@@ -1,0 +1,434 @@
+//! IntexFactory runtime use-cases: issuance, settlement, Promis mining.
+
+use alloy_primitives::{keccak256, Address, U256};
+use alloy_sol_types::{SolCall, SolEvent};
+
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
+
+use outbe_intexregistry::IntexState;
+
+use crate::constants::{
+    COEN_CALL_TRIGGER_DEN, COEN_CALL_TRIGGER_NUM, COEN_PRICE_FLOOR_DEN, COEN_PRICE_FLOOR_NUM,
+    INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO,
+    RESERVE_VAULT,
+};
+use crate::errors::IntexFactoryError;
+use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
+
+/// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
+pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
+    storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
+}
+
+/// Capture series identity in IntexRegistry and enroll it in the floor-bin
+/// index. The outbound LayerZero send is added with messenger wiring.
+pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
+    // u32 timestamp; bounded until 2106.
+    let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
+        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
+
+    // Floor and call trigger are oracle-scale COEN prices derived from the
+    // clearing price (floor = price * 1.08, trigger = floor * 1.64).
+    let coen_price_floor = derived_floor(params.coen_price)?;
+    let coen_price_call_trigger = derived_call_trigger(coen_price_floor)?;
+
+    let record = outbe_intexregistry::CreateSeriesParams {
+        series_id: params.series_id,
+        issued_intex_count: params.issued_intex_count,
+        intex_size: params.intex_size,
+        intex_strike_price: params.intex_strike_price,
+        coen_price_floor,
+        intex_call_period: params.intex_call_period,
+        call_trigger: outbe_intexregistry::IntexCallTrigger {
+            window_days: params.call_window_days,
+            threshold_days: params.call_threshold_days,
+            coen_price_call_trigger,
+        },
+        issued_at,
+    };
+    outbe_intexregistry::api::create_series(storage, record)?;
+
+    // Register the series on the local IntexNFT1155 so holders can be tracked
+    // on the Outbe side (required for the call-bridge credit path).
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::createSeriesCall {
+            seriesId: params.series_id,
+            issuedIntexCount: params.issued_intex_count,
+            intexCallPeriod: params.intex_call_period,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
+    // Send ISSUANCE_INSTRUCTIONS to BNB via LayerZero.
+    // OriginMessenger._payNative pays from its relay float when msg.value == 0;
+    // we still quote so the fee struct carries the correct nativeFee for _lzSend.
+    let coen_price_floor_u64 = u64::try_from(coen_price_floor)
+        .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
+    let coen_price_call_trigger_u64 = u64::try_from(coen_price_call_trigger)
+        .map_err(|_| PrecompileError::Revert("coen call trigger exceeds u64".into()))?;
+    let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
+        seriesId: params.series_id,
+        issuedIntexCount: params.issued_intex_count,
+        intexSize: params.intex_size,
+        intexStrikePrice: params.intex_strike_price,
+        coenPriceFloor: coen_price_floor_u64,
+        intexCallPeriod: params.intex_call_period,
+        settlementTokenAlias: QUALIFIER_REFERENCE_ISO,
+        callWindowDays: params.call_window_days,
+        callThresholdDays: params.call_threshold_days,
+        coenPriceCallTrigger: coen_price_call_trigger_u64,
+        recipients: params.recipients,
+        quantities: params.quantities,
+    };
+    let quote_ret = storage.staticcall(
+        ORIGIN_MESSENGER_ADDRESS,
+        IOriginMessenger::quoteSendIssuanceInstructionsCall {
+            params: messenger_params.clone(),
+            extraOptions: alloy_primitives::Bytes::new(),
+            payInLzToken: false,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let fee = IOriginMessenger::quoteSendIssuanceInstructionsCall::abi_decode_returns(&quote_ret)
+        .map_err(|_| {
+        PrecompileError::Revert("quoteSendIssuanceInstructions undecodable".into())
+    })?;
+    storage.call(
+        ORIGIN_MESSENGER_ADDRESS,
+        U256::ZERO,
+        IOriginMessenger::sendIssuanceInstructionsCall {
+            params: messenger_params,
+            extraOptions: alloy_primitives::Bytes::new(),
+            fee: MessagingFee {
+                nativeFee: fee.nativeFee,
+                lzTokenFee: fee.lzTokenFee,
+            },
+            refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
+    // Enroll into the unqualified floor-bin index for begin_block qualify.
+    IntexFactoryContract::new(storage.clone())
+        .insert_unqualified(params.series_id, coen_price_floor)?;
+
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::SeriesIssued {
+            seriesId: params.series_id,
+            issuedIntexCount: params.issued_intex_count,
+            coenPrice: params.coen_price,
+        },
+    )
+}
+
+/// COEN price floor = clearing price * 1.08 (oracle scale, integer 108/100).
+pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
+    coen_price
+        .checked_mul(U256::from(COEN_PRICE_FLOOR_NUM))
+        .map(|v| v / U256::from(COEN_PRICE_FLOOR_DEN))
+        .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))
+}
+
+/// Forced-call trigger = floor * 1.64 (oracle scale, integer 164/100).
+pub(crate) fn derived_call_trigger(floor: U256) -> Result<U256> {
+    floor
+        .checked_mul(U256::from(COEN_CALL_TRIGGER_NUM))
+        .map(|v| v / U256::from(COEN_CALL_TRIGGER_DEN))
+        .ok_or_else(|| PrecompileError::Revert("coen call trigger overflow".into()))
+}
+
+/// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
+/// `holder` is the caller (the precompile passes its caller).
+pub fn set_authorized_settler(
+    storage: &StorageHandle<'_>,
+    holder: Address,
+    series_id: u32,
+    settler: Address,
+) -> Result<()> {
+    if holder.is_zero() || settler.is_zero() {
+        return Err(IntexFactoryError::ZeroAddress.into());
+    }
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    factory.write_authorized_settler(holder, series_id, settler)
+}
+
+/// Settle: `settler` is the caller. Gating reads IntexRegistry; value movement
+/// (token / vault / NFT) goes via storage.call.
+pub fn settle(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    intex_holder: Address,
+    settler: Address,
+    amount: U256,
+) -> Result<()> {
+    if intex_holder.is_zero() || settler.is_zero() {
+        return Err(IntexFactoryError::ZeroAddress.into());
+    }
+    if amount.is_zero() {
+        return Err(IntexFactoryError::ZeroAmount.into());
+    }
+
+    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let state = series.lifecycle_state()?;
+    // Settle is allowed in Qualified (voluntary) and Called (forced).
+    if state != IntexState::Qualified && state != IntexState::Called {
+        return Err(IntexFactoryError::NotSettleable(series.state).into());
+    }
+    // The deadline only constrains forced settlement (Called).
+    if state == IntexState::Called {
+        let now = storage.timestamp()?.to::<u64>();
+        let deadline = u64::from(series.called_at) + u64::from(series.intex_call_period);
+        if now > deadline {
+            return Err(IntexFactoryError::DeadlineExpired.into());
+        }
+    }
+
+    // Issued balance (NFT). Issued token id = uint256(seriesId).
+    let issued_token_id = U256::from(series_id);
+    let balance = nft_balance_of(storage, intex_holder, issued_token_id)?;
+    if balance.is_zero() {
+        return Err(IntexFactoryError::ZeroBalance.into());
+    }
+    if amount > balance {
+        return Err(IntexFactoryError::AmountExceedsBalance.into());
+    }
+
+    // Dual-wallet authorization: only the holder or its authorized settler.
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    if intex_holder != settler
+        && factory.read_authorized_settler(intex_holder, series_id)? != settler
+    {
+        return Err(IntexFactoryError::NotAuthorized.into());
+    }
+
+    // payment = intexStrikePrice * amount (in payment-token units).
+    let payment = U256::from(series.intex_strike_price)
+        .checked_mul(amount)
+        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+
+    // Pull payment from the settler, deposit into the reserve vault.
+    // Fee-on-transfer safe: measure the received delta.
+    let payment_token = vault_asset(storage)?;
+    let before = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
+    storage.call(
+        payment_token,
+        U256::ZERO,
+        IERC20::transferFromCall {
+            from: settler,
+            to: INTEX_FACTORY_ADDRESS,
+            amount: payment,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let after = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
+    let received = after
+        .checked_sub(before)
+        .ok_or_else(|| PrecompileError::Revert("payment balance underflow".into()))?;
+
+    storage.call(
+        payment_token,
+        U256::ZERO,
+        IERC20::approveCall {
+            spender: RESERVE_VAULT,
+            amount: received,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let shares_ret = storage.call(
+        RESERVE_VAULT,
+        U256::ZERO,
+        IVaultProvider::depositLiquidityCall {
+            asset: payment_token,
+            assetsAmount: received,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let shares = IVaultProvider::depositLiquidityCall::abi_decode_returns(&shares_ret)
+        .map_err(|_| PrecompileError::Revert("vault depositLiquidity undecodable".into()))?;
+    if shares.is_zero() {
+        return Err(IntexFactoryError::ZeroSharesReceived.into());
+    }
+
+    // Burn Issued from holder, mint Settled to the settler.
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::settleCall {
+            seriesId: series_id,
+            from: intex_holder,
+            to: settler,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
+    factory.bump_settle_count(series_id)?;
+
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::Settled {
+            seriesId: series_id,
+            intexHolder: intex_holder,
+            settler,
+            amount,
+        },
+    )
+}
+
+// --- storage.call helpers (localnet-exercised) ---
+
+fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
+    let ret = storage.staticcall(
+        INTEX_NFT1155_ADDRESS,
+        IIntexNFT1155::balanceOfCall { account, id }
+            .abi_encode()
+            .into(),
+    )?;
+    IIntexNFT1155::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+}
+
+fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
+    let ret = storage.staticcall(
+        RESERVE_VAULT,
+        IVaultProvider::assetAtCall { index: U256::ZERO }
+            .abi_encode()
+            .into(),
+    )?;
+    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("vault assetAt undecodable".into()))?;
+    if asset.is_zero() {
+        return Err(IntexFactoryError::NotWired.into());
+    }
+    Ok(asset)
+}
+
+fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {
+    let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
+}
+
+/// minePromis: PoW-gated burn of Settled then mint of Promis. `holder` is the
+/// caller.
+pub fn mine_promis(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    holder: Address,
+    amount: U256,
+    nonce: U256,
+) -> Result<U256> {
+    if holder.is_zero() {
+        return Err(IntexFactoryError::ZeroAddress.into());
+    }
+    if amount.is_zero() {
+        return Err(IntexFactoryError::ZeroAmount.into());
+    }
+
+    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let settled = nft_balance_of(storage, holder, settled_token_id(series_id))?;
+    if settled < amount {
+        return Err(IntexFactoryError::InsufficientSettled.into());
+    }
+
+    let promis_amount = series
+        .intex_size
+        .checked_mul(amount)
+        .ok_or_else(|| PrecompileError::Revert("promis amount overflow".into()))?;
+
+    // PoW over the per-(series, holder) sequence; bump it on success.
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    let seq = factory.read_mine_seq(series_id, holder)?;
+    validate_pow(holder, promis_amount, series_id, seq, nonce)?;
+    factory.write_mine_seq(series_id, holder, seq + 1)?;
+
+    // Burn Settled from holder on the NFT.
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::burnSettledCall {
+            holder,
+            seriesId: series_id,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
+    outbe_promis::Promis::new(storage.clone()).mine(holder, promis_amount)?;
+
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::PromisMined {
+            seriesId: series_id,
+            holder,
+            amount,
+            promisAmount: promis_amount,
+        },
+    )?;
+    Ok(promis_amount)
+}
+
+/// Settled token id = `uint256(keccak256("SETTLED" ++ seriesId))`.
+pub(crate) fn settled_token_id(series_id: u32) -> U256 {
+    let mut buf = Vec::with_capacity(7 + 4);
+    buf.extend_from_slice(b"SETTLED");
+    buf.extend_from_slice(&series_id.to_be_bytes());
+    U256::from_be_bytes(keccak256(&buf).0)
+}
+
+/// PoW hash: `SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)`.
+pub(crate) fn compute_pow_hash(
+    holder: Address,
+    promis_amount: U256,
+    series_id: u32,
+    seq: u32,
+    nonce: U256,
+) -> Result<[u8; 32]> {
+    if nonce > U256::from(u64::MAX) {
+        return Err(PrecompileError::Revert("nonce exceeds uint64 range".into()));
+    }
+    let mut preimage = String::new();
+    preimage.push_str(&hex::encode(holder.as_slice()));
+    preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
+    preimage.push_str(&hex::encode(series_id.to_be_bytes()));
+    preimage.push_str(&hex::encode(seq.to_be_bytes()));
+
+    let mut data = preimage.into_bytes();
+    data.extend_from_slice(&nonce.to::<u64>().to_be_bytes());
+
+    let digest = ring::digest::digest(&ring::digest::SHA256, &data);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_ref());
+    Ok(out)
+}
+
+/// The PoW hash must have `POW_DIFFICULTY` leading zero bytes.
+pub(crate) fn validate_pow(
+    holder: Address,
+    promis_amount: U256,
+    series_id: u32,
+    seq: u32,
+    nonce: U256,
+) -> Result<()> {
+    let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce)?;
+    for b in &hash[..POW_DIFFICULTY] {
+        if *b != 0 {
+            return Err(IntexFactoryError::InsufficientProofOfWork.into());
+        }
+    }
+    Ok(())
+}

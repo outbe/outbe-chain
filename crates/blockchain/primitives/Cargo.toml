@@ -1,0 +1,51 @@
+[package]
+name = "outbe-primitives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-rlp.workspace = true
+alloy-sol-types.workspace = true
+alloy-evm.workspace = true
+bytes.workspace = true
+reth-ethereum = { workspace = true, features = ["node"] }
+reth-ethereum-engine-primitives.workspace = true
+reth-codecs.workspace = true
+reth-node-builder.workspace = true
+reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-rpc-traits.workspace = true
+revm.workspace = true
+ring.workspace = true
+# Validator-set data types (ValidatorSet / ValidatorP2pAddress) live here so
+# both `outbe-consensus` and `outbe-engine` see the same canonical types
+# without `outbe-consensus` having to depend on `outbe-engine` and without
+# `outbe-engine`-only callers re-deriving the shape.
+commonware-cryptography.workspace = true
+commonware-p2p.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+# Validator EVM signer (system-tx signing key). Lives here so consensus does
+# not need an `outbe-evm` dep just for the signer type.
+k256.workspace = true
+zeroize.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["rand"] }
+proptest.workspace = true
+tempfile.workspace = true
+trybuild = "1"
+
+[features]
+default = []
+test-utils = []

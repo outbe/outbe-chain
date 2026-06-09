@@ -1,0 +1,57 @@
+# Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
+
+[profile.default]
+  auto_detect_solc = true
+  block_timestamp = 1_680_220_800 # March 31, 2023 at 00:00 GMT
+  bytecode_hash = "none"
+  evm_version = "shanghai"
+  fuzz = { runs = 1_000 }
+  gas_reports = ["*"]
+  optimizer = true
+  optimizer_runs = 10_000
+  out = "out"
+  script = "script"
+  solc = "0.8.30"
+  src = "src"
+  test = "test"
+  allow_paths = ["node_modules"]
+  libs = ["../node_modules", "node_modules", "lib"]
+
+
+[profile.ci]
+  fuzz = { runs = 10_000 }
+  verbosity = 4
+
+[etherscan]
+  mainnet = { key = "${API_KEY_ETHERSCAN}" }
+  optimism = { key = "${API_KEY_OPTIMISTIC_ETHERSCAN}" }
+  arbitrum = { key = "${API_KEY_ARBISCAN}" }
+  base = { key = "${API_KEY_BASESCAN}" }
+
+
+  avalanche = { key = "${API_KEY_SNOWTRACE}" }
+  bnb_smart_chain = { key = "${API_KEY_BSCSCAN}" }
+  goerli = { key = "${API_KEY_ETHERSCAN}" }
+  polygon = { key = "${API_KEY_POLYGONSCAN}" }
+  sepolia = { key = "${API_KEY_ETHERSCAN}" }
+
+[fmt]
+  bracket_spacing = true
+  int_types = "long"
+  line_length = 120
+  multiline_func_header = "all"
+  number_underscore = "thousands"
+  quote_style = "double"
+  tab_width = 4
+  wrap_comments = true
+
+[rpc_endpoints]
+  outbe-priv="https://eth.p.outbe.net"
+  outbe-dev="https://eth.d.outbe.net"
+  bsc-testnet="https://cosmopolitan-solemn-emerald.bsc-testnet.quiknode.pro/10f3eba8ae928e9655a53773651d528c78a45b4c/"
+  outbe-testnet-old="https://eth.testnet.outbe.net"
+  outbe-testnet="https://rpc.testnet.outbe.net"
+
+[lint]
+# ... rest of lint config ...
+exclude_lints = ["unsafe-typecast","mixed-case-variable"]

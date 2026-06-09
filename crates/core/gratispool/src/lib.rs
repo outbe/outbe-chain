@@ -1,0 +1,38 @@
+//! Shielded Gratis pool precompile (`0x2004`).
+//!
+//! Tornado-style commitment+nullifier+ZK pool scoped to Gratis pledges. Two
+//! deposit paths (user pledge, credisfactory reclaim insert) and two spend
+//! paths (`requestCredis` via credisfactory, `unpledgeGratis` direct) share a
+//! single per-denomination Merkle tree, root window, and global nullifier
+//! set.
+//!
+//! Crypto reuses the `outbe-poseidon` + `outbe-zk-circuit-noir` stack
+//! (same UltraHonkKeccak verifier the OWNERSHIP circuit already uses); the
+//! Barretenberg SRS is initialised at node startup by `outbe_zkproof::init_crs`.
+//! The verification key for the commitment-nullifier proof comes from
+//! `outbe_zk_canonical::COMMITMENT_NULLIFIER`; see the `outbe-circuits`
+//! repository for the Noir source and canonical regeneration workflow.
+
+pub mod api;
+pub mod constants;
+pub mod errors;
+pub mod precompile;
+pub mod runtime;
+pub mod schema;
+pub mod state;
+
+// `verifier` is `pub` only under the `test-helpers` feature so other crates'
+// integration tests can override the verifier outcome. Production builds keep
+// it crate-private — the only entry point into proof verification is through
+// the `runtime::verify_and_spend_*` functions.
+#[cfg(feature = "test-helpers")]
+pub mod verifier;
+#[cfg(not(feature = "test-helpers"))]
+mod verifier;
+
+pub use errors::GratisPoolError;
+pub use runtime::SpendArgs;
+pub use schema::GratisPoolContract;
+
+#[cfg(test)]
+mod tests;

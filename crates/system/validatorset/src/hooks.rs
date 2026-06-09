@@ -1,0 +1,153 @@
+use alloy_primitives::{Address, B256};
+use outbe_primitives::{error::Result, storage::StorageHandle};
+
+use crate::schema::ValidatorSet;
+use crate::state::{self, CommitteeSnapshot};
+
+/// Returns `true` if an epoch boundary has been reached at the given block height.
+///
+/// Does NOT transition the epoch — the caller is responsible for orchestrating
+/// the full epoch transition sequence (distribute rewards, reset slash counters,
+/// then call `transition_epoch`).
+pub fn is_epoch_boundary(storage: StorageHandle, block_number: u64) -> Result<bool> {
+    let vs = ValidatorSet::new(storage);
+    let epoch_start_block = vs.epoch_start_block.read()?;
+    let epoch_length_blocks = vs.config_epoch_length_blocks.read()?;
+
+    if epoch_length_blocks == 0 {
+        return Ok(false);
+    }
+
+    Ok(block_number >= epoch_start_block.saturating_add(epoch_length_blocks as u64))
+}
+
+/// Transitions to a new epoch: resets per-epoch counters, increments epoch number.
+///
+/// Should be called AFTER reward distribution and slash counter resets.
+pub fn transition_epoch(storage: StorageHandle, timestamp: u64, block_number: u64) -> Result<()> {
+    let mut vs = ValidatorSet::new(storage);
+    vs.update_epoch(timestamp, block_number)
+}
+
+/// Called from post-execution: record the block's proposer.
+pub fn record_proposer(storage: StorageHandle, beneficiary: Address) -> Result<()> {
+    let mut vs = ValidatorSet::new(storage);
+    // Only record if this address is a registered validator
+    if vs.is_validator(beneficiary)? {
+        vs.record_proposer(beneficiary)?;
+    }
+    Ok(())
+}
+
+/// Called from post-execution: record voter participation.
+pub fn record_participation(
+    storage: StorageHandle,
+    voters: &[Address],
+    absent: &[Address],
+) -> Result<()> {
+    if absent.is_empty() {
+        return Ok(());
+    }
+    let mut vs = ValidatorSet::new(storage);
+    vs.record_participation(voters, absent)?;
+    Ok(())
+}
+
+/// Called from post-execution: record voter participation for a
+/// historical (finalized-parent) committee. Accepts registered
+/// validators that may no longer be current consensus participants.
+///
+/// Idempotent under metadata-tx replays: the
+/// `finalized_participation_recorded[fb_hash]` guard short-circuits
+/// the inner counter update so replays of the same metadata-tx do not
+/// double-increment `val_missed_votes`. `fb_hash` is the finalized
+/// block hash (`metadata.finalized_block_hash`).
+pub fn record_finalized_participation(
+    storage: StorageHandle,
+    fb_hash: B256,
+    voters: &[Address],
+    absent: &[Address],
+) -> Result<()> {
+    if voters.is_empty() && absent.is_empty() {
+        return Ok(());
+    }
+    let mut vs = ValidatorSet::new(storage);
+    if vs.finalized_participation_recorded.read(&fb_hash)? {
+        return Ok(());
+    }
+    vs.record_finalized_participation(voters, absent)?;
+    vs.finalized_participation_recorded.write(&fb_hash, true)?;
+    Ok(())
+}
+
+/// Called from post-execution after a DKG/reshare ceremony completes:
+/// activates the reshared validator set and updates the group public key.
+pub fn activate_reshared_set(
+    storage: StorageHandle,
+    new_active_set: &[Address],
+    active_set_hash: B256,
+) -> Result<()> {
+    let mut vs = ValidatorSet::new(storage);
+    vs.activate_reshared_set(new_active_set, active_set_hash)?;
+    Ok(())
+}
+
+/// Inputs for the V2 atomic boundary activation hook.
+///
+/// `outgoing` is the snapshot of the committee that signed up to and
+/// including the boundary block (epoch `outgoing_epoch`). It is `None`
+/// for the genesis boundary (block 1), where there is no preceding epoch.
+///
+/// `incoming` is the snapshot of the committee that takes over after the
+/// boundary (epoch `incoming_epoch`).
+#[derive(Debug, Clone)]
+pub struct BoundaryActivationInputs {
+    pub outgoing: Option<(u64, CommitteeSnapshot)>,
+    pub incoming_epoch: u64,
+    pub incoming: CommitteeSnapshot,
+    pub new_active_set: Vec<Address>,
+    pub active_set_hash: B256,
+}
+
+/// V2 atomic boundary activation.
+///
+///
+///   1. Open a journal checkpoint (RAII guard).
+///   2. Write the outgoing committee snapshot for epoch `N` (if any).
+///   3. Apply `activate_reshared_set` to mutate validator-set membership.
+///   4. Write the incoming committee snapshot for epoch `N + 1`.
+///   5. Commit the checkpoint.
+///
+/// If any step returns an error the guard drops without committing, so:
+///
+/// * no partial snapshot bytes survive,
+/// * `active_consensus_set_hash` is not advanced,
+/// * `pending_set_change` is not cleared.
+///
+/// Returns `(outgoing_snapshot_key, incoming_snapshot_key)`. The outgoing
+/// key is `B256::ZERO` for the genesis boundary.
+pub fn activate_boundary_atomic(
+    storage: StorageHandle,
+    inputs: &BoundaryActivationInputs,
+) -> Result<(B256, B256)> {
+    let guard = storage.checkpoint_guard();
+
+    let outgoing_key = if let Some((outgoing_epoch, ref outgoing_snapshot)) = inputs.outgoing {
+        let (_, key) =
+            state::write_committee_snapshot(storage.clone(), outgoing_epoch, outgoing_snapshot)?;
+        key
+    } else {
+        B256::ZERO
+    };
+
+    {
+        let mut vs = ValidatorSet::new(storage.clone());
+        vs.activate_reshared_set(&inputs.new_active_set, inputs.active_set_hash)?;
+    }
+
+    let (_, incoming_key) =
+        state::write_committee_snapshot(storage, inputs.incoming_epoch, &inputs.incoming)?;
+
+    guard.commit();
+    Ok((outgoing_key, incoming_key))
+}

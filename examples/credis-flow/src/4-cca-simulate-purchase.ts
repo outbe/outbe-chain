@@ -1,0 +1,196 @@
+import { ethers, Wallet } from "ethers";
+import {
+  SmartAccountFactory__factory,
+  IERC20__factory,
+  ITokenBundle__factory,
+  IEntryPoint__factory,
+} from "./contracts/index.js";
+import {
+  formatTokenMeta,
+  fetchTokenMeta,
+  TokenMeta,
+  DEFAULT_ENV,
+  loadEnv,
+  requireEnv, formatTokenMeta2,
+} from "./utils.js";
+
+const SALT = 0n;
+const WITHDRAW_AMOUNT = 1_000_000n; // 1 USDT0 (6 decimals)
+
+// Parse CLI args: [envName]
+const envName = process.argv[2] || DEFAULT_ENV;
+
+// Load env files
+const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
+
+const rpcUrl = requireEnv("RPC_URL", envPath);
+const userAddress = requireEnv("USER_ADDRESS", envPath);
+const ccaPrivateKey = requireEnv("CCA_PRIVATE_KEY", envPath);
+const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
+const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
+const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
+const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
+const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
+const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envPath);
+
+async function main() {
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const ccaWallet = new Wallet(ccaPrivateKey, provider);
+
+  const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
+  const token = IERC20__factory.connect(erc20Address, provider);
+  const bundlePlugin = ITokenBundle__factory.connect(bundleModulePluginAddress, provider);
+
+  const erc20Meta = await fetchTokenMeta(token);
+
+  // Predict Bundle account address
+  const smartAccountAddr = await saFactory.getAccountAddress(
+    userAddress,
+    ccaAddress,
+    [erc20Address],
+    [vaultProviderAddress],
+    SALT,
+  );
+
+  console.log("=== CCA Simulate Purchase ===");
+  console.log(`Env:              ${envName}`);
+  console.log(`RPC:              ${rpcUrl}`);
+  console.log(`User:             ${userAddress}`);
+  console.log(`CCA:              ${ccaAddress}`);
+  console.log(`Bundle Account:    ${smartAccountAddr}`);
+  console.log(`EntryPoint:       ${entryPointAddress}`);
+  console.log(`ERC20:            ${erc20Address} (${erc20Meta.symbol})`);
+  console.log(`Withdraw amount:  ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
+
+  // Verify Bundle account is deployed
+  const code = await provider.getCode(smartAccountAddr);
+  if (code === "0x") {
+    console.error("Bundle account not deployed. Run 2-top-up-smart-account.ts first.");
+    process.exit(1);
+  }
+
+  // State before
+  const [bundleBalBefore, accountBalBefore, ccaBalBefore] = await Promise.all([
+    bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
+    token.balanceOf(smartAccountAddr),
+    token.balanceOf(ccaAddress),
+  ]);
+
+  console.log("\n=== State BEFORE ===");
+  printBalances(smartAccountAddr, accountBalBefore, bundleBalBefore, ccaBalBefore, erc20Meta);
+
+  if (bundleBalBefore < WITHDRAW_AMOUNT) {
+    console.error(`Insufficient bundle balance: have ${formatTokenMeta(bundleBalBefore, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
+    process.exit(1);
+  }
+
+  // ── Build and submit UserOp ───────────────────────────────────────────────
+
+  // permissionId = bytes4(keccak256(abi.encode("credis.cca", token)))
+  const permIdFull = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["string", "address"], ["credis.cca", erc20Address]),
+  );
+  const permId4Hex = permIdFull.slice(2, 10); // first 4 bytes hex (no 0x)
+  const identifierHex = permId4Hex + "0".repeat(32); // bytes20(bytes4) = 4 bytes + 16 zero bytes
+  const nonceKeyHex = "0002" + identifierHex + "0000"; // 24 bytes
+  const nonceKey = BigInt("0x" + nonceKeyHex);
+
+  const entryPoint = IEntryPoint__factory.connect(entryPointAddress, ccaWallet);
+
+  const nonce = await entryPoint.getNonce(smartAccountAddr, nonceKey);
+
+  // Ensure EntryPoint has deposit for gas
+  const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
+  if (epDeposit < ethers.parseEther("0.01")) {
+    console.log("\nFunding EntryPoint deposit for Bundle account...");
+    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ethers.parseEther("0.05") });
+    await depositTx.wait();
+    console.log("  Deposited 0.05 COEN into EntryPoint");
+  }
+
+  // callData = executeUserOp.selector || execute(execMode, encodeSingle(token, 0, transfer(cca, amount)))
+  const erc20Iface = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]);
+  const transferCalldata = erc20Iface.encodeFunctionData("transfer", [ccaAddress, WITHDRAW_AMOUNT]);
+  const executionCalldata = ethers.solidityPacked(
+    ["address", "uint256", "bytes"],
+    [erc20Address, 0n, transferCalldata],
+  );
+  const execModeBytes32 = "0x" + "00".repeat(32);
+  const kernelIface = new ethers.Interface([
+    "function execute(bytes32 mode, bytes calldata executionCalldata)",
+  ]);
+  const innerExecute = kernelIface.encodeFunctionData("execute", [execModeBytes32, executionCalldata]);
+  const executeUserOpSel = "0x8dd7712f";
+  const callData = ethers.concat([executeUserOpSel, innerExecute]);
+
+  const accountGasLimits = ethers.solidityPacked(["uint128", "uint128"], [2_000_000n, 2_000_000n]);
+  const gasFees = ethers.solidityPacked(["uint128", "uint128"], [1n, 1n]);
+
+  const op = {
+    sender: smartAccountAddr,
+    nonce: nonce,
+    initCode: "0x",
+    callData: callData,
+    accountGasLimits: accountGasLimits,
+    preVerificationGas: 1_000_000n,
+    gasFees: gasFees,
+    paymasterAndData: "0x",
+    signature: "0x",
+  };
+
+  // Sign with CCA key and prepend 0xFF (skip-policy-sig marker)
+  const userOpHash = await entryPoint.getUserOpHash(op);
+  const sig = await ccaWallet.signMessage(ethers.getBytes(userOpHash));
+  op.signature = "0xff" + sig.slice(2);
+
+  console.log("\nSending UserOp via EntryPoint.handleOps...");
+  console.log(`  Nonce:      ${nonce}`);
+  console.log(`  UserOpHash: ${userOpHash}`);
+
+  const tx = await entryPoint.handleOps([op], ccaWallet.address);
+  const receipt = await tx.wait();
+  console.log(`  TX hash:    ${receipt!.hash}`);
+  console.log(`  Block:      ${receipt!.blockNumber}`);
+  console.log(`  Gas used:   ${receipt!.gasUsed}`);
+
+  // ── State after ───────────────────────────────────────────────────────────
+
+  const [bundleBalAfter, accountBalAfter, ccaBalAfter] = await Promise.all([
+    bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
+    token.balanceOf(smartAccountAddr),
+    token.balanceOf(ccaAddress),
+  ]);
+
+  console.log("\n=== State AFTER ===");
+  printBalances(smartAccountAddr, accountBalAfter, bundleBalAfter, ccaBalAfter, erc20Meta);
+
+  console.log("\n=== CHANGES ===");
+  const bundleDiff = bundleBalAfter - bundleBalBefore;
+  const accountDiff = accountBalAfter - accountBalBefore;
+  const ccaDiff = ccaBalAfter - ccaBalBefore;
+  console.log(`  SA bundle:    ${bundleDiff >= 0n ? "+" : ""}${formatTokenMeta(bundleDiff, erc20Meta)}`);
+  console.log(`  SA total:     ${accountDiff >= 0n ? "+" : ""}${formatTokenMeta(accountDiff, erc20Meta)}`);
+  console.log(`  CCA ERC20:    ${ccaDiff >= 0n ? "+" : ""}${formatTokenMeta(ccaDiff, erc20Meta)}`);
+}
+
+function printBalances(
+  smartAccountAddr: string,
+  accountBal: bigint,
+  bundleBal: bigint,
+  ccaBal: bigint,
+  erc20Meta: TokenMeta,
+) {
+  const personalBal = accountBal - bundleBal;
+  const bundleBalance2 = bundleBal / 2n;
+  console.log(`  Bundle Account (${smartAccountAddr}):`);
+  console.log(`    ERC20 total:   ${formatTokenMeta(accountBal, erc20Meta)}`);
+  console.log(`     Bundle:       ${formatTokenMeta(bundleBal, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);
+  console.log(`    Personal:      ${formatTokenMeta(personalBal, erc20Meta)}`);
+  console.log(`  CCA (${ccaAddress}):`);
+  console.log(`    ERC20 balance: ${formatTokenMeta(ccaBal, erc20Meta)}`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

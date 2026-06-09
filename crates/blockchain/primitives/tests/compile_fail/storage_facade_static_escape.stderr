@@ -1,0 +1,11 @@
+error[E0597]: `provider` does not live long enough
+  --> tests/compile_fail/storage_facade_static_escape.rs:11:37
+   |
+10 |     let mut provider = HashMapStorageProvider::new(1);
+   |         ------------ binding `provider` declared here
+11 |     let handle = StorageHandle::new(&mut provider);
+   |                                     ^^^^^^^^^^^^^ borrowed value does not live long enough
+12 |     takes_static(Facade { _storage: handle });
+   |     ----------------------------------------- argument requires that `provider` is borrowed for `'static`
+13 | }
+   | - `provider` dropped here while still borrowed

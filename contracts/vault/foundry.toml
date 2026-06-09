@@ -1,0 +1,38 @@
+[profile.default]
+auto_detect_solc = true
+via_ir = true
+optimizer = true
+optimizer_runs = 100000
+bytecode_hash = "none"
+evm_version = "cancun"
+dynamic_test_linking = true
+
+fs_permissions = [{ access = "read-write", path = "./" }]
+
+remappings = [
+  "forge-std/=lib/forge-std/src/",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+]
+
+[profile.default.fmt]
+wrap_comments = true
+
+[rpc_endpoints]
+ethereum = "${ETHEREUM_RPC_URL}"
+bsc = "${BSC_RPC_URL}"
+sepolia = "${SEPOLIA_RPC_URL}"
+local = "http://127.0.0.1:8545"
+local-dev = "http://127.0.0.1:8545"
+outbe-privnet = "https://eth.p.outbe.net"
+outbe-dev = "https://eth.d.outbe.net"
+outbe-peira = "https://rpc.testnet.outbe.net"
+bsc-testnet = "https://bsc-testnet.bnbchain.org"
+
+[lint]
+ignore = ['test/**/*.sol']
+
+[fuzz]
+runs = 2048
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

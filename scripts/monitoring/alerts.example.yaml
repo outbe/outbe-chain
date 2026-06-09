@@ -1,0 +1,215 @@
+# Prometheus / Alertmanager alert rules for outbe-chain validator hosts.
+#
+# This file is a TEMPLATE. Copy it to the operator's actual rule
+# directory (e.g. /etc/prometheus/rules/outbe-chain.yaml) and adjust
+# label selectors / hosts / contacts as needed.
+#
+# Source metrics:
+#   - outbe_block_cache_size
+#       process-local block_cache entry count
+#       (emitted from `crates/blockchain/consensus/src/metrics.rs`
+#        and updated on every bounded insert + finalization eviction).
+#   - process_resident_memory_bytes
+#       Reth's standard per-process RSS gauge.
+#   - commonware_p2p_active_peers
+#       current tracked Commonware consensus peer-set size.
+#
+# Constants used here mirror the Rust source of truth:
+#   BLOCK_CACHE_MAX_ENTRIES = 1024
+#   (see `crates/blockchain/consensus/src/finalization/actor.rs`)
+#
+# An alert on the MDBX `read transaction has been open for too long`
+# warning is intentionally NOT included here — that warning is emitted
+# from `reth-db`'s `MetricsHandler` and does not currently have a
+# Prometheus counter; capture it via the operator's log pipeline
+# (Loki / journald-based alerting). Track Rust-side counter exposure
+# under a follow-up task.
+
+groups:
+  - name: outbe-chain.consensus
+    interval: 30s
+    rules:
+      # Soft warning: cache approaching the hard cap. Indicates either
+      # a sustained wedge (no finalization advancing) or fork spam.
+      - alert: OutbeBlockCacheNearCap
+        expr: outbe_block_cache_size > 0.9 * 1024
+        for: 5m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "block_cache near max entries on {{ $labels.instance }}"
+          description: |
+            outbe_block_cache_size = {{ $value }} (>= 90% of 1024).
+            Either consensus is wedged (no finalization advancing) or
+            the network is producing many same-height forks. Investigate
+            via logs and `outbe_consensus_tip_block_height` /
+            `outbe_finalized_view`.
+
+      # Hard alarm: cache pinned at the cap for an extended period —
+      # eviction is keeping up but the underlying condition (wedge or
+      # fork spam) has not cleared.
+      - alert: OutbeBlockCacheAtCap
+        expr: outbe_block_cache_size >= 1024
+        for: 15m
+        labels:
+          severity: critical
+          subsystem: consensus
+        annotations:
+          summary: "block_cache pinned at MAX_ENTRIES on {{ $labels.instance }} for >15m"
+          description: |
+            outbe_block_cache_size has been at or above
+            BLOCK_CACHE_MAX_ENTRIES (1024) for 15 minutes. This is
+            survivable (eviction still runs) but indicates a sustained
+            problem — wedge or fork spam — that the operator must
+            investigate now.
+
+      # Network split early-warning: disconnected validator. The May
+      # 2026 OOM incident root cause was this condition going unnoticed
+      # for hours.
+      - alert: OutbeConsensusPeerSetEmpty
+        expr: commonware_p2p_active_peers == 0
+        for: 5m
+        labels:
+          severity: critical
+          subsystem: consensus
+        annotations:
+          summary: "validator {{ $labels.instance }} has zero consensus peers for >5m"
+          description: |
+            commonware_p2p_active_peers == 0 for 5 minutes. The validator has
+            an empty tracked consensus peer set and cannot finalize. Check P2P
+            reachability, known-peers.json, and bootnode pingability.
+
+  - name: outbe-chain.host
+    interval: 30s
+    rules:
+      # Memory pressure early-warning: gives the operator hours of
+      # headroom to investigate before OOM. Threshold sized for the
+      # current 7.8 GiB hosts; raise to ~12 GiB after RAM upgrade
+      - alert: OutbeChainHighRSS
+        expr: process_resident_memory_bytes{job=~".*outbe.*"} > 6 * 1024 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+          subsystem: host
+        annotations:
+          summary: "outbe-chain RSS > 6 GiB on {{ $labels.instance }}"
+          description: |
+            outbe-chain process RSS = {{ $value | humanize1024 }} for
+            10 minutes. Historical OOM events on production hosts
+            killed the process at ~7.1 GiB anon-rss; this threshold
+            gives ~1 GiB headroom to investigate before OOM.
+
+  - name: outbe-chain.slashing
+    interval: 30s
+    rules:
+      # Early-warning before a felony fires. Threshold values match
+      # `slashindicator.config_proposer_felony_threshold` (default 150).
+      # Fire when miss count exceeds 80% of the threshold.
+      - alert: OutbeProposerMissNearFelony
+        expr: outbe_proposer_miss_count > 120
+        for: 2m
+        labels:
+          severity: warning
+          subsystem: slashing
+        annotations:
+          summary: "validator {{ $labels.addr }} approaching proposer felony"
+          description: |
+            outbe_proposer_miss_count = {{ $value }} for {{ $labels.addr }}.
+            Default felony threshold is 150 — at this rate the validator
+            will be force-exited soon. Investigate node health.
+
+      # Validator just transitioned to EXITING (status code 3). This
+      # means a slash or voluntary deactivation just happened.
+      - alert: OutbeValidatorExiting
+        expr: outbe_validator_status == 3
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: slashing
+        annotations:
+          summary: "validator {{ $labels.addr }} is EXITING"
+          description: |
+            Validator {{ $labels.addr }} transitioned to EXITING status.
+            Cause is either a felony, evidence-based slash, or voluntary
+            deactivation. Check `outbe::slashing` / `outbe::validatorset`
+            log target for the triggering event.
+
+      # Validator transitioned to UNBONDING. Permanent exit from
+      # consensus participation.
+      - alert: OutbeValidatorUnbonding
+        expr: outbe_validator_status == 4
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: slashing
+        annotations:
+          summary: "validator {{ $labels.addr }} is UNBONDING"
+          description: |
+            Validator {{ $labels.addr }} transitioned to UNBONDING.
+            Permanent exit from consensus until re-registration after
+            cooldown. See `outbe::validatorset` log target for transition.
+
+      # Slash event just happened (any reason). Treats the slash as a
+      # signal that needs human attention.
+      - alert: OutbeValidatorSlashed
+        expr: rate(outbe_validator_slashed_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          subsystem: slashing
+        annotations:
+          summary: "validator {{ $labels.addr }} slashed (reason={{ $labels.reason }})"
+          description: |
+            outbe_validator_slashed_total incremented for
+            {{ $labels.addr }} (reason={{ $labels.reason }}). Full
+            forensic context lives under the `outbe::slashing` log
+            target.
+
+      # Felony count climbed for a validator. Cumulative metric, so any
+      # increase is worth investigating.
+      - alert: OutbeFelonyCountIncreased
+        expr: increase(outbe_felony_count[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          subsystem: slashing
+        annotations:
+          summary: "felony count rose for {{ $labels.addr }}"
+          description: |
+            outbe_felony_count for {{ $labels.addr }} = {{ $value }}.
+            Cumulative metric — any rise indicates a new felony just
+            fired. Cross-reference `outbe_validator_slashed_total`
+            with the corresponding `reason` label.
+
+  - name: outbe-chain.validatorset
+    interval: 30s
+    rules:
+      # Active validator count dropped. f+1 or worse may halt finalization.
+      - alert: OutbeActiveValidatorCountDropped
+        expr: outbe_validator_active_count < 4
+        for: 5m
+        labels:
+          severity: critical
+          subsystem: validatorset
+        annotations:
+          summary: "active validator count = {{ $value }}"
+          description: |
+            outbe_validator_active_count fell below the 4-validator
+            minimum quorum needed for healthy finalization. Investigate
+            recent EXITING / UNBONDING transitions.
+
+      # Pending validator-set change has not been resolved by next
+      # reshare. May indicate stuck DKG or operator inattention.
+      - alert: OutbeValidatorSetChangePending
+        expr: outbe_validator_pending_set_change == 1
+        for: 30m
+        labels:
+          severity: warning
+          subsystem: validatorset
+        annotations:
+          summary: "validator-set change pending for >30 min"
+          description: |
+            outbe_validator_pending_set_change has been 1 for over 30
+            minutes. A reshare should have completed by now; check DKG
+            progress and validator availability.

@@ -1,0 +1,8 @@
+# Intentionally no `rustflags = ["--cap-lints", "warn"]`.
+#
+# A global `--cap-lints warn` caps EVERY lint (including this workspace's own)
+# at warn-level, which makes the CI `cargo clippy --all-targets --all-features
+# -- -D warnings` gate a false-green: it can never fail, so lint regressions
+# land silently. Cargo already caps external dependencies at `allow`
+# automatically, so a global cap-lints is unnecessary for deps and only neuters
+# our own lint gate. Keep this file free of a workspace-wide lint cap.

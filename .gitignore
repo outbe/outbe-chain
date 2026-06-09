@@ -1,0 +1,20 @@
+/target
+*.swp
+*.swo
+.DS_Store
+
+# Ruler-generated local tool output. Source of truth is `.ruler/`.
+.codex/
+.claude/
+
+# Pi project-local packages (if using pi install -l)
+.serena
+/.vscode
+
+.idea
+/e2e/evm/out
+/e2e/evm/cache
+
+# codegraph index (local code-intelligence cache)
+/.codegraph
+/contracts/account-abstraction/lib/kernel/broadcast

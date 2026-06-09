@@ -1,0 +1,782 @@
+use super::*;
+use outbe_nodfactory::api as nodfactory_api;
+use outbe_oracle::contract::OracleContract;
+
+#[test]
+fn gas_07_metadosis_lifecycle_active_wwd_backlog_is_bounded_by_schedule() {
+    const SIMULATED_DAYS: u64 = 120;
+    const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+    const NON_BOOTSTRAP_CHAIN_ID: u64 = CHAIN_ID;
+
+    assert!(!outbe_primitives::chain::is_devnet(NON_BOOTSTRAP_CHAIN_ID));
+    assert!(!outbe_primitives::chain::is_testnet(NON_BOOTSTRAP_CHAIN_ID));
+
+    let schedule_hours = FORMING_PERIOD_HOURS
+        + DEFAULT_LOOKBACK_DELAY_HOURS
+        + DEFAULT_OFFERING_PERIOD_HOURS
+        + WAITING_PERIOD_HOURS;
+    let lifecycle_days = schedule_hours.div_ceil(24);
+    let expected_max_active = lifecycle_days + COMPLETED_WWD_RETENTION_DAYS + 2; // cleanup is daily and block 1 seeds UTC day too.
+
+    with_storage(|storage| {
+        let start_timestamp =
+            outbe_common::WorldwideDay::new(20260101).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let first_seeded_wwd =
+            outbe_common::WorldwideDay::new(crate::runtime::timestamp_to_date_key(start_timestamp));
+        let mut observed_max_active = 0usize;
+        let mut observed_max_day = 0u64;
+
+        for day in 0..SIMULATED_DAYS {
+            let timestamp = start_timestamp + day * SECONDS_PER_DAY;
+            run_begin_block_with_chain_id(
+                storage.clone(),
+                day + 1,
+                timestamp,
+                NON_BOOTSTRAP_CHAIN_ID,
+            );
+
+            let metadosis = MetadosisContract::new(storage.clone());
+            let active = metadosis.get_all_active_wwds().unwrap();
+            if active.len() > observed_max_active {
+                observed_max_active = active.len();
+                observed_max_day = day;
+            }
+            assert!(
+                active.len() <= expected_max_active as usize,
+                "GAS-07: valid Metadosis lifecycle accumulated {} active WWDs on simulated day \
+                 {day}, exceeding schedule-derived bound {expected_max_active}",
+                active.len()
+            );
+        }
+
+        assert!(
+            observed_max_active > 1,
+            "GAS-07: test fixture must prove multiple active WWDs are valid; observed max \
+             {observed_max_active}"
+        );
+
+        let metadosis = MetadosisContract::new(storage);
+        let active = metadosis.get_all_active_wwds().unwrap();
+        assert!(
+            !active.contains(&first_seeded_wwd),
+            "GAS-07: first seeded WWD {first_seeded_wwd} should be cleaned up after \
+             {SIMULATED_DAYS} daily lifecycle runs; observed max active {observed_max_active} \
+             on day {observed_max_day}"
+        );
+    });
+}
+
+#[test]
+fn test_emission_sink_accumulates_by_utc_date_key() {
+    with_storage(|storage| {
+        let timestamp =
+            outbe_common::WorldwideDay::new(20241221).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
+            storage.clone(),
+        );
+
+        crate::emission_sink::apply(&ctx, U256::from(123u64)).unwrap();
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(
+            metadosis.get_day_limit(20241220u32.into()).unwrap(),
+            U256::from(123u64)
+        );
+        assert_eq!(
+            metadosis.get_day_limit(20241221u32.into()).unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
+fn test_cold_start_creates_utc_day_and_current_utc_plus_14_day() {
+    with_storage(|storage| {
+        let timestamp =
+            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        run_begin_block(storage.clone(), 1, timestamp);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        let active = metadosis.get_all_active_wwds().unwrap();
+        assert!(active.contains(&20260301u32.into()));
+        assert!(active.contains(&20260302u32.into()));
+        assert_eq!(
+            metadosis.get_bootstrap_end_time().unwrap(),
+            timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR
+        );
+
+        let tribute = TributeContract::new(storage);
+        assert!(tribute.is_day_sealed(20260301u32.into()).unwrap());
+        assert!(tribute.is_day_sealed(20260302u32.into()).unwrap());
+    });
+}
+
+#[test]
+fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_end_time() {
+    with_storage(|storage| {
+        let timestamp =
+            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_bootstrap_end_time().unwrap(), 0);
+
+        let active = metadosis.get_all_active_wwds().unwrap();
+        assert!(active.contains(&20260301u32.into()));
+        assert!(active.contains(&20260302u32.into()));
+
+        let wwd = 20260302u32;
+        let forming_start = outbe_common::WorldwideDay::new(wwd).start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let expected_lookback_end = forming_end + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let expected_offering_end =
+            expected_lookback_end + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd.into())
+                .lookback_end()
+                .read()
+                .unwrap(),
+            expected_lookback_end
+        );
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd.into())
+                .offering_end()
+                .read()
+                .unwrap(),
+            expected_offering_end
+        );
+    });
+}
+
+#[test]
+fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
+    with_storage(|storage| {
+        let wwd_raw = 20260302u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let previous_wwd = wwd.previous_date_key();
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let previous_forming_start = previous_wwd.start_timestamp();
+        let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let offering_entry = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let offering_end = offering_entry + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.seal_day(wwd).unwrap();
+
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .write_snapshot(
+                previous_forming_start + SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .write_snapshot(
+                forming_start + 30 * SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(110u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(
+                previous_wwd,
+                previous_forming_start,
+                previous_forming_end,
+            )
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, forming_end);
+
+        let oracle = OracleContract::new(storage.clone());
+        let (_, _, pair_ids, vwaps, _) = oracle.get_worldwide_day_vwap_snapshot(wwd).unwrap();
+        assert_eq!(pair_ids, vec![pair_id]);
+        assert_eq!(vwaps, vec![U256::from(110u64)]);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .previous_vwap()
+                .read()
+                .unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .current_vwap()
+                .read()
+                .unwrap(),
+            U256::from(110u64)
+        );
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::GREEN);
+
+        run_begin_block(storage.clone(), 3, offering_entry);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::OFFERING);
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .previous_vwap()
+                .read()
+                .unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .current_vwap()
+                .read()
+                .unwrap(),
+            U256::from(110u64)
+        );
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::GREEN);
+
+        let tribute = TributeContract::new(storage.clone());
+        assert!(!tribute.is_day_sealed(wwd).unwrap());
+
+        run_begin_block(storage.clone(), 4, offering_end);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::WAITING);
+        let tribute = TributeContract::new(storage);
+        assert!(tribute.is_day_sealed(wwd).unwrap());
+    });
+}
+
+#[test]
+fn test_missing_previous_vwap_results_in_red_day() {
+    with_storage(|storage| {
+        let wwd_raw = 20260303u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let offering_entry = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.seal_day(wwd).unwrap();
+
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .write_snapshot(
+                forming_start + 30 * SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(110u64), U256::from(1u64))],
+            )
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, forming_end);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .previous_vwap()
+                .read()
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .current_vwap()
+                .read()
+                .unwrap(),
+            U256::from(110u64)
+        );
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+
+        run_begin_block(storage.clone(), 3, offering_entry);
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+    });
+}
+
+#[test]
+fn test_equal_vwap_results_in_red_day() {
+    with_storage(|storage| {
+        let wwd_raw = 20260303u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let previous_wwd = wwd.previous_date_key();
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let previous_forming_start = previous_wwd.start_timestamp();
+        let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let offering_entry = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.seal_day(wwd).unwrap();
+
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .write_snapshot(
+                previous_forming_start + SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .write_snapshot(
+                forming_start + 30 * SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(
+                previous_wwd,
+                previous_forming_start,
+                previous_forming_end,
+            )
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, forming_end);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+
+        run_begin_block(storage.clone(), 3, offering_entry);
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+    });
+}
+
+#[test]
+fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
+    with_storage(|storage| {
+        let wwd_raw = 20260304u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let previous_wwd = wwd.previous_date_key();
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let previous_forming_start = previous_wwd.start_timestamp();
+        let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let offering_entry = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let scheduled = offering_entry
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.seal_day(wwd).unwrap();
+
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .write_snapshot(
+                previous_forming_start + SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(100u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .write_snapshot(
+                forming_start + SECONDS_PER_HOUR,
+                &[(pair_id, U256::from(120u64), U256::from(1u64))],
+            )
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(
+                previous_wwd,
+                previous_forming_start,
+                previous_forming_end,
+            )
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, forming_end);
+        run_begin_block(storage.clone(), 3, offering_entry);
+        run_begin_block(storage.clone(), 4, scheduled);
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_ne!(metadosis.get_day_type(wwd).unwrap(), day_type::UNKNOWN);
+    });
+}
+
+#[test]
+fn test_ready_processing_missing_limit_fails_like_source() {
+    with_storage(|storage| {
+        let wwd_raw = 20260310u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
+        assert!(!metadosis.is_day_limit_used(wwd).unwrap());
+    });
+}
+
+#[test]
+fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
+    with_storage(|storage| {
+        let wwd_raw = 20260310u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let day_limit = U256::from(333u64);
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.record_day_limit(wwd, day_limit).unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+
+        let promis = PromisLimitContract::new(storage);
+        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+    });
+}
+
+#[test]
+fn test_ready_processing_zero_limit_fails_and_marks_used() {
+    with_storage(|storage| {
+        let wwd_raw = 20260311u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.record_day_limit(wwd, U256::ZERO).unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+    });
+}
+
+#[test]
+fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
+    with_storage(|storage| {
+        let wwd_raw = 20260312u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let day_limit = U256::from(777u64);
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.record_day_limit(wwd, day_limit).unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::COMPLETED);
+        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+
+        let promis = PromisLimitContract::new(storage);
+        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+    });
+}
+
+#[test]
+fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes() {
+    with_storage(|storage| {
+        let wwd_raw = 20260313u32;
+        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let nominal = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let owner = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let token_id = U256::from_be_bytes(alloy_primitives::keccak256([0x01, 0x02, 0x03]).0);
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.record_day_limit(wwd, day_limit).unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&TributeData {
+                token_id,
+                owner,
+                worldwide_day: wwd,
+                issuance_amount_minor: nominal,
+                issuance_currency: 1,
+                nominal_amount_minor: nominal,
+                reference_currency: 840,
+                tribute_price_minor: U256::ZERO,
+            })
+            .unwrap();
+        tribute.seal_day(wwd).unwrap();
+
+        // Pre-issue a NOD with the same (owner, worldwide_day) tuple the lysis
+        // run will produce, so the second issue collides on nod_id and lysis
+        // fails — the test asserts the day_limit is returned in full and the
+        // tribute survives.
+        nodfactory_api::issue_nod(
+            &storage,
+            &outbe_nod::NodIssueParams {
+                owner,
+                gratis_load_minor: U256::from(1u64),
+                worldwide_day: wwd,
+                league_id: 1,
+                floor_price_minor: U256::from(1u64),
+                entry_price_minor: U256::from(1u64),
+                cost_amount_minor: U256::from(1u64),
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+
+        let tribute = TributeContract::new(storage.clone());
+        assert_eq!(tribute.total_supply().unwrap(), 1);
+
+        let promis = PromisLimitContract::new(storage);
+        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+    });
+}
+
+#[test]
+fn test_events_emitted_for_accumulation_and_lifecycle() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
+
+    StorageHandle::enter(&mut storage, |storage| {
+        let timestamp =
+            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, timestamp, outbe_primitives::chain::CHAIN_ID),
+            storage.clone(),
+        );
+        crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
+        crate::runtime::start_metadosis(&ctx).unwrap();
+    });
+
+    let events = storage.get_events(contract_addr);
+    assert!(
+        events.len() >= 2,
+        "expected accumulation + lifecycle events"
+    );
+}
+
+#[test]
+fn intex_reveal_dispatched_on_mid_offering_tick() {
+    use alloy_sol_types::SolEvent;
+    // Offering spans two daily ticks (48h). Reveal must dispatch on the second
+    // (mid-offering) tick so it lands separately from clearing at READY; otherwise
+    // reveal and clearing collide on one tick. Probed via the best-effort
+    // DesisDispatchFailed event: Desis has no code in tests, so every dispatch
+    // attempt fails and emits one.
+    const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
+    let reveal_sig = IMetadosis::DesisDispatchFailed::SIGNATURE_HASH;
+    let base_ts = crate::runtime::date_key_to_timestamp(20260601);
+
+    // Track one wwd by its date key; many wwds dispatch each tick, so filter the
+    // event by its indexed worldwideDay to isolate this one.
+    let wwd_key: u32 = 20260601;
+    let mut stages: Vec<Option<String>> = Vec::new();
+    for k in 0..7u64 {
+        storage.clear_events(addr);
+        let ts = base_ts + k * SECONDS_PER_DAY;
+        StorageHandle::enter(&mut storage, |storage| {
+            run_begin_block(storage.clone(), k + 1, ts);
+        });
+        let stage = storage.get_events(addr).iter().find_map(|log| {
+            if log.topics().first() != Some(&reveal_sig) {
+                return None;
+            }
+            let ev = IMetadosis::DesisDispatchFailed::decode_log_data(log).ok()?;
+            (ev.worldwideDay == wwd_key).then_some(ev.stage)
+        });
+        println!(
+            "tick {k}: date={} stage={stage:?}",
+            timestamp_to_date_key(ts)
+        );
+        stages.push(stage);
+    }
+
+    // k0/k1 FORMING, k2 offering entry (start), k3 mid-offering (reveal), k4 READY.
+    assert_eq!(
+        stages[2].as_deref(),
+        Some("auction_stage_start"),
+        "start must dispatch on the offering-entry tick: {stages:?}"
+    );
+    assert_eq!(
+        stages[3].as_deref(),
+        Some("auction_stage_reveal"),
+        "reveal must dispatch on the mid-offering tick, not bundled with clearing: {stages:?}"
+    );
+}

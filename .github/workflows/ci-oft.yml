@@ -1,0 +1,107 @@
+name: CI oft
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/actions/**"
+      - "contracts/oft/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/actions/**"
+      - "contracts/oft/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Forge Format
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/oft
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check formatting
+        run: forge fmt --check
+
+  compile:
+    name: Compile Contracts
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/oft
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Compile contracts
+        run: forge build
+
+  test:
+    name: Foundry Tests
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/oft
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run Forge tests
+        run: forge test -vvv
+
+  lint:
+    name: Forge Lint
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/oft
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run lint
+        run: forge lint --severity high
+
+  ci-success:
+    name: ci success
+    runs-on: depot-ubuntu-24.04
+    if: always()
+    needs:
+      - format
+      - compile
+      - test
+      - lint
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether all jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}

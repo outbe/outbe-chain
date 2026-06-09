@@ -1,0 +1,52 @@
+[package]
+name = "outbe-chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[features]
+default = []
+test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
+
+[[bin]]
+name = "outbe-chain"
+path = "src/main.rs"
+
+[dependencies]
+outbe-evm.workspace = true
+outbe-rpc.workspace = true
+outbe-node.workspace = true
+outbe-consensus.workspace = true
+outbe-engine.workspace = true
+outbe-primitives.workspace = true
+outbe-tributefactory.workspace = true
+outbe-tee.workspace = true
+outbe-zkproof.workspace = true
+
+reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-chainspec.workspace = true
+reth-cli.workspace = true
+reth-node-builder.workspace = true
+reth-rpc-server-types.workspace = true
+
+commonware-runtime.workspace = true
+
+clap.workspace = true
+eyre.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+commonware-consensus.workspace = true
+commonware-storage.workspace = true
+commonware-utils.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[build-dependencies]
+vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }
+vergen-git2 = "9.1.0"

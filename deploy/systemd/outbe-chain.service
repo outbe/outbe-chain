@@ -1,0 +1,25 @@
+[Unit]
+Description=Outbe Reth Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=outbe
+Group=outbe
+EnvironmentFile=/etc/outbe-chain/outbe-chain.env
+ExecStart=/usr/local/bin/outbe-chain node \
+    --datadir=${DATADIR} \
+    --chain=${CHAIN_FILE} \
+    --http \
+    --http.addr=${HTTP_ADDR} \
+    --http.port=${HTTP_PORT} \
+    --http.api=${HTTP_API} \
+    --port=${P2P_PORT} \
+    --metrics=${METRICS_ADDR}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

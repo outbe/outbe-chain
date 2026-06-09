@@ -1,0 +1,265 @@
+[workspace]
+members = [
+    # blockchain
+    "crates/blockchain/macros",
+    "crates/blockchain/primitives",
+    "crates/blockchain/evm",
+    "crates/blockchain/consensus",
+    "crates/blockchain/engine",
+    "crates/blockchain/rpc",
+    "crates/blockchain/txpool",
+    "crates/blockchain/node",
+    # system
+    "crates/system/validatorset",
+    "crates/system/slashindicator",
+    "crates/system/staking",
+    "crates/system/rewards",
+    "crates/system/oracle",
+    "crates/system/zerofee",
+    "crates/system/emissionlimit",
+    "crates/system/cycle",
+    "crates/system/accounting",
+    "crates/system/zkproof",
+    "crates/system/tee",
+    "crates/system/teeregistry",
+    # core outbe
+    "crates/core/gratis",
+    "crates/core/promis",
+    "crates/core/tribute",
+    "crates/core/nod",
+    "crates/core/nodfactory",
+    "crates/core/gem",
+    "crates/core/gemfactory",
+    "crates/core/intexregistry",
+    "crates/core/intexfactory",
+    "crates/core/desis",
+    "crates/core/lysis",
+    "crates/core/agentreward",
+    "crates/core/credis",
+    "crates/core/credisfactory",
+    "crates/core/fidelity",
+    "crates/core/metadosis",
+    "crates/core/promislimit",
+    "crates/core/tributefactory",
+    "crates/core/gratisfactory",
+    "crates/core/gratispool",
+    "crates/core/e2e",
+    "crates/core/common",
+    # binaries
+    "bin/outbe-chain",
+    "bin/outbe-keygen",
+    "bin/outbe-cli",
+    "bin/outbe-feeder",
+    "bin/outbe-tee-enclave",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Internal — blockchain
+outbe-macros = { path = "crates/blockchain/macros" }
+outbe-primitives = { path = "crates/blockchain/primitives" }
+outbe-evm = { path = "crates/blockchain/evm" }
+outbe-consensus = { path = "crates/blockchain/consensus" }
+outbe-engine = { path = "crates/blockchain/engine" }
+outbe-rpc = { path = "crates/blockchain/rpc" }
+outbe-txpool = { path = "crates/blockchain/txpool" }
+outbe-node = { path = "crates/blockchain/node" }
+# Internal — system
+outbe-validatorset = { path = "crates/system/validatorset" }
+outbe-slashindicator = { path = "crates/system/slashindicator" }
+outbe-staking = { path = "crates/system/staking" }
+outbe-rewards = { path = "crates/system/rewards" }
+outbe-oracle = { path = "crates/system/oracle" }
+outbe-zerofee = { path = "crates/system/zerofee" }
+outbe-emissionlimit = { path = "crates/system/emissionlimit" }
+outbe-cycle = { path = "crates/system/cycle" }
+outbe-accounting = { path = "crates/system/accounting" }
+outbe-zkproof = { path = "crates/system/zkproof" }
+outbe-tee = { path = "crates/system/tee" }
+outbe-teeregistry = { path = "crates/system/teeregistry" }
+# Core — outbe
+outbe-gratis = { path = "crates/core/gratis" }
+outbe-promis = { path = "crates/core/promis" }
+outbe-tribute = { path = "crates/core/tribute" }
+outbe-nod = { path = "crates/core/nod" }
+outbe-nodfactory = { path = "crates/core/nodfactory" }
+outbe-gem = { path = "crates/core/gem" }
+outbe-gemfactory = { path = "crates/core/gemfactory" }
+outbe-intexregistry = { path = "crates/core/intexregistry" }
+outbe-intexfactory = { path = "crates/core/intexfactory" }
+outbe-desis = { path = "crates/core/desis" }
+outbe-lysis = { path = "crates/core/lysis" }
+outbe-agentreward = { path = "crates/core/agentreward" }
+outbe-credis = { path = "crates/core/credis" }
+outbe-credisfactory = { path = "crates/core/credisfactory" }
+outbe-fidelity = { path = "crates/core/fidelity" }
+outbe-metadosis = { path = "crates/core/metadosis" }
+outbe-promislimit = { path = "crates/core/promislimit" }
+outbe-tributefactory = { path = "crates/core/tributefactory" }
+outbe-gratisfactory = { path = "crates/core/gratisfactory" }
+outbe-gratispool = { path = "crates/core/gratispool" }
+outbe-e2e = { path = "crates/core/e2e" }
+outbe-common = { path = "crates/core/common" }
+
+# Alloy — core (alloy-rs/core): stays on 1.x
+alloy-primitives = { version = "=1.5.7", default-features = false }
+alloy-sol-types = { version = "=1.5.7", default-features = false }
+alloy-rlp = { version = "0.3.13", default-features = false }
+
+# Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
+alloy-consensus = { version = "2.0.4", default-features = false }
+alloy-eips = { version = "2.0.4", default-features = false }
+alloy-genesis = { version = "2.0.4", default-features = false }
+alloy-rpc-types-engine = { version = "2.0.4", default-features = false }
+alloy-rpc-types-eth = { version = "2.0.4", default-features = false }
+alloy-provider = { version = "2.0.4" }
+alloy-signer = { version = "2.0.4" }
+alloy-signer-local = { version = "2.0.4" }
+alloy-network = { version = "2.0.4" }
+alloy-transport-http = { version = "2.0.4" }
+alloy-rpc-types = { version = "2.0.4" }
+
+# Alloy-EVM (pinned to match reth v2.2.0)
+alloy-evm = { version = "0.34.0", default-features = false }
+
+# Revm
+revm = { version = "38.0.0", default-features = false, features = ["std"] }
+
+# Reth v2.2.0 (revm 38, alloy 2.0, alloy-evm 0.34)
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-ethereum-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-errors = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-revm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-rpc-traits = { version = "0.3.1", default-features = false }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-tasks = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-trie = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-payload-validator = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-primitives-traits = { version = "0.3.1", default-features = false }
+reth-codecs = { version = "0.3.1", default-features = false, features = ["alloy"] }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+
+# Commonware (v2026.5.0)
+commonware-actor = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-math = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-macros = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+
+# BLS
+blst = { version = "0.3.13", default-features = false }
+
+# Crypto
+argon2 = "0.5"
+k256 = { version = "0.13", features = ["ecdsa"] }
+keyring = { version = "3", features = ["apple-native", "linux-native"] }
+ring = "0.17"
+zeroize = "1"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+
+# ZK / Poseidon
+outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.0.2" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
+outbe-zk-circuit-noir = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
+outbe-crypto-common = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
+ark-bn254 = "0.5"
+ark-ff = { version = "0.5", features = ["std"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Compact binary serde format for the node<->enclave wire (postcard): the offer
+# ciphertext rides as length-prefixed raw bytes (1x) instead of a JSON number
+# array (~4x), and alloy U256/Address/B256 serialize as bytes, not hex strings.
+postcard = { version = "1", features = ["use-std"] }
+
+# CLI / IO
+clap = { version = "4", features = ["derive"] }
+jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Runtime
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+bytes = "1"
+metrics = "0.24"
+modular-bitfield = "0.13"
+
+# TEE node <-> enclave transport (Noise-IK over UDS)
+snow = "0.9"
+
+# Config
+toml = "0.8"
+
+# Testing
+tempfile = "3"
+proptest = "1"
+proptest-state-machine = "0.3"
+arbitrary = { version = "1", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Proc-macro
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+# Utilities
+thiserror = "2"
+eyre = "0.6"
+hex = "0.4"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+futures = "0.3"
+time = "0.3"
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.release]
+debug = "line-tables-only"
+
+[profile.test]
+debug = 0
+
+# Points alloy-evm at the outbe fork on GitHub, branch `outbe-precompile-ctx-hook-0.34`,
+# which adds the `ctx_dispatch` hook required to expose `&mut Context` to outbe
+# stateful precompiles. Pinned by exact commit revision for reproducible builds.
+[patch.crates-io]
+alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }

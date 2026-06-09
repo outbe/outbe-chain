@@ -1,0 +1,32 @@
+name: Setup Foundry + Node Contract
+description: Setup Node/Corepack, install dependencies, and install Foundry after repository checkout
+
+inputs:
+  working-directory:
+    description: Directory containing package.json and dependencies
+    required: true
+  node-version:
+    description: Node.js version to install
+    required: false
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Enable Corepack
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: corepack enable
+
+    - name: Install Node dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: yarn install --immutable
+
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1

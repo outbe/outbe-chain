@@ -1,0 +1,18 @@
+name: Setup Node.js, Yarn, and Foundry
+description: Setup Node/Corepack/Yarn, install dependencies, and install Foundry after repository checkout
+
+inputs:
+  working-directory:
+    description: Directory containing package.json and dependencies
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js and Yarn
+      uses: ./.github/actions/setup-node-yarn
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1

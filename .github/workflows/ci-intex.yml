@@ -1,0 +1,217 @@
+name: CI intex
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/actions/**"
+      - "contracts/intex/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/actions/**"
+      - "contracts/intex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  lint:
+    name: Solhint
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          working-directory: contracts/intex
+
+      - name: Run Solhint
+        run: yarn lint
+
+  format:
+    name: Forge Format
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check formatting
+        run: forge fmt --check
+
+  compile:
+    name: Compile Contracts
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Compile contracts
+        run: yarn compile
+
+      - name: Upload compiled artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: intex-compiled-contracts
+          path: |
+            contracts/intex/artifacts/
+            contracts/intex/cache/
+            contracts/intex/typechain-types/
+          retention-days: 1
+
+  test-foundry:
+    name: Foundry Tests
+    runs-on: depot-ubuntu-24.04
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Run Forge tests
+        run: forge test -vv
+
+  test-hardhat:
+    name: Hardhat Tests
+    runs-on: depot-ubuntu-24.04
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn
+        with:
+          working-directory: contracts/intex
+
+      - name: Download compiled artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: intex-compiled-contracts
+          path: contracts/intex
+
+      - name: Run Hardhat tests
+        run: yarn test:hardhat
+
+  slither:
+    name: Slither
+    runs-on: depot-ubuntu-24.04
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Run Slither
+        run: yarn slither:ci
+
+      - name: Upload Slither report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intex-slither-report
+          path: contracts/intex/slither-report.sarif
+          retention-days: 14
+
+  aderyn:
+    name: Aderyn
+    runs-on: depot-ubuntu-24.04
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Run Aderyn
+        run: yarn aderyn
+
+      - name: Upload Aderyn report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intex-aderyn-report
+          path: contracts/intex/report.md
+          retention-days: 14
+
+  ci-success:
+    name: ci success
+    runs-on: depot-ubuntu-24.04
+    if: always()
+    needs:
+      - lint
+      - format
+      - compile
+      - test-foundry
+      - test-hardhat
+      - slither
+      - aderyn
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether all jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}

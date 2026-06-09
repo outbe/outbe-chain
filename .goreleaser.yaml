@@ -1,0 +1,115 @@
+version: 2
+
+# Project name should ideally match the project name in your Cargo.toml.
+project_name: outbe-chain
+
+before:
+  hooks:
+    - rustup toolchain install 1.93
+    - rustup default 1.93
+    - cargo fetch --locked
+
+# Actually builds the binaries.
+builds:
+  - builder: rust
+    id: outbe-chain
+    binary: outbe-chain
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-chain
+    targets:
+      - x86_64-unknown-linux-gnu
+  - builder: rust
+    id: outbe-cli
+    binary: outbe-cli
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-cli
+    targets:
+      - x86_64-unknown-linux-gnu
+  - builder: rust
+    id: outbe-keygen
+    binary: outbe-keygen
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-keygen
+    targets:
+      - x86_64-unknown-linux-gnu
+  - builder: rust
+    id: outbe-feeder
+    binary: outbe-feeder
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-feeder
+    targets:
+      - x86_64-unknown-linux-gnu
+
+# Creates archives for each target.
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+# Changelog configuration (will be in the github release).
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+# A footer to add to all releases.
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
+
+# Creates Linux packages.
+nfpms:
+  - file_name_template: "{{ .ConventionalFileName }}"
+    maintainer: Novunaut <novunaut@proton.me>
+    formats:
+      - deb
+      - rpm
+
+# Enables source archives.
+source:
+  enabled: true
+
+# SBOMs for the archives.
+sboms:
+  - artifacts: archive
+
+# Sign binaries with cosign.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum

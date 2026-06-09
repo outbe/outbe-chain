@@ -1,0 +1,44 @@
+[package]
+name = "outbe-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "outbe-cli"
+path = "src/main.rs"
+
+[dependencies]
+# Alloy (ABI encoding + primitives)
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-eips.workspace = true
+outbe-common.workspace = true
+outbe-primitives.workspace = true
+
+# CLI
+clap.workspace = true
+
+# HTTP / JSON-RPC
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Signing
+k256.workspace = true
+
+# Offer encryption (client side: X25519 ECDHE + HKDF-SHA256 + ChaCha20Poly1305,
+# byte-identical to the enclave decrypt path).
+x25519-dalek.workspace = true
+ring.workspace = true
+
+# Async
+tokio.workspace = true
+
+# Utilities
+hex.workspace = true
+eyre.workspace = true
+
+[dev-dependencies]
+outbe-rpc = { workspace = true, features = ["test-support"] }

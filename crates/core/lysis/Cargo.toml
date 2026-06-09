@@ -1,0 +1,18 @@
+[package]
+name = "outbe-lysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-common.workspace = true
+outbe-primitives.workspace = true
+outbe-nod.workspace = true
+outbe-nodfactory.workspace = true
+outbe-tribute.workspace = true
+outbe-fidelity.workspace = true
+outbe-oracle.workspace = true
+alloy-primitives.workspace = true
+
+[dev-dependencies]

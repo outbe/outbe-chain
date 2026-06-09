@@ -1,0 +1,24 @@
+[package]
+name = "outbe-nod"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-common.workspace = true
+outbe-primitives.workspace = true
+outbe-oracle = { path = "../../system/oracle" }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+base64 = "0.22"
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["rand"] }
+
+[features]
+default = []
+test-utils = ["outbe-primitives/test-utils"]

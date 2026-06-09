@@ -1,0 +1,17 @@
+[default.extend-words]
+# Project crate names
+outbe = "outbe"
+promis = "promis"
+lysis = "lysis"
+anadosis = "anadosis"
+metadosis = "metadosis"
+gratis = "gratis"
+keygen = "keygen"
+
+# Dependencies
+flate = "flate"
+bimap = "bimap"
+ratatui = "ratatui"
+credis = "credis"
+
+groth = "groth"

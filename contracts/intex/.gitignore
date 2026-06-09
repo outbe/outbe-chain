@@ -1,0 +1,69 @@
+# Node modules
+/node_modules
+
+# Yarn
+.yarn
+
+# Compilation output
+/dist
+/out
+
+# Yarn
+.yarn
+
+# pnpm deploy output
+/bundle
+
+# Hardhat Build Artifacts
+/artifacts
+
+# Hardhat compilation (v2) support directory
+/cache
+
+# Typechain output
+/types
+
+# Hardhat coverage reports
+/coverage
+
+# Forge coverage (LCOV)
+lcov.info
+
+# Secrets / config
+.env
+.npmrc
+.npmrc-pkg
+params.json
+
+# ignition
+/ignition/deployments/
+
+# Bidder data (wallets with private keys, generated commits)
+/data/bidders/
+!/data/bidders/wallets-bsc-testnet.json
+
+# Generated sample files
+sample-nft.svg
+sample-nft-metadata.json
+
+# Serena (local code-assistant tooling: per-user cache, logs, memories, config)
+/.serena/
+
+# Static analysis reports
+report.md
+slither-report.sarif
+
+# Local scratch (design notes, throwaway reference files — never committed)
+/.scratch/
+
+# Local planning work (per-task plans, sequencing notes — never committed)
+/.work/
+.claude/
+# QC-1252: track committed Claude Code skills + ported review harness/agents
+# (override the global .claude/ ignore above; generated/cache .claude content stays ignored)
+!.claude/
+!.claude/skills/
+!.claude/skills/**
+!.claude/agents/
+!.claude/agents/**
+reports/

@@ -1,0 +1,32 @@
+[package]
+name = "outbe-tee"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+outbe-primitives.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+postcard.workspace = true
+snow.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+ed25519-dalek.workspace = true
+
+# Real DCAP quote signature/TCB verification (Intel QVL, pure-Rust). Gated
+# behind the `dcap` feature so the default dev-box build pulls nothing and the
+# strict path is only compiled for gramine-sgx / CI. See `quote::verify_dcap_signature`.
+dcap-qvl = { version = "0.5", optional = true }
+
+[features]
+# Enables cryptographic DCAP quote verification (Intel QVL + PCCS collateral).
+# OFF by default; turn on for gramine-sgx / CI builds (`--features dcap`).
+dcap = ["dep:dcap-qvl"]
+
+[dev-dependencies]
+k256.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true }

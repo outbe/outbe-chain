@@ -1,0 +1,32 @@
+error[E0277]: `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` cannot be sent between threads safely
+ --> tests/compile_fail/storage_handle_thread_spawn.rs:7:24
+  |
+7 |       std::thread::spawn(move || {
+  |       ------------------ ^------
+  |       |                  |
+  |  _____|__________________within this `{closure@$DIR/tests/compile_fail/storage_handle_thread_spawn.rs:7:24: 7:31}`
+  | |     |
+  | |     required by a bound introduced by this call
+8 | |         let _ = handle.chain_id();
+9 | |     });
+  | |_____^ `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` cannot be sent between threads safely
+  |
+  = help: within `{closure@$DIR/tests/compile_fail/storage_handle_thread_spawn.rs:7:24: 7:31}`, the trait `Send` is not implemented for `Rc<RefCell<&mut dyn PrecompileStorageProvider>>`
+note: required because it appears within the type `StorageHandle<'_>`
+ --> src/storage/handle.rs
+  |
+  | pub struct StorageHandle<'storage> {
+  |            ^^^^^^^^^^^^^
+note: required because it's used within this closure
+ --> tests/compile_fail/storage_handle_thread_spawn.rs:7:24
+  |
+7 |     std::thread::spawn(move || {
+  |                        ^^^^^^^
+note: required by a bound in `spawn`
+ --> $RUST/std/src/thread/functions.rs
+  |
+  | pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+  |        ----- required by a bound in this function
+...
+  |     F: Send + 'static,
+  |        ^^^^ required by this bound in `spawn`

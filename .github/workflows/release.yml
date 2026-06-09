@@ -1,0 +1,35 @@
+name: goreleaser
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.*"
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+  id-token: write
+  security-events: write
+
+jobs:
+  goreleaser:
+    if: "!contains(github.ref_name, '-rc')"
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: sigstore/cosign-installer@v4.1.1
+      - uses: anchore/sbom-action/download-syft@v0.24.0
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: Swatinem/rust-cache@v2
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --parallelism=1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}

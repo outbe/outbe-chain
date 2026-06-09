@@ -1,0 +1,5 @@
+error: signature declares 2 ABI argument(s) but method has 1 non-special argument(s)
+  --> tests/compile_fail/arg_count_mismatch.rs:12:23
+   |
+12 |     #[contract_public("foo(uint32,uint64)")]
+   |                       ^^^^^^^^^^^^^^^^^^^^

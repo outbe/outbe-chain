@@ -1,0 +1,56 @@
+[package]
+name = "outbe-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Internal
+outbe-evm.workspace = true
+outbe-primitives.workspace = true
+outbe-txpool.workspace = true
+
+# Reth
+reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-chainspec.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-consensus-common.workspace = true
+reth-node-builder.workspace = true
+reth-ethereum-payload-builder.workspace = true
+reth-db.workspace = true
+reth-errors.workspace = true
+reth-execution-types.workspace = true
+reth-evm.workspace = true
+reth-provider.workspace = true
+reth-engine-primitives.workspace = true
+reth-payload-builder.workspace = true
+reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-revm.workspace = true
+reth-storage-api.workspace = true
+reth-transaction-pool.workspace = true
+revm.workspace = true
+
+# Utilities
+alloy-consensus.workspace = true
+alloy-genesis.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+alloy-rpc-types-engine.workspace = true
+eyre.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+alloy-provider.workspace = true
+outbe-validatorset.workspace = true
+reth-e2e-test-utils.workspace = true
+reth-node-api.workspace = true
+reth-node-core.workspace = true
+reth-rpc-server-types.workspace = true
+reth-tracing.workspace = true
+reth-tasks.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+tempfile.workspace = true

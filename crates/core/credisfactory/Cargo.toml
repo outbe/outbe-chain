@@ -1,0 +1,26 @@
+[package]
+name = "outbe-credisfactory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-credis.workspace = true
+outbe-gratis.workspace = true
+outbe-gratispool.workspace = true
+outbe-fidelity.workspace = true
+outbe-oracle.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+outbe-gratisfactory.workspace = true
+# Enable the test-helpers feature on outbe-gratispool so e2e tests can drive
+# the verifier outcome without a real Barretenberg-prover proof. Cargo
+# unions features across `[dependencies]` and `[dev-dependencies]` for test
+# builds.
+outbe-gratispool = { workspace = true, features = ["test-helpers"] }

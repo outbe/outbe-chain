@@ -1,0 +1,22 @@
+[package]
+name = "outbe-gratisfactory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-gratis.workspace = true
+outbe-gratispool.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# `test-helpers` exposes `outbe_gratispool::verifier::with_verifier_outcome`,
+# letting the unpledge tests force the verifier outcome without a real
+# Barretenberg-prover proof. Cargo unions features across `[dependencies]`
+# and `[dev-dependencies]` for test builds.
+outbe-gratispool = { workspace = true, features = ["test-helpers"] }

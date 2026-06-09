@@ -1,0 +1,5 @@
+error: #[contract_view] and #[contract_payable] are mutually exclusive
+  --> tests/compile_fail/view_and_payable_conflict.rs:12:23
+   |
+12 |     #[contract_public("foo()")]
+   |                       ^^^^^^^

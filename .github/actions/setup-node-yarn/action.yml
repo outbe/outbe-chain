@@ -1,0 +1,40 @@
+name: Setup Node.js and Yarn
+description: Setup Node.js, enable Corepack, install dependencies
+
+inputs:
+  working-directory:
+    description: Directory containing .nvmrc, package.json, and yarn.lock
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: ${{ inputs.working-directory }}/.nvmrc
+        registry-url: https://npm.pkg.github.com
+        scope: "@outbe"
+
+    - name: Enable Corepack
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: corepack enable
+
+    - name: Prepare Yarn
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: corepack prepare yarn@4.9.3 --activate
+
+    - name: Cache Yarn
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working-directory }}/.yarn/cache
+        key: ${{ runner.os }}-yarn-${{ hashFiles(format('{0}/yarn.lock', inputs.working-directory)) }}
+        restore-keys: |
+          ${{ runner.os }}-yarn-
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: yarn install --immutable

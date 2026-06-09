@@ -1,0 +1,22 @@
+[package]
+name = "outbe-cycle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-accounting.workspace = true
+outbe-emissionlimit.workspace = true
+outbe-rewards.workspace = true
+outbe-agentreward.workspace = true
+outbe-metadosis.workspace = true
+outbe-intexfactory.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

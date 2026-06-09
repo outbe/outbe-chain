@@ -1,0 +1,229 @@
+{
+  "version": "1.0.0",
+  "description": "Test data for bridge message testing - full INTEX auction lifecycle",
+
+  "config": {
+    "chainIds": {
+      "BNB_MAINNET_EID": 30102,
+      "BNB_TESTNET_EID": 40102,
+      "OUTBE_EID": "TBD"
+    }
+  },
+
+  "bidders": [
+    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+    "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+    "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+    "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+    "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+    "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+    "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+    "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+  ],
+
+  "scenario": {
+    "seriesId": 12022026,
+    "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+    "auctionIdString": "12-02-2026"
+  },
+
+  "auctionLifecycle": {
+    "step1_AUCTION_STAGE_START": {
+      "direction": "Outbe -> BNB",
+      "msgType": 4,
+      "sender": "Telosis",
+      "receiver": "Auction",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "seriesId": 12022026,
+        "clearingTimestamp": 1739361600,
+        "bidFloorPrice": "80000000",
+        "intexSize": "1000000",
+        "settlementAmount": "1000000000",
+        "bidMinimumQuantity": 4
+      }
+    },
+
+    "step2_AUCTION_STAGE_REVEAL": {
+      "direction": "Outbe -> BNB",
+      "msgType": 5,
+      "sender": "Telosis",
+      "receiver": "Auction",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "isGreenDay": true
+      }
+    },
+
+    "step3_AUCTION_STAGE_CLEARING": {
+      "direction": "Outbe -> BNB",
+      "msgType": 6,
+      "sender": "Telosis",
+      "receiver": "Auction",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000"
+      }
+    },
+
+    "step4_BIDS_BATCH": {
+      "direction": "BNB -> Outbe",
+      "msgType": 1,
+      "sender": "Auction",
+      "receiver": "Telosis",
+      "triggeredBy": "AUCTION_STAGE_CLEARING",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "srcEid": 30102,
+        "ibaAddresses": [
+          "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+          "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+          "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+          "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+          "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+          "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+          "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+        ],
+        "quantities": [50, 40, 35, 30, 25, 20, 15, 10, 8, 5],
+        "bidPrices": [
+          "150000000",
+          "140000000",
+          "130000000",
+          "120000000",
+          "110000000",
+          "100000000",
+          "95000000",
+          "90000000",
+          "85000000",
+          "82000000"
+        ],
+        "timestamps": [
+          1739275200,
+          1739275260,
+          1739275320,
+          1739275380,
+          1739275440,
+          1739275500,
+          1739275560,
+          1739275620,
+          1739275680,
+          1739275740
+        ]
+      }
+    },
+
+    "step5_AUCTION_RESULT": {
+      "direction": "Outbe -> BNB",
+      "msgType": 7,
+      "sender": "Telosis",
+      "receiver": "Auction",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "issuedIntexCount": 180,
+        "auctionClearingPrice": "82000000"
+      }
+    },
+
+    "step6_ISSUANCE_INSTRUCTIONS": {
+      "direction": "Outbe -> BNB",
+      "msgType": 8,
+      "sender": "Telosis",
+      "receiver": "IntexNFT1155",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "intexSize": "1000000",
+        "settlementAmount": "1000000000",
+        "clearingPrice": "82000000",
+        "bidFloorPrice": "80000000",
+        "recipients": [
+          "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+          "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+          "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+          "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+        ],
+        "quantities": ["50", "40", "35", "30", "20", "5"]
+      }
+    },
+
+    "step7_REFUND_INSTRUCTIONS": {
+      "direction": "Outbe -> BNB",
+      "msgType": 9,
+      "sender": "Telosis",
+      "receiver": "EscrowAdapter",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "bidders": [
+          "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+          "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+          "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+          "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+          "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+          "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+          "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+        ],
+        "refundAmounts": [
+          "3400000000",
+          "2320000000",
+          "1680000000",
+          "1140000000",
+          "700000000",
+          "90000000",
+          "1425000000",
+          "900000000",
+          "680000000",
+          "410000000"
+        ],
+        "claimAmounts": [
+          "4100000000",
+          "3280000000",
+          "2870000000",
+          "2460000000",
+          "1640000000",
+          "410000000",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      }
+    }
+  },
+
+  "intexSettlementLifecycle": {
+    "_note": "Settlement and expiry now happen on Outbe directly. The only bridge message in this phase is MARK_CALLED (Outbe -> BNB) followed by System Bridge (BNB -> Outbe via ONFT1155AdapterBatch.systemMultiSend).",
+
+    "step8_MARK_CALLED": {
+      "direction": "Outbe -> BNB",
+      "msgType": 10,
+      "sender": "Metadosis",
+      "receiver": "TargetMessenger -> IntexNFT1155",
+      "description": "Metadosis marks the series as Called. TargetMessenger receives LZ message, calls intex.markCalled(), then triggers systemMultiSend to bridge all holder tokens to Outbe.",
+      "data": {
+        "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "callDeadlineAt": 1739793600
+      }
+    },
+
+    "step9_SYSTEM_BRIDGE": {
+      "direction": "BNB -> Outbe",
+      "msgType": "SEND_MULTI (LayerZero ONFT)",
+      "sender": "ONFT1155AdapterBatch (BSC)",
+      "receiver": "ONFT1155Adapter (Outbe)",
+      "description": "System bridge debits tokens from all holders on BSC and credits (mints) equivalent amounts on Outbe. After this, all Intex tokens exist on Outbe only.",
+      "data": {
+        "tokenId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
+        "holders": ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"],
+        "amounts": ["50"]
+      }
+    }
+  }
+}

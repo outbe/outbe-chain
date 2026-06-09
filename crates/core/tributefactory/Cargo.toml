@@ -1,0 +1,29 @@
+[package]
+name = "outbe-tributefactory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-common.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-tribute.workspace = true
+outbe-metadosis.workspace = true
+outbe-agentreward.workspace = true
+outbe-oracle.workspace = true
+outbe-tee.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+ring.workspace = true
+x25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+eyre.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+outbe-lysis.workspace = true

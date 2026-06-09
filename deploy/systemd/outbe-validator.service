@@ -1,0 +1,37 @@
+[Unit]
+Description=Outbe Reth Validator Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=outbe
+Group=outbe
+EnvironmentFile=/etc/outbe-chain/outbe-validator.env
+ExecStart=/usr/local/bin/outbe-chain node \
+    --datadir=${DATADIR} \
+    --chain=${CHAIN_FILE} \
+    --http \
+    --http.addr=${HTTP_ADDR} \
+    --http.port=${HTTP_PORT} \
+    --http.api=${HTTP_API} \
+    --port=${P2P_PORT} \
+    --metrics=${METRICS_ADDR} \
+    --validator \
+    --consensus.signing-key=${SIGNING_KEY} \
+    --validator.evm-key=${EVM_KEY} \
+    --consensus.listen-addr=${CONSENSUS_ADDR} \
+    --consensus.storage-dir=${CONSENSUS_STORAGE}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${DATADIR} ${CONSENSUS_STORAGE}
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

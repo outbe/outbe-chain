@@ -1,0 +1,150 @@
+//! Consensus configuration constants.
+
+use commonware_consensus::simplex::scheme::Namespace;
+use std::{sync::OnceLock, time::Duration};
+
+/// P2P namespace for Outbe consensus messages.
+pub const NAMESPACE: &[u8] = b"outbe";
+
+/// Process-wide singleton of the derived Simplex namespace.
+///
+/// `Namespace::new(NAMESPACE)` is a pure function that allocates four `Vec<u8>`
+/// sub-namespaces (`notarize`, `nullify`, `finalize`, `seed`). Rather than
+/// rebuilding it inside `HybridScheme::sign`, `verify`, `HybridRandomElector::elect`,
+/// and every per-epoch scheme constructor, all callers go through this
+/// `OnceLock` so there is one and only one `Namespace` instance in the process
+/// and the four sub-namespace byte buffers are heap-allocated exactly once.
+///
+/// The verifier crate `outbe-consensus-proof` byte-pins the same sub-namespace
+/// strings (`OUTBE_NOTARIZE_NAMESPACE_V2`, `OUTBE_FINALIZE_NAMESPACE_V2`,
+/// `OUTBE_HYBRID_SEED_NAMESPACE_V2`) so it can verify without a runtime
+/// dependency on the Simplex `Namespace` type; an `outbe-consensus` test asserts
+/// they match byte-for-byte against the singleton this function returns.
+pub fn simplex_namespace() -> &'static Namespace {
+    static NAMESPACE_CELL: OnceLock<Namespace> = OnceLock::new();
+    NAMESPACE_CELL.get_or_init(|| Namespace::new(NAMESPACE))
+}
+
+/// Channel identifiers for Commonware P2P.
+pub const VOTES_CHANNEL: u64 = 0;
+pub const CERTIFICATES_CHANNEL: u64 = 1;
+pub const RESOLVER_CHANNEL: u64 = 2;
+/// P2P channel for block dissemination via buffered broadcast engine.
+pub const BROADCAST_CHANNEL: u64 = 3;
+/// P2P channel for marshal's resolver (on-demand block resolution / backfill).
+pub const MARSHAL_CHANNEL: u64 = 4;
+/// P2P channel for DKG ceremony messages.
+pub const DKG_CHANNEL: u64 = 5;
+/// P2P channel for the one-time TEE bootstrap coordination (registration +
+/// signature exchange), run once at startup like the DKG.
+pub const TEE_BOOTSTRAP_CHANNEL: u64 = 6;
+/// P2P channel for the one-time TEE DKG ceremony (enclave identity exchange +
+/// dealer/player gossip + offer-key partial-signature exchange), run once at
+/// startup to derive the shared tribute offer key. Distinct from the consensus
+/// DKG channel (5) and the TEE bootstrap channel (6).
+pub const TEE_DKG_CHANNEL: u64 = 7;
+/// P2P channel for the tribute offer key-handoff (a joining/keyless committee
+/// member requests the resident offer key; a current node seals it to the
+/// newcomer's attested X25519 key). Distinct from the consensus DKG (5), TEE
+/// bootstrap (6), and TEE DKG (7) channels.
+pub const TEE_HANDOFF_CHANNEL: u64 = 8;
+
+/// Maximum extra_data size in block headers (bytes).
+/// Enough for 128-validator participation bitmap (23 bytes) with room to grow.
+pub const MAX_EXTRA_DATA_SIZE: usize = 256;
+
+/// Default timeouts for Simplex consensus.
+///
+/// These re-export the single source of truth in [`crate::timing`] so the values
+/// (and the gas↔consensus-timeout contract) are documented in one place. The
+/// live values come from `genesis.json` with these as fallbacks; there is no CLI
+/// override. `DEFAULT_PROPOSAL_TIMEOUT_MS` == `timing::DEFAULT_LEADER_TIMEOUT_MS`
+/// (leader window); `DEFAULT_NOTARIZATION_TIMEOUT_MS` ==
+/// `timing::DEFAULT_CERTIFICATION_TIMEOUT_MS` (certification window).
+pub const DEFAULT_PROPOSAL_TIMEOUT_MS: u64 = crate::timing::DEFAULT_LEADER_TIMEOUT_MS;
+pub const DEFAULT_NOTARIZATION_TIMEOUT_MS: u64 = crate::timing::DEFAULT_CERTIFICATION_TIMEOUT_MS;
+pub const DEFAULT_PROPOSAL_TIMEOUT: Duration = Duration::from_millis(DEFAULT_PROPOSAL_TIMEOUT_MS);
+pub const DEFAULT_NOTARIZATION_TIMEOUT: Duration =
+    Duration::from_millis(DEFAULT_NOTARIZATION_TIMEOUT_MS);
+pub const DEFAULT_NULLIFY_REBROADCAST: Duration = Duration::from_secs(10);
+pub const DEFAULT_PEER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
+pub const DEFAULT_FCU_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub const EXECUTION_WATCHDOG_INTERVAL: Duration = Duration::from_secs(30);
+pub const EXECUTION_WATCHDOG_GRACE: Duration = Duration::from_secs(30);
+pub const EXECUTION_WATCHDOG_LAG_BLOCKS: u64 = 30;
+pub const EXECUTION_WATCHDOG_STARTUP_GRACE_SEC: u64 = 120;
+pub const STARTUP_GENESIS_FORMATION_PROBE_INTERVAL: Duration = Duration::from_secs(1);
+pub const STARTUP_GENESIS_FORMATION_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Time to give the payload builder to execute transactions before resolving.
+/// Mirrors Tempo's `time_to_prepare_proposal_transactions` (default 200ms).
+pub const DEFAULT_PAYLOAD_RESOLVE_TIME: Duration = Duration::from_millis(200);
+
+/// Minimum time before sending a proposal (keeps block times stable).
+/// Mirrors Tempo's `minimum_time_before_propose` (default 450ms).
+pub const DEFAULT_PAYLOAD_RETURN_TIME: Duration = Duration::from_millis(450);
+
+/// Maximum P2P message size (2 MB — enough for max block + overhead).
+pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
+/// Internal mailbox size for consensus engine actors.
+pub const ENGINE_MAILBOX_SIZE: usize = 256;
+/// Channel message backlog for P2P channels.
+pub const CHANNEL_BACKLOG: usize = 16_384;
+
+/// Default epoch length in blocks, used when genesis.json does not specify
+/// `config.epochLengthBlocks`. ~1 hour at a ~3s block — the cadence for DKG
+/// reshare, active-set rotation, and the per-epoch slash-counter reset. A felony
+/// threshold must stay below this (see `outbe_slashindicator`). The DKG
+/// prepare/grace windows below are lookback/fallback bounds and stay < this epoch;
+/// the operational windows come from `config.dkg{Prepare,Grace}*` in genesis.
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
+
+/// Activity timeout in views (track this many behind finalized tip).
+pub const ACTIVITY_TIMEOUT: u32 = 1000;
+/// Skip timeout in views (skip lazy leader after this many inactive views).
+pub const SKIP_TIMEOUT: u32 = 5;
+/// Number of concurrent certificate fetch requests.
+pub const FETCH_CONCURRENT: usize = 3;
+
+/// Default DKG prepare window before planned activation (~10 minutes at ~1s/block).
+pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 600;
+/// Default late activation grace window after planned activation.
+pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 600;
+
+/// Replay buffer size for journal (1 MB).
+pub const REPLAY_BUFFER: usize = 1024 * 1024;
+/// Write buffer size for journal (64 KB).
+pub const WRITE_BUFFER: usize = 64 * 1024;
+/// Page cache size for journal (32 MB).
+pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// Marshal storage constants (matching Tempo's production defaults)
+// ---------------------------------------------------------------------------
+
+/// Items per section in immutable archive.
+pub const IMMUTABLE_ITEMS_PER_SECTION: u64 = 262_144;
+/// Items per section in prunable cache.
+pub const PRUNABLE_ITEMS_PER_SECTION: u64 = 4_096;
+/// Freezer table resize frequency.
+pub const FREEZER_TABLE_RESIZE_FREQUENCY: u8 = 4;
+/// Freezer table resize chunk size (~3 MB).
+pub const FREEZER_TABLE_RESIZE_CHUNK_SIZE: u32 = 1 << 16;
+/// Freezer table initial size (~2 MB).
+pub const FREEZER_TABLE_INITIAL_SIZE: u32 = 1 << 21;
+/// Freezer value target size (1 GB).
+pub const FREEZER_VALUE_TARGET_SIZE: u64 = 1024 * 1024 * 1024;
+/// Freezer value compression level (zstd level 3).
+pub const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
+/// Marshal replay buffer size (8 MB).
+pub const MARSHAL_REPLAY_BUFFER: usize = 8 * 1024 * 1024;
+/// Marshal write buffer size (1 MB).
+pub const MARSHAL_WRITE_BUFFER: usize = 1024 * 1024;
+/// Marshal max repair (pending block backfill count).
+pub const MAX_REPAIR: usize = 20;
+/// Marshal max pending acks (1 = sequential block delivery).
+pub const MAX_PENDING_ACKS: usize = 1;
+/// Broadcast engine deque size per peer.
+pub const BROADCAST_DEQUE_SIZE: usize = 64;
+/// Marshal view retention timeout multiplier.
+pub const VIEW_RETENTION_MULTIPLIER: u64 = 10;

@@ -1,0 +1,44 @@
+{
+  "name": "outbe-intents-contracts",
+  "description": "Core solidity contracts for the Intents",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "examples"
+  ],
+  "dependencies": {
+    "@layerzerolabs/lz-evm-messagelib-v2": "^3.0.143",
+    "@layerzerolabs/lz-evm-oapp-v2": "^3.0.143",
+    "@layerzerolabs/lz-evm-protocol-v2": "^3.0.143",
+    "@openzeppelin/contracts": "^4.9.6",
+    "@openzeppelin/contracts-upgradeable": "^4.9.6",
+    "@polymerdao/prover-contracts": "^0.0.17",
+    "@uniswap/permit2": "github:Uniswap/permit2",
+    "dotenv-run-script": "^0.4.1",
+    "solidity-bytes-utils": "^0.8.4"
+  },
+  "devDependencies": {
+    "ethers": "^5.7.2",
+    "forge-std": "github:foundry-rs/forge-std#v1.8.1",
+    "prettier": "^3.0.0",
+    "solhint": "^3.6.2",
+    "typescript": "5.3.3"
+  },
+  "scripts": {
+    "exportAbi": "bash scripts/export-abi.sh",
+    "deploy:createX": "forge script script/0_DeployCreateX.s.sol:DeployCreateXDeterministic --rpc-url $NETWORK --broadcast --verify --slow -vvv",
+    "deployCreateX": "dotenv-run-script deploy:createX",
+    "deploy:escrow": "forge script script/1_DeploySolverEscrow.s.sol:DeploySolverEscrow --rpc-url $NETWORK --broadcast --verify --slow --legacy -vvv --skip-simulation",
+    "deploySolverEscrow": "dotenv-run-script deploy:escrow",
+    "deploy:auction": "forge script script/2_DeployAuction.s.sol:DeployAuction --rpc-url $NETWORK --broadcast --verify --slow --legacy -vvv",
+    "deployAuction": "dotenv-run-script deploy:auction",
+    "deploy:lzRouter": "forge script script/3_DeployLayerZeroRouter.s.sol:DeployLayerZeroRouter --rpc-url $NETWORK --broadcast --verify --slow --legacy -vvv",
+    "deployLzRouter": "dotenv-run-script deploy:lzRouter",
+    "configure:all": "forge script script/4_ConfigureAll.s.sol:ConfigureAll --rpc-url $NETWORK --broadcast --slow --legacy -vvv --skip-simulation",
+    "configureAll": "dotenv-run-script configure:all",
+    "configure:lzPeers": "forge script script/SetupLZPeers.s.sol:SetupLZPeers --rpc-url $NETWORK --broadcast --slow --legacy -vvv --skip-simulation",
+    "configureLzPeers": "dotenv-run-script configure:lzPeers",
+    "deploy:all": "forge script script/DeployAll.s.sol:DeployAll --rpc-url $NETWORK --broadcast --slow --legacy -vvv --skip-simulation",
+    "deployAll": "dotenv-run-script deploy:all"
+  }
+}

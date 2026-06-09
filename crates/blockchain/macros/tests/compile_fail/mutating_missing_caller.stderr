@@ -1,0 +1,5 @@
+error: expected `Address`, found `u32`
+  --> tests/compile_fail/mutating_missing_caller.rs:14:36
+   |
+14 |     fn _abi_foo(&mut self, sender: u32) -> Result<(), ()> {
+   |                                    ^^^

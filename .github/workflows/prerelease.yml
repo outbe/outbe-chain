@@ -1,0 +1,104 @@
+name: prerelease
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.*-rc*"
+
+permissions:
+  contents: read
+  security-events: write
+  checks: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cve-scan:
+    name: CVE scan (Cargo.lock)
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  vet:
+    name: supply chain review
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.93
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet
+      - run: cargo vet
+
+  build:
+    name: build & audit binaries
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: dtolnay/rust-toolchain@1.93
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-auditable,cargo-audit
+      - run: cargo auditable build --release --verbose
+      - run: cargo test --verbose
+      - name: CVE scan (binaries)
+        run: |
+          find target/release -maxdepth 1 -type f -executable -name 'outbe-*' | while read bin; do
+            name=$(basename "$bin")
+            cargo audit --format sarif bin "$bin" > "audit-${name}.sarif"
+          done
+      - name: upload audit results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .
+          category: cargo-audit-bin
+
+  docker:
+    name: docker build & trivy scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: build amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: outbe-chain:rc-amd64
+      - name: build arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          tags: outbe-chain:rc-arm64
+      - name: trivy scan (amd64)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: outbe-chain:rc-amd64
+          format: sarif
+          output: trivy-amd64.sarif
+          severity: CRITICAL,HIGH
+      - name: trivy scan (arm64)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: outbe-chain:rc-arm64
+          format: sarif
+          output: trivy-arm64.sarif
+          severity: CRITICAL,HIGH
+      - name: upload trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .
+          category: trivy

@@ -1,0 +1,60 @@
+# Gramine manifest for outbe-tee-enclave (rendered by gramine-manifest at
+# container start, see entrypoint.sh). The `sgx.*` keys are ignored by
+# gramine-direct and only consumed by gramine-sgx, so the same manifest serves
+# both modes.
+
+libos.entrypoint = "{{ entrypoint }}"
+
+loader.log_level = "{{ log_level }}"
+# Pass the process argv (--socket / --dkg-seed) straight through from the
+# `gramine-direct outbe-tee-enclave ...` command line.
+loader.insecure__use_cmdline_argv = true
+loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr/{{ arch_libdir }}"
+
+# The enclave serves one thread per connection and exits cleanly on SIGTERM.
+sys.enable_sigterm_injection = true
+
+fs.mounts = [
+  { uri = "file:{{ gramine.runtimedir() }}", path = "/lib" },
+  { uri = "file:{{ arch_libdir }}", path = "{{ arch_libdir }}" },
+  { uri = "file:/usr/{{ arch_libdir }}", path = "/usr/{{ arch_libdir }}" },
+  { uri = "file:{{ entrypoint }}", path = "{{ entrypoint }}" },
+  # Writable tee dir for the sealed offer-key blob (--tee-dir). The blob is
+  # AES-GCM sealed by the enclave (EGETKEY), so it lives in an UNTRUSTED allowed
+  # file — the enclave's own AEAD provides confidentiality + integrity + the
+  # chain_id/isv_svn binding. `tee_dir` is rendered by the launcher.
+  { uri = "file:{{ tee_dir }}/", path = "{{ tee_dir }}/" },
+]
+# The node reaches the enclave over TCP (`--socket host:port`), which Gramine
+# passes through to the host network — no host<->enclave Unix socket mount needed.
+
+# --- gramine-sgx only (ignored by gramine-direct) ---
+sgx.debug = true
+sgx.edmm_enable = false
+# One Gramine thread per served connection + a margin.
+sgx.max_threads = 64
+
+# Real SGX attestation. Under gramine-sgx this makes /dev/attestation/quote
+# produce a real DCAP (ECDSA) quote and /dev/attestation/keys/* the real EGETKEY
+# sealing keys. Ignored by gramine-direct (which has no SGX hardware, so
+# attestation_type reads `none` and the enclave runs explicitly unattested).
+sgx.remote_attestation = "dcap"
+# Enclave identity (MRSIGNER-policy sealing survives an update of the same SVN
+# family). Bump isvsvn on a security-relevant rebuild to enforce anti-rollback.
+sgx.isvprodid = 1
+sgx.isvsvn = 1
+
+sgx.trusted_files = [
+  "file:{{ gramine.libos }}",
+  "file:{{ entrypoint }}",
+  "file:{{ gramine.runtimedir() }}/",
+  "file:{{ arch_libdir }}/",
+  "file:/usr/{{ arch_libdir }}/",
+]
+
+# Read-write passthrough for the sealed-blob dir (no integrity check at the
+# Gramine layer — the enclave's AES-GCM sealing is the integrity/confidentiality
+# boundary). Lets the restart fast-path persist/restore `sealed_root.bin`.
+sgx.allowed_files = [
+  "file:{{ tee_dir }}/",
+]

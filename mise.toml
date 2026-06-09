@@ -1,0 +1,15 @@
+[tools]
+# ── Core ────────────────────────────────────────────────────────────── #
+rust = "1.96"                      # build outbe-chain + all crates
+foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI)
+
+# ── System deps ─────────────────────────────────── #
+# These must come from the system package manager — `mise run setup` checks them:
+#   - gcc / clang   (C/C++ toolchain for native crates)
+#   - openssl       (linked by openssl-sys; pkg-config locates it)
+# macOS: `brew install openssl pkg-config` (clang ships with Xcode CLT)
+# Debian/Ubuntu: `sudo apt install build-essential clang libssl-dev pkg-config libc++-dev libc++abi-dev
+
+"cargo:cargo-binstall" = "latest"
+"cargo:cargo-nextest"  = "latest"
+"cargo:cargo-deny"  = "latest"

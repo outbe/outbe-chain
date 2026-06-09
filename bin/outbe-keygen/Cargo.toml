@@ -1,0 +1,25 @@
+[package]
+name = "outbe-keygen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "outbe-keygen"
+path = "src/main.rs"
+
+[dependencies]
+outbe-consensus.workspace = true
+commonware-cryptography.workspace = true
+commonware-codec.workspace = true
+commonware-math.workspace = true
+alloy-primitives.workspace = true
+blst.workspace = true
+clap.workspace = true
+hex.workspace = true
+rand_core.workspace = true
+eyre.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

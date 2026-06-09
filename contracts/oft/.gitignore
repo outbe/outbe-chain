@@ -1,0 +1,18 @@
+# Foundry artifacts
+cache/
+out/
+
+# Broadcast logs
+broadcast/
+
+# Docs
+docs/
+
+# Local environment secrets
+.env
+
+# IDE / local files
+.idea/
+.claude/
+.junie/
+.DS_Store

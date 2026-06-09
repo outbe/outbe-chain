@@ -1,0 +1,20 @@
+[package]
+name = "outbe-promis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-macros.workspace = true
+outbe-primitives.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["rand"] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = []
+test-utils = ["outbe-primitives/test-utils"]

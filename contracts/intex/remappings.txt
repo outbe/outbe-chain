@@ -1,0 +1,6 @@
+@contracts/=contracts/
+@test-mocks/=test/mocks/
+@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/contracts/
+@layerzerolabs/onft-evm/=node_modules/@layerzerolabs/onft-evm/contracts/
+@layerzerolabs/lz-evm-protocol-v2/=node_modules/@layerzerolabs/lz-evm-protocol-v2/
+@layerzerolabs/lz-evm-messagelib-v2/=node_modules/@layerzerolabs/lz-evm-messagelib-v2/

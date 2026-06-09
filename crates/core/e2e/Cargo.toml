@@ -1,0 +1,20 @@
+[package]
+name = "outbe-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+outbe-common.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-evm.workspace = true
+outbe-metadosis.workspace = true
+outbe-tribute.workspace = true
+outbe-nod.workspace = true
+outbe-nodfactory.workspace = true
+outbe-gratis.workspace = true
+outbe-oracle.workspace = true
+outbe-promislimit.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true

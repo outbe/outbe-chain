@@ -1,0 +1,74 @@
+[package]
+name = "outbe-tee-enclave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `mock` gates the dev/CI-only EGETKEY stub (hard-coded sealing key + fake
+# quote). The production binary is built WITHOUT this feature and therefore
+# physically contains no mock key material. See plan §"Mock build-time isolation".
+mock = []
+
+[lib]
+name = "outbe_tee_enclave"
+path = "src/lib.rs"
+
+[[bin]]
+name = "outbe-tee-enclave"
+path = "src/main.rs"
+
+# Dev/CI mock enclave. `required-features = ["mock"]` guarantees it is only built
+# with `--features mock`; the production binary above links no mock key material.
+[[bin]]
+name = "outbe-tee-enclave-mock"
+path = "src/mock_main.rs"
+required-features = ["mock"]
+
+[dependencies]
+outbe-tee.workspace = true
+alloy-primitives.workspace = true
+ring.workspace = true
+x25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+
+# Poseidon-BN254 (same circom params as the chain's zkproof / wallet) for the
+# in-enclave `tribute_id` derivation. We depend on the lightweight Poseidon
+# stack directly — NOT `outbe-zkproof`, which pulls a heavy Barretenberg C++ FFI
+# inappropriate for the enclave.
+outbe-poseidon.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+
+# Node <-> enclave transport (Noise-IK responder over framed UDS).
+snow.workspace = true
+
+# Commonware BLS12-381 DKG primitives (feldman_desmedt). The enclave runs the
+# secret-touching DKG seams (Dealer/Player) so shares and the assembled tribute
+# key never leave SGX in plaintext. Host-side actor drives the public protocol.
+commonware-cryptography.workspace = true
+commonware-utils.workspace = true
+commonware-parallel.workspace = true
+commonware-codec.workspace = true
+rand_core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+outbe-tributefactory.workspace = true
+alloy-primitives.workspace = true
+tokio = { workspace = true }
+criterion.workspace = true
+
+# Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).
+# The CPU ceiling the network can sustain inside the enclave during block
+# execution; transport (Noise/UDS) + SGX enter/exit are measured separately by the
+# `transport_throughput_offers_per_sec` ignored test in tests/transport.rs.
+[[bench]]
+name = "tribute_offer_throughput"
+harness = false
