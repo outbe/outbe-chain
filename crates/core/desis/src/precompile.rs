@@ -80,8 +80,7 @@ fn bids_from_sol_arrays(
     if len != quantities.len() || len != prices.len() || len != timestamps.len() {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "processBidsBatch: array length mismatch".into(),
-        )
-        .into());
+        ));
     }
     Ok((0..len)
         .map(|i| BidData {

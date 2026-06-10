@@ -17,6 +17,6 @@ pub enum DesisError {
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {
     fn from(e: DesisError) -> Self {
-        outbe_primitives::error::PrecompileError::Revert(e.to_string().into())
+        outbe_primitives::error::PrecompileError::Revert(e.to_string())
     }
 }

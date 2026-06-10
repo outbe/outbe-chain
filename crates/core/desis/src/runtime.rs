@@ -459,7 +459,7 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
 // ---------------------------------------------------------------------------
 
 /// Sort bids: descending price, ascending timestamp on tie.
-fn sort_bids(bids: &mut Vec<BidData>) {
+fn sort_bids(bids: &mut [BidData]) {
     bids.sort_by(|a, b| {
         b.intex_bid_price
             .cmp(&a.intex_bid_price)
