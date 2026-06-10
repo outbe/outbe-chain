@@ -10,6 +10,8 @@ import {
   formatUnits,
   getAddress,
   maxUint256,
+  pad,
+  parseAbiItem,
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx } from "../chain.js";
@@ -17,14 +19,17 @@ import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
   ERC20_ABI,
+  FACTORY_ABI,
   type IntexAddresses,
   NETWORKS,
   NFT_ABI,
+  ONFT_ABI,
   REGISTRY_ABI,
   intexAddress,
 } from "../intex/registry.js";
 import { auctionStage, epochIso, intexState, intexStatus, isActiveStage } from "../intex/format.js";
 import { commitHash, revealBidTypedData } from "../intex/bid.js";
+import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
 
 /**
  * Intex participant tools: auction commit/reveal, escrow funding, NFT holdings,
@@ -44,6 +49,13 @@ interface Network {
   client: PublicClient;
   wallet?: WalletClient;
 }
+
+const AUCTION_STAGE_EVENT = parseAbiItem(
+  "event AuctionStageUpdated(uint32 indexed seriesId, uint8 auctionStage, uint32 timestamp, string reason)",
+);
+const PROMIS_MINED_EVENT = parseAbiItem(
+  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+);
 
 export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const pk = process.env.OUTBE_PRIVATE_KEY;
@@ -245,7 +257,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const logs = await n.client.getLogs({
         address: addr(n, "auction"),
-        event: (AUCTION_ABI.find((x) => x.type === "event" && x.name === "AuctionStageUpdated") as never),
+        event: AUCTION_STAGE_EVENT,
         fromBlock: 0n,
         toBlock: "latest",
       });
@@ -318,7 +330,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       } else {
         const logs = await n.client.getLogs({
           address: addr(n, "auction"),
-          event: (AUCTION_ABI.find((x) => x.type === "event" && x.name === "AuctionStageUpdated") as never),
+          event: AUCTION_STAGE_EVENT,
           fromBlock: 0n,
           toBlock: "latest",
         });
@@ -472,6 +484,191 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, value] });
       const receipt = await submit(n, token, data, 0n, wait);
       return ok({ network: n.name, token, escrow, approved: max ? "max" : value.toString(), ...receipt });
+    }),
+  );
+
+  // --- Bridge BSC -> outbe (ONFT1155Adapter, signed) -------------------------
+  const amountArg = z.string().describe("amount as the raw on-chain integer");
+
+  async function buildSendParam(n: Network, series: number, amount: bigint, recipient: Address) {
+    const adapter = addr(n, "bridgeAdapter");
+    const [dstEid, ids] = (await Promise.all([
+      n.client.readContract({ address: adapter, abi: ONFT_ABI, functionName: "OUTBE_EID" }),
+      n.client.readContract({ address: addr(n, "nft"), abi: NFT_ABI, functionName: "tokenIds", args: [series] }),
+    ])) as [number, [bigint, bigint]];
+    return {
+      dstEid: Number(dstEid),
+      to: pad(recipient, { size: 32 }),
+      tokenId: ids[0], // issued token id
+      amount,
+      extraOptions: "0x" as Hex,
+      composeMsg: "0x" as Hex,
+    };
+  }
+
+  const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
+
+  server.tool(
+    "intex_bridge_quote",
+    "Quote the LayerZero native fee to bridge an Intex NFT (issued token of a series) from BSC to outbe.",
+    { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
+    handler(async ({ series, amount, recipient, network }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const to = recipient ? getAddress(recipient) : whoever();
+      const sp = await buildSendParam(n, series, BigInt(amount), to);
+      const fee = (await n.client.readContract({
+        address: addr(n, "bridgeAdapter"),
+        abi: ONFT_ABI,
+        functionName: "quoteSend",
+        args: [sp, false],
+      })) as { nativeFee: bigint; lzTokenFee: bigint };
+      return ok({
+        network: n.name,
+        series,
+        tokenId: sp.tokenId.toString(),
+        dstEid: sp.dstEid,
+        recipient: to,
+        fee: { nativeFee: { raw: fee.nativeFee.toString(), value: formatUnits(fee.nativeFee, 18) } },
+      });
+    }),
+  );
+
+  server.tool(
+    "intex_bridge_approve",
+    "Approve the bridge adapter to move your Intex NFTs (one-time setApprovalForAll). Requires OUTBE_PRIVATE_KEY.",
+    { network: networkArg.optional(), wait: waitArg },
+    handler(async ({ network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      requireAccount();
+      const adapter = addr(n, "bridgeAdapter");
+      const data = encodeFunctionData({ abi: NFT_ABI, functionName: "setApprovalForAll", args: [adapter, true] });
+      const receipt = await submit(n, addr(n, "nft"), data, 0n, wait);
+      return ok({ network: n.name, nft: addr(n, "nft"), adapter, ...receipt });
+    }),
+  );
+
+  server.tool(
+    "intex_bridge_nft",
+    "Bridge an Intex NFT (issued token of a series) from BSC to outbe. Auto-quotes the LayerZero fee and " +
+      "pays it as native value. Checks the adapter approval and tells you to run intex_bridge_approve if " +
+      "missing. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, amount, recipient, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const account = requireAccount();
+      const adapter = addr(n, "bridgeAdapter");
+      const approved = (await n.client.readContract({
+        address: addr(n, "nft"),
+        abi: NFT_ABI,
+        functionName: "isApprovedForAll",
+        args: [account.address, adapter],
+      })) as boolean;
+      if (!approved) throw new Error("NFT not approved for the bridge adapter — run intex_bridge_approve first");
+      const to = recipient ? getAddress(recipient) : account.address;
+      const sp = await buildSendParam(n, series, BigInt(amount), to);
+      const fee = (await n.client.readContract({
+        address: adapter,
+        abi: ONFT_ABI,
+        functionName: "quoteSend",
+        args: [sp, false],
+      })) as { nativeFee: bigint; lzTokenFee: bigint };
+      const data = encodeFunctionData({ abi: ONFT_ABI, functionName: "send", args: [sp, fee, account.address] });
+      const receipt = await submit(n, adapter, data, fee.nativeFee, wait);
+      return ok({
+        network: n.name,
+        series,
+        tokenId: sp.tokenId.toString(),
+        recipient: to,
+        lzFee: { raw: fee.nativeFee.toString(), value: formatUnits(fee.nativeFee, 18) },
+        ...receipt,
+      });
+    }),
+  );
+
+  // --- Settlement + Promis (outbe IntexFactory, signed) ----------------------
+  server.tool(
+    "intex_settle",
+    "Settle Issued Intexes of a series held by an address. Defaults to your own wallet; pass holder to " +
+      "settle for someone else, which requires that holder to have authorized you via " +
+      "intex_set_authorized_settler. Allowed while Qualified (voluntary) or Called (forced). Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, amount: amountArg, holder: ownerArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, amount, holder, network, wait }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const account = requireAccount();
+      const intexHolder = holder ? getAddress(holder) : account.address;
+      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "settle", args: [series, intexHolder, BigInt(amount)] });
+      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
+      return ok({ network: n.name, series, intexHolder, amount, self: intexHolder === account.address, ...receipt });
+    }),
+  );
+
+  server.tool(
+    "intex_set_authorized_settler",
+    "Authorize another wallet to settle your position in a series. Call this from the holder wallet before " +
+      "that wallet can settle on your behalf. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, settler: z.string().describe("0x address to authorize"), network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, settler, network, wait }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      requireAccount();
+      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "setAuthorizedSettler", args: [series, getAddress(settler)] });
+      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
+      return ok({ network: n.name, series, settler: getAddress(settler), ...receipt });
+    }),
+  );
+
+  server.tool(
+    "intex_mine_promis",
+    "Burn settled Intexes and mine Promis to your own wallet. The proof-of-work nonce is computed locally " +
+      "(SHA256, " + String(POW_DIFFICULTY) + "-byte difficulty); you supply only series and amount. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, amount, network, wait }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const account = requireAccount();
+      const holder = account.address;
+      const amt = BigInt(amount);
+      const sd = (await n.client.readContract({
+        address: addr(n, "registry"),
+        abi: REGISTRY_ABI,
+        functionName: "seriesData",
+        args: [series],
+      })) as { intexSize: bigint };
+      const promisAmount = sd.intexSize * amt;
+      const logs = await n.client.getLogs({
+        address: addr(n, "factory"),
+        event: PROMIS_MINED_EVENT,
+        args: { seriesId: series, holder },
+        fromBlock: 0n,
+        toBlock: "latest",
+      });
+      const seq = logs.length;
+      const pow = grindNonce(holder, promisAmount, series, seq);
+      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "minePromis", args: [series, amt, pow.nonce] });
+      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
+      return ok({
+        network: n.name,
+        series,
+        amount: amt.toString(),
+        promisAmount: promisAmount.toString(),
+        pow: { nonce: pow.nonce.toString(), iterations: pow.iterations, hash: pow.hash, difficulty: POW_DIFFICULTY, seq },
+        ...receipt,
+      });
+    }),
+  );
+
+  server.tool(
+    "intex_promis_balance",
+    "Promis balance for an address on outbe.",
+    { account: ownerArg, network: networkArg.optional() },
+    handler(async ({ account, network }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const who = whoever(account);
+      const bal = (await n.client.readContract({
+        address: addr(n, "promis"),
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [who],
+      })) as bigint;
+      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 18) } });
     }),
   );
 }

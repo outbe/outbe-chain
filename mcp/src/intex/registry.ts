@@ -102,7 +102,22 @@ export const REGISTRY_ABI: Abi = parseAbi([
   "function seriesAt(uint64 index) view returns (uint32)",
 ]);
 
-/** Minimal ERC20 (BSC payment token). */
+/** ONFT1155Adapter: the BSC->outbe NFT bridge. */
+export const ONFT_ABI: Abi = parseAbi([
+  "function OUTBE_EID() view returns (uint32)",
+  "function quoteSend((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, bool payInLzToken) view returns ((uint256 nativeFee, uint256 lzTokenFee) fee)",
+  "function send((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable returns ((bytes32 guid, uint64 nonce, (uint256 nativeFee, uint256 lzTokenFee) fee) receipt)",
+]);
+
+/** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
+export const FACTORY_ABI: Abi = parseAbi([
+  "function settle(uint32 seriesId, address intexHolder, uint256 amount)",
+  "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) returns (uint256 promisAmount)",
+  "function setAuthorizedSettler(uint32 seriesId, address settler)",
+  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+]);
+
+/** Minimal ERC20 (BSC payment token; outbe Promis balance). */
 export const ERC20_ABI: Abi = parseAbi([
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
