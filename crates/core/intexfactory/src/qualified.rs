@@ -2,17 +2,20 @@
 //! rate and qualifies matured (21d) Issued series. Runs in `begin_block`.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
+    addresses::INTEX_FACTORY_ADDRESS,
     block::{BlockLifecycle, BlockRuntimeContext},
-    error::Result,
+    error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
 };
 
 use outbe_intexregistry::IntexState;
 
-use crate::constants::{MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::sol_ext::{IOriginMessenger, MessagingFee};
 use crate::schema::IntexFactoryContract;
 
 pub struct IntexLifecycle;
@@ -96,8 +99,40 @@ pub(crate) fn try_qualify(
     }
     outbe_intexregistry::api::mark_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
-    // Enroll into the call-trigger index for the daily Called scan.
     factory.insert_qualified(series_id, series.coen_price_call_trigger)?;
+
+    // Notify BNB of the Qualified transition via LayerZero.
+    // OriginMessenger self-funds from its relay float; msg.value is zero.
+    let quote_ret = storage.staticcall(
+        ORIGIN_MESSENGER_ADDRESS,
+        IOriginMessenger::quoteSendMarkQualifiedCall {
+            seriesId: series_id,
+            extraOptions: alloy_primitives::Bytes::new(),
+            payInLzToken: false,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let fee =
+        IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret).map_err(
+            |_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()),
+        )?;
+    storage.call(
+        ORIGIN_MESSENGER_ADDRESS,
+        U256::ZERO,
+        IOriginMessenger::sendMarkQualifiedCall {
+            seriesId: series_id,
+            extraOptions: alloy_primitives::Bytes::new(),
+            fee: MessagingFee {
+                nativeFee: fee.nativeFee,
+                lzTokenFee: fee.lzTokenFee,
+            },
+            refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesQualified {

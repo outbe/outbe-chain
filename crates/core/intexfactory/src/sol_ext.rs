@@ -38,6 +38,32 @@ sol! {
             MessagingFee calldata fee,
             address refundAddress
         ) external payable returns (bytes32 guid);
+
+        function quoteSendMarkQualified(
+            uint32 seriesId,
+            bytes calldata extraOptions,
+            bool payInLzToken
+        ) external view returns (MessagingFee memory fee);
+
+        function sendMarkQualified(
+            uint32 seriesId,
+            bytes calldata extraOptions,
+            MessagingFee calldata fee,
+            address refundAddress
+        ) external payable returns (bytes32 guid);
+
+        function quoteSendMarkCalled(
+            uint32 seriesId,
+            bytes calldata extraOptions,
+            bool payInLzToken
+        ) external view returns (MessagingFee memory fee);
+
+        function sendMarkCalled(
+            uint32 seriesId,
+            bytes calldata extraOptions,
+            MessagingFee calldata fee,
+            address refundAddress
+        ) external payable returns (bytes32 guid);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

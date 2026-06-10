@@ -3,9 +3,12 @@
 //! come from the call-trigger bin index; counts are recomputed from oracle VWAP
 //! history each run. Driven by the Cycle daily trigger.
 
+use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
+    addresses::INTEX_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
@@ -14,8 +17,9 @@ use outbe_primitives::{
 
 use outbe_intexregistry::IntexState;
 
-use crate::constants::QUALIFIER_REFERENCE_ISO;
+use crate::constants::{ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
+use crate::sol_ext::{IOriginMessenger, MessagingFee};
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
@@ -135,6 +139,39 @@ pub(crate) fn try_call(
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intexregistry::api::mark_called(storage, series_id, called_at)?;
     factory.remove_qualified(series_id, trigger)?;
+
+    // Notify BNB of the Called transition via LayerZero.
+    // OriginMessenger self-funds from its relay float; msg.value is zero.
+    let quote_ret = storage.staticcall(
+        ORIGIN_MESSENGER_ADDRESS,
+        IOriginMessenger::quoteSendMarkCalledCall {
+            seriesId: series_id,
+            extraOptions: alloy_primitives::Bytes::new(),
+            payInLzToken: false,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let fee =
+        IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret).map_err(
+            |_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()),
+        )?;
+    storage.call(
+        ORIGIN_MESSENGER_ADDRESS,
+        U256::ZERO,
+        IOriginMessenger::sendMarkCalledCall {
+            seriesId: series_id,
+            extraOptions: alloy_primitives::Bytes::new(),
+            fee: MessagingFee {
+                nativeFee: fee.nativeFee,
+                lzTokenFee: fee.lzTokenFee,
+            },
+            refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesCalled {
