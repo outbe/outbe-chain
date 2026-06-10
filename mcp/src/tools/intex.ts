@@ -1,17 +1,22 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  type Account,
   type Address,
   type Chain,
   type Hex,
   type PublicClient,
   type WalletClient,
+  encodeFunctionData,
+  formatUnits,
   getAddress,
+  maxUint256,
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx } from "../chain.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
+  ERC20_ABI,
   type IntexAddresses,
   NETWORKS,
   NFT_ABI,
@@ -19,6 +24,7 @@ import {
   intexAddress,
 } from "../intex/registry.js";
 import { auctionStage, epochIso, intexState, intexStatus, isActiveStage } from "../intex/format.js";
+import { commitHash, revealBidTypedData } from "../intex/bid.js";
 
 /**
  * Intex participant tools: auction commit/reveal, escrow funding, NFT holdings,
@@ -72,6 +78,33 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   function addr(n: Network, key: keyof IntexAddresses): Address {
     return intexAddress(n.name, key);
+  }
+
+  function requireAccount(): Account {
+    if (!ctx.account) {
+      throw new Error("signing requires a key — set OUTBE_PRIVATE_KEY in the MCP server env");
+    }
+    return ctx.account;
+  }
+
+  async function estimateGas(n: Network, to: Address, data: Hex, value: bigint): Promise<bigint> {
+    const est = await n.client.estimateGas({ account: ctx.account?.address, to, data, value });
+    return (est * 130n) / 100n;
+  }
+
+  async function send(n: Network, to: Address, data: Hex, value: bigint, gas: bigint): Promise<Hex> {
+    const account = requireAccount();
+    if (!n.wallet) throw new Error(`no signer for ${n.name}`);
+    return n.wallet.sendTransaction({ account, chain: n.chain, to, data, value, gas });
+  }
+
+  /** Submit a tx and, unless wait===false, wait for and summarize its receipt. */
+  async function submit(n: Network, to: Address, data: Hex, value: bigint, wait?: boolean) {
+    const gas = await estimateGas(n, to, data, value);
+    const hash = await send(n, to, data, value, gas);
+    if (wait === false) return { txHash: hash, status: "submitted" as const };
+    const r = await n.client.waitForTransactionReceipt({ hash, timeout: 180_000 });
+    return { txHash: hash, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() };
   }
 
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
@@ -308,5 +341,137 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
-  // signing tools (commit/reveal, funding, bridge, settlement) register next.
+  // --- Bid commit / reveal (BSC IntexAuction, signed) ------------------------
+  const seriesArg = z.number().int().describe("series id");
+  const quantityArg = z.number().int().describe("bid quantity (uint16)");
+  const priceArg = z.string().describe("bid price as the raw on-chain uint64 (see intex_auction_info min price)");
+  const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
+
+  async function signReveal(n: Network, account: Account, series: number, quantity: number, bidPrice: bigint): Promise<Hex> {
+    const typedData = revealBidTypedData({
+      chainId: n.chainId,
+      verifyingContract: addr(n, "auction"),
+      seriesId: series,
+      bidder: account.address,
+      quantity,
+      bidPrice,
+    });
+    if (!account.signTypedData) throw new Error("the configured account cannot sign typed data");
+    return account.signTypedData(typedData);
+  }
+
+  server.tool(
+    "intex_commit_bid",
+    "Commit a sealed Intex bid. Signs the EIP-712 RevealBid (series, quantity, price) and submits its " +
+      "keccak256 as the commit hash — there is no separate salt. IMPORTANT: record your (series, quantity, " +
+      "price); you must supply them again to reveal, they cannot be recovered on-chain, and this assistant " +
+      "only remembers them within the current session. Approve the payment token before revealing. " +
+      "Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, quantity: quantityArg, price: priceArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, quantity, price, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const account = requireAccount();
+      const bidPrice = BigInt(price);
+      const signature = await signReveal(n, account, series, quantity, bidPrice);
+      const hash = commitHash(signature);
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [series, hash] });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({
+        network: n.name,
+        series,
+        quantity,
+        price: bidPrice.toString(),
+        commitHash: hash,
+        ...receipt,
+        reminder:
+          `Record series=${series}, quantity=${quantity}, price=${bidPrice.toString()} — required to reveal, ` +
+          `not recoverable on-chain, remembered only this session. Run intex_approve_payment before reveal.`,
+      });
+    }),
+  );
+
+  server.tool(
+    "intex_reveal_bid",
+    "Reveal a previously committed Intex bid. Re-derives the identical EIP-712 signature from (series, " +
+      "quantity, price) and submits revealBid. The escrow pulls quantity*price of the payment token here, " +
+      "so an allowance must already cover it (see intex_approve_payment). Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, quantity: quantityArg, price: priceArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, quantity, price, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const account = requireAccount();
+      const bidPrice = BigInt(price);
+      const signature = await signReveal(n, account, series, quantity, bidPrice);
+      const data = encodeFunctionData({
+        abi: AUCTION_ABI,
+        functionName: "revealBid",
+        args: [series, quantity, bidPrice, BigInt(n.chainId), signature],
+      });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({ network: n.name, series, quantity, price: bidPrice.toString(), ...receipt });
+    }),
+  );
+
+  server.tool(
+    "intex_cancel_commit",
+    "Cancel a committed bid for a series before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      requireAccount();
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [series] });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({ network: n.name, series, ...receipt });
+    }),
+  );
+
+  // --- Bid funding (BSC payment token -> EscrowAdapter) ----------------------
+  server.tool(
+    "intex_payment_allowance",
+    "Payment-token allowance granted to the EscrowAdapter and the owner's balance, with token decimals/symbol.",
+    { owner: ownerArg, network: networkArg.optional() },
+    handler(async ({ owner, network }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const who = whoever(owner);
+      const token = addr(n, "paymentToken");
+      const escrow = addr(n, "escrow");
+      const [allowance, balance, decimals, symbol] = (await Promise.all([
+        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [who, escrow] }),
+        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [who] }),
+        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+      ])) as [bigint, bigint, number, string];
+      const d = Number(decimals);
+      return ok({
+        network: n.name,
+        owner: who,
+        token: { address: token, symbol, decimals: d },
+        escrow,
+        allowance: { raw: allowance.toString(), value: formatUnits(allowance, d) },
+        balance: { raw: balance.toString(), value: formatUnits(balance, d) },
+      });
+    }),
+  );
+
+  server.tool(
+    "intex_approve_payment",
+    "Approve the EscrowAdapter to pull the payment token (required before reveal). Pass amount as the raw " +
+      "on-chain integer (must cover quantity*price), or max=true to approve the maximum. Requires OUTBE_PRIVATE_KEY.",
+    {
+      amount: z.string().optional().describe("raw token amount to approve"),
+      max: z.boolean().optional().describe("approve the maximum uint256 instead of a fixed amount"),
+      network: networkArg.optional(),
+      wait: waitArg,
+    },
+    handler(async ({ amount, max, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      requireAccount();
+      if (!max && amount === undefined) throw new Error("pass amount (raw) or max=true");
+      const value = max ? maxUint256 : BigInt(amount as string);
+      const token = addr(n, "paymentToken");
+      const escrow = addr(n, "escrow");
+      const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, value] });
+      const receipt = await submit(n, token, data, 0n, wait);
+      return ok({ network: n.name, token, escrow, approved: max ? "max" : value.toString(), ...receipt });
+    }),
+  );
 }
