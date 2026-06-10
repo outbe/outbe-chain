@@ -101,8 +101,21 @@ pub(crate) fn try_qualify(
     factory.remove_unqualified(series_id, floor)?;
     factory.insert_qualified(series_id, series.coen_price_call_trigger)?;
 
-    // Notify BNB of the Qualified transition via LayerZero.
-    // OriginMessenger self-funds from its relay float; msg.value is zero.
+    // Notify the target chain of the Qualified transition via LayerZero; best-effort.
+    // OriginMessenger failure (e.g. exhausted relay float) does not revert the
+    // state transition. The target chain can reconcile series state from the origin chain.
+    let _ = notify_lz_qualified(storage, series_id);
+
+    crate::runtime::emit_event(
+        storage,
+        crate::precompile::IIntexFactory::SeriesQualified {
+            seriesId: series_id,
+        },
+    )?;
+    Ok(true)
+}
+
+fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
     let quote_ret = storage.staticcall(
         ORIGIN_MESSENGER_ADDRESS,
         IOriginMessenger::quoteSendMarkQualifiedCall {
@@ -132,12 +145,5 @@ pub(crate) fn try_qualify(
         .abi_encode()
         .into(),
     )?;
-
-    crate::runtime::emit_event(
-        storage,
-        crate::precompile::IIntexFactory::SeriesQualified {
-            seriesId: series_id,
-        },
-    )?;
-    Ok(true)
+    Ok(())
 }

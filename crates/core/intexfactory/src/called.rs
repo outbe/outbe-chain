@@ -140,8 +140,22 @@ pub(crate) fn try_call(
     outbe_intexregistry::api::mark_called(storage, series_id, called_at)?;
     factory.remove_qualified(series_id, trigger)?;
 
-    // Notify BNB of the Called transition via LayerZero.
-    // OriginMessenger self-funds from its relay float; msg.value is zero.
+    // Notify the target chain of the Called transition via LayerZero; best-effort.
+    // OriginMessenger failure (e.g. exhausted relay float) does not revert the
+    // state transition. The target chain can reconcile series state from the origin chain.
+    let _ = notify_lz_called(storage, series_id);
+
+    crate::runtime::emit_event(
+        storage,
+        crate::precompile::IIntexFactory::SeriesCalled {
+            seriesId: series_id,
+            calledAt: called_at,
+        },
+    )?;
+    Ok(true)
+}
+
+fn notify_lz_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
     let quote_ret = storage.staticcall(
         ORIGIN_MESSENGER_ADDRESS,
         IOriginMessenger::quoteSendMarkCalledCall {
@@ -171,13 +185,5 @@ pub(crate) fn try_call(
         .abi_encode()
         .into(),
     )?;
-
-    crate::runtime::emit_event(
-        storage,
-        crate::precompile::IIntexFactory::SeriesCalled {
-            seriesId: series_id,
-            calledAt: called_at,
-        },
-    )?;
-    Ok(true)
+    Ok(())
 }
