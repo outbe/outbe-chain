@@ -12,6 +12,10 @@ all: help
 build: ## Build Solidity contracts using forge
 	forge build
 
+.PHONY: install
+install: ## Restore soldeer dependencies
+	forge soldeer install
+
 .PHONY: export-abi
 export-abi: build ## Export contracts ABI
 	@echo 'Exporting ABI for smart contracts'
@@ -32,6 +36,10 @@ test: ## Test Solidity contracts using forge
 .PHONY: fmt
 fmt:  ## Format code
 	forge fmt
+
+.PHONY: lint
+lint: ## Lint Solidity code
+	forge lint
 
 .PHONY: clean
 clean: ## Clean up forge artifacts

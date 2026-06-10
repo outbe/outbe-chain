@@ -32,11 +32,8 @@ contract StubAuctionWithBids {
         bidCount = n;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {}
+    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external {}
     function startRevealingBidsStage(uint32, bool) external {}
     function startClearingStage(uint32) external {}
     function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
@@ -65,14 +62,11 @@ contract StubAuctionWithBids {
 contract StubBatchAdapterReverter is IONFT1155AdapterBatch {
     error StubBatchRevert();
 
-    function quoteSystemMultiSend(
-        uint256,
-        address[] calldata,
-        uint256[] calldata,
-        uint32,
-        bytes calldata,
-        bool
-    ) external pure returns (MessagingFee memory) {
+    function quoteSystemMultiSend(uint256, address[] calldata, uint256[] calldata, uint32, bytes calldata, bool)
+        external
+        pure
+        returns (MessagingFee memory)
+    {
         revert StubBatchRevert();
     }
 
@@ -92,11 +86,11 @@ contract StubBatchAdapterReverter is IONFT1155AdapterBatch {
         revert StubBatchRevert();
     }
 
-    function batchSend(
-        BatchSendParam calldata,
-        MessagingFee calldata,
-        address
-    ) external payable returns (MessagingReceipt memory) {
+    function batchSend(BatchSendParam calldata, MessagingFee calldata, address)
+        external
+        payable
+        returns (MessagingReceipt memory)
+    {
         revert StubBatchRevert();
     }
 
@@ -104,11 +98,11 @@ contract StubBatchAdapterReverter is IONFT1155AdapterBatch {
         revert StubBatchRevert();
     }
 
-    function multiSend(
-        MultiRecipientSendParam calldata,
-        MessagingFee calldata,
-        address
-    ) external payable returns (MessagingReceipt memory) {
+    function multiSend(MultiRecipientSendParam calldata, MessagingFee calldata, address)
+        external
+        payable
+        returns (MessagingReceipt memory)
+    {
         revert StubBatchRevert();
     }
 
@@ -244,12 +238,11 @@ contract PatternADeferTest is TestHelperOz5 {
         }
     }
 
-    function _onftComposedPacket(
-        address to,
-        uint256 tokenId_,
-        uint256 amount_,
-        bytes memory composeMsg
-    ) internal pure returns (bytes memory) {
+    function _onftComposedPacket(address to, uint256 tokenId_, uint256 amount_, bytes memory composeMsg)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodePacked(
             ONFT1155MsgCodec.BODY_VERSION_V1,
             bytes32(uint256(uint160(to))),

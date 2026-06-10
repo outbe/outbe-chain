@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
 
-import { SolverAllocator } from "../src/allocators/SolverAllocator.sol";
-import { SolverEscrow } from "../src/SolverEscrow.sol";
+import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
+import {SolverEscrow} from "../src/SolverEscrow.sol";
 
 /// @dev Deployment script for solver collateral system.
 ///

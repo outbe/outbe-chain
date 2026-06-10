@@ -344,12 +344,11 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeIssuanceInstructions(p);
     }
 
-    function exposedONFTEncode(
-        bytes32 to,
-        uint256 tokenId,
-        uint256 amount,
-        bytes calldata composeMsg
-    ) external view returns (bytes memory payload, bool hasCompose) {
+    function exposedONFTEncode(bytes32 to, uint256 tokenId, uint256 amount, bytes calldata composeMsg)
+        external
+        view
+        returns (bytes memory payload, bool hasCompose)
+    {
         return ONFT1155MsgCodec.encode(to, tokenId, amount, composeMsg);
     }
 

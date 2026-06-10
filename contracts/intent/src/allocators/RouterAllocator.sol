@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-import { IAllocator } from "the-compact/src/interfaces/IAllocator.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { IdLib } from "the-compact/src/lib/IdLib.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
+import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IdLib} from "the-compact/src/lib/IdLib.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 
 /// @title RouterAllocator
 /// @notice Allocator for The Compact that authorizes claims from registered router operators.
@@ -118,12 +118,7 @@ contract RouterAllocator is IAllocator, Ownable2Step {
         uint256 expires,
         uint256[2][] calldata, /* idsAndAmounts */
         bytes calldata /* allocatorData */
-    )
-        external
-        view
-        override
-        returns (bytes4)
-    {
+    ) external view override returns (bytes4) {
         if (block.timestamp > expires) revert ClaimExpired(expires, block.timestamp);
         if (!authorizedOperators[arbiter]) revert UnauthorizedOperator(arbiter);
         return IAllocator.authorizeClaim.selector;
@@ -139,12 +134,7 @@ contract RouterAllocator is IAllocator, Ownable2Step {
         uint256 expires,
         uint256[2][] calldata, /* idsAndAmounts */
         bytes calldata /* allocatorData */
-    )
-        external
-        view
-        override
-        returns (bool)
-    {
+    ) external view override returns (bool) {
         return authorizedOperators[arbiter] && block.timestamp <= expires;
     }
 }

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 
-import { LayerZeroRouter } from "../src/router/LayerZeroRouter.sol";
-import { RouterAllocator } from "../src/allocators/RouterAllocator.sol";
-import { ICreateX } from "./utils/ICreateX.sol";
+import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
+import {ICreateX} from "./utils/ICreateX.sol";
 
 /// @dev Deploys RouterAllocator + LayerZeroRouter via CreateX.
 ///
@@ -47,13 +47,7 @@ contract DeployLayerZeroRouter is Script {
         return keccak256(abi.encodePacked("LayerZeroRouter", salt, vm.addr(deployerPrivateKey)));
     }
 
-    function deployRouter(
-        address createX,
-        string memory salt,
-        address compact,
-        address escrow,
-        address auction
-    )
+    function deployRouter(address createX, string memory salt, address compact, address escrow, address auction)
         public
         returns (address router, address allocatorAddr)
     {

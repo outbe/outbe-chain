@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test } from "forge-std/Test.sol";
-import { IAllocator } from "the-compact/src/interfaces/IAllocator.sol";
+import {Test} from "forge-std/Test.sol";
+import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
 
-import { SolverAllocator } from "../src/allocators/SolverAllocator.sol";
+import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 
-import { MockTheCompact } from "./mocks/MockTheCompact.sol";
+import {MockTheCompact} from "./mocks/MockTheCompact.sol";
 
 contract SolverAllocatorTest is Test {
     MockTheCompact internal compact;

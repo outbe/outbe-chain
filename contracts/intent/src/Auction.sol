@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-import { IAuction } from "./interfaces/IAuction.sol";
-import { OrderValidator } from "./libs/OrderValidator.sol";
+import {IAuction} from "./interfaces/IAuction.sol";
+import {OrderValidator} from "./libs/OrderValidator.sol";
 
 /// @title Auction
 /// @notice Commit-reveal Vickrey auction for competitive solver selection
@@ -105,7 +105,7 @@ contract Auction is IAuction, Ownable2Step {
         // Bound against the uint128 quote storage: an unchecked downcast would silently truncate
         // outputAmount > type(uint128).max, letting a sub-floor value enter Vickrey ranking.
         if (outputAmount > type(uint128).max) revert OutputAmountTooLarge();
-        _quotes[orderId].push(Quote({ solver: msg.sender, outputAmount: uint128(outputAmount) }));
+        _quotes[orderId].push(Quote({solver: msg.sender, outputAmount: uint128(outputAmount)}));
 
         emit QuoteSubmitted(orderId, msg.sender, outputAmount);
     }

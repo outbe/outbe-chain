@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { console2 } from "forge-std/console2.sol";
-import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import {console2} from "forge-std/console2.sol";
+import {MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-import { BaseTest } from "./BaseTest.sol";
-import { LayerZeroRouter } from "../src/router/LayerZeroRouter.sol";
-import { RouterMessage } from "../src/libs/RouterMessage.sol";
-import { EndpointV2Mock } from "./mocks/MockLayerZeroEndpoint.sol";
+import {BaseTest} from "./BaseTest.sol";
+import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {RouterMessage} from "../src/libs/RouterMessage.sol";
+import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 
 /**
  * @title LayerZeroRouterForTest
@@ -33,9 +33,7 @@ contract LayerZeroRouterForTest is LayerZeroRouter {
         bytes12 _lockTag,
         address _escrow,
         address _auction
-    )
-        LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction)
-    {
+    ) LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction) {
         _fixedLocalDomain = fixedDomain;
     }
 
@@ -43,11 +41,7 @@ contract LayerZeroRouterForTest is LayerZeroRouter {
         return _fixedLocalDomain;
     }
 
-    function dispatchSettle(
-        uint32 _originDomain,
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         public
         payable
     {
@@ -58,12 +52,7 @@ contract LayerZeroRouterForTest is LayerZeroRouter {
         _dispatchRefund(_originDomain, _orderIds);
     }
 
-    function _handleSettleOrder(
-        uint32 _messageOrigin,
-        bytes32 _messageSender,
-        bytes32 _orderId,
-        bytes32 _receiver
-    )
+    function _handleSettleOrder(uint32 _messageOrigin, bytes32 _messageSender, bytes32 _orderId, bytes32 _receiver)
         internal
         override
     {
@@ -222,7 +211,7 @@ contract LayerZeroRouterTest is BaseTest {
         deal(kakaroto, 1_000_000);
 
         vm.prank(kakaroto);
-        originRouter.dispatchSettle{ value: fee.nativeFee }(destination, orderIds, fillerData);
+        originRouter.dispatchSettle{value: fee.nativeFee}(destination, orderIds, fillerData);
 
         // Since the mock delivers synchronously, we inspect destinationRouter directly
         assertEq(destinationRouter.settledMessageOrigin(0), origin);
@@ -250,7 +239,7 @@ contract LayerZeroRouterTest is BaseTest {
         deal(kakaroto, 1_000_000);
 
         vm.prank(kakaroto);
-        originRouter.dispatchRefund{ value: fee.nativeFee }(destination, orderIds);
+        originRouter.dispatchRefund{value: fee.nativeFee}(destination, orderIds);
 
         // Delivery is synchronous
         assertEq(destinationRouter.refundedMessageOrigin(0), origin);
@@ -282,7 +271,7 @@ contract LayerZeroRouterTest is BaseTest {
         deal(kakaroto, 1_000_000);
 
         vm.prank(kakaroto);
-        destinationRouter.dispatchSettle{ value: fee.nativeFee }(origin, orderIds, fillerData);
+        destinationRouter.dispatchSettle{value: fee.nativeFee}(origin, orderIds, fillerData);
 
         // Message was delivered synchronously into originRouter
         assertEq(originRouter.settledMessageOrigin(0), destination);
@@ -310,7 +299,7 @@ contract LayerZeroRouterTest is BaseTest {
         deal(kakaroto, 1_000_000);
 
         vm.prank(kakaroto);
-        destinationRouter.dispatchRefund{ value: fee.nativeFee }(origin, orderIds);
+        destinationRouter.dispatchRefund{value: fee.nativeFee}(origin, orderIds);
 
         assertEq(originRouter.refundedMessageOrigin(0), destination);
         assertEq(originRouter.refundedMessageOrigin(1), destination);

@@ -49,10 +49,7 @@ interface ISolverEscrow {
     function getCollateralAmount(uint256 outputAmount) external view returns (uint256);
 
     /// @notice Get ERC6909 balance for an owner and token (total, locked, available)
-    function getBalance(
-        address owner,
-        address token
-    )
+    function getBalance(address owner, address token)
         external
         view
         returns (uint256 total, uint256 locked, uint256 available);

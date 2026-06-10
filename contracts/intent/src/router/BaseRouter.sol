@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import { OriginSettler } from "./origin/OriginSettler.sol";
-import { DestinationSettler } from "./destination/DestinationSettler.sol";
-import { IAuction } from "../interfaces/IAuction.sol";
-import { ISolverEscrow } from "../interfaces/ISolverEscrow.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {OriginSettler} from "./origin/OriginSettler.sol";
+import {DestinationSettler} from "./destination/DestinationSettler.sol";
+import {IAuction} from "../interfaces/IAuction.sol";
+import {ISolverEscrow} from "../interfaces/ISolverEscrow.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 
 /**
  * @title BaseRouter
@@ -82,11 +82,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     // ============ Same-Chain Dispatch ============
 
     /// @dev Routes settlement: same-chain calls _handleSettleOrder directly, cross-chain delegates.
-    function _dispatchSettle(
-        uint32 _originDomain,
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function _dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         override
     {
@@ -119,9 +115,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
         uint32 _originDomain,
         bytes32[] memory _orderIds,
         bytes[] memory _ordersFillerData
-    )
-        internal
-        virtual;
+    ) internal virtual;
 
     function _dispatchRefundCrossChain(uint32 _originDomain, bytes32[] memory _orderIds) internal virtual;
 }

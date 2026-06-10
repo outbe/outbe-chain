@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { OnchainCrossChainOrder } from "../../interfaces/OrderTypes.sol";
-import { IDestinationSettler } from "../../interfaces/IDestinationSettler.sol";
-import { OrderStatusStorage } from "../common/OrderStatusStorage.sol";
-import { RouterAccessors } from "../common/RouterAccessors.sol";
+import {OnchainCrossChainOrder} from "../../interfaces/OrderTypes.sol";
+import {IDestinationSettler} from "../../interfaces/IDestinationSettler.sol";
+import {OrderStatusStorage} from "../common/OrderStatusStorage.sol";
+import {RouterAccessors} from "../common/RouterAccessors.sol";
 
 /**
  * @title DestinationSettlerBase
@@ -123,9 +123,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
         bytes32[] calldata _orderIds,
         bytes[] memory _ordersOriginData,
         bytes[] memory _ordersFillerData
-    )
-        internal
-        virtual;
+    ) internal virtual;
 
     /**
      * @notice Refunds a batch of OnchainCrossChainOrders
@@ -144,11 +142,11 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
     function _getOrderId(OnchainCrossChainOrder calldata _order) internal pure virtual returns (bytes32);
 
     /// @notice Hook called after an order is successfully filled (unlock collateral)
-    function _onFilled(bytes32 _orderId) internal virtual { }
+    function _onFilled(bytes32 _orderId) internal virtual {}
 
     /// @notice Hook called when a claimed order is refunded (slash collateral)
-    function _onSlashed(bytes32 _orderId) internal virtual { }
+    function _onSlashed(bytes32 _orderId) internal virtual {}
 
     /// @notice Hook called when an order is claimed (lock collateral)
-    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData) internal virtual { }
+    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData) internal virtual {}
 }

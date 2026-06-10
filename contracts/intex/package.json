@@ -11,7 +11,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./abi/*": "./dist/abi/*.json",
+    "./abi/*": "./abi-export/*.json",
     "./addresses/*": "./dist/addresses/*.json"
   },
   "repository": {
@@ -22,7 +22,8 @@
     "registry": "https://npm.pkg.github.com"
   },
   "files": [
-    "dist"
+    "dist",
+    "abi-export"
   ],
   "scripts": {
     "test:hardhat": "hardhat test --network hardhatMainnet",

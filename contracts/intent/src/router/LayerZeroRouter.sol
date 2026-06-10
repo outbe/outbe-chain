@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { OptionsBuilder } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import { BaseRouter } from "./BaseRouter.sol";
-import { RouterMessage } from "../libs/RouterMessage.sol";
+import {OApp, Origin, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {BaseRouter} from "./BaseRouter.sol";
+import {RouterMessage} from "../libs/RouterMessage.sol";
 
 /**
  * @title LayerZeroRouter
@@ -64,10 +64,7 @@ contract LayerZeroRouter is BaseRouter, OApp {
         bytes12 _lockTag,
         address _escrow,
         address _auction
-    )
-        OApp(_lzEndpoint, _owner)
-        BaseRouter(_compact, _lockTag, _escrow, _auction)
-    {
+    ) OApp(_lzEndpoint, _owner) BaseRouter(_compact, _lockTag, _escrow, _auction) {
         if (_lzEndpoint == address(0)) revert InvalidEndpoint();
         defaultGasLimit = 200_000;
         perOrderGas = 60_000;
@@ -132,11 +129,7 @@ contract LayerZeroRouter is BaseRouter, OApp {
      * @param _payInLzToken Whether to pay in LZ token.
      * @return fee          The messaging fee breakdown.
      */
-    function quote(
-        uint32 _dstDomain,
-        bytes memory _payload,
-        bool _payInLzToken
-    )
+    function quote(uint32 _dstDomain, bytes memory _payload, bool _payInLzToken)
         external
         view
         returns (MessagingFee memory fee)
@@ -150,10 +143,7 @@ contract LayerZeroRouter is BaseRouter, OApp {
         uint32 _originDomain,
         bytes32[] memory _orderIds,
         bytes[] memory _ordersFillerData
-    )
-        internal
-        override
-    {
+    ) internal override {
         uint32 dstEid = domainToEid[_originDomain];
         bytes memory payload = RouterMessage.encodeSettle(_orderIds, _ordersFillerData);
         uint128 gasLimit = defaultGasLimit + perOrderGas * uint128(_orderIds.length);

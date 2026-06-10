@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { OnchainCrossChainOrder, ResolvedCrossChainOrder } from "./OrderTypes.sol";
+import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "./OrderTypes.sol";
 
 /// @title IOriginSettler
 /// @notice Interface for settlement contracts on the origin chain

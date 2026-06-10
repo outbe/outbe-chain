@@ -58,11 +58,11 @@ contract AuctionTest is Test {
     }
 
     /// @dev Build auction params with the given minimum bid price and intex size.
-    function _params(
-        uint64 minIntexBidPrice,
-        uint128 intexSize,
-        uint16 minIntexBidQuantity
-    ) internal pure returns (IIntexAuction.AuctionParams memory) {
+    function _params(uint64 minIntexBidPrice, uint128 intexSize, uint16 minIntexBidQuantity)
+        internal
+        pure
+        returns (IIntexAuction.AuctionParams memory)
+    {
         return IIntexAuction.AuctionParams({
             intexSize: intexSize,
             minIntexBidPrice: minIntexBidPrice,
@@ -89,13 +89,11 @@ contract AuctionTest is Test {
 
     /// @dev Build an EIP-712 reveal signature against the deployed `auction` instance and the
     ///      current `block.chainid`.
-    function _createSignature(
-        uint32 seriesId,
-        address sender,
-        uint16 qty,
-        uint64 price,
-        uint256 privateKey
-    ) internal view returns (bytes memory) {
+    function _createSignature(uint32 seriesId, address sender, uint16 qty, uint64 price, uint256 privateKey)
+        internal
+        view
+        returns (bytes memory)
+    {
         bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, sender, qty, price));
         bytes32 domainSeparator = keccak256(
             abi.encode(

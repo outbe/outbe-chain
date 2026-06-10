@@ -13,12 +13,7 @@ interface IGratisPool {
     /// @notice Emitted when any commitment is appended to the tree, whether
     ///         from `pledgeGratis` (via gratisfactory) or from `payAnadosis`
     ///         (via credisfactory).
-    event CommitmentInserted(
-        uint8 indexed denomId,
-        uint256 commitment,
-        uint32 leafIndex,
-        uint256 newRoot
-    );
+    event CommitmentInserted(uint8 indexed denomId, uint256 commitment, uint32 leafIndex, uint256 newRoot);
 
     /// @notice Emitted when a nullifier is consumed by either spend path.
     ///         `action` is 1 for `requestCredis`, 2 for `unpledgeGratis`.

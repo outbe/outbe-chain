@@ -215,13 +215,11 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     }
 
     /// @inheritdoc IIntexAuction
-    function revealBid(
-        uint32 seriesId,
-        uint16 quantity,
-        uint64 bidPrice,
-        uint64 chainId,
-        bytes memory signature
-    ) external override nonReentrant {
+    function revealBid(uint32 seriesId, uint16 quantity, uint64 bidPrice, uint64 chainId, bytes memory signature)
+        external
+        override
+        nonReentrant
+    {
         if (chainId != block.chainid) revert WrongChain(block.chainid, chainId);
 
         IIntexAuction.AuctionData storage a = auctions[seriesId];

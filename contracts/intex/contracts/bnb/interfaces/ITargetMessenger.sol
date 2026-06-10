@@ -156,17 +156,17 @@ interface ITargetMessenger {
     /// @param params Bids batch parameters
     /// @param payInLzToken Whether to pay fee in LZ token
     /// @return fee Messaging fee quote
-    function quoteSendBidsBatch(
-        BidsBatchParams calldata params,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteSendBidsBatch(BidsBatchParams calldata params, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Send bids batch to Outbe. Only callable by Auction.
     /// @param params Bids batch parameters
     /// @param fee Messaging fee
     /// @return receipt Messaging receipt
-    function sendBidsBatch(
-        BidsBatchParams calldata params,
-        MessagingFee calldata fee
-    ) external payable returns (MessagingReceipt memory receipt);
+    function sendBidsBatch(BidsBatchParams calldata params, MessagingFee calldata fee)
+        external
+        payable
+        returns (MessagingReceipt memory receipt);
 }

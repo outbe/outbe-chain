@@ -99,11 +99,10 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     ///      false and are always caller-funded — they can never spend the system float.
     bool private _relayFunded;
 
-    constructor(
-        address _token,
-        address _lzEndpoint,
-        address _delegate
-    ) OApp(_requireNonZeroAddress(_lzEndpoint, "lzEndpoint"), _delegate) Ownable(_delegate) {
+    constructor(address _token, address _lzEndpoint, address _delegate)
+        OApp(_requireNonZeroAddress(_lzEndpoint, "lzEndpoint"), _delegate)
+        Ownable(_delegate)
+    {
         // `token` is immutable: a zero address would permanently brick this adapter. `_delegate` is
         // already enforced by the Ownable base constructor (reverts `OwnableInvalidOwner(address(0))`
         // on zero; Ownable linearizes ahead of OAppCore); `_lzEndpoint` is guarded above in the
@@ -122,20 +121,22 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
 
     // --- Single-recipient batch ---
     /// @inheritdoc IONFT1155AdapterBatch
-    function quoteBatchSend(
-        BatchSendParam calldata _sendParam,
-        bool _payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteBatchSend(BatchSendParam calldata _sendParam, bool _payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         (bytes memory message, bytes memory options) = _buildBatchMsgAndOptions(_sendParam);
         return _quote(_sendParam.dstEid, message, options, _payInLzToken);
     }
 
     /// @inheritdoc IONFT1155AdapterBatch
-    function batchSend(
-        BatchSendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable nonReentrant returns (MessagingReceipt memory msgReceipt) {
+    function batchSend(BatchSendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        nonReentrant
+        returns (MessagingReceipt memory msgReceipt)
+    {
         if (_sendParam.tokenIds.length == 0) revert EmptyBatch();
         if (_sendParam.tokenIds.length != _sendParam.amounts.length) revert ArrayLengthMismatch();
 
@@ -184,20 +185,22 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
 
     // --- Multi-recipient batch ---
     /// @inheritdoc IONFT1155AdapterBatch
-    function quoteMultiSend(
-        MultiRecipientSendParam calldata _sendParam,
-        bool _payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteMultiSend(MultiRecipientSendParam calldata _sendParam, bool _payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         (bytes memory message, bytes memory options) = _buildMultiMsgAndOptions(_sendParam);
         return _quote(_sendParam.dstEid, message, options, _payInLzToken);
     }
 
     /// @inheritdoc IONFT1155AdapterBatch
-    function multiSend(
-        MultiRecipientSendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable nonReentrant returns (MessagingReceipt memory msgReceipt) {
+    function multiSend(MultiRecipientSendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        nonReentrant
+        returns (MessagingReceipt memory msgReceipt)
+    {
         uint256 len = _sendParam.recipients.length;
         if (len == 0) revert EmptyBatch();
         if (len != _sendParam.tokenIds.length || len != _sendParam.amounts.length) {
@@ -299,11 +302,11 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     /// @param holders Source chain holder addresses
     /// @param amounts Corresponding balances for each holder
     /// @return message Encoded LayerZero message
-    function _buildSystemMultiMsg(
-        uint256 tokenId,
-        address[] calldata holders,
-        uint256[] calldata amounts
-    ) internal pure returns (bytes memory message) {
+    function _buildSystemMultiMsg(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts)
+        internal
+        pure
+        returns (bytes memory message)
+    {
         uint256 len = holders.length;
         if (len > MAX_BATCH_SIZE) revert ONFT1155BatchMsgCodec.BatchTooLarge(len, MAX_BATCH_SIZE);
 
@@ -380,7 +383,11 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         address,
         /*_executor*/
         bytes calldata /*_extraData*/
-    ) internal override nonReentrant {
+    )
+        internal
+        override
+        nonReentrant
+    {
         // Idempotency first — a redelivered `(srcEid, guid)` reverts before any state mutation.
         // Shared nonReentrant across all four entrypoints blocks credit-callback re-entry.
         // Validation order: idempotency → minimum header → version → msgType allowed-set → the
@@ -450,14 +457,9 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     /// @dev Self-call wrapper around `token.credit` that isolates per-item reverts. A failure
     ///      on item `i` records a `FailedCredit` snapshot for `(guid, i)` and emits `CreditFailed`
     ///      instead of reverting the whole batch — that's the Critical funds-lock fix.
-    function _tryCreditOne(
-        uint32 srcEid,
-        bytes32 guid,
-        uint256 idx,
-        address to,
-        uint256 tokenId,
-        uint256 amount
-    ) internal {
+    function _tryCreditOne(uint32 srcEid, bytes32 guid, uint256 idx, address to, uint256 tokenId, uint256 amount)
+        internal
+    {
         try this.creditOne(to, tokenId, amount) {
         // ok — credit landed
         }

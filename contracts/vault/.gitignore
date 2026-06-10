@@ -1,12 +1,23 @@
-# Compiler files
-cache/
+# Foundry artifacts
 out/
+cache/
 
-# Ignores development broadcast logs
-/broadcast
+# soldeer dependencies (restored from soldeer.lock; lockfile IS committed)
+/dependencies
+
+# Deploy broadcast logs
+broadcast/
 
 # Docs
 docs/
 
-# Dotenv file
+# Env / secrets
+.env
 *.env
+
+# OS / editor / tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/
+.junie/

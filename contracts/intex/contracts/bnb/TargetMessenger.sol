@@ -91,23 +91,20 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
     uint256 public nextPendingHoldersRelayIdx;
 
-    constructor(
-        address _lzEndpoint,
-        address _delegate,
-        uint32 _outbeEid
-    ) OApp(_lzEndpoint, _delegate) Ownable(_delegate) {
+    constructor(address _lzEndpoint, address _delegate, uint32 _outbeEid)
+        OApp(_lzEndpoint, _delegate)
+        Ownable(_delegate)
+    {
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
         OUTBE_EID = _outbeEid;
     }
 
     // --- Admin ---
     /// @inheritdoc ITargetMessenger
-    function wire(
-        address _auction,
-        address _intex,
-        address _escrowAdapter,
-        address _onftBatchAdapter
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function wire(address _auction, address _intex, address _escrowAdapter, address _onftBatchAdapter)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         if (_auction == address(0)) revert ZeroAddress("auction");
         if (_intex == address(0)) revert ZeroAddress("intex");
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
@@ -125,10 +122,11 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
 
     // --- Quote Functions ---
     /// @inheritdoc ITargetMessenger
-    function quoteSendBidsBatch(
-        BidsBatchParams calldata params,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteSendBidsBatch(BidsBatchParams calldata params, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         // Mirror `sendBidsBatch`'s message + dynamic gas sizing so the quoted fee matches the send.
         (bytes memory message, bytes memory options) = _buildBidsBatch(params, bidsRelayGeneration[params.seriesId]);
         return _quote(OUTBE_EID, message, options, payInLzToken);
@@ -136,10 +134,12 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
 
     // --- Send Functions ---
     /// @inheritdoc ITargetMessenger
-    function sendBidsBatch(
-        BidsBatchParams calldata params,
-        MessagingFee calldata fee
-    ) external payable onlyRole(AUCTION_ROLE) returns (MessagingReceipt memory receipt) {
+    function sendBidsBatch(BidsBatchParams calldata params, MessagingFee calldata fee)
+        external
+        payable
+        onlyRole(AUCTION_ROLE)
+        returns (MessagingReceipt memory receipt)
+    {
         uint256 len = params.bidderAddresses.length;
         if (len == 0) revert EmptyArray();
         if (
@@ -161,10 +161,11 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
 
     /// @dev Encode a single-chunk BIDS_BATCH (`isLast = true`) for the direct send/quote path and
     ///      size its gas option to the bid count, so the quote matches the actual send byte-for-byte.
-    function _buildBidsBatch(
-        BidsBatchParams calldata params,
-        uint32 gen
-    ) private view returns (bytes memory message, bytes memory options) {
+    function _buildBidsBatch(BidsBatchParams calldata params, uint32 gen)
+        private
+        view
+        returns (bytes memory message, bytes memory options)
+    {
         message = BridgeMsgCodec.encodeBidsBatch(
             params.seriesId,
             endpoint.eid(),
@@ -195,7 +196,11 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         address,
         /*_executor*/
         bytes calldata /*_extraData*/
-    ) internal override nonReentrant {
+    )
+        internal
+        override
+        nonReentrant
+    {
         // Record this packet's nonce so `nextNonce` advances by exactly one. Endpoint already
         // verified `_origin.nonce == inboundNonce + 1` before calling us; bumping here keeps the
         // invariant for the next delivery on this `(srcEid, sender)` channel.

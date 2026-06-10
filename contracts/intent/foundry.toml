@@ -1,21 +1,30 @@
 # Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
 
 [profile.default]
-  auto_detect_solc = true
-  block_timestamp = 1_680_220_800 # March 31, 2023 at 00:00 GMT
   bytecode_hash = "none"
-  evm_version = "shanghai"
-  fuzz = { runs = 1_000 }
+  cbor_metadata = false
+  evm_version = "Prague"
   gas_reports = ["*"]
   optimizer = true
   optimizer_runs = 10_000
+  via_ir = true
+  dynamic_test_linking = true
   out = "out"
   script = "script"
   solc = "0.8.30"
   src = "src"
   test = "test"
-  allow_paths = ["node_modules"]
-  libs = ["../node_modules", "node_modules", "lib"]
+  libs = ["dependencies"]
+  remappings = [
+    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-4.9.6/contracts/",
+    "forge-std/=dependencies/forge-std-1.8.1/src/",
+    "@layerzerolabs/lz-evm-oapp-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/oapp/",
+    "@layerzerolabs/lz-evm-protocol-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/protocol/",
+    "@layerzerolabs/lz-evm-messagelib-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/messagelib/",
+    "solidity-bytes-utils/=dependencies/solidity-bytes-utils-0.8.4/",
+    "the-compact/=dependencies/the-compact-1.0.0/",
+    "solady/=dependencies/the-compact-1.0.0/lib/solady/src/",
+  ]
 
 
 [profile.ci]
@@ -35,16 +44,6 @@
   polygon = { key = "${API_KEY_POLYGONSCAN}" }
   sepolia = { key = "${API_KEY_ETHERSCAN}" }
 
-[fmt]
-  bracket_spacing = true
-  int_types = "long"
-  line_length = 120
-  multiline_func_header = "all"
-  number_underscore = "thousands"
-  quote_style = "double"
-  tab_width = 4
-  wrap_comments = true
-
 [rpc_endpoints]
   outbe-priv="https://eth.p.outbe.net"
   outbe-dev="https://eth.d.outbe.net"
@@ -53,5 +52,29 @@
   outbe-testnet="https://rpc.testnet.outbe.net"
 
 [lint]
-# ... rest of lint config ...
-exclude_lints = ["unsafe-typecast","mixed-case-variable"]
+exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode", "unsafe-typecast"]
+
+[fuzz]
+runs = 1000
+max_test_rejects = 65536
+
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+show_metrics = true
+
+[soldeer]
+# Remappings are maintained by hand in foundry.toml [profile.default];
+# do not let soldeer regenerate/overwrite them.
+remappings_generate = false
+# Fetch a git dependency's own submodules on restore (the-compact needs solady/forge-std),
+# so a clean `forge soldeer install` reproduces the full tree.
+recursive_deps = true
+
+[dependencies]
+the-compact = { version = "1.0.0", git = "https://github.com/Uniswap/the-compact", tag = "V1" }
+forge-std = { version = "1.8.1", git = "https://github.com/foundry-rs/forge-std", tag = "v1.8.1" }
+openzeppelin-contracts = { version = "4.9.6", git = "https://github.com/OpenZeppelin/openzeppelin-contracts", tag = "v4.9.6" }
+solidity-bytes-utils = { version = "0.8.4", git = "https://github.com/GNSPS/solidity-bytes-utils", rev = "fc502455bb2a7e26a743378df042612dd50d1eb9" }
+LayerZero-v2 = { version = "3.0.0", git = "https://github.com/LayerZero-Labs/LayerZero-v2", rev = "9c741e7f9790639537b1710a203bcdfd73b0b9ac" }

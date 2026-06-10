@@ -16,9 +16,7 @@ interface IIntexFactory {
 
     /// @notice Burn settled Intexes and mint Promis, gated by off-chain proof
     ///         of work. Caller is the holder. Returns the minted Promis amount.
-    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce)
-        external
-        returns (uint256 promisAmount);
+    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) external returns (uint256 promisAmount);
 
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
@@ -27,14 +25,10 @@ interface IIntexFactory {
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 coenPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(
-        uint32 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount
-    );
+    event Settled(uint32 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(
-        uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount
-    );
+    event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
 
     /// @notice The series qualified (Issued → Qualified).
     event SeriesQualified(uint32 indexed seriesId);

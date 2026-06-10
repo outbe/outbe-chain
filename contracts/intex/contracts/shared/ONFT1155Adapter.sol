@@ -121,12 +121,10 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     /// @param guid Inbound packet GUID whose parked credit was retried.
     event CreditRetried(bytes32 indexed guid);
 
-    constructor(
-        address _token,
-        address _lzEndpoint,
-        address _delegate,
-        uint32 _outbeEid
-    ) OApp(_lzEndpoint, _delegate) Ownable(_delegate) {
+    constructor(address _token, address _lzEndpoint, address _delegate, uint32 _outbeEid)
+        OApp(_lzEndpoint, _delegate)
+        Ownable(_delegate)
+    {
         // `token` is immutable: a zero address would permanently brick this adapter. `_lzEndpoint`
         // and `_delegate` are already enforced by the OApp/Ownable base constructors: a zero
         // delegate/owner reverts `OwnableInvalidOwner(address(0))` (Ownable linearizes ahead of
@@ -144,11 +142,11 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     }
 
     /// @inheritdoc IONFT1155Adapter
-    function send(
-        SendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory msgReceipt) {
+    function send(SendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt)
+    {
         token.debit(msg.sender, _sendParam.tokenId, _sendParam.amount);
 
         (bytes memory message, bytes memory options) = _buildMsgAndOptions(_sendParam);
@@ -196,7 +194,11 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         address,
         /*_executor*/
         bytes calldata /*_extraData*/
-    ) internal override nonReentrant {
+    )
+        internal
+        override
+        nonReentrant
+    {
         if (processed[_origin.srcEid][_guid]) revert AlreadyProcessed(_origin.srcEid, _guid);
         processed[_origin.srcEid][_guid] = true;
 

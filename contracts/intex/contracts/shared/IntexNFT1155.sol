@@ -89,11 +89,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function createSeries(
-        uint32 seriesId,
-        uint32 issuedIntexCount,
-        uint32 intexCallPeriod
-    ) external onlyRole(RELAYER_ROLE) {
+    function createSeries(uint32 seriesId, uint32 issuedIntexCount, uint32 intexCallPeriod)
+        external
+        onlyRole(RELAYER_ROLE)
+    {
         uint256 iTok = uint256(seriesId);
 
         if (seriesData[iTok].issuedAt != 0) {
@@ -176,11 +175,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function mintBatch(
-        address[] calldata recipients,
-        uint256[] calldata quantities,
-        uint32 seriesId
-    ) external onlyRole(RELAYER_ROLE) {
+    function mintBatch(address[] calldata recipients, uint256[] calldata quantities, uint32 seriesId)
+        external
+        onlyRole(RELAYER_ROLE)
+    {
         if (recipients.length != quantities.length) {
             revert ArrayLengthMismatch(recipients.length, quantities.length);
         }
@@ -577,10 +575,11 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function holderBalances(
-        uint32 seriesId,
-        address holder
-    ) external view returns (IIntexNFT1155.HolderBalances memory) {
+    function holderBalances(uint32 seriesId, address holder)
+        external
+        view
+        returns (IIntexNFT1155.HolderBalances memory)
+    {
         uint256 iTok = uint256(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
         return IIntexNFT1155.HolderBalances({
@@ -589,11 +588,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getIssuedHoldersWithBalances(
-        uint32 seriesId,
-        uint256 offset,
-        uint256 limit
-    )
+    function getIssuedHoldersWithBalances(uint32 seriesId, uint256 offset, uint256 limit)
         external
         view
         returns (
@@ -779,10 +774,11 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getSeriesPaginated(
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory series, uint256 total) {
+    function getSeriesPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory series, uint256 total)
+    {
         total = _allSeries.length;
         if (offset >= total) return (new uint256[](0), total);
 
@@ -806,11 +802,11 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesPaginated(
-        address owner,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory series, uint256 total) {
+    function getOwnedSeriesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory series, uint256 total)
+    {
         total = _ownedSeries[owner].length;
         if (offset >= total) return (new uint256[](0), total);
 

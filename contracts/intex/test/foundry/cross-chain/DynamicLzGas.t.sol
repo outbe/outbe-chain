@@ -17,20 +17,19 @@ contract GasEstimatorHarness {
         return LzGasEstimator.estimateGas(baseGas, perItemGas, itemCount);
     }
 
-    function receiveOption(
-        uint128 baseGas,
-        uint128 perItemGas,
-        uint256 itemCount
-    ) external pure returns (bytes memory) {
+    function receiveOption(uint128 baseGas, uint128 perItemGas, uint256 itemCount)
+        external
+        pure
+        returns (bytes memory)
+    {
         return LzGasEstimator.receiveOption(baseGas, perItemGas, itemCount);
     }
 
-    function receiveOption(
-        uint128 baseGas,
-        uint128 perItemGas,
-        uint256 itemCount,
-        uint16 bufferBps
-    ) external pure returns (bytes memory) {
+    function receiveOption(uint128 baseGas, uint128 perItemGas, uint256 itemCount, uint16 bufferBps)
+        external
+        pure
+        returns (bytes memory)
+    {
         return LzGasEstimator.receiveOption(baseGas, perItemGas, itemCount, bufferBps);
     }
 }

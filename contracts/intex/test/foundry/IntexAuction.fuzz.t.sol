@@ -138,13 +138,11 @@ contract IntexAuctionFuzzTest is Test {
         );
     }
 
-    function _signFor(
-        uint256 pk,
-        uint32 seriesId,
-        address bidder,
-        uint16 qty,
-        uint64 price
-    ) internal view returns (bytes memory) {
+    function _signFor(uint256 pk, uint32 seriesId, address bidder, uint16 qty, uint64 price)
+        internal
+        view
+        returns (bytes memory)
+    {
         bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, price));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);

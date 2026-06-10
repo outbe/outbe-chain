@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 
-import { Auction } from "../src/Auction.sol";
+import {Auction} from "../src/Auction.sol";
 
 /// @dev Deployment script for standalone Auction contract.
 ///

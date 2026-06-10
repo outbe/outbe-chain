@@ -1,6 +1,23 @@
-out
-cache
+# Foundry artifacts
+out/
+cache/
 
+# soldeer dependencies (restored from soldeer.lock; lockfile IS committed)
+/dependencies
+
+# Deploy broadcast logs
+broadcast/
+
+# Docs
+docs/
+
+# Env / secrets
+.env
 *.env
-# Ignores development broadcast logs
-/broadcast
+
+# OS / editor / tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/
+.junie/

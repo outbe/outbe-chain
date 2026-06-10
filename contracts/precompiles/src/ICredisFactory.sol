@@ -51,12 +51,9 @@ interface ICredisFactory {
     ///         delivers the stablecoin to `bundleAccount`.
     /// @return positionId Derived from `nullifierHash` and `bundleAccount`.
     /// @return amountStables Stablecoin amount disbursed (oracle-converted).
-    function requestCredis(
-        address asset,
-        address vaultProvider,
-        address bundleAccount,
-        RequestArgs calldata args
-    ) external returns (uint256 positionId, uint256 amountStables);
+    function requestCredis(address asset, address vaultProvider, address bundleAccount, RequestArgs calldata args)
+        external
+        returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Advance the named position by one anadosis installment.
     ///         When the final installment completes, the factory inserts the

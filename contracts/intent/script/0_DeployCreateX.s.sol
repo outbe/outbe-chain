@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 
 /// @dev Minimal CREATE3 factory. Deployed address depends only on (factory, salt),
 ///      not on the contract's bytecode or constructor arguments.
@@ -63,7 +63,7 @@ contract DeployCreateXDeterministic is Script {
 
     function deployCreateX(string memory salt) public returns (address) {
         bytes32 saltHash = keccak256(abi.encode(salt));
-        CreateX createx = new CreateX{ salt: saltHash }();
+        CreateX createx = new CreateX{salt: saltHash}();
         return address(createx);
     }
 }

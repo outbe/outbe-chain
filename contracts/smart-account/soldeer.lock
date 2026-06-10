@@ -1,0 +1,17 @@
+[[dependencies]]
+name = "forge-std"
+version = "1.16.1"
+git = "https://github.com/foundry-rs/forge-std"
+rev = "620536fa5277db4e3fd46772d5cbc1ea0696fb43"
+
+[[dependencies]]
+name = "kernel"
+version = "3.3.0"
+git = "https://github.com/zerodevapp/kernel"
+rev = "cd697c7e21715d015e0643af22310a99aa17433b"
+
+[[dependencies]]
+name = "openzeppelin-contracts"
+version = "5.6.1"
+git = "https://github.com/OpenZeppelin/openzeppelin-contracts"
+rev = "5fd1781b1454fd1ef8e722282f86f9293cacf256"

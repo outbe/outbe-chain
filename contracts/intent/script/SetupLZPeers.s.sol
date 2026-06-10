@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 
-import { LayerZeroRouter } from "../src/router/LayerZeroRouter.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 /// @dev Standalone script to configure LayerZero peer addresses and domain mappings.
 /// @notice Use this for adding peers after initial deployment. For full setup, prefer 5_ConfigureAll.s.sol.

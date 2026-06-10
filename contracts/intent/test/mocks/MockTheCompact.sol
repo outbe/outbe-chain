@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { AllocatedTransfer, Claim } from "the-compact/src/types/Claims.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {AllocatedTransfer, Claim} from "the-compact/src/types/Claims.sol";
 
 /// @notice Mock for The Compact contract.
 /// @dev Supports both Router flows (depositERC20/depositNative/allocatedTransfer)
@@ -28,7 +28,7 @@ contract MockTheCompact {
 
     uint96 private _nextAllocatorId = 1;
 
-    receive() external payable { }
+    receive() external payable {}
 
     // ============ Test helpers ============
 
@@ -72,12 +72,7 @@ contract MockTheCompact {
     // ============ Deposits (with ERC6909 balance tracking) ============
 
     /// @notice Pull ERC20 tokens from caller, credit ERC6909 to recipient.
-    function depositERC20(
-        address token,
-        bytes12 lockTag,
-        uint256 amount,
-        address recipient
-    )
+    function depositERC20(address token, bytes12 lockTag, uint256 amount, address recipient)
         external
         returns (uint256 id)
     {
@@ -104,10 +99,7 @@ contract MockTheCompact {
         uint256, /* expires */
         bytes32, /* typehash */
         bytes32 /* witness */
-    )
-        external
-        returns (uint256 id, bytes32 claimHash, uint256 registeredAmount)
-    {
+    ) external returns (uint256 id, bytes32 claimHash, uint256 registeredAmount) {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         id = _toId(lockTag, token);
         balanceOf[recipient][id] += amount;
@@ -122,11 +114,7 @@ contract MockTheCompact {
         uint256, /* expires */
         bytes32, /* typehash */
         bytes32 /* witness */
-    )
-        external
-        payable
-        returns (uint256 id, bytes32 claimHash)
-    {
+    ) external payable returns (uint256 id, bytes32 claimHash) {
         id = _toId(lockTag, address(0));
         balanceOf[recipient][id] += msg.value;
         return (id, bytes32(0));
@@ -150,7 +138,7 @@ contract MockTheCompact {
             uint256 amount = claimPayload.claimants[i].amount;
 
             if (token == address(0)) {
-                (bool success,) = recipient.call{ value: amount }("");
+                (bool success,) = recipient.call{value: amount}("");
                 require(success, "MockTheCompact: ETH transfer failed");
             } else {
                 IERC20(token).safeTransfer(recipient, amount);
@@ -177,7 +165,7 @@ contract MockTheCompact {
 
             // Release underlying tokens
             if (token == address(0)) {
-                (bool success,) = recipient.call{ value: amount }("");
+                (bool success,) = recipient.call{value: amount}("");
                 require(success, "MockTheCompact: ETH transfer failed");
             } else {
                 IERC20(token).safeTransfer(recipient, amount);

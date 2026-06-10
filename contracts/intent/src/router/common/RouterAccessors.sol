@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { IAuction } from "../../interfaces/IAuction.sol";
-import { ISolverEscrow } from "../../interfaces/ISolverEscrow.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IAuction} from "../../interfaces/IAuction.sol";
+import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
 
 /**
  * @title RouterAccessors
