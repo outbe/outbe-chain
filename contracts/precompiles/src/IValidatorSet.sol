@@ -16,6 +16,15 @@ interface IValidatorSet {
     /// Emitted when a validator is forced to exit because of a severe fault.
     event ValidatorForcedExit(address indexed validator, uint64 atHeight);
 
+    /// Emitted when a validator is JAILED (slashed + frozen) on a felony, instead
+    /// of being force-exited. It is dropped from the next reshare and may later
+    /// unjail (→ PENDING → ACTIVE) or unstake out.
+    event ValidatorJailed(address indexed validator, uint64 atHeight);
+
+    /// Emitted when a JAILED validator calls unjailValidator() and returns to
+    /// PENDING (then ACTIVE via the next reshare).
+    event ValidatorUnjailed(address indexed validator, uint64 atHeight);
+
     /// Emitted on epoch transition.
     event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);
 
@@ -73,5 +82,10 @@ interface IValidatorSet {
     function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
     function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
     function deactivateValidator(address validatorAddress) external;
+    /// Stale-join guard: a PENDING joiner confirms on-chain that its node has
+    /// caught up to head and may be frozen into the next DKG reshare target.
+    /// Caller must be the validator itself and currently PENDING. Until called,
+    /// a staked joiner stays PENDING and is excluded from the reshare target.
+    function confirmValidatorReady() external;
     function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
 }

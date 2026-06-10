@@ -2081,6 +2081,7 @@ impl ApplicationShared {
             round,
             &context.leader,
             self.chain_id,
+            self.proposer_evm_address.is_none(),
             &self.certificate_scheme_provider,
             &self.committee_provider,
             &self.dkg_manager,
@@ -2441,11 +2442,24 @@ async fn validate_header_consensus_artifacts(
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
+    is_verifier: bool,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
     ancestry: &impl AncestryReader,
 ) -> Result<(), String> {
+    // Finalized-follower rule: a share-less verifier (a TEE full-node, no
+    // `proposer_evm_address`) does NOT validate live proposals — it follows
+    // FINALIZED blocks, whose threshold certificate is verified by the reporter
+    // against the GROUP public key (preserved across reshares). The leader-binding
+    // and DKG-boundary checks below are polynomial/DKG-view-dependent and would
+    // diverge on a verifier's stale post-rotation state, so they are skipped here;
+    // consensus safety for the follower comes from the finalization certificate, not
+    // from re-deriving the live proposal's leader. The verifier never votes (`me()`
+    // is None), so accepting the proposal here cannot affect the committee's quorum.
+    if is_verifier {
+        return Ok(());
+    }
     validate_rewards_beneficiary(block)?;
     validate_system_tx_leader_binding(
         block,
@@ -3424,6 +3438,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3462,6 +3477,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3479,6 +3495,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3845,6 +3862,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3858,6 +3876,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3886,6 +3905,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,

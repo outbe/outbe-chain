@@ -114,7 +114,7 @@ fn test_slash_proposer_felony() {
 
         // Validator must be forced out
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
 
         // Stake must be reduced (5% slashed from 1_000_000)
         let staking = Staking::new(storage.clone());
@@ -123,6 +123,41 @@ fn test_slash_proposer_felony() {
         assert_eq!(
             remaining, expected,
             "stake should be 95% of original after 5% slash"
+        );
+    });
+}
+
+#[test]
+fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
+    // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
+    // ACTIVE→EXITING / PENDING→REGISTERED when stake drops below min_stake, but a
+    // JAILED status matches neither arm, so a JAILED validator stays JAILED even
+    // when the slash takes it below min_stake.
+    with_storage(|storage| {
+        let stake = U256::from(1_000u64);
+        register_and_activate_with_stake(storage.clone(), VAL_A, 2, stake);
+        // min_stake == current stake, so the 5% slash lands below it.
+        Staking::new(storage.clone())
+            .config_min_stake
+            .write(stake)
+            .unwrap();
+
+        let mut si = SlashIndicator::new(storage.clone());
+        si.config_proposer_felony_threshold.write(150).unwrap();
+        for _ in 0..150 {
+            si.slash_proposer(VAL_A).unwrap();
+        }
+
+        // 5% slash of 1_000 = 950 < min_stake(1_000).
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+            U256::from(950u64)
+        );
+        let vs = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            vs.val_status.read(&VAL_A).unwrap(),
+            status::JAILED,
+            "jail-before-slash must keep JAILED even when the slash drops below min_stake"
         );
     });
 }
@@ -277,7 +312,7 @@ fn test_evidence_reward() {
 
         // Verify felony applied
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
 
         // Verify evidence reward paid to submitter
         // slashed = 1_000_000 * 5 / 100 = 50_000
@@ -333,7 +368,7 @@ fn test_conflicting_vote_evidence() {
 
         // Verify felony applied
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
 
         // Verify evidence reward
         // slashed = 2_000_000 * 5 / 100 = 100_000
@@ -452,7 +487,9 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(validator, U256::from(1_000_000u64))
             .unwrap();
 
-        // Stake enough to meet min_stake → auto-activates
+        // Stake to meet min_stake → PENDING (PoS lifecycle), then activate so the
+        // felony has an ACTIVE consensus participant to act on (the DKG reshare
+        // normally promotes PENDING→ACTIVE; use the owner-manual path in the test).
         staking
             .stake(validator, validator, U256::from(10_000u64))
             .unwrap();
@@ -460,8 +497,10 @@ fn test_full_lifecycle_integration() {
         // A-05: slash_stake burns from STAKING_ADDRESS — fund it for the test.
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::ACTIVE);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
+        vs.activate_validator(validator).unwrap();
         vs.val_has_bls_share.write(&validator, true).unwrap();
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::ACTIVE);
         assert_eq!(staking.get_stake(validator).unwrap(), U256::from(10_000u64));
 
         // 4. Record proposer blocks
@@ -478,7 +517,7 @@ fn test_full_lifecycle_integration() {
         }
 
         // 6. Verify forced exit
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
 
         // Stake reduced by 5%: 10_000 * 95 / 100 = 9_500
@@ -491,13 +530,14 @@ fn test_full_lifecycle_integration() {
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
     });
 
-    // 8. There is no recovery branch. Validator remains EXITING
-    // until DKG excludes it and Staking completes unbonding.
+    // 8. On a felony the validator is JAILED (not force-exited). It remains
+    // JAILED until the operator unjails (-> PENDING) or unstakes out; DKG drops
+    // it from the committee at the next reshare regardless.
     storage.set_timestamp(U256::from(200_000u64));
     StorageHandle::enter(&mut storage, |storage| {
         let validator = VAL_A;
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::JAILED);
     });
 }
 
@@ -526,7 +566,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
-        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::EXITING);
+        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
 
         // 1_000_000 stake slashed by 5% → 950_000.
         let staking = Staking::new(storage.clone());

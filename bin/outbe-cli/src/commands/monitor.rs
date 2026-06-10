@@ -138,6 +138,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
                     3 => "Exiting",
                     4 => "Unbonding",
                     5 => "Inactive",
+                    6 => "Jailed",
                     _ => "Unknown",
                 };
                 println!(
@@ -363,6 +364,7 @@ fn interpret_validator_status(status: u8) -> (&'static str, bool) {
         3 => ("exiting", false),
         4 => ("unbonding", false),
         5 => ("inactive", false),
+        6 => ("jailed", false),
         _ => ("unknown", false),
     }
 }

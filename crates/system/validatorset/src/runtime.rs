@@ -13,6 +13,14 @@ use crate::schema::ValidatorSet;
 ///
 /// Lifecycle: Registered → Pending → Active → Exiting → Unbonding → Inactive.
 ///
+/// JAILED branches off the active path on a consensus/oracle felony: instead of
+/// being force-exited out of the registry, the validator is slashed and frozen in
+/// JAILED. It keeps its current-epoch consensus accountability until the next
+/// reshare drops it (same as EXITING — a member cannot leave a threshold committee
+/// mid-epoch), then it stops voting. From JAILED there are two exits:
+///   - return: `unjailValidator()` (self, stake ≥ min_stake, cooldown) → PENDING →
+///     (confirm-ready + reshare) → ACTIVE;
+///   - leave: unstake the full stake → EXITING → UNBONDING → INACTIVE.
 pub mod status {
     pub const REGISTERED: u8 = 0;
     pub const PENDING: u8 = 1;
@@ -20,6 +28,9 @@ pub mod status {
     pub const EXITING: u8 = 3;
     pub const UNBONDING: u8 = 4;
     pub const INACTIVE: u8 = 5;
+    /// Punished (felony) + frozen: slashed, removed from the next committee, but
+    /// retained in the registry pending unjail (→ PENDING) or unstake (→ exit).
+    pub const JAILED: u8 = 6;
 }
 
 /// A fully-hydrated validator record read from storage.
@@ -42,7 +53,16 @@ pub struct ValidatorRecord {
 
 impl ValidatorSet<'_> {
     fn is_current_consensus_participant_status(validator_status: u8, has_bls_share: bool) -> bool {
-        matches!(validator_status, status::ACTIVE | status::EXITING) && has_bls_share
+        // JAILED is included alongside ACTIVE/EXITING: a just-jailed validator is
+        // still cryptographically in the live committee (its share is only cleared
+        // at the next reshare), so it remains accountable — and `record_proposer` /
+        // `record_participation` would Fatal if a current-committee member that was
+        // jailed mid-epoch were rejected here. JAILED stops counting once the reshare
+        // clears its share (then `has_bls_share == false`), exactly like EXITING.
+        matches!(
+            validator_status,
+            status::ACTIVE | status::EXITING | status::JAILED
+        ) && has_bls_share
     }
 
     /// Reads the 48-byte BLS MinPk consensus pubkey from two storage slots.
@@ -115,6 +135,71 @@ impl ValidatorSet<'_> {
         Ok(all
             .into_iter()
             .filter(|v| v.status == status::ACTIVE)
+            .collect())
+    }
+
+    /// Returns validators eligible to be in the NEXT consensus committee — the DKG
+    /// reshare target / `next_players` set: `status ∈ {ACTIVE, PENDING}`. ACTIVE
+    /// members stay; PENDING members are staked joiners awaiting their first share.
+    /// EXITING validators are excluded (a reshare removes them). This is distinct
+    /// from [`Self::get_active_validators`] (voting set, ACTIVE-only): a PENDING
+    /// joiner must be in the reshare target so the ceremony grants it a share and
+    /// [`Self::activate_reshared_set`] promotes it PENDING→ACTIVE.
+    pub fn get_reshare_target_set(&self) -> Result<Vec<ValidatorRecord>> {
+        let all = self.get_all_validators()?;
+        let mut target = Vec::new();
+        for v in all {
+            let include = match v.status {
+                status::ACTIVE => true,
+                // Stale-join guard: a PENDING joiner enters the reshare target
+                // only after it has confirmed on-chain that its node caught up
+                // to head (`confirmValidatorReady()`). An unconfirmed joiner is
+                // deferred to a later reshare so a behind/stale node is never
+                // frozen into the ceremony and flipped ACTIVE before it can vote.
+                status::PENDING => self.val_join_confirmed.read(&v.validator_address)?,
+                _ => false,
+            };
+            if include {
+                target.push(v);
+            }
+        }
+        Ok(target)
+    }
+
+    /// Returns validators with `status == PENDING` — staked joiners admitted to the
+    /// validator set but not yet granted a threshold share. Used to admit them to
+    /// consensus P2P as SECONDARY peers so they can sync to head before the reshare
+    /// that makes them signers; they are NOT consensus participants (no share).
+    pub fn get_pending_validators(&self) -> Result<Vec<ValidatorRecord>> {
+        let all = self.get_all_validators()?;
+        Ok(all
+            .into_iter()
+            .filter(|v| v.status == status::PENDING)
+            .collect())
+    }
+
+    /// Returns validators admitted to consensus P2P as non-voting SECONDARY peers so
+    /// they sync to head: `status ∈ {REGISTERED, PENDING}`. This is the
+    /// TEE full-node admission: a REGISTERED node (registered +
+    /// P2P-announced + enclave-registered, but NOT yet staked) syncs and executes
+    /// offer blocks as a verifier WITHOUT voting; a PENDING joiner is the staked case
+    /// on its way to ACTIVE. Voting requires `has_bls_share` (granted only by a
+    /// reshare), so admitting these peers cannot affect consensus. Distinct from
+    /// [`Self::get_reshare_target_set`] ({ACTIVE, PENDING}) — REGISTERED nodes are not
+    /// staked and must NOT receive a threshold share. Peers without a registered P2P
+    /// address are dropped downstream (the address read yields `Missing`).
+    pub fn get_admitted_non_consensus_validators(&self) -> Result<Vec<ValidatorRecord>> {
+        let all = self.get_all_validators()?;
+        Ok(all
+            .into_iter()
+            .filter(|v| {
+                // JAILED nodes stay admitted as non-voting followers: once the
+                // reshare clears their share they keep syncing to head so the
+                // operator can later unjail (re-confirm + rejoin) or unstake out.
+                v.status == status::REGISTERED
+                    || v.status == status::PENDING
+                    || v.status == status::JAILED
+            })
             .collect())
     }
 
@@ -438,11 +523,73 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
+    /// Marks a REGISTERED validator as PENDING — staked and admitted to the
+    /// validator set, but NOT yet a consensus participant (no threshold share).
+    ///
+    /// This is the staking entrypoint (PoS): reaching `min_stake` moves a validator
+    /// REGISTERED→PENDING (not directly ACTIVE). The validator then syncs to head and
+    /// is included in the next DKG reshare target; only when the reshare grants it a
+    /// share does [`Self::activate_reshared_set`] promote it PENDING→ACTIVE. Signals
+    /// `pending_set_change` so consensus schedules that reshare. Idempotent for a
+    /// validator already PENDING/ACTIVE.
+    pub fn mark_pending(&mut self, addr: Address) -> Result<()> {
+        let index = self.address_to_index.read(&addr)?;
+        if index == 0 {
+            return Err(PrecompileError::Revert("validator not registered".into()));
+        }
+        let current_status = self.val_status.read(&addr)?;
+        // Only a freshly-REGISTERED validator transitions to PENDING. A validator
+        // already PENDING or ACTIVE is left untouched (no spurious churn / no
+        // demotion of an active validator on a top-up stake).
+        if current_status != status::REGISTERED {
+            return Ok(());
+        }
+        self.val_status.write(&addr, status::PENDING)?;
+        // A freshly-staked joiner has NOT yet confirmed it caught up to head, so
+        // it is not eligible for the reshare target until `confirmValidatorReady()`
+        // (stale-join guard). Reset here so a re-staked validator must re-confirm.
+        self.val_join_confirmed.write(&addr, false)?;
+        // Signal consensus to include this validator in the next reshare target.
+        self.pending_set_change.write(true)?;
+
+        crate::metrics::record_validator_status(addr, status::PENDING);
+        crate::metrics::record_pending_set_change(true);
+
+        Ok(())
+    }
+
+    /// Stale-join guard: a PENDING joiner confirms, on-chain, that its node has
+    /// caught up to head and is ready to be frozen into the next DKG reshare
+    /// target. The operator sends this only after `outbe_syncStatus` shows the
+    /// node at the finalized tip; until then the joiner stays PENDING and is
+    /// excluded from [`Self::get_reshare_target_set`]. Caller must be the
+    /// validator itself and currently PENDING.
+    pub fn confirm_validator_ready(&mut self, caller: Address) -> Result<()> {
+        let index = self.address_to_index.read(&caller)?;
+        if index == 0 {
+            return Err(PrecompileError::Revert("validator not registered".into()));
+        }
+        let current_status = self.val_status.read(&caller)?;
+        if current_status != status::PENDING {
+            return Err(PrecompileError::Revert(format!(
+                "confirmValidatorReady requires PENDING status, got {current_status}"
+            )));
+        }
+        self.val_join_confirmed.write(&caller, true)?;
+        // Re-signal so consensus schedules a reshare now that a confirmed joiner
+        // is eligible (the stake-time signal may already have lapsed).
+        self.pending_set_change.write(true)?;
+        crate::metrics::record_pending_set_change(true);
+        Ok(())
+    }
+
     /// Activates a registered validator (sets status to ACTIVE).
     ///
     /// A-21: Only REGISTERED and PENDING statuses are allowed as source states.
     /// Also signals `pending_set_change` so the consensus layer triggers a DKG
-    /// reshare to include the newly-activated validator.
+    /// reshare to include the newly-activated validator. Retained for owner/manual
+    /// activation; the normal PoS path is [`Self::mark_pending`] →
+    /// [`Self::activate_reshared_set`].
     pub fn activate_validator(&mut self, addr: Address) -> Result<()> {
         let index = self.address_to_index.read(&addr)?;
         if index == 0 {
@@ -534,6 +681,28 @@ impl ValidatorSet<'_> {
     /// successful reshare. Stake withdrawal is handled by Staking after the
     /// validator reaches UNBONDING.
     pub fn force_exit_validator(&mut self, addr: Address) -> Result<()> {
+        self.punish_validator(addr, false)
+    }
+
+    /// Jails a validator for a severe consensus/oracle fault (felony). Unlike
+    /// [`Self::force_exit_validator`], the validator is NOT removed from the
+    /// registry: it is frozen in JAILED, excluded from the next reshare target
+    /// (so the reshare clears its share), and may later return via
+    /// `unjailValidator` (→ PENDING → ACTIVE) or leave via a full unstake
+    /// (→ EXITING → UNBONDING → INACTIVE). The slash itself is applied by the
+    /// caller AFTER this call (slash_stake leaves a JAILED status untouched).
+    /// Increments `slash_count` (mirrors force-exit). Idempotent for JAILED.
+    pub fn jail_validator(&mut self, addr: Address) -> Result<()> {
+        self.punish_validator(addr, true)
+    }
+
+    /// Shared punitive transition for [`Self::force_exit_validator`] (`jail =
+    /// false` → ACTIVE→EXITING, the validator leaves the registry via UNBONDING)
+    /// and [`Self::jail_validator`] (`jail = true` → ACTIVE→JAILED, the validator
+    /// is frozen in the registry). Both signal a reshare, bump `slash_count`, and
+    /// are idempotent on the already-punished status; the only differences are the
+    /// target status, the `val_jailed_at_height` write, and the emitted events.
+    fn punish_validator(&mut self, addr: Address, jail: bool) -> Result<()> {
         let index = self.address_to_index.read(&addr)?;
         if index == 0 {
             return Err(PrecompileError::Revert("validator not registered".into()));
@@ -541,14 +710,22 @@ impl ValidatorSet<'_> {
 
         let current_status = self.val_status.read(&addr)?;
         let block_number = self.storage.block_number()?;
+        let (target, target_label, action) = if jail {
+            (status::JAILED, "JAILED", "jail")
+        } else {
+            (status::EXITING, "EXITING", "force-exit")
+        };
 
         match current_status {
             status::ACTIVE => {
-                self.val_status.write(&addr, status::EXITING)?;
+                self.val_status.write(&addr, target)?;
+                if jail {
+                    self.val_jailed_at_height.write(&addr, block_number)?;
+                }
                 self.val_deactivated_at_height.write(&addr, block_number)?;
                 self.pending_set_change.write(true)?;
 
-                crate::metrics::record_validator_status(addr, status::EXITING);
+                crate::metrics::record_validator_status(addr, target);
                 crate::metrics::record_validator_force_exit(addr);
                 crate::metrics::record_pending_set_change(true);
 
@@ -557,54 +734,50 @@ impl ValidatorSet<'_> {
                     block_number,
                     validator: format!("{addr:?}"),
                     status_before: "ACTIVE".into(),
-                    status_after: "EXITING".into(),
+                    status_after: target_label.into(),
                 });
 
                 warn!(
                     target: "outbe::validatorset",
-                    event = "validator_force_exit",
+                    event = if jail { "validator_jailed" } else { "validator_force_exit" },
                     validator = %addr,
-                    status_before = "ACTIVE",
-                    status_after = "EXITING",
+                    status_after = target_label,
                     block_number,
-                    "validator force-exited from ACTIVE",
+                    "validator punished from ACTIVE (force-exit/jail)",
                 );
 
-                self.emit(IValidatorSet::ValidatorDeactivated {
+                if jail {
+                    self.emit(IValidatorSet::ValidatorJailed {
+                        validator: addr,
+                        atHeight: block_number,
+                    })?;
+                } else {
+                    self.emit(IValidatorSet::ValidatorDeactivated {
+                        validator: addr,
+                        atHeight: block_number,
+                    })?;
+                    self.emit(IValidatorSet::ValidatorForcedExit {
+                        validator: addr,
+                        atHeight: block_number,
+                    })?;
+                }
+            }
+            // Idempotent re-signal of the already-jailed validator (jail path only).
+            status::JAILED if jail => {
+                self.pending_set_change.write(true)?;
+                let height = self.val_jailed_at_height.read(&addr)?;
+                self.emit(IValidatorSet::ValidatorJailed {
                     validator: addr,
-                    atHeight: block_number,
-                })?;
-                self.emit(IValidatorSet::ValidatorForcedExit {
-                    validator: addr,
-                    atHeight: block_number,
+                    atHeight: height,
                 })?;
             }
+            // Already EXITING: re-emit the force-exit signal. For the jail path a
+            // leaver is NOT pulled back into JAILED — it stays EXITING.
             status::EXITING => {
                 self.pending_set_change.write(true)?;
                 let height = self.val_deactivated_at_height.read(&addr)?;
-
                 crate::metrics::record_validator_force_exit(addr);
                 crate::metrics::record_pending_set_change(true);
-
-                journal_record(JournalRecord::ValidatorForcedExit {
-                    wall_clock: iso8601_now(),
-                    block_number,
-                    validator: format!("{addr:?}"),
-                    status_before: "EXITING".into(),
-                    status_after: "EXITING".into(),
-                });
-
-                warn!(
-                    target: "outbe::validatorset",
-                    event = "validator_force_exit",
-                    validator = %addr,
-                    status_before = "EXITING",
-                    status_after = "EXITING",
-                    deactivated_at_height = height,
-                    block_number,
-                    "validator already EXITING; re-emitting force-exit signal",
-                );
-
                 self.emit(IValidatorSet::ValidatorForcedExit {
                     validator: addr,
                     atHeight: height,
@@ -614,16 +787,16 @@ impl ValidatorSet<'_> {
                 // Already excluded from consensus.
                 info!(
                     target: "outbe::validatorset",
-                    event = "validator_force_exit_noop",
+                    event = "validator_punish_noop",
                     validator = %addr,
                     status = current_status,
                     block_number,
-                    "force-exit no-op: validator already in UNBONDING or INACTIVE",
+                    "punish no-op: validator already in UNBONDING or INACTIVE",
                 );
             }
             _ => {
                 return Err(PrecompileError::Revert(format!(
-                    "cannot force-exit validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
+                    "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
                 )));
             }
         }
@@ -632,6 +805,58 @@ impl ValidatorSet<'_> {
         self.val_slash_count.write(&addr, sc + 1)?;
 
         Ok(())
+    }
+
+    /// Unjails a JAILED validator back to PENDING. Called by Staking's
+    /// `unjailValidator` (which first verifies the caller's stake ≥ min_stake);
+    /// the caller must be the validator itself. Enforces the unjail cooldown,
+    /// resets the stale-join readiness flag (the node must re-confirm before the
+    /// next reshare) and the per-epoch miss metrics, and signals a reshare so the
+    /// normal PENDING → ACTIVE promotion runs.
+    pub fn unjail_to_pending(&mut self, addr: Address) -> Result<()> {
+        let index = self.address_to_index.read(&addr)?;
+        if index == 0 {
+            return Err(PrecompileError::Revert("validator not registered".into()));
+        }
+        let current_status = self.val_status.read(&addr)?;
+        if current_status != status::JAILED {
+            return Err(PrecompileError::Revert(format!(
+                "unjailValidator requires JAILED status, got {current_status}"
+            )));
+        }
+        let block_number = self.storage.block_number()?;
+        let jailed_at = self.val_jailed_at_height.read(&addr)?;
+        let cooldown = self.unjail_cooldown_blocks()?;
+        let ready_at = jailed_at.saturating_add(cooldown);
+        if block_number < ready_at {
+            return Err(PrecompileError::Revert(format!(
+                "unjail cooldown not elapsed: jailed_at {jailed_at} + cooldown {cooldown} = {ready_at}, current {block_number}"
+            )));
+        }
+
+        self.val_status.write(&addr, status::PENDING)?;
+        self.val_jailed_at_height.write(&addr, 0)?;
+        // Re-joining via PENDING: must re-confirm readiness (stale-join guard) and
+        // start from a clean per-epoch miss slate so stale counts cannot trip a
+        // felony immediately on return.
+        self.val_join_confirmed.write(&addr, false)?;
+        self.val_missed_blocks.write(&addr, 0)?;
+        self.val_missed_votes.write(&addr, 0)?;
+        self.pending_set_change.write(true)?;
+
+        crate::metrics::record_validator_status(addr, status::PENDING);
+        crate::metrics::record_pending_set_change(true);
+
+        self.emit(IValidatorSet::ValidatorUnjailed {
+            validator: addr,
+            atHeight: block_number,
+        })?;
+        Ok(())
+    }
+
+    /// Unjail cooldown in blocks (default 0 — immediate unjail allowed).
+    pub fn unjail_cooldown_blocks(&self) -> Result<u64> {
+        self.config_unjail_cooldown_blocks.read()
     }
 
     /// Called by consensus after DKG reshare completes.
@@ -672,6 +897,9 @@ impl ValidatorSet<'_> {
                 status::REGISTERED | status::PENDING => {
                     self.val_status.write(&addr, status::ACTIVE)?;
                     self.val_has_bls_share.write(&addr, true)?;
+                    // Clear the stale-join guard now that the joiner is ACTIVE; a
+                    // future re-stake (PENDING again) must re-confirm readiness.
+                    self.val_join_confirmed.write(&addr, false)?;
                 }
                 status::ACTIVE => {
                     self.val_has_bls_share.write(&addr, true)?;
@@ -874,7 +1102,12 @@ impl ValidatorSet<'_> {
             // Only reset counters for validators that accumulate them.
             // A-44: Include EXITING — they still participate in consensus
             // until reshare completes and accumulate per-epoch counters.
-            if v.status != status::ACTIVE && v.status != status::EXITING {
+            // JAILED is likewise still in the live committee until the next
+            // reshare clears its share, so reset its counters too.
+            if v.status != status::ACTIVE
+                && v.status != status::EXITING
+                && v.status != status::JAILED
+            {
                 continue;
             }
             let addr = v.validator_address;
@@ -965,6 +1198,11 @@ impl ValidatorSet<'_> {
         self.val_has_bls_share.write(addr, false)?;
         self.val_p2p_address_version.write(addr, 0)?;
         self.val_p2p_address_payload.get_bytes(addr).clear()?;
+        // Stale-join + jail per-validator state must be cleared too, so a future
+        // re-registration at the same address starts clean (a leaked
+        // `val_join_confirmed = true` would bypass the stale-join guard).
+        self.val_join_confirmed.write(addr, false)?;
+        self.val_jailed_at_height.write(addr, 0)?;
         Ok(())
     }
 

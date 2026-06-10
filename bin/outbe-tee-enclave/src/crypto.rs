@@ -38,6 +38,10 @@ const OFFER_SEED_INFO_PREFIX: &[u8] = b"outbe/tribute/v1/";
 /// offer encryption so a share key can never be derived as an offer key.
 const DKG_SHARE_INFO: &[u8] = b"outbe/tee/dkg-share/v1";
 
+/// HKDF `info` for the deterministic registry-seal nonce, distinct from the AEAD
+/// key derivation so the nonce cannot collide with the key.
+const REGISTRY_NONCE_INFO: &[u8] = b"outbe/tee/registry-seal-nonce/v1";
+
 /// Single-use nonce provider for ring's `BoundKey` API. Replicated locally
 /// (mirrors `outbe_primitives::crypto::OneNonce`) to keep enclave dependencies
 /// minimal for reproducible `MRENCLAVE`.
@@ -239,6 +243,41 @@ pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<Encry
     })
 }
 
+/// DETERMINISTIC seal of `plaintext` to `recipient_pub`, suitable for committing
+/// the sealed blob ON-CHAIN (an encrypted-seed analog):
+/// every enclave holding the same `sender_static_secret` (the resident offer key's
+/// X25519 secret, identical across the committee) produces a BYTE-IDENTICAL
+/// [`EncryptedShare`] for the same recipient + plaintext, so the result can be a
+/// consensus-validated on-chain artifact.
+///
+/// Unlike [`encrypt_share`] (random ephemeral key + random nonce), this uses
+/// static-static ECDH between the sender's static secret and the recipient's
+/// static public, and derives the nonce from the shared secret — NO RNG. The
+/// recipient opens it with the UNCHANGED [`decrypt_share`] using its own X25519
+/// secret and the sender's static public (carried in `ephemeral_pub`, which equals
+/// the on-chain `tribute_offer_public_key`). The fixed-per-pair nonce is safe: the
+/// AEAD key is unique per (offer-key epoch, recipient) because the offer secret
+/// rotates with the key epoch and `recipient_pub` salts both key and nonce.
+pub fn encrypt_share_deterministic(
+    sender_static_secret: &[u8; 32],
+    recipient_pub: &[u8; 32],
+    plaintext: &[u8],
+) -> Result<EncryptedShare> {
+    let sender = StaticSecret::from(*sender_static_secret);
+    let sender_pub = PublicKey::from(&sender).to_bytes();
+    let shared = sender.diffie_hellman(&PublicKey::from(*recipient_pub));
+    let key = hkdf_sha256(recipient_pub, shared.as_bytes(), DKG_SHARE_INFO)?;
+    let nonce_okm = hkdf_sha256(recipient_pub, shared.as_bytes(), REGISTRY_NONCE_INFO)?;
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&nonce_okm[..12]);
+    let ciphertext = chacha20poly1305_encrypt(&key, &nonce, plaintext)?;
+    Ok(EncryptedShare {
+        ephemeral_pub: sender_pub,
+        nonce,
+        ciphertext,
+    })
+}
+
 /// Open a share sealed by [`encrypt_share`] with the recipient's X25519 private
 /// key. The salt (`recipient_pub`) is recomputed from `recipient_secret`, so it
 /// matches the sealer without being transmitted.
@@ -259,6 +298,36 @@ pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The deterministic registry seal must be byte-identical across calls (so every
+    /// committee enclave commits the same on-chain blob) and must round-trip through
+    /// the UNCHANGED `decrypt_share` using only the recipient's secret.
+    #[test]
+    fn encrypt_share_deterministic_is_byte_identical_and_roundtrips() {
+        let offer_secret = [7u8; 32];
+        let recipient_secret = [9u8; 32];
+        let recipient_pub = x25519_public(&recipient_secret);
+        let plaintext = b"resident group signature bytes";
+
+        let a = encrypt_share_deterministic(&offer_secret, &recipient_pub, plaintext).unwrap();
+        let b = encrypt_share_deterministic(&offer_secret, &recipient_pub, plaintext).unwrap();
+        assert_eq!(
+            a.to_bytes(),
+            b.to_bytes(),
+            "deterministic seal must be byte-identical for on-chain commit"
+        );
+
+        // `ephemeral_pub` carries the sender's STATIC public = the offer public key,
+        // so the recipient (with only its own secret) opens it via decrypt_share.
+        assert_eq!(a.ephemeral_pub, x25519_public(&offer_secret));
+        let opened = decrypt_share(&recipient_secret, &a).unwrap();
+        assert_eq!(opened.as_slice(), plaintext);
+
+        // Different recipient → different blob (key + nonce both salted by recipient).
+        let other_pub = x25519_public(&[11u8; 32]);
+        let c = encrypt_share_deterministic(&offer_secret, &other_pub, plaintext).unwrap();
+        assert_ne!(a.to_bytes(), c.to_bytes());
+    }
 
     /// Encrypt as a client would (ephemeral_secret x tribute_offer_public), then decrypt
     /// in the enclave (tribute_offer_secret x ephemeral_public). Proves the ECDHE+HKDF+

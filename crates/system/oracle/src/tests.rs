@@ -588,7 +588,7 @@ mod oracle_tests {
             // Validator should be force-exited (check via ValidatorSet)
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             let info = vs.get_validator(v1).unwrap().unwrap();
-            assert_eq!(info.status, outbe_validatorset::logic::status::EXITING);
+            assert_eq!(info.status, outbe_validatorset::logic::status::JAILED);
         });
     }
 
@@ -652,7 +652,7 @@ mod oracle_tests {
             oracle.increment_miss(&validator).unwrap();
 
             let err = crate::tally::slash_and_reset_counters(&mut oracle, 10_000).unwrap_err();
-            assert!(err.to_string().contains("cannot force-exit validator"));
+            assert!(err.to_string().contains("cannot jail validator"));
 
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             assert_eq!(staking.stake_amount.read(&validator).unwrap(), stake);

@@ -39,6 +39,10 @@ pub fn dispatch(
                 reject_value(&value)?;
                 mutate_void(c, caller, |sender, _c| staking.claim_unbonded(sender))
             }
+            unjailValidator(c) => {
+                reject_value(&value)?;
+                mutate_void(c, caller, |sender, _c| staking.unjail_validator(sender))
+            }
             getStake(c) => view(c, |c| staking.get_stake(c.validator)),
             getTotalStaked(_) => {
                 metadata::<IStaking::getTotalStakedCall>(|| staking.get_total_staked())

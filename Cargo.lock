@@ -6845,6 +6845,7 @@ dependencies = [
  "outbe-common",
  "outbe-primitives",
  "outbe-rpc",
+ "outbe-tee",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -7605,6 +7606,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
 ]
 
 [[package]]

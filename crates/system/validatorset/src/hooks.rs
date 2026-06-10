@@ -77,8 +77,28 @@ pub fn record_finalized_participation(
     }
     vs.record_finalized_participation(voters, absent)?;
     vs.finalized_participation_recorded.write(&fb_hash, true)?;
+
+    // Prune ring: bound the guard (slot 30) to the last
+    // FINALIZED_PARTICIPATION_RETAIN finalized blocks. A finalized block older than
+    // the K-block late-finalize window can never be replayed, so clearing the guard
+    // flag of the block RETAIN records ago reclaims its slot without weakening the
+    // replay protection for any block still inside the window.
+    let seq = vs.finalized_participation_ring_seq.read()?;
+    let idx = seq % FINALIZED_PARTICIPATION_RETAIN;
+    let evicted = vs.finalized_participation_ring.read(&idx)?;
+    if evicted != B256::ZERO && evicted != fb_hash {
+        vs.finalized_participation_recorded.write(&evicted, false)?;
+    }
+    vs.finalized_participation_ring.write(&idx, fb_hash)?;
+    vs.finalized_participation_ring_seq.write(seq + 1)?;
     Ok(())
 }
+
+/// Number of recent finalized blocks whose participation guard (slot 30) stays
+/// live. The replay horizon is the K-block late-finalize window, so retaining the
+/// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous; older guard flags are
+/// pruned by [`record_finalized_participation`]. Changing it is a hard fork.
+pub const FINALIZED_PARTICIPATION_RETAIN: u64 = 64;
 
 /// Called from post-execution after a DKG/reshare ceremony completes:
 /// activates the reshared validator set and updates the group public key.
