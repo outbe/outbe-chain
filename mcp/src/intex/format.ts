@@ -14,7 +14,17 @@ function label(table: string[], code: number | bigint): { code: number; name: st
   return { code: c, name: table[c] ?? `unknown(${c})` };
 }
 
-export const auctionStage = (code: number | bigint) => label(AUCTION_STAGE, code);
+// Short clarifications for non-obvious auction stages. The name stays exactly as
+// the contract enum; the note only explains it.
+const AUCTION_STAGE_NOTE: Record<number, string> = {
+  2: "reveal window ended, awaiting clearing", // Issuance
+};
+
+export const auctionStage = (code: number | bigint) => {
+  const base = label(AUCTION_STAGE, code);
+  const note = AUCTION_STAGE_NOTE[base.code];
+  return note ? { ...base, note } : base;
+};
 export const intexState = (code: number | bigint) => label(INTEX_STATE, code);
 export const intexStatus = (code: number | bigint) => label(INTEX_STATUS, code);
 
