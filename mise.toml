@@ -4,12 +4,226 @@ rust = "1.96"                      # build outbe-chain + all crates
 foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI)
 
 # ── System deps ─────────────────────────────────── #
-# These must come from the system package manager — `mise run setup` checks them:
+# These must come from the system package manager:
 #   - gcc / clang   (C/C++ toolchain for native crates)
 #   - openssl       (linked by openssl-sys; pkg-config locates it)
 # macOS: `brew install openssl pkg-config` (clang ships with Xcode CLT)
-# Debian/Ubuntu: `sudo apt install build-essential clang libssl-dev pkg-config libc++-dev libc++abi-dev
+# Debian/Ubuntu: `sudo apt install build-essential clang libssl-dev pkg-config libc++-dev libc++abi-dev`
 
-"cargo:cargo-binstall" = "latest"
-"cargo:cargo-nextest"  = "latest"
-"cargo:cargo-deny"  = "latest"
+# ── Cargo tools ─────────────────────────────────────────────────────── #
+# Core tools needed by build/test/audit tasks. The heavier audit toolchain
+# (machete, udeps, geiger, bloat, llvm-lines, llvm-cov) is installed on
+# demand by `mise run audit-tools-install` to mirror the old Makefile.
+"cargo:cargo-binstall"  = "latest"
+"cargo:cargo-nextest"   = "latest"
+"cargo:cargo-deny"      = "latest"
+"cargo:cargo-auditable" = "latest"
+"cargo:cargo-audit"     = "latest"
+
+[env]
+# Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
+OUT_DIR            = "/tmp/outbe-testnet"
+VALIDATORS         = "4"
+OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
+# SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
+
+# ─── Build ──────────────────────────────────────────────────────────── #
+
+[tasks.build]
+description = "Build the workspace (debug, cargo auditable)"
+run = "cargo auditable build"
+
+[tasks.build-release]
+description = "Build the workspace (release, cargo auditable)"
+run = "cargo auditable build --release"
+
+# ─── Format / Lint ──────────────────────────────────────────────────── #
+
+[tasks.fmt]
+description = "Format all Rust code"
+run = "cargo fmt --all"
+
+[tasks.fmt-check]
+description = "Check formatting without writing changes"
+run = "cargo fmt --all --check"
+
+[tasks.lint]
+description = "Run clippy on all crates (-D warnings)"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks.check]
+description = "Type-check the workspace"
+run = "cargo check --workspace"
+
+# ─── Test ───────────────────────────────────────────────────────────── #
+
+[tasks.test]
+description = "Run the default test suite (cargo nextest run + cargo test --doc)"
+run = [
+  "cargo nextest run --workspace",
+  "cargo test --doc --workspace",
+]
+
+[tasks.test-doc]
+description = "Run workspace doctests only (nextest skips doctests)"
+run = "cargo test --doc --workspace"
+
+[tasks.test-consensus]
+description = "Run consensus crate tests via nextest"
+run = "cargo nextest run -p outbe-consensus"
+
+[tasks.nextest-install]
+description = "Install cargo-nextest locally (one-shot helper)"
+run = "cargo install --locked cargo-nextest"
+
+# ─── Audit (RustSec on built binaries) ──────────────────────────────── #
+
+[tasks.audit]
+description = "Audit debug binaries for known vulnerabilities"
+depends = ["build"]
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+
+[tasks.audit-release]
+description = "Audit release binaries for known vulnerabilities"
+depends = ["build-release"]
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit bin {} \\;"
+
+# ─── Audit toolchain (rust-module-audit skill entry points) ─────────── #
+
+[tasks.audit-tools-install]
+description = "Install full cargo audit toolchain + nightly + miri/llvm components"
+run = [
+  "cargo install --locked cargo-nextest cargo-machete cargo-deny cargo-audit cargo-llvm-cov cargo-llvm-lines cargo-bloat",
+  "cargo install --locked cargo-udeps",
+  "cargo install cargo-geiger",
+  "rustup toolchain install nightly",
+  "rustup +nightly component add miri rust-src",
+  "rustup component add llvm-tools-preview clippy rustfmt",
+]
+
+[tasks.audit-quick]
+description = "Fast cycle: clippy -D warnings + cargo nextest run"
+run = [
+  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo nextest run --workspace",
+]
+
+[tasks.audit-full]
+description = "Full cycle: machete + deny + rustsec + udeps"
+depends = ["audit-machete", "audit-deny", "audit-rustsec", "audit-udeps"]
+
+[tasks.audit-deny]
+description = "cargo deny check (licenses, advisories, bans, sources)"
+run = "cargo deny check"
+
+[tasks.audit-rustsec]
+description = "cargo audit (RustSec workspace dependency advisories)"
+run = "cargo audit"
+
+[tasks.audit-machete]
+description = "cargo machete (unused workspace dependencies)"
+run = "cargo machete"
+
+[tasks.audit-udeps]
+description = "cargo +nightly udeps --workspace --all-targets"
+run = "cargo +nightly udeps --workspace --all-targets"
+
+[tasks.audit-miri]
+description = "cargo +nightly miri test --lib (UB / unsafe surface)"
+run = "cargo +nightly miri test --lib"
+
+[tasks.audit-geiger]
+description = "cargo geiger (unsafe surface count per crate)"
+run = "cargo geiger"
+
+[tasks.audit-bloat]
+description = "cargo bloat --release --crates -n 30"
+run = "cargo bloat --release --crates -n 30"
+
+[tasks.audit-llvm-lines]
+description = "cargo llvm-lines --release | head -50"
+run = "cargo llvm-lines --release | head -50"
+
+[tasks.audit-coverage]
+description = "cargo llvm-cov nextest --html (HTML coverage report)"
+run = "cargo llvm-cov nextest --workspace --html"
+
+[tasks.audit-bench]
+description = "cargo bench (criterion baseline; configure benches per crate)"
+run = "cargo bench --workspace"
+
+# ─── Localnet ───────────────────────────────────────────────────────── #
+
+[tasks.localnet-bootstrap]
+description = "Clean OUT_DIR and bootstrap a local validator set"
+run = """
+if [ -z "${SEED_FILE:-}" ]; then
+  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
+else
+  ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR" "$SEED_FILE"
+fi
+"""
+
+[tasks.localnet-start]
+description = "Start a bootstrapped localnet from OUT_DIR"
+run = """
+./scripts/run-testnet.sh start "$OUT_DIR"
+./scripts/run-testnet.sh status "$OUT_DIR"
+"""
+
+[tasks.localnet-stop]
+description = "Stop the localnet in OUT_DIR"
+run = './scripts/run-testnet.sh stop "$OUT_DIR"'
+
+[tasks.localnet-status]
+description = "Show localnet process status for OUT_DIR"
+run = './scripts/run-testnet.sh status "$OUT_DIR"'
+
+[tasks.localnet]
+description = "Build release + bootstrap + start localnet"
+run = """
+mise run build-release
+mise run localnet-bootstrap
+mise run localnet-start
+"""
+
+[tasks.localnet-restart]
+description = "Stop and start the bootstrapped localnet"
+run = """
+mise run localnet-stop
+mise run localnet-start
+"""
+
+[tasks.localnet-clean]
+description = "Remove all validator-*/ and pids/ from OUT_DIR"
+run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
+
+[tasks.localnet-chain244-smoke]
+description = "Build + run system-tx localnet smoke"
+run = 'OUTBE_CHAIN_BINARY="${OUTBE_CHAIN_BINARY:-./target/debug/outbe-chain}" VALIDATORS="$VALIDATORS" ./scripts/chain244-system-tx-smoke.sh "$OUT_DIR"'
+
+# ─── SGX / Benchmarks ───────────────────────────────────────────────── #
+
+# Hardware SGX smoke: build + sign + run the enclave under gramine-sgx and
+# assert real SGX execution + EGETKEY sealing. Requires gramine + SGX
+# hardware; no-op skip on non-SGX boxes.
+[tasks.sgx-smoke]
+description = "Hardware SGX smoke (build + sign + run enclave under gramine-sgx)"
+run = "./scripts/sgx-smoke.sh"
+
+# Tribute-offer enclave throughput. Two layers:
+#  1) criterion micro-bench: pure in-enclave CPU cost per offer;
+#  2) e2e test: same path INCLUDING the Noise/UDS transport round-trip.
+[tasks.bench-tribute]
+description = "Tribute-offer enclave throughput (criterion micro-bench + e2e transport)"
+run = """
+cargo bench -p outbe-tee-enclave --bench tribute_offer_throughput
+cargo test -p outbe-tee-enclave --release --test transport \
+  transport_throughput_offers_per_sec -- --ignored --nocapture
+"""
+
+# Production throughput figure: drive offers through the enclave under REAL
+# gramine-sgx. Requires gramine + SGX hardware; SKIPs on non-SGX boxes.
+[tasks.bench-tribute-sgx]
+description = "Production tribute throughput under real gramine-sgx"
+run = "./scripts/sgx-bench.sh"

@@ -28,7 +28,10 @@ jobs:
     runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-vet
@@ -41,11 +44,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
-      - uses: dtolnay/rust-toolchain@1.93
-      - uses: taiki-e/install-action@v2
+      - uses: jdx/mise-action@v2
         with:
-          tool: cargo-auditable,cargo-audit
-      - run: cargo auditable build --release --verbose
+          install: true
+          cache: true
+      # cargo-auditable + cargo-audit are provided by mise.toml [tools].
+      - run: mise run build-release
       - run: cargo test --verbose
       - name: CVE scan (binaries)
         run: |

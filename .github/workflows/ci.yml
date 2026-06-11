@@ -24,10 +24,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
         with:
-          components: rustfmt
-      - run: cargo fmt --all --check
+          install: true
+          cache: true
+      # mise installs the rust toolchain with the default profile (no rustfmt).
+      - run: rustup component add rustfmt
+      - run: mise run fmt-check
 
   clippy:
     name: clippy
@@ -41,11 +44,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
         with:
-          components: clippy
+          install: true
+          cache: true
+      - run: rustup component add clippy
       - uses: mozilla-actions/sccache-action@v0.0.9
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: mise run lint
 
   test:
     name: test
@@ -59,7 +64,10 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --cobertura --output-path cobertura.xml
@@ -95,6 +103,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: rui314/setup-mold@v1
+      # udeps requires the nightly toolchain, which the pinned mise stable
+      # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-udeps
@@ -107,7 +117,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
       - name: Ensure no arbitrary dep in production build
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
 
@@ -121,9 +134,11 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93
-      - uses: taiki-e/install-action@cargo-deny
-      - run: cargo deny check
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - run: mise run audit-deny
 
   machete:
     name: cargo machete
@@ -133,8 +148,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
       - uses: taiki-e/install-action@cargo-machete
-      - run: cargo machete
+      - run: mise run audit-machete
 
   geiger:
     name: cargo geiger
@@ -144,9 +163,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.93
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
       - run: cargo install cargo-geiger
-      - run: cargo geiger
+      - run: mise run audit-geiger
 
   miri:
     name: cargo miri
@@ -156,6 +178,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+      # miri requires the nightly toolchain, which the pinned mise stable
+      # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src

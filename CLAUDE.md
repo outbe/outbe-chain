@@ -1182,12 +1182,12 @@ See also: `.ruler/skills/storage-handle-survey/`
 # Testing And Harness Map
 
 - Use targeted tests before workspace-wide tests.
-- Default test runner is `cargo nextest run`. Install once with `cargo install --locked cargo-nextest` (or `make nextest-install`); CI images must provide it before running test targets.
-- `cargo nextest run` does not execute doctests. Run `cargo test --doc` (workspace: `make test-doc`) whenever the touched crate's public API has executable doc-examples.
+- Default test runner is `cargo nextest run`. Install once with `cargo install --locked cargo-nextest` (or `mise run nextest-install`); CI images must provide it before running test targets.
+- `cargo nextest run` does not execute doctests. Run `cargo test --doc` (workspace: `mise run test-doc`) whenever the touched crate's public API has executable doc-examples.
 - Consensus changes start with `cargo nextest run -p outbe-consensus`.
 - Storage lifetime or facade changes run `cargo nextest run -p outbe-primitives --test trybuild`.
 - The storage trybuild harness keeps compile-fail coverage for provider-scope escape, `!Send` thread-spawn rejection, and `'static` facade escape.
-- Node startup, restart, or localnet flow changes run the localnet harness: `make localnet-bootstrap`, `make localnet-start`, `make localnet-status`, and `./scripts/run-testnet.sh stop`. A 4-validator localnet that reaches a non-zero block height on every node is the restart / startup smoke signal.
+- Node startup, restart, or localnet flow changes run the localnet harness: `mise run localnet-bootstrap`, `mise run localnet-start`, `mise run localnet-status`, and `./scripts/run-testnet.sh stop`. A 4-validator localnet that reaches a non-zero block height on every node is the restart / startup smoke signal.
 - Runtime economics, precompile, and hook changes need crate tests plus integration or execution-level tests when behavior crosses module boundaries.
 - Fuzz or conformance-style tests are appropriate for encoding, decoding, artifact formats, consensus metadata, and storage/wire compatibility.
 - Before committing, run `cargo fmt --all --check`.
@@ -1201,12 +1201,12 @@ See also: `.ruler/skills/storage-handle-survey/`
 
 ## Audit toolchain (entry points)
 
-Use `make audit-*` as the primary entry point — these wrap the same commands the audit skill prescribes:
+Use `mise run audit-*` as the primary entry point — these wrap the same commands the audit skill prescribes:
 
-- `make audit-tools-install` — install the full toolchain (cargo-nextest, machete, deny, audit, llvm-cov, llvm-lines, bloat, udeps, geiger; nightly + miri/rust-src; llvm-tools-preview, clippy, rustfmt).
-- `make audit-quick` — fast cycle: `cargo clippy --all-targets --all-features -- -D warnings` + `cargo nextest run --workspace`.
-- `make audit-full` — slow cycle: `cargo machete` + `cargo deny check` + `cargo audit` + `cargo +nightly udeps`.
-- Per-tool: `make audit-deny`, `make audit-rustsec`, `make audit-machete`, `make audit-udeps`, `make audit-miri`, `make audit-geiger`, `make audit-bloat`, `make audit-llvm-lines`, `make audit-coverage`, `make audit-bench`.
+- `mise run audit-tools-install` — install the full toolchain (cargo-nextest, machete, deny, audit, llvm-cov, llvm-lines, bloat, udeps, geiger; nightly + miri/rust-src; llvm-tools-preview, clippy, rustfmt).
+- `mise run audit-quick` — fast cycle: `cargo clippy --all-targets --all-features -- -D warnings` + `cargo nextest run --workspace`.
+- `mise run audit-full` — slow cycle: `cargo machete` + `cargo deny check` + `cargo audit` + `cargo +nightly udeps`.
+- Per-tool: `mise run audit-deny`, `mise run audit-rustsec`, `mise run audit-machete`, `mise run audit-udeps`, `mise run audit-miri`, `mise run audit-geiger`, `mise run audit-bloat`, `mise run audit-llvm-lines`, `mise run audit-coverage`, `mise run audit-bench`.
 
 Tool tiers (must-have / nice-to-have / unsafe-only):
 
