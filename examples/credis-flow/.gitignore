@@ -5,3 +5,4 @@ src/contracts/
 .local-reth.env
 .local-reth.deployment.env
 tickets/
+.outbe-circuits-cache/

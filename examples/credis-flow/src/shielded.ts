@@ -8,12 +8,33 @@
 // pledged gratis. The pledge script asserts parity against the on-chain
 // `CommitmentInserted` event before reporting success.
 
-import { readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { buildPoseidon, type Poseidon } from "circomlibjs";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
+
+// ---------------------------------------------------------------------------
+// Pinned outbe-circuits version
+// ---------------------------------------------------------------------------
+//
+// Single source of truth for which `outbe-circuits` release the
+// circuit ACIR and canonical VK are pulled from. Bump this in lockstep
+// with the Rust workspace pin in `/Cargo.toml` (the three
+// `outbe-zk-*` / `outbe-crypto-common` entries pinned by `tag =`).
+//
+// The bb.js + noir_js versions in `package.json` must also align with
+// the Noir + Barretenberg toolchain `outbe-circuits` was compiled
+// against (`outbe-circuits/Cargo.toml`: `acvm`/`nargo` tag and
+// `barretenberg-rs` nightly pin). Cross-version drift surfaces as a
+// VK / proof byte mismatch rather than a compile error, so keep these
+// in sync manually when bumping.
+export const OUTBE_CIRCUITS_VERSION = "v0.10.0";
+export const OUTBE_CIRCUITS_REPO = "outbe/outbe-circuits";
+
+const OUTBE_CIRCUITS_RAW_BASE =
+  `https://raw.githubusercontent.com/${OUTBE_CIRCUITS_REPO}/${OUTBE_CIRCUITS_VERSION}`;
 
 // Tags & action constants — must match crates/core/gratispool/src/constants.rs.
 export const TAG_COMMIT_GRATIS = 0x6e0001n;
@@ -185,24 +206,94 @@ export async function buildMerkleProof(
 }
 
 // ---------------------------------------------------------------------------
-// UltraHonkKeccak proof generation
+// Canonical artefact loader (circuit ACIR + VK)
 // ---------------------------------------------------------------------------
 
-// Path to the committed circuit ACIR. The circuit lives in the sibling
-// outbe-circuits checkout — clone https://github.com/outbe/outbe-circuits
-// alongside this repo and check out tag v0.0.1.
-const CIRCUIT_JSON_PATH = resolve(
+// Both the compiled Noir program (used to build the prover witness) and
+// the canonical UltraHonkKeccak VK (used by `_writevk.ts` to cross-
+// check what the on-chain `verify_ultra_honk_keccak` sees) live in the
+// `outbe-circuits` repo at deterministic paths. We resolve them via:
+//
+//   1. Local download cache under `.outbe-circuits-cache/<version>/` —
+//      the steady-state path once an artefact has been fetched once.
+//   2. Sibling `outbe-circuits` checkout — zero-config fallback for
+//      circuit devs iterating on `.nr` sources locally; no download
+//      needed if you have a checkout at the expected sibling path.
+//   3. GitHub raw download from
+//      `raw.githubusercontent.com/<repo>/<version>/<path>` — written
+//      back into the cache so subsequent runs hit (1).
+//
+// The cache dir is `.gitignored`.
+
+const CACHE_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../../outbe-circuits/crates/outbe-zk-circuit-noir/data/commitment_nullifier_proof.json",
+  "..",
+  ".outbe-circuits-cache",
+  OUTBE_CIRCUITS_VERSION,
 );
+
+const SIBLING_CIRCUITS_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../outbe-circuits",
+);
+
+const CIRCUIT_JSON_REPO_PATH =
+  "crates/outbe-zk-circuit-noir/data/commitment_nullifier_proof.json";
+const VK_REPO_PATH = "crates/outbe-zk-canonical/res/vks/commitment_nullifier.vk";
+
+const CIRCUIT_JSON_CACHE_NAME = "commitment_nullifier_proof.json";
+const VK_CACHE_NAME = "commitment_nullifier.vk";
+
+async function fetchCanonicalAsset(
+  repoRelativePath: string,
+  cacheFilename: string,
+): Promise<string> {
+  const cachePath = resolve(CACHE_DIR, cacheFilename);
+  if (existsSync(cachePath)) return cachePath;
+
+  const siblingPath = resolve(SIBLING_CIRCUITS_ROOT, repoRelativePath);
+  if (existsSync(siblingPath)) return siblingPath;
+
+  const url = `${OUTBE_CIRCUITS_RAW_BASE}/${repoRelativePath}`;
+  console.error(
+    `[outbe-circuits ${OUTBE_CIRCUITS_VERSION}] fetching ${cacheFilename}`,
+  );
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `failed to download ${url}: ${response.status} ${response.statusText}`,
+    );
+  }
+  const buf = Buffer.from(await response.arrayBuffer());
+  mkdirSync(CACHE_DIR, { recursive: true });
+  writeFileSync(cachePath, buf);
+  return cachePath;
+}
 
 let circuitCache: CompiledCircuit | null = null;
 
-export function loadCircuit(): CompiledCircuit {
+export async function loadCircuit(): Promise<CompiledCircuit> {
   if (circuitCache) return circuitCache;
-  const raw = readFileSync(CIRCUIT_JSON_PATH, "utf-8");
+  const path = await fetchCanonicalAsset(
+    CIRCUIT_JSON_REPO_PATH,
+    CIRCUIT_JSON_CACHE_NAME,
+  );
+  const raw = readFileSync(path, "utf-8");
   circuitCache = JSON.parse(raw) as CompiledCircuit;
   return circuitCache;
+}
+
+// Canonical UltraHonkKeccak VK shipped by `outbe-zk-canonical` for the
+// commitment-nullifier circuit at this pinned version. `_writevk.ts`
+// regenerates a fresh VK from local bytecode and writes it to the same
+// cache slot so the two can be compared byte-for-byte.
+export async function loadCommitmentNullifierVk(): Promise<Uint8Array> {
+  const path = await fetchCanonicalAsset(VK_REPO_PATH, VK_CACHE_NAME);
+  return new Uint8Array(readFileSync(path));
+}
+
+export function commitmentNullifierVkCachePath(): string {
+  return resolve(CACHE_DIR, VK_CACHE_NAME);
 }
 
 export interface ProveUnpledgeInputs {
@@ -220,16 +311,26 @@ export interface ProveUnpledgeInputs {
 // UltraHonkKeccak proof. Returns the bare proof bytes — the on-chain verifier
 // in `verifier.rs` prepends the public-input prefix itself, so we hand back
 // `proofData.proof` unchanged.
+//
+// Public-input order matches the v0.10.0 `outbe-commitment-nullifier-circuit`
+// `fn main`:
+//   merkle_root, nullifier_hash, denom_id, receiver_binding,
+//   tag_commit, tag_nullifier, tag_merkle.
+// The three `tag_*` values are public inputs (not in-circuit constants) so the
+// verifier pins them to the deployment-fixed `TAG_*_GRATIS` triple per call.
 export async function proveUnpledge(
   inputs: ProveUnpledgeInputs,
 ): Promise<Uint8Array> {
-  const circuit = loadCircuit();
+  const circuit = await loadCircuit();
   const noir = new Noir(circuit);
   const witnessInput = {
     merkle_root: fieldToHex32(inputs.merkleRoot),
     nullifier_hash: fieldToHex32(inputs.nullifierHashValue),
     denom_id: fieldToHex32(BigInt(inputs.denomId)),
     receiver_binding: fieldToHex32(inputs.receiverBindingValue),
+    tag_commit: fieldToHex32(TAG_COMMIT_GRATIS),
+    tag_nullifier: fieldToHex32(TAG_NULLIFIER_GRATIS),
+    tag_merkle: fieldToHex32(TAG_MERKLE_GRATIS),
     secret: fieldToHex32(inputs.secret),
     nullifier_secret: fieldToHex32(inputs.nullifierSecret),
     merkle_path: inputs.merklePath.map(fieldToHex32),
