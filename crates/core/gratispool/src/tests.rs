@@ -273,6 +273,87 @@ fn receiver_binding_changes_when_nonce_changes() {
 }
 
 #[test]
+fn proof_invalid_does_not_consume_nullifier() {
+    // Checks-before-effects: a failed proof must not have marked the nullifier
+    // spent, so the note remains spendable once a valid proof is produced.
+    // (In production the precompile error reverts the frame too; this asserts
+    // the runtime ordering is correct independent of revert semantics.)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let denom_id: u8 = 1;
+        let secret = U256::from(0xD1_u64);
+        let null_s = U256::from(0xD2_u64);
+        let c = commitment_hash(secret, null_s, denom_id).unwrap();
+        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+
+        let args = make_spend_args(
+            storage.clone(),
+            null_s,
+            denom_id,
+            ACTION_UNPLEDGE,
+            carol(),
+            U256::ZERO,
+        );
+
+        with_verifier_outcome(false, || {
+            api::verify_and_spend_for_unpledge(storage.clone(), carol(), &args).unwrap_err();
+        });
+
+        let pool = GratisPoolContract::new(storage);
+        assert!(
+            !pool.nullifier_spent.contains(&args.nullifier_hash).unwrap(),
+            "a rejected proof must not consume the nullifier"
+        );
+    });
+}
+
+#[test]
+fn non_canonical_nullifier_rejected() {
+    // A nullifier `N` and its non-canonical alias `N + p` reduce to the same
+    // field element inside the verifier, but are distinct `U256` keys in the
+    // nullifier set. Without the canonical-form gate a note could be spent
+    // once per representative; assert the alias is rejected outright.
+    use ark_bn254::Fr;
+    use ark_ff::{BigInteger, PrimeField};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let denom_id: u8 = 1;
+        let secret = U256::from(0xE1_u64);
+        let null_s = U256::from(0xE2_u64);
+        let c = commitment_hash(secret, null_s, denom_id).unwrap();
+        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+
+        let mut args = make_spend_args(
+            storage.clone(),
+            null_s,
+            denom_id,
+            ACTION_UNPLEDGE,
+            carol(),
+            U256::ZERO,
+        );
+
+        // p = BN254 scalar field modulus, as a U256.
+        let p_be = <Fr as PrimeField>::MODULUS.to_bytes_be();
+        let mut buf = [0u8; 32];
+        buf[32 - p_be.len()..].copy_from_slice(&p_be);
+        let p = U256::from_be_bytes(buf);
+
+        // N + p is a non-canonical representative of the same field element.
+        args.nullifier_hash += p;
+
+        with_verifier_outcome(true, || {
+            let err =
+                api::verify_and_spend_for_unpledge(storage.clone(), carol(), &args).unwrap_err();
+            assert!(
+                err.to_string().contains("canonical"),
+                "non-canonical nullifier must be rejected, got: {err}"
+            );
+        });
+    });
+}
+
+#[test]
 fn proof_invalid_rejected() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {

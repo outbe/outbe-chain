@@ -63,7 +63,9 @@ pub fn verify(public_inputs: &[U256; NUM_PUBLIC_INPUTS], proof_body: &[u8]) -> b
     outbe_zk_circuit_noir::barretenberg::verify::verify_ultra_honk_keccak(
         combined,
         COMMITMENT_NULLIFIER.vk_bytes.to_vec(),
-        /* is_recursive = */ false,
+        // `disable_zk` — must match the prover's setting. 
+        // Proofs are produced with ZK enabled, so this is `false`.
+        false,
     )
     .unwrap_or(false)
 }
