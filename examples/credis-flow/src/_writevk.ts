@@ -1,27 +1,38 @@
-// Regenerate the commitment-nullifier VK locally from a sibling
-// outbe-circuits checkout using the bb.js version pinned in this package.
-// Run this after a bb / nargo nightly bump to cross-check against the
-// canonical VK shipped in outbe-zk-canonical (`res/vks/commitment_nullifier.vk`).
+// Regenerate the commitment-nullifier VK locally from the pinned
+// `outbe-circuits` bytecode and write it to the canonical-asset cache.
 //
-//   npx tsx src/_writevk.ts
+//   npx tsx src/_writevk.ts                      # write to default cache slot
+//   npx tsx src/_writevk.ts <output-file-path>   # override target
+//
+// Run after a bb / nargo nightly bump to cross-check against the
+// canonical VK shipped in `outbe-zk-canonical` (downloaded into the
+// same cache slot by `loadCommitmentNullifierVk()`). Byte-for-byte
+// equality is the proof / verifier compatibility signal.
 
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
+import { dirname, resolve } from "path";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
-import { loadCircuit } from "./shielded.js";
-
-const TARGET_VK = new URL(
-  "../../../../outbe-circuits/crates/outbe-zk-canonical/res/vks/commitment_nullifier.vk",
-  import.meta.url,
-);
+import {
+  commitmentNullifierVkCachePath,
+  loadCircuit,
+  OUTBE_CIRCUITS_VERSION,
+} from "./shielded.js";
 
 async function main() {
-  const circuit = loadCircuit();
+  const targetPath = process.argv[2]
+    ? resolve(process.argv[2])
+    : commitmentNullifierVkCachePath();
+
+  const circuit = await loadCircuit();
   const api = await Barretenberg.new({ threads: 1 });
   try {
     const backend = new UltraHonkBackend(circuit.bytecode, api);
     const vk = await backend.getVerificationKey({ verifierTarget: "evm" });
-    writeFileSync(TARGET_VK, vk);
-    console.log(`Wrote ${vk.length} bytes to ${TARGET_VK.pathname}`);
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, vk);
+    console.log(
+      `[outbe-circuits ${OUTBE_CIRCUITS_VERSION}] wrote ${vk.length} bytes to ${targetPath}`,
+    );
   } finally {
     await api.destroy();
   }
