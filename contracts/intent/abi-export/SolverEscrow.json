@@ -721,12 +721,12 @@
   },
   {
     "type": "error",
-    "name": "OnlyAuthorizedCaller",
+    "name": "OperatorNotApproved",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "OperatorNotApproved",
+    "name": "UnauthorizedCaller",
     "inputs": []
   },
   {

@@ -77,7 +77,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @notice Thrown when deposit or withdrawal amount is zero
     error InvalidAmount();
     /// @notice Thrown when caller is not the authorized caller (DestinationSettler)
-    error OnlyAuthorizedCaller();
+    error UnauthorizedCaller();
     /// @notice Thrown when collateral bps is zero or exceeds 10000
     error InvalidBps();
     /// @notice Thrown when solver has not approved escrow as ERC6909 operator
@@ -92,7 +92,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Modifiers ============
 
     modifier onlyAuthorizedCaller() {
-        if (msg.sender != AUTHORIZED_CALLER) revert OnlyAuthorizedCaller();
+        if (msg.sender != AUTHORIZED_CALLER) revert UnauthorizedCaller();
         _;
     }
 

@@ -49,7 +49,7 @@ contract SolverAllocatorTest is Test {
 
     function test_setArbiter_onlyOwner_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverAllocator.OnlyOwner.selector);
+        vm.expectRevert(SolverAllocator.UnauthorizedOwner.selector);
         allocator.setArbiter(arbiterAddr);
     }
 

@@ -51,7 +51,7 @@ contract SolverAllocator is IAllocator {
     /// @notice Thrown when caller is not the authorized arbiter
     error UnauthorizedArbiter();
     /// @notice Thrown when caller is not the contract owner
-    error OnlyOwner();
+    error UnauthorizedOwner();
     /// @notice Thrown when arbiter has already been set
     error ArbiterAlreadySet();
     /// @notice Thrown when a zero address is supplied as the arbiter
@@ -73,7 +73,7 @@ contract SolverAllocator is IAllocator {
     /// @notice Set the arbiter contract address. Can only be called once by OWNER.
     /// @param _arbiter SolverEscrow contract address
     function setArbiter(address _arbiter) external {
-        if (msg.sender != OWNER) revert OnlyOwner();
+        if (msg.sender != OWNER) revert UnauthorizedOwner();
         if (_arbiter == address(0)) revert ZeroArbiter();
         if (arbiter != address(0)) revert ArbiterAlreadySet();
         arbiter = _arbiter;

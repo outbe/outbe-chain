@@ -2,6 +2,11 @@
 
 Solidity smart contracts for the Outbe 
 
+## Requirements
+
+- **[Foundry](https://getfoundry.sh)** (`forge` / `cast` / `anvil`) 
+- **Node.js ≥ 20 + Yarn 4**  for `intex` (Hardhat toolchain);
+
 ## Existing projects
 
 | Project | Description | Solc | Toolchain |

@@ -219,7 +219,7 @@ contract SolverEscrowTest is Test {
 
     function test_lockCollateral_onlyAuthorizedCaller_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.OnlyAuthorizedCaller.selector);
+        vm.expectRevert(SolverEscrow.UnauthorizedCaller.selector);
         escrow.lockCollateral(keccak256("order1"), solver, address(token), 100);
     }
 

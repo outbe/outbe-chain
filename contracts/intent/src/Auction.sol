@@ -20,8 +20,8 @@ contract Auction is IAuction, Ownable2Step {
 
     // ============ Errors ============
 
-    /// @notice Thrown when caller is not authorized
-    error OnlyAuthorized();
+    /// @notice Thrown when caller is not the router
+    error UnauthorizedRouter();
     /// @notice Thrown when an invalid period is set
     error InvalidPeriod();
     /// @notice Thrown when an invalid max quotes value is set
@@ -57,7 +57,7 @@ contract Auction is IAuction, Ownable2Step {
     // ============ Modifiers ============
 
     modifier onlyRouter() {
-        if (msg.sender != router) revert OnlyAuthorized();
+        if (msg.sender != router) revert UnauthorizedRouter();
         _;
     }
 

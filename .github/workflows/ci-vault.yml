@@ -5,160 +5,21 @@ on:
     branches: ["main"]
     paths:
       - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
       - "contracts/vault/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
       - "contracts/vault/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
-  format:
-    name: Forge Format
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.5.1
-
-      - name: Check formatting
-        run: forge fmt --check
-
-  compile:
-    name: Compile Contracts
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.5.1
-
-      - name: Show Forge version
-        run: forge --version
-
-      - name: Compile contracts
-        run: forge build --sizes
-
-  test:
-    name: Foundry Tests
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.5.1
-
-      - name: Run Forge tests
-        run: forge test -vvv
-
-  lint:
-    name: Forge Lint
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.5.1
-
-      - name: Run lint
-        run: forge lint --severity high
-
-  abi-check:
-    name: Lint ABI
-    runs-on: depot-ubuntu-24.04
-    timeout-minutes: 5
-    defaults:
-      run:
-        working-directory: contracts/vault
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.5.1
-
-      - name: Ensure jq is installed
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Build and Export ABI
-        run: make export-abi
-
-      - name: Verify no changes in ABI
-        run: |
-          CHANGES=$(git status --porcelain)
-          if [ -n "$CHANGES" ]; then
-            echo "Changes detected in ABI:"
-            echo "$CHANGES"
-            echo "--- git diff ---"
-            git diff
-            exit 1
-          fi
-          echo "ABI is up to date"
-
-  ci-success:
-    name: ci success
-    runs-on: depot-ubuntu-24.04
-    if: always()
-    needs:
-      - format
-      - compile
-      - test
-      - lint
-      - abi-check
-    timeout-minutes: 5
-    steps:
-      - name: Decide whether all jobs succeeded or failed
-        uses: re-actors/alls-green@release/v1
-        with:
-          jobs: ${{ toJSON(needs) }}
+  ci:
+    uses: ./.github/workflows/_contract-ci.yml
+    with:
+      project: vault
+      abi-check: true
