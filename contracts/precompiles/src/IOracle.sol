@@ -198,12 +198,7 @@ interface IOracle {
     function getPairs()
         external
         view
-        returns (
-            uint32[] memory pairIds,
-            string[] memory bases,
-            string[] memory quotes,
-            bool[] memory isActive
-        );
+        returns (uint32[] memory pairIds, string[] memory bases, string[] memory quotes, bool[] memory isActive);
 
     /// @notice Returns the S-curve adjusted nominal price for a pair at a timestamp.
     function getNominalPrice(string calldata base, string calldata quote, uint64 timestamp)

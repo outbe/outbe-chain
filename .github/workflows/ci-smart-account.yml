@@ -1,0 +1,25 @@
+name: CI smart-account
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/smart-account/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/smart-account/**"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_contract-ci.yml
+    with:
+      project: smart-account
+      abi-check: true

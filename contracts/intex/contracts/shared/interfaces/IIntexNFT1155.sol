@@ -308,11 +308,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return issuedBalances Issued balances parallel to `holders`.
     /// @return settledBalances Settled balances parallel to `holders` (read at the same block).
     /// @return total Length of `_seriesHolders[issuedTokenId]` at call time.
-    function getIssuedHoldersWithBalances(
-        uint32 seriesId,
-        uint256 offset,
-        uint256 limit
-    )
+    function getIssuedHoldersWithBalances(uint32 seriesId, uint256 offset, uint256 limit)
         external
         view
         returns (
@@ -349,10 +345,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param limit Maximum slice length to return.
     /// @return series The requested slice of Issued token ids.
     /// @return total Total number of series created.
-    function getSeriesPaginated(
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory series, uint256 total);
+    function getSeriesPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory series, uint256 total);
 
     /// @notice Total number of series created.
     /// @return The count of created series.
@@ -369,11 +365,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param limit Maximum slice length to return.
     /// @return series The requested slice of owned token ids.
     /// @return total Total number of distinct series owned by `owner`.
-    function getOwnedSeriesPaginated(
-        address owner,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory series, uint256 total);
+    function getOwnedSeriesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory series, uint256 total);
 
     /// @notice Number of distinct series owned by an address.
     /// @param owner Owner address to read.

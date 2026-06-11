@@ -1,0 +1,153 @@
+name: Contract CI
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: "Sub-project directory under contracts/ (e.g. intent, oft, vault)"
+        type: string
+        required: true
+      abi-check:
+        description: "Verify committed abi-export/ is up to date (only where ABIs are exported)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-ci-${{ inputs.project }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  format:
+    name: Forge Format
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check formatting
+        run: forge fmt --check
+
+  compile:
+    name: Compile Contracts
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Compile contracts
+        run: forge build
+
+  test:
+    name: Foundry Tests
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Run tests
+        run: forge test -vvv
+
+  lint:
+    name: Forge Lint
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Run lint
+        run: forge lint --severity high
+
+  abi:
+    name: ABI Export Check
+    if: ${{ inputs.abi-check }}
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Ensure jq is installed
+        run: jq --version || (sudo apt-get update && sudo apt-get install -y jq)
+
+      - name: Export ABI
+        run: make export-abi
+
+      - name: Verify abi-export is up to date
+        run: |
+          if ! git diff --quiet -- abi-export; then
+            echo "::error::abi-export is stale — run 'make export-abi' and commit the result"
+            git diff -- abi-export
+            exit 1
+          fi
+
+  ci-success:
+    name: ci success
+    runs-on: depot-ubuntu-24.04
+    if: always()
+    needs:
+      - format
+      - compile
+      - test
+      - lint
+      - abi
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether all jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          allowed-skips: test,abi
+          jobs: ${{ toJSON(needs) }}

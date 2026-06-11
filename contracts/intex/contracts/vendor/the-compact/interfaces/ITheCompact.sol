@@ -20,12 +20,9 @@ interface ITheCompact {
      * @param recipient The address that will receive the corresponding ERC6909 tokens.
      * @return id       The ERC6909 token identifier of the associated resource lock.
      */
-    function depositERC20(
-        address token,
-        bytes12 lockTag,
-        uint256 amount,
-        address recipient
-    ) external returns (uint256 id);
+    function depositERC20(address token, bytes12 lockTag, uint256 amount, address recipient)
+        external
+        returns (uint256 id);
 
     /**
      * @notice External function to initiate a forced withdrawal for a resource lock.

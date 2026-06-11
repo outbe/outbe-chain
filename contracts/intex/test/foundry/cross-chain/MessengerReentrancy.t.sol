@@ -36,11 +36,9 @@ contract ReentrancyProbeAuction {
         bridge = bridge_;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {
+    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external
+    {
         observedGuardSlot = uint256(VM.load(bridge, REENTRANCY_GUARD_STORAGE));
         observed = true;
     }
@@ -78,7 +76,11 @@ contract ReentrancyProbeDesis {
     ///      Return `None` so the auto-clear branch is skipped in this probe-only test.
     function getAuctionStage(
         uint32 /*seriesId*/
-    ) external pure returns (IDesis.AuctionStage) {
+    )
+        external
+        pure
+        returns (IDesis.AuctionStage)
+    {
         return IDesis.AuctionStage.None;
     }
 }

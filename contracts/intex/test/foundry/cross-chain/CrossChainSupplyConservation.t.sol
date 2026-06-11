@@ -161,13 +161,10 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
     }
 
-    function _send(
-        ONFT1155Adapter from,
-        uint32 dstEid,
-        address recipient,
-        uint256 tokenId,
-        uint256 amount
-    ) internal returns (MessagingReceipt memory) {
+    function _send(ONFT1155Adapter from, uint32 dstEid, address recipient, uint256 tokenId, uint256 amount)
+        internal
+        returns (MessagingReceipt memory)
+    {
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(400000, 0);
         SendParam memory params = SendParam({
             dstEid: dstEid,

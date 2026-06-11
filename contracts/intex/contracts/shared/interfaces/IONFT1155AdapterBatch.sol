@@ -160,42 +160,40 @@ interface IONFT1155AdapterBatch {
     /// @param _sendParam Batch send parameters
     /// @param _payInLzToken Whether to pay in LZ token
     /// @return fee Messaging fee quote
-    function quoteBatchSend(
-        BatchSendParam calldata _sendParam,
-        bool _payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteBatchSend(BatchSendParam calldata _sendParam, bool _payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Sends multiple token types to one recipient on another chain.
     /// @param _sendParam Batch send parameters
     /// @param _fee Messaging fee
     /// @param _refundAddress Address for fee refund
     /// @return msgReceipt Messaging receipt
-    function batchSend(
-        BatchSendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory msgReceipt);
+    function batchSend(BatchSendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt);
 
     // --- Multi-recipient ---
     /// @notice Quotes the messaging fee for a multi-recipient cross-chain transfer.
     /// @param _sendParam Multi-recipient send parameters
     /// @param _payInLzToken Whether to pay in LZ token
     /// @return fee Messaging fee quote
-    function quoteMultiSend(
-        MultiRecipientSendParam calldata _sendParam,
-        bool _payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteMultiSend(MultiRecipientSendParam calldata _sendParam, bool _payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Sends tokens to multiple recipients on another chain.
     /// @param _sendParam Multi-recipient send parameters
     /// @param _fee Messaging fee
     /// @param _refundAddress Address for fee refund
     /// @return msgReceipt Messaging receipt
-    function multiSend(
-        MultiRecipientSendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory msgReceipt);
+    function multiSend(MultiRecipientSendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt);
 
     // --- System bridge (markCalled → holder migration) ---
     /// @notice Quotes the messaging fee for a system bridge multi-send.

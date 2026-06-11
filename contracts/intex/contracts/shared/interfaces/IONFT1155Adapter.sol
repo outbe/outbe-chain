@@ -66,11 +66,10 @@ interface IONFT1155Adapter {
     /// @param _fee Messaging fee
     /// @param _refundAddress Address for fee refund
     /// @return msgReceipt Messaging receipt
-    function send(
-        SendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory msgReceipt);
+    function send(SendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt);
 
     /// @notice Sweep any residual native tokens back to an owner-chosen recipient.
     /// @dev Default OApp `_payNative` reverts on mismatch so no ETH should ever accumulate;

@@ -32,7 +32,7 @@ const config: HardhatUserConfig = {
       default: {
         version: "0.8.30",
         settings: {
-          evmVersion: "cancun",
+          evmVersion: "prague",
           optimizer: {
             enabled: true,
             runs: 10000,
@@ -43,7 +43,7 @@ const config: HardhatUserConfig = {
       production: {
         version: "0.8.30",
         settings: {
-          evmVersion: "cancun",
+          evmVersion: "prague",
           optimizer: {
             enabled: true,
             runs: 10000,

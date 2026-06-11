@@ -1,22 +1,21 @@
 [profile.default]
-auto_detect_solc = true
+solc = "0.8.30"
 via_ir = true
+dynamic_test_linking = true
 optimizer = true
 optimizer_runs = 100000
 bytecode_hash = "none"
-evm_version = "cancun"
-dynamic_test_linking = true
+cbor_metadata = false
+evm_version = "Prague"
 
 fs_permissions = [{ access = "read-write", path = "./" }]
 
 remappings = [
-  "forge-std/=lib/forge-std/src/",
-  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
-  "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+  "forge-std/=dependencies/forge-std-1.16.1/src/",
+  "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/",
+  "@openzeppelin/contracts-upgradeable/=dependencies/openzeppelin-contracts-upgradeable-5.6.1/contracts/",
 ]
-
-[profile.default.fmt]
-wrap_comments = true
+libs = ["dependencies"]
 
 [rpc_endpoints]
 ethereum = "${ETHEREUM_RPC_URL}"
@@ -30,9 +29,26 @@ outbe-peira = "https://rpc.testnet.outbe.net"
 bsc-testnet = "https://bsc-testnet.bnbchain.org"
 
 [lint]
+exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode"]
 ignore = ['test/**/*.sol']
 
 [fuzz]
-runs = 2048
+runs = 1000
+max_test_rejects = 65536
+
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+show_metrics = true
+
+[soldeer]
+# Remappings are maintained by hand in foundry.toml; do not let soldeer overwrite them.
+remappings_generate = false
+
+[dependencies]
+forge-std = { version = "1.16.1", git = "https://github.com/foundry-rs/forge-std", rev = "b3bc8b154382a75d0b0ef22d7fd4a0a5f0feee0e" }
+openzeppelin-contracts = { version = "5.6.1", git = "https://github.com/OpenZeppelin/openzeppelin-contracts", rev = "5a3b28fc5bd3976da5ea38d90d88ba26f1e0a335" }
+openzeppelin-contracts-upgradeable = { version = "5.6.1", git = "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable", tag = "v5.6.1" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

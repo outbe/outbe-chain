@@ -1,22 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test } from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 
-import { OrderValidator } from "../src/libs/OrderValidator.sol";
-import { OrderEncoder } from "../src/libs/OrderEncoder.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
-import { OrderData } from "../src/interfaces/OrderTypes.sol";
-import { IDestinationSettler } from "../src/interfaces/IDestinationSettler.sol";
+import {OrderValidator} from "../src/libs/OrderValidator.sol";
+import {OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
+import {OrderData} from "../src/interfaces/OrderTypes.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
 
 /// @dev Wraps the internal library in an external function so `originData` is calldata and a
 ///      branch revert surfaces at a call boundary for vm.expectRevert.
 contract OrderValidatorHarness {
-    function decodeAndCheck(
-        bytes calldata originData,
-        bytes32 orderId,
-        uint256 outputAmount
-    )
+    function decodeAndCheck(bytes calldata originData, bytes32 orderId, uint256 outputAmount)
         external
         view
         returns (OrderData memory)

@@ -101,10 +101,11 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     // --- Helpers ---
     /// @dev Build a single-bid BidsBatchParams payload keyed by SERIES_ID.
-    function _bidsBatchParams(
-        uint256 count,
-        bytes memory options
-    ) internal view returns (ITargetMessenger.BidsBatchParams memory) {
+    function _bidsBatchParams(uint256 count, bytes memory options)
+        internal
+        view
+        returns (ITargetMessenger.BidsBatchParams memory)
+    {
         address[] memory bidderAddresses = new address[](count);
         uint16[] memory intexQuantities = new uint16[](count);
         uint64[] memory intexBidPrices = new uint64[](count);

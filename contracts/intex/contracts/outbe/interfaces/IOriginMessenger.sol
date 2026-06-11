@@ -230,11 +230,10 @@ interface IOriginMessenger {
     /// @param extraOptions Additional LayerZero options
     /// @param payInLzToken Whether to pay fee in LZ token
     /// @return fee Messaging fee quote
-    function quoteSendAuctionStageClearing(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteSendAuctionStageClearing(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Send auction stage clearing to BNB. Restricted to `DESIS_ROLE`.
     /// @param seriesId Series identifier
@@ -350,11 +349,10 @@ interface IOriginMessenger {
     /// @param extraOptions Additional LayerZero options
     /// @param payInLzToken Whether to pay fee in LZ token
     /// @return fee Messaging fee quote
-    function quoteSendMarkCalled(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteSendMarkCalled(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Send mark called message to BNB. Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev The settlement deadline is derived locally on the destination chain
@@ -376,11 +374,10 @@ interface IOriginMessenger {
     /// @param extraOptions Additional LayerZero options
     /// @param payInLzToken Whether to pay fee in LZ token
     /// @return fee Messaging fee quote
-    function quoteSendMarkQualified(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee);
+    function quoteSendMarkQualified(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee);
 
     /// @notice Send mark qualified message to BNB, flipping the series to Qualified.
     /// @param seriesId Series identifier

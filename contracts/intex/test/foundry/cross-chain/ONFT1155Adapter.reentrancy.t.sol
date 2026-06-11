@@ -34,13 +34,10 @@ contract ReentrancyGuardProbe is IERC1155Receiver {
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
-    function onERC1155BatchReceived(
-        address,
-        address,
-        uint256[] calldata,
-        uint256[] calldata,
-        bytes calldata
-    ) external returns (bytes4) {
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        returns (bytes4)
+    {
         observedGuardSlot = uint256(VM.load(adapter, REENTRANCY_GUARD_STORAGE));
         observed = true;
         return IERC1155Receiver.onERC1155BatchReceived.selector;

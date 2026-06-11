@@ -32,11 +32,11 @@ library LzGasEstimator {
     /// @param perItemGas Marginal gas per loop iteration on the destination handler.
     /// @param itemCount Number of items the destination will iterate.
     /// @return The encoded `lzReceiveOption` blob with the default safety buffer applied.
-    function receiveOption(
-        uint128 baseGas,
-        uint128 perItemGas,
-        uint256 itemCount
-    ) internal pure returns (bytes memory) {
+    function receiveOption(uint128 baseGas, uint128 perItemGas, uint256 itemCount)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return receiveOption(baseGas, perItemGas, itemCount, DEFAULT_BUFFER_BPS);
     }
 
@@ -46,12 +46,11 @@ library LzGasEstimator {
     /// @param itemCount Number of items the destination will iterate.
     /// @param bufferBps Safety buffer in basis points (e.g. 2000 = +20%).
     /// @return The encoded `lzReceiveOption` blob with `bufferBps` applied on top of the estimate.
-    function receiveOption(
-        uint128 baseGas,
-        uint128 perItemGas,
-        uint256 itemCount,
-        uint16 bufferBps
-    ) internal pure returns (bytes memory) {
+    function receiveOption(uint128 baseGas, uint128 perItemGas, uint256 itemCount, uint16 bufferBps)
+        internal
+        pure
+        returns (bytes memory)
+    {
         uint256 raw = estimateGas(baseGas, perItemGas, itemCount);
         uint256 buffered = (raw * (10_000 + uint256(bufferBps))) / 10_000;
         // `addExecutorLzReceiveOption` takes a uint128 gas; a payload large enough to overflow it

@@ -50,12 +50,11 @@ library ONFT1155MsgCodec {
     /// @param _composeMsg Optional compose payload; empty for a plain transfer.
     /// @return payload The packed message bytes.
     /// @return hasCompose True when `_composeMsg` was non-empty and embedded in `payload`.
-    function encode(
-        bytes32 _sendTo,
-        uint256 _tokenId,
-        uint256 _amount,
-        bytes memory _composeMsg
-    ) internal view returns (bytes memory payload, bool hasCompose) {
+    function encode(bytes32 _sendTo, uint256 _tokenId, uint256 _amount, bytes memory _composeMsg)
+        internal
+        view
+        returns (bytes memory payload, bool hasCompose)
+    {
         hasCompose = _composeMsg.length > 0;
         payload = hasCompose
             ? abi.encodePacked(BODY_VERSION_V1, _sendTo, _tokenId, _amount, addressToBytes32(msg.sender), _composeMsg)

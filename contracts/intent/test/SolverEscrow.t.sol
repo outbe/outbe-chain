@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test } from "forge-std/Test.sol";
-import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
+import {Test} from "forge-std/Test.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
 
-import { SolverAllocator } from "../src/allocators/SolverAllocator.sol";
-import { ISolverEscrow } from "../src/interfaces/ISolverEscrow.sol";
-import { SolverEscrow } from "../src/SolverEscrow.sol";
+import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
+import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
+import {SolverEscrow} from "../src/SolverEscrow.sol";
 
-import { MockTheCompact } from "./mocks/MockTheCompact.sol";
+import {MockTheCompact} from "./mocks/MockTheCompact.sol";
 
 contract SolverEscrowTest is Test {
     ERC20 internal token;
@@ -112,7 +112,7 @@ contract SolverEscrowTest is Test {
         vm.expectEmit(true, true, false, true);
         emit Deposited(solver, address(0), amount);
 
-        escrow.deposit{ value: amount }(address(0), 0);
+        escrow.deposit{value: amount}(address(0), 0);
         vm.stopPrank();
 
         uint256 id = escrow.lockId(address(0));
@@ -122,7 +122,7 @@ contract SolverEscrowTest is Test {
     function test_deposit_native_zeroValue_reverts() public {
         vm.prank(solver);
         vm.expectRevert(SolverEscrow.InvalidAmount.selector);
-        escrow.deposit{ value: 0 }(address(0), 0);
+        escrow.deposit{value: 0}(address(0), 0);
     }
 
     // ============ withdraw ERC20 ============
@@ -165,7 +165,7 @@ contract SolverEscrowTest is Test {
         uint256 amount = 1000;
 
         vm.startPrank(solver);
-        escrow.deposit{ value: amount }(address(0), 0);
+        escrow.deposit{value: amount}(address(0), 0);
 
         uint256 balanceBefore = solver.balance;
 
@@ -219,7 +219,7 @@ contract SolverEscrowTest is Test {
 
     function test_lockCollateral_onlyAuthorizedCaller_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.OnlyAuthorizedCaller.selector);
+        vm.expectRevert(SolverEscrow.UnauthorizedCaller.selector);
         escrow.lockCollateral(keccak256("order1"), solver, address(token), 100);
     }
 

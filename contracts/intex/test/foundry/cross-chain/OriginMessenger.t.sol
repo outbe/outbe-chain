@@ -108,10 +108,11 @@ contract OriginMessengerTest is TestHelperOz5 {
         });
     }
 
-    function _baseIssuanceParams(
-        address[] memory recipients,
-        uint256[] memory quantities
-    ) internal pure returns (IOriginMessenger.IssuanceInstructionsParams memory) {
+    function _baseIssuanceParams(address[] memory recipients, uint256[] memory quantities)
+        internal
+        pure
+        returns (IOriginMessenger.IssuanceInstructionsParams memory)
+    {
         return IOriginMessenger.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             issuedIntexCount: 10_000,

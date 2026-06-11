@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { IERC6909 } from "the-compact/lib/forge-std/src/interfaces/IERC6909.sol";
-import { AllocatedTransfer } from "the-compact/src/types/Claims.sol";
-import { Component } from "the-compact/src/types/Components.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IERC6909} from "the-compact/lib/forge-std/src/interfaces/IERC6909.sol";
+import {AllocatedTransfer} from "the-compact/src/types/Claims.sol";
+import {Component} from "the-compact/src/types/Components.sol";
 
-import { ISolverEscrow } from "./interfaces/ISolverEscrow.sol";
+import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 
 /// @title SolverEscrow
 /// @notice Deposit, withdraw, lock, and slash solver collateral managed via The Compact.
@@ -77,7 +77,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @notice Thrown when deposit or withdrawal amount is zero
     error InvalidAmount();
     /// @notice Thrown when caller is not the authorized caller (DestinationSettler)
-    error OnlyAuthorizedCaller();
+    error UnauthorizedCaller();
     /// @notice Thrown when collateral bps is zero or exceeds 10000
     error InvalidBps();
     /// @notice Thrown when solver has not approved escrow as ERC6909 operator
@@ -92,7 +92,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Modifiers ============
 
     modifier onlyAuthorizedCaller() {
-        if (msg.sender != AUTHORIZED_CALLER) revert OnlyAuthorizedCaller();
+        if (msg.sender != AUTHORIZED_CALLER) revert UnauthorizedCaller();
         _;
     }
 
@@ -160,7 +160,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         // Step 2: Release underlying tokens to solver via allocatedTransfer
         // claimant = uint160(solver) → zero upper bits → zero lockTag → withdrawal of underlying
         Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({ claimant: uint160(msg.sender), amount: withdrawAmount });
+        recipients[0] = Component({claimant: uint160(msg.sender), amount: withdrawAmount});
 
         COMPACT.allocatedTransfer(
             AllocatedTransfer({
@@ -177,12 +177,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Lock / Unlock / Slash ============
 
     /// @inheritdoc ISolverEscrow
-    function lockCollateral(
-        bytes32 orderId,
-        address solver,
-        address token,
-        uint256 amount
-    )
+    function lockCollateral(bytes32 orderId, address solver, address token, uint256 amount)
         external
         onlyAuthorizedCaller
     {
@@ -194,7 +189,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         uint256 availableCollateral = total > locked ? total - locked : 0;
         if (availableCollateral < amount) revert InsufficientAvailableBalance();
 
-        locks[orderId] = Lock({ solver: solver, token: token, amount: amount });
+        locks[orderId] = Lock({solver: solver, token: token, amount: amount});
         totalLocked[solver][id] += amount;
     }
 
@@ -219,11 +214,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @inheritdoc ISolverEscrow
     /// @dev Distributes REWARD_BPS (1.5%) of orderAmountIn from slashed pool as underlying tokens.
     ///      Returns 0 if insufficient slashed balance (all-or-nothing).
-    function distributeReward(
-        address token,
-        uint256 orderAmountIn,
-        address receiver
-    )
+    function distributeReward(address token, uint256 orderAmountIn, address receiver)
         external
         onlyAuthorizedCaller
         returns (uint256 reward)
@@ -236,7 +227,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
         // Release underlying tokens to receiver via allocatedTransfer
         Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({ claimant: uint160(receiver), amount: reward });
+        recipients[0] = Component({claimant: uint160(receiver), amount: reward});
 
         COMPACT.allocatedTransfer(
             AllocatedTransfer({
@@ -265,10 +256,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     }
 
     /// @inheritdoc ISolverEscrow
-    function getBalance(
-        address owner,
-        address token
-    )
+    function getBalance(address owner, address token)
         external
         view
         returns (uint256 total, uint256 locked, uint256 available)
@@ -312,7 +300,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     function _depositNative() private {
         if (msg.value == 0) revert InvalidAmount();
 
-        COMPACT.depositNative{ value: msg.value }(LOCK_TAG, msg.sender);
+        COMPACT.depositNative{value: msg.value}(LOCK_TAG, msg.sender);
 
         emit Deposited(msg.sender, address(0), msg.value);
     }

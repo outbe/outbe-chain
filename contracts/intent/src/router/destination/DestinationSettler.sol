@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { Address } from "@openzeppelin/contracts/utils/Address.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
-import { OnchainCrossChainOrder } from "../../interfaces/OrderTypes.sol";
-import { IAuction } from "../../interfaces/IAuction.sol";
-import { ISolverEscrow } from "../../interfaces/ISolverEscrow.sol";
-import { OrderData, OrderEncoder } from "../../libs/OrderEncoder.sol";
-import { OrderValidator } from "../../libs/OrderValidator.sol";
-import { TypeCasts } from "../../libs/TypeCasts.sol";
-import { DestinationSettlerBase } from "./DestinationSettlerBase.sol";
+import {OnchainCrossChainOrder} from "../../interfaces/OrderTypes.sol";
+import {IAuction} from "../../interfaces/IAuction.sol";
+import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
+import {OrderData, OrderEncoder} from "../../libs/OrderEncoder.sol";
+import {OrderValidator} from "../../libs/OrderValidator.sol";
+import {TypeCasts} from "../../libs/TypeCasts.sol";
+import {DestinationSettlerBase} from "./DestinationSettlerBase.sol";
 
 /// @title DestinationSettler
 /// @notice Destination chain settlement contract for cross-chain swaps with auction
@@ -94,10 +94,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         bytes32[] calldata _orderIds,
         bytes[] memory _ordersOriginData,
         bytes[] memory _ordersFillerData
-    )
-        internal
-        override
-    {
+    ) internal override {
         _dispatchSettle(OrderEncoder.decode(_ordersOriginData[0]).originDomain, _orderIds, _ordersFillerData);
     }
 
@@ -142,7 +139,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     function _onSlashed(bytes32 _orderId) internal override {
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) == address(0)) return;
-        try escrow.slashCollateral(_orderId) { }
+        try escrow.slashCollateral(_orderId) {}
         catch {
             emit SlashSkipped(_orderId);
         }
@@ -156,11 +153,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
      * @param _orderIds The IDs of the orders to settle.
      * @param _ordersFillerData The filler data for the orders.
      */
-    function _dispatchSettle(
-        uint32 _originDomain,
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function _dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         virtual;
 

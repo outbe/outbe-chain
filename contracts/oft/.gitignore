@@ -1,18 +1,23 @@
 # Foundry artifacts
-cache/
 out/
+cache/
 
-# Broadcast logs
+# soldeer dependencies (restored from soldeer.lock; lockfile IS committed)
+/dependencies
+
+# Deploy broadcast logs
 broadcast/
 
 # Docs
 docs/
 
-# Local environment secrets
+# Env / secrets
 .env
+*.env
 
-# IDE / local files
+# OS / editor / tooling
+.DS_Store
 .idea/
+.vscode/
 .claude/
 .junie/
-.DS_Store

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test } from "forge-std/Test.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {Test} from "forge-std/Test.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
-import { BaseTest } from "./BaseTest.sol";
-import { OriginSettler } from "../src/router/origin/OriginSettler.sol";
-import { IOriginSettler } from "../src/interfaces/IOriginSettler.sol";
-import { OrderData, OrderEncoder } from "../src/libs/OrderEncoder.sol";
-import { OnchainCrossChainOrder, ResolvedCrossChainOrder } from "../src/interfaces/OrderTypes.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { IAuction } from "../src/interfaces/IAuction.sol";
-import { ISolverEscrow } from "../src/interfaces/ISolverEscrow.sol";
-import { MockTheCompact } from "./mocks/MockTheCompact.sol";
+import {BaseTest} from "./BaseTest.sol";
+import {OriginSettler} from "../src/router/origin/OriginSettler.sol";
+import {IOriginSettler} from "../src/interfaces/IOriginSettler.sol";
+import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IAuction} from "../src/interfaces/IAuction.sol";
+import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
+import {MockTheCompact} from "./mocks/MockTheCompact.sol";
 
 event Settled(bytes32 orderId, address receiver);
 event Refunded(bytes32 orderId, address receiver);
@@ -48,12 +48,7 @@ contract OriginSettlerForTest is OriginSettler {
     }
 
     // Expose internal functions for testing
-    function handleSettleOrder(
-        uint32 _messageOrigin,
-        bytes32 _messageSender,
-        bytes32 _orderId,
-        bytes32 _receiver
-    )
+    function handleSettleOrder(uint32 _messageOrigin, bytes32 _messageSender, bytes32 _orderId, bytes32 _receiver)
         public
     {
         _handleSettleOrder(_messageOrigin, _messageSender, _orderId, _receiver);
@@ -71,12 +66,7 @@ contract OriginSettlerForTest is OriginSettler {
         return _resolveOrder(_order);
     }
 
-    function resolvedOrder(
-        bytes32 _orderType,
-        address _sender,
-        uint32 _fillDeadline,
-        bytes memory _orderData
-    )
+    function resolvedOrder(bytes32 _orderType, address _sender, uint32 _fillDeadline, bytes memory _orderData)
         public
         view
         returns (ResolvedCrossChainOrder memory rOrder)
@@ -113,7 +103,7 @@ contract OriginSettlerTest is BaseTest {
         users.push(address(mockCompact));
     }
 
-    receive() external payable { }
+    receive() external payable {}
 
     function _prepareOrderData() internal view returns (OrderData memory) {
         return OrderData({
@@ -367,9 +357,8 @@ contract OriginSettlerTest is BaseTest {
 
     function test_resolveOrder_onChain_works() public {
         OrderData memory orderData = _prepareOrderData();
-        OnchainCrossChainOrder memory order = _prepareOnchainOrder(
-            OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType()
-        );
+        OnchainCrossChainOrder memory order =
+            _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
 
         vm.prank(kakaroto);
         (ResolvedCrossChainOrder memory rOrder,,) = originSettler.resolveOrder(order);
@@ -400,9 +389,8 @@ contract OriginSettlerTest is BaseTest {
     function test_resolveOrder_InvalidOriginDomain() public {
         OrderData memory orderData = _prepareOrderData();
         orderData.originDomain = 0;
-        OnchainCrossChainOrder memory order = _prepareOnchainOrder(
-            OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType()
-        );
+        OnchainCrossChainOrder memory order =
+            _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
 
         vm.expectRevert(abi.encodeWithSelector(IOriginSettler.InvalidOriginDomain.selector, orderData.originDomain));
         originSettler.resolveOrder(order);

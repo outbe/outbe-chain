@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { OriginSettlerBase } from "./OriginSettlerBase.sol";
-import { OrderData, OrderEncoder } from "../../libs/OrderEncoder.sol";
-import { TypeCasts } from "../../libs/TypeCasts.sol";
+import {OriginSettlerBase} from "./OriginSettlerBase.sol";
+import {OrderData, OrderEncoder} from "../../libs/OrderEncoder.sol";
+import {TypeCasts} from "../../libs/TypeCasts.sol";
 import {
     OnchainCrossChainOrder,
     ResolvedCrossChainOrder,
     Output,
     FillInstruction
 } from "../../interfaces/OrderTypes.sol";
-import { AllocatedTransfer } from "the-compact/src/types/Claims.sol";
-import { Component } from "the-compact/src/types/Components.sol";
-import { ISolverEscrow } from "../../interfaces/ISolverEscrow.sol";
+import {AllocatedTransfer} from "the-compact/src/types/Claims.sol";
+import {Component} from "the-compact/src/types/Components.sol";
+import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
 
 /// @title OriginSettler
 /// @notice Origin chain settlement contract for cross-chain swaps
@@ -28,12 +28,7 @@ abstract contract OriginSettler is OriginSettlerBase {
      * @param _orderId The ID of the order to settle.
      * @param _receiver The receiver address (encoded as bytes32).
      */
-    function _handleSettleOrder(
-        uint32 _messageOrigin,
-        bytes32 _messageSender,
-        bytes32 _orderId,
-        bytes32 _receiver
-    )
+    function _handleSettleOrder(uint32 _messageOrigin, bytes32 _messageSender, bytes32 _orderId, bytes32 _receiver)
         internal
         virtual
     {
@@ -98,13 +93,7 @@ abstract contract OriginSettler is OriginSettlerBase {
      * @param _orderId  The order ID (used to derive a unique nonce).
      * @param _label    "settle" or "refund" — makes nonce unique per operation.
      */
-    function _allocatedTransfer(
-        address _token,
-        address _to,
-        uint256 _amount,
-        bytes32 _orderId,
-        bytes32 _label
-    )
+    function _allocatedTransfer(address _token, address _to, uint256 _amount, bytes32 _orderId, bytes32 _label)
         internal
     {
         // lockId = lockTag (upper 96 bits) | tokenAddress (lower 160 bits)
@@ -113,7 +102,7 @@ abstract contract OriginSettler is OriginSettlerBase {
 
         // claimant with zero lockTag = withdrawal: underlying tokens sent to _to directly
         Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({ claimant: uint256(uint160(_to)), amount: _amount });
+        recipients[0] = Component({claimant: uint256(uint160(_to)), amount: _amount});
 
         // Nonce derived from orderId + label — unique per operation, no extra storage needed
         uint256 nonce = uint256(keccak256(abi.encode(_orderId, _label)));
@@ -133,11 +122,7 @@ abstract contract OriginSettler is OriginSettlerBase {
      * @param _orderId The unique identifier of the order.
      * @return A boolean indicating if the order is valid, and the decoded OrderData structure.
      */
-    function _checkOrderEligibility(
-        uint32 _messageOrigin,
-        bytes32 _messageSender,
-        bytes32 _orderId
-    )
+    function _checkOrderEligibility(uint32 _messageOrigin, bytes32 _messageSender, bytes32 _orderId)
         internal
         virtual
         returns (bool, OrderData memory)
@@ -185,12 +170,7 @@ abstract contract OriginSettler is OriginSettlerBase {
      * @return orderId The order ID.
      * @return nonce The order nonce.
      */
-    function _resolvedOrder(
-        bytes32 _orderType,
-        address _sender,
-        uint32 _fillDeadline,
-        bytes memory _orderData
-    )
+    function _resolvedOrder(bytes32 _orderType, address _sender, uint32 _fillDeadline, bytes memory _orderData)
         internal
         view
         returns (ResolvedCrossChainOrder memory resolvedOrder, bytes32 orderId, uint256 nonce)

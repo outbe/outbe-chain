@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { Script } from "forge-std/Script.sol";
-import { console2 } from "forge-std/console2.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 
-import { LayerZeroRouter } from "../src/router/LayerZeroRouter.sol";
-import { Auction } from "../src/Auction.sol";
-import { SolverEscrow } from "../src/SolverEscrow.sol";
-import { RouterAllocator } from "../src/allocators/RouterAllocator.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {Auction} from "../src/Auction.sol";
+import {SolverEscrow} from "../src/SolverEscrow.sol";
+import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 /// @dev Post-deployment wiring script.
 ///
@@ -47,9 +47,7 @@ contract ConfigureAll is Script {
         address auctionAddress,
         address escrowAddress,
         address allocatorAddress
-    )
-        public
-    {
+    ) public {
         // 1. Escrow → Router
         SolverEscrow(escrowAddress).setAuthorizedCaller(routerAddress);
         console2.log("  escrow.setAuthorizedCaller done");

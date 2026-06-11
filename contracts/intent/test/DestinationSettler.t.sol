@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test } from "forge-std/Test.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {Test} from "forge-std/Test.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
-import { BaseTest } from "./BaseTest.sol";
-import { DestinationSettler } from "../src/router/destination/DestinationSettler.sol";
-import { IDestinationSettler } from "../src/interfaces/IDestinationSettler.sol";
-import { IAuction } from "../src/interfaces/IAuction.sol";
-import { ISolverEscrow } from "../src/interfaces/ISolverEscrow.sol";
-import { Auction } from "../src/Auction.sol";
-import { OrderStatusStorage } from "../src/router/common/OrderStatusStorage.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { OrderData, OrderEncoder } from "../src/libs/OrderEncoder.sol";
-import { OnchainCrossChainOrder } from "../src/interfaces/OrderTypes.sol";
+import {BaseTest} from "./BaseTest.sol";
+import {DestinationSettler} from "../src/router/destination/DestinationSettler.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
+import {IAuction} from "../src/interfaces/IAuction.sol";
+import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
+import {Auction} from "../src/Auction.sol";
+import {OrderStatusStorage} from "../src/router/common/OrderStatusStorage.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
 
 event Filled(bytes32 orderId, bytes originData, bytes fillerData);
 event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
@@ -53,11 +53,7 @@ contract DestinationSettlerForTest is DestinationSettler {
         return bytes12(0);
     }
 
-    function _dispatchSettle(
-        uint32 _originDomain,
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function _dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         override
     {
@@ -80,9 +76,7 @@ contract DestinationSettlerForTest is DestinationSettler {
         bytes32[] calldata _orderIds,
         bytes[] memory ordersOriginData,
         bytes[] memory ordersFillerData
-    )
-        public
-    {
+    ) public {
         _settleOrders(_orderIds, ordersOriginData, ordersFillerData);
     }
 
@@ -114,7 +108,7 @@ contract DestinationSettlerTest is BaseTest {
         users.push(address(destinationSettler));
     }
 
-    receive() external payable { }
+    receive() external payable {}
 
     // ========== Helpers ==========
 
@@ -161,9 +155,7 @@ contract DestinationSettlerTest is BaseTest {
         uint256 amount2,
         bytes32 orderId,
         bytes memory originData
-    )
-        internal
-    {
+    ) internal {
         // Use different salts per solver via separate commit hashes
         vm.prank(solver1);
         auction.commit(orderId, keccak256(abi.encode(orderId, amount1, bytes32(uint256(1)))));
@@ -268,7 +260,7 @@ contract DestinationSettlerTest is BaseTest {
         uint256[] memory balancesBefore = _balances();
 
         vm.startPrank(vegeta);
-        destinationSettler.fillOrder{ value: amount }(orderId, originData, abi.encode(vegeta.addressToBytes32()));
+        destinationSettler.fillOrder{value: amount}(orderId, originData, abi.encode(vegeta.addressToBytes32()));
 
         uint256[] memory balancesAfter = _balances();
         assertEq(balancesAfter[balanceId[vegeta]], balancesBefore[balanceId[vegeta]] - amount);
@@ -287,7 +279,7 @@ contract DestinationSettlerTest is BaseTest {
 
         vm.prank(vegeta);
         vm.expectRevert(OrderStatusStorage.InvalidNativeAmount.selector);
-        destinationSettler.fillOrder{ value: amount - 1 }(orderId, originData, new bytes(0));
+        destinationSettler.fillOrder{value: amount - 1}(orderId, originData, new bytes(0));
     }
 
     function test_fillOrder_InvalidOrderId() public {
@@ -364,9 +356,8 @@ contract DestinationSettlerTest is BaseTest {
     function test_getOrderId_onchain_works() public view {
         OrderData memory orderData = _prepareOrderData();
 
-        OnchainCrossChainOrder memory order = _prepareOnchainOrder(
-            OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType()
-        );
+        OnchainCrossChainOrder memory order =
+            _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
 
         assertEq(destinationSettler.getOrderId(order), OrderEncoder.id(orderData));
     }
