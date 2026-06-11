@@ -25,7 +25,10 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::constants::{denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE};
+use crate::constants::{
+    denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_COMMIT_GRATIS, TAG_MERKLE_GRATIS,
+    TAG_NULLIFIER_GRATIS,
+};
 use crate::errors::GratisPoolError;
 use crate::precompile::emit_commitment_inserted;
 use crate::schema::GratisPoolContract;
@@ -160,17 +163,23 @@ fn verify_and_spend(
     };
 
     // 4. The proof must verify against the committed gratis-pool VK *and*
-    //    against the four runtime-authoritative public inputs. The
+    //    against the seven runtime-authoritative public inputs. The
     //    verifier prepends them to the proof body so the binding is
     //    atomic — a proof valid for some other (root, nullifier, denom,
-    //    binding) tuple cannot be replayed against this call's `args`.
-    //    Order matches circuit declaration order in the upstream
-    //    `outbe-commitment-nullifier-circuit::main` (see `outbe-circuits`).
+    //    binding, tag-triple) tuple cannot be replayed against this call's
+    //    `args`. Order matches circuit declaration order in the upstream
+    //    `outbe-commitment-nullifier-circuit::main` (see `outbe-circuits`):
+    //    the four runtime-derived inputs first, then the three
+    //    deployment-fixed domain-separator tags that pin which ceremony
+    //    the proof was produced against.
     let public_inputs: [U256; verifier::NUM_PUBLIC_INPUTS] = [
         args.merkle_root,
         args.nullifier_hash,
         U256::from(args.denom_id),
         args.receiver_binding,
+        U256::from(TAG_COMMIT_GRATIS),
+        U256::from(TAG_NULLIFIER_GRATIS),
+        U256::from(TAG_MERKLE_GRATIS),
     ];
     if !verifier::verify(&public_inputs, &args.proof) {
         return Err(GratisPoolError::ProofInvalid.into());

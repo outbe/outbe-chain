@@ -28,17 +28,26 @@ use outbe_zk_canonical::COMMITMENT_NULLIFIER;
 /// `outbe-commitment-nullifier-circuit` Noir program shipped by
 /// `outbe-circuits`. Used both to size the combined-proof prefix here and
 /// to type the `verify` callsite in `runtime.rs`.
-pub const NUM_PUBLIC_INPUTS: usize = 4;
+pub const NUM_PUBLIC_INPUTS: usize = 7;
 
 /// Verify an UltraHonkKeccak proof against the canonical commitment-nullifier
-/// VK, binding the four runtime-known public inputs to the proof.
+/// VK, binding the seven runtime-known public inputs to the proof.
 ///
 /// `public_inputs` are field elements in **circuit declaration order**:
-/// `[merkle_root, nullifier_hash, denom_id, receiver_binding]` — the order
+/// `[merkle_root, nullifier_hash, denom_id, receiver_binding,
+///   tag_commit, tag_nullifier, tag_merkle]` — the order
 /// `fn main(...)` in the upstream Noir circuit declares them and the order
 /// Noir / bb emit them in the proof. Each is encoded as a 32-byte
-/// big-endian field element; `denom_id` is the BN254 Fr embedding of a small
-/// integer, i.e. the 32-byte BE encoding with leading zeros.
+/// big-endian field element; `denom_id` and the three `tag_*` values are the
+/// BN254 Fr embedding of a small integer, i.e. the 32-byte BE encoding with
+/// leading zeros.
+///
+/// The three domain-separator tags are public inputs (rather than circuit
+/// constants) so the verifier pins them to the protocol-fixed
+/// `TAG_COMMIT_GRATIS` / `TAG_NULLIFIER_GRATIS` / `TAG_MERKLE_GRATIS`
+/// declared in `constants.rs` — this lets the same Noir bytecode be reused
+/// across deployments while still gating each verification on the local
+/// ceremony's tag triple.
 ///
 /// `proof_body` is the bare proof bytes — the `bb prove` output with the
 /// `[u32-BE count | N×32B public inputs]` prefix stripped off. This module
