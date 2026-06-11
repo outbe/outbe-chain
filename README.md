@@ -45,22 +45,22 @@ outbe-chain/
 
 ## Quick Start
 
-Prerequisites: Rust (see `rust-toolchain.toml`), `cargo-nextest` (`make nextest-install`).
+Prerequisites: [`mise`](https://mise.jdx.dev) (provisions the Rust toolchain, Foundry, and cargo tools from `mise.toml`). Run `mise install` once, then `mise tasks` to list every task.
 
 ```bash
 # 4-validator localnet
-make build-release
-make localnet-bootstrap     # BLS keys + genesis.json
-make localnet-start
-make localnet-status        # all 4 nodes should advance past block 0
+mise run build-release
+mise run localnet-bootstrap     # BLS keys + genesis.json
+mise run localnet-start
+mise run localnet-status        # all 4 nodes should advance past block 0
 
 # Verify via RPC
 curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 
 # Tests
-make test                   # cargo nextest run --workspace
-make test-consensus         # consensus crate only
+mise run test                   # cargo nextest run --workspace + doctests
+mise run test-consensus         # consensus crate only
 ```
 
 ## CLI Tools

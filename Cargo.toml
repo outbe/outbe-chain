@@ -252,9 +252,6 @@ time = "0.3"
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
-[profile.release]
-debug = "line-tables-only"
-
 [profile.test]
 debug = 0
 
