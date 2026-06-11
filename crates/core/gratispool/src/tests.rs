@@ -354,6 +354,9 @@ fn build_combined_lays_out_count_inputs_then_body() {
         U256::from(0xBB_u64),
         U256::from(0x02_u64), // denom_id-shaped small int
         U256::from(0xCC_u64),
+        U256::from(0x11_u64), // tag_commit slot
+        U256::from(0x22_u64), // tag_nullifier slot
+        U256::from(0x33_u64), // tag_merkle slot
     ];
     let proof_body: Vec<u8> = (0u8..=255).collect();
 
