@@ -562,6 +562,83 @@ fn try_call_excludes_pre_issuance_days() {
 }
 
 // ---------------------------------------------------------------------
+// LZ notification failure: state transition must survive messenger outage
+// ---------------------------------------------------------------------
+
+/// Seed a series directly in the registry + bin index, bypassing issue()
+/// so tests can omit the OriginMessenger stub.
+fn seed_issued(s: &StorageHandle<'_>, id: u32) {
+    outbe_intexregistry::api::create_series(
+        s,
+        outbe_intexregistry::CreateSeriesParams {
+            series_id: id,
+            issued_intex_count: 100,
+            intex_size: INTEX_SIZE,
+            intex_strike_price: 2_000,
+            coen_price_floor: U256::from(EXPECTED_FLOOR),
+            intex_call_period: CALL_PERIOD,
+            call_trigger: outbe_intexregistry::IntexCallTrigger {
+                window_days: 30,
+                threshold_days: 20,
+                coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
+            },
+            issued_at: ISSUED_AT,
+        },
+    )
+    .unwrap();
+    IntexFactoryContract::new(s.clone())
+        .insert_unqualified(id, U256::from(EXPECTED_FLOOR))
+        .unwrap();
+}
+
+#[test]
+fn qualify_survives_lz_messenger_failure() {
+    // No OriginMessenger stub: notify_lz_qualified fails silently.
+    // The Issued -> Qualified transition must still complete.
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    StorageHandle::enter(&mut storage, |s| {
+        seed_issued(&s, 7);
+        let mut f = IntexFactoryContract::new(s.clone());
+        let mature = ISSUED_AT as u64 + 21 * DAY + 1;
+        assert!(
+            qualified::try_qualify(&s, &mut f, 7, mature, U256::from(EXPECTED_FLOOR) + U256::from(1))
+                .unwrap()
+        );
+        assert_eq!(
+            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
+            outbe_intexregistry::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn call_survives_lz_messenger_failure() {
+    // No OriginMessenger stub: notify_lz_called fails silently.
+    // The Qualified -> Called transition must still complete.
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    StorageHandle::enter(&mut storage, |s| {
+        seed_issued(&s, 7);
+        outbe_intexregistry::api::mark_qualified(&s, 7).unwrap();
+        let mut f = IntexFactoryContract::new(s.clone());
+        f.insert_qualified(7, U256::from(EXPECTED_TRIGGER)).unwrap();
+
+        let oracle = OracleContract::new(s.clone());
+        let pair_id = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
+        fill_days(&oracle, today, pair_id, 30, U256::from(EXPECTED_TRIGGER) + U256::from(1));
+
+        assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
+        assert_eq!(
+            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
+            outbe_intexregistry::IntexState::Called
+        );
+    });
+}
+
+// ---------------------------------------------------------------------
 // full begin_block / daily scans (oracle read + bin iteration)
 // ---------------------------------------------------------------------
 

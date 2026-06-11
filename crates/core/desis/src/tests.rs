@@ -93,7 +93,7 @@ fn begin_clearing_stores_pending() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        let supply_promis = 10 * INTEX_SIZE as u128;
+        let supply_promis = 10 * INTEX_SIZE;
         let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
         assert_eq!(remainder, 0); // no rounding with exact multiple
         let contract = s.contract::<DesisContract>();
@@ -108,7 +108,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * INTEX_SIZE as u128).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * INTEX_SIZE).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             SERIES_ID,
