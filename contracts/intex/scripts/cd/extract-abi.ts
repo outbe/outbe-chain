@@ -14,10 +14,7 @@ const CONTRACTS = [
   "bnb/IntexAuction",
   "bnb/EscrowAdapter",
   "bnb/TargetMessenger",
-  // Outbe-side
-  "outbe/IntexSettlement",
-  "outbe/Desis",
-  "outbe/IntexFactory",
+  // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
   "outbe/OriginMessenger",
   // Both chains
   "shared/IntexNFT1155",
@@ -30,10 +27,7 @@ const INTERFACES = [
   "bnb/interfaces/IIntexAuction",
   "bnb/interfaces/IEscrowAdapter",
   "bnb/interfaces/ITargetMessenger",
-  // Outbe-side
-  "outbe/interfaces/IIntexSettlement",
-  "outbe/interfaces/IDesis",
-  "outbe/interfaces/IIntexFactory",
+  // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
   "outbe/interfaces/IOriginMessenger",
   // Both chains
   "shared/interfaces/IIntexNFT1155",
