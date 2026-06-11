@@ -96,7 +96,7 @@ export const NFT_ABI: Abi = parseAbi([
 
 /** IntexRegistry (outbe precompile): canonical cross-chain series ledger. */
 export const REGISTRY_ABI: Abi = parseAbi([
-  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 intexSize, uint64 intexStrikePrice, uint64 coenPriceFloor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint64 coenPriceCallTrigger, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod) data)",
+  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 intexSize, uint64 intexStrikePrice, uint256 coenPriceFloor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint256 coenPriceCallTrigger, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod) data)",
   "function seriesExists(uint32 seriesId) view returns (bool)",
   "function totalSeries() view returns (uint64)",
   "function seriesAt(uint64 index) view returns (uint32)",
