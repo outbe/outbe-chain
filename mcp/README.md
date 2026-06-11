@@ -173,6 +173,69 @@ claude mcp add outbe --scope user \
   -- npx -y @outbe/mcp --rpc https://rpc.testnet.outbe.net
 ```
 
+## Intex (auctions, NFTs, settlement)
+
+Participant tools for the Intex flow — there is no UI; the chat is the form. Intex
+is cross-chain: the auction, escrow and NFT live on a target chain (BSC today);
+the series ledger, settlement and Promis live on outbe as runtime precompiles. The
+tools resolve networks from the `NETWORKS` table in `src/intex/registry.ts`
+(`bsc-testnet`, `outbe-testnet`); addresses are keyed per network. View tools work
+without a key; signing tools need `OUTBE_PRIVATE_KEY`.
+
+**Auction (BSC)** — `intex_active_auctions` (all auctions + current stage),
+`intex_auction_info` (one series: stage, schedule, params, result),
+`intex_my_bids` (your commit/reveal status), `intex_commit_bid`, `intex_reveal_bid`,
+`intex_cancel_commit`.
+
+**Bid funding (BSC)** — `intex_payment_allowance` (stablecoin allowance to the
+escrow + balance), `intex_approve_payment`.
+
+**NFT** — `intex_my_holdings` (owned token ids, balances, status),
+`intex_series_balance` (issued/settled balance for one series). Reads BSC by
+default; pass `network: outbe-testnet` to read the bridged side.
+
+**Series ledger (outbe)** — `intex_series_info` (canonical series record + lifecycle
+state), `intex_series_list`.
+
+**Bridge BSC→outbe (Qualified only)** — `intex_bridge_quote` (LayerZero fee),
+`intex_bridge_approve` (one-time), `intex_bridge_nft`. Bridging is voluntary and
+only allowed once a series is **Qualified**; *Issued* cannot bridge, and *Called*
+is auto-bridged by the system (not via these tools).
+
+**Settlement + Promis (outbe)** — `intex_settle` (step 1: pay strike, Issued→Settled),
+`intex_mine_promis` (step 2: Settled→Promis), `intex_set_authorized_settler`,
+`intex_promis_balance`.
+
+Series lifecycle is **Issued → Qualified → Called**: bids stay sealed through
+commit/reveal (counts and clearing result are 0 until clearing); winners hold
+*Issued* Intex on BSC and trade peer-to-peer; bridging + settlement open only at
+*Qualified* (voluntary) or *Called* (forced, system-bridged).
+
+Commit/reveal has **no salt**: the commit hash is `keccak256` of the EIP-712
+RevealBid signature, which is deterministic, so reveal re-derives it from
+`(key, series, quantity, price)` with nothing stored. **Record your bid** — you
+must supply series/quantity/price again to reveal, they are not recoverable
+on-chain, and the assistant only remembers them within a session. `price` is in
+payment-token units (e.g. `"1.5"`); the tools scale it by the token decimals, so
+you never deal with raw integers. Commit needs no approval — reveal pulls
+`quantity*price` into the escrow and **auto-approves** the allowance if it is
+short, reporting the approval so the spend is never silent. `intex_mine_promis`
+grinds the proof-of-work nonce locally (SHA256, 1-byte difficulty) — you pass only
+series and amount.
+
+**Example prompts:**
+
+- *"What Intex auctions are active and what stage are they in?"* → `intex_active_auctions`
+- *"Commit 5 Intexes at price 1.5 in series 42."* →
+  `intex_commit_bid { series: 42, quantity: 5, price: "1.5" }`
+- *"Reveal my bid in series 42: 5 at 1.5."* →
+  `intex_reveal_bid { series: 42, quantity: 5, price: "1.5" }` (auto-approves first if needed)
+- *"Show my Intex NFTs."* → `intex_my_holdings`
+- *"Bridge my series 42 NFT to outbe."* (only once Qualified) → `intex_bridge_approve`
+  (once) then `intex_bridge_nft { series: 42, amount: "5" }`
+- *"Settle series 42 and mine Promis."* → `intex_settle { series: 42, amount: "5" }`
+  then `intex_mine_promis { series: 42, amount: "5" }`
+
 ## Notes
 
 - Contract registry, addresses and ABIs live in `src/registry.ts`. Source of truth:

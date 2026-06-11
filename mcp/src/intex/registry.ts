@@ -1,0 +1,127 @@
+import { type Abi, type Address, getAddress, parseAbi } from "viem";
+
+/**
+ * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
+ * series registry, cross-chain bridge, settlement/Promis).
+ *
+ * Intex is cross-chain: the auction + escrow + NFT run on target chains (BSC
+ * today, more later); the series ledger (IntexRegistry), settlement
+ * (IntexFactory) and Promis live on outbe as runtime precompiles. Addresses are
+ * embedded constants, keyed by network so a new target chain is an added branch,
+ * not a rewrite. The MCP never reads JSON at runtime.
+ *
+ * ABIs are embedded as viem human-readable signatures (no Solidity compile step),
+ * matching the convention in src/registry.ts and src/intent/registry.ts.
+ */
+
+export interface NetworkDef {
+  name: string;
+  chainId: number;
+  rpc: string;
+}
+
+/** Supported networks. `outbe-testnet` reuses the connected ctx when ids match. */
+export const NETWORKS: NetworkDef[] = [
+  { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
+  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
+];
+
+/** Per-network Intex contract addresses. Empty until deployed on that network. */
+export interface IntexAddresses {
+  auction?: Address;
+  escrow?: Address;
+  paymentToken?: Address;
+  nft?: Address;
+  bridgeAdapter?: Address;
+  registry?: Address;
+  factory?: Address;
+  promis?: Address;
+}
+
+const a = (s: string): Address => getAddress(s);
+
+export const INTEX: Record<string, IntexAddresses> = {
+  "bsc-testnet": {
+    auction: a("0x912E4b32b38cc2c4D80047cB476599102c676896"),
+    escrow: a("0x47E9e7be5a45B296036b196C0cC8B371A8AB9D83"),
+    paymentToken: a("0x78366397b72D0c283658DA5A38C450455A97e595"),
+    nft: a("0xc9735138d43CDc740d8aF43cB6597Ee040Bb1D2d"),
+    bridgeAdapter: a("0x5EF48bBD34e2eBcB51E459faCCb90E16BD7BF9aB"),
+  },
+  "outbe-testnet": {
+    nft: a("0xbB9493451F46e0b984B839f182624F2da1e9821c"),
+    bridgeAdapter: a("0xA1DBb77fDF66bdDC26ae6925B1E775ac70452851"),
+    // outbe runtime precompiles (addresses.rs):
+    registry: a("0x0000000000000000000000000000000000001014"),
+    factory: a("0x0000000000000000000000000000000000001015"),
+    promis: a("0x0000000000000000000000000000000000001337"),
+  },
+};
+
+/** Resolve a contract address for a network, or throw a clear error. */
+export function intexAddress(network: string, key: keyof IntexAddresses): Address {
+  const addr = INTEX[network]?.[key];
+  if (!addr) {
+    throw new Error(`Intex "${key}" is not configured on "${network}"`);
+  }
+  return addr;
+}
+
+// --- ABIs ------------------------------------------------------------------
+
+/** IntexAuction (BSC): commit/reveal + auction views. */
+export const AUCTION_ABI: Abi = parseAbi([
+  "function commitBid(uint32 seriesId, bytes32 commitHash)",
+  "function revealBid(uint32 seriesId, uint16 quantity, uint64 bidPrice, uint64 chainId, bytes signature)",
+  "function cancelCommit(uint32 seriesId)",
+  "function getAuctionStage(uint32 seriesId) view returns (uint8)",
+  "function getAuctionInfo(uint32 seriesId) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint128 intexSize, uint64 minIntexBidPrice, uint64 intexStrikePrice, uint64 coenPriceFloor, uint16 minIntexBidQuantity) params, (uint128 issuedIntexLoadedPromis, uint64 auctionIntexClearingPrice, uint32 issuedIntexCount, uint32 wonBidsCount) result) auctionData)",
+  "function committedBidsByHash(uint32 seriesId, address bidder) view returns (bytes32)",
+  "function revealedBidsByBidder(uint32 seriesId, address bidder) view returns (bool)",
+  "function escrowContract() view returns (address)",
+  "event AuctionStageUpdated(uint32 indexed seriesId, uint8 auctionStage, uint32 timestamp, string reason)",
+]);
+
+/** IntexNFT1155 (BSC + outbe): holder-facing reads. */
+export const NFT_ABI: Abi = parseAbi([
+  "function getOwnedSeriesWithBalances(address owner) view returns (uint256[] ownedTokenIds, uint256[] balances)",
+  "function getAuctionWonCount(uint32 seriesId, address account) view returns (uint16)",
+  "function statusOf(uint256 tokenId) view returns (uint8)",
+  "function balanceOf(address account, uint256 id) view returns (uint256)",
+  "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",
+  "function readData(uint32 seriesId) view returns ((uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod, uint32 totalSupply, uint32 issuedIntexCount, uint32 mintedCount, uint8 status, uint8 state) data)",
+  "function isApprovedForAll(address account, address operator) view returns (bool)",
+  "function setApprovalForAll(address operator, bool approved)",
+]);
+
+/** IntexRegistry (outbe precompile): canonical cross-chain series ledger. */
+export const REGISTRY_ABI: Abi = parseAbi([
+  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 intexSize, uint64 intexStrikePrice, uint256 coenPriceFloor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint256 coenPriceCallTrigger, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod) data)",
+  "function seriesExists(uint32 seriesId) view returns (bool)",
+  "function totalSeries() view returns (uint64)",
+  "function seriesAt(uint64 index) view returns (uint32)",
+]);
+
+/** ONFT1155Adapter: the BSC->outbe NFT bridge. */
+export const ONFT_ABI: Abi = parseAbi([
+  "function OUTBE_EID() view returns (uint32)",
+  "function quoteSend((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, bool payInLzToken) view returns ((uint256 nativeFee, uint256 lzTokenFee) fee)",
+  "function send((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable returns ((bytes32 guid, uint64 nonce, (uint256 nativeFee, uint256 lzTokenFee) fee) receipt)",
+]);
+
+/** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
+export const FACTORY_ABI: Abi = parseAbi([
+  "function settle(uint32 seriesId, address intexHolder, uint256 amount)",
+  "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) returns (uint256 promisAmount)",
+  "function setAuthorizedSettler(uint32 seriesId, address settler)",
+  "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+]);
+
+/** Minimal ERC20 (BSC payment token; outbe Promis balance). */
+export const ERC20_ABI: Abi = parseAbi([
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+]);
