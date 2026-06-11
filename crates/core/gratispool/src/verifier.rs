@@ -18,6 +18,7 @@
 //! regenerate-canonical`; bumping the `outbe-circuits` git tag here picks
 //! up any VK update without changes to this crate.
 
+use crate::errors::GratisPoolError;
 use alloy_primitives::U256;
 #[cfg(not(any(test, feature = "test-helpers")))]
 use outbe_zk_canonical::COMMITMENT_NULLIFIER;
@@ -54,20 +55,29 @@ pub const NUM_PUBLIC_INPUTS: usize = 7;
 /// prepends a fresh prefix from `public_inputs` so the verifier sees exactly
 /// what the runtime intends to gate.
 ///
-/// Returns `false` on any verifier error or proof mismatch (the `Result` is
-/// consumed locally so the runtime path stays simple — proof failure is just
-/// "invalid proof").
+/// Returns `Ok(())` when the proof verifies. On failure the returned
+/// [`GratisPoolError::ProofInvalid`] wraps the root cause: either the
+/// verifier's own error string (malformed proof, VK mismatch, FFI failure) or
+/// the fact that the verifier ran cleanly but rejected the proof.
 #[cfg(not(any(test, feature = "test-helpers")))]
-pub fn verify(public_inputs: &[U256; NUM_PUBLIC_INPUTS], proof_body: &[u8]) -> bool {
+pub fn verify(
+    public_inputs: &[U256; NUM_PUBLIC_INPUTS],
+    proof_body: &[u8],
+) -> Result<(), GratisPoolError> {
     let combined = build_combined(public_inputs, proof_body);
-    outbe_zk_circuit_noir::barretenberg::verify::verify_ultra_honk_keccak(
+    match outbe_zk_circuit_noir::barretenberg::verify::verify_ultra_honk_keccak(
         combined,
         COMMITMENT_NULLIFIER.vk_bytes.to_vec(),
-        // `disable_zk` — must match the prover's setting. 
+        // `disable_zk` — must match the prover's setting.
         // Proofs are produced with ZK enabled, so this is `false`.
         false,
-    )
-    .unwrap_or(false)
+    ) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(GratisPoolError::ProofInvalid(
+            "verifier rejected the proof".to_string(),
+        )),
+        Err(e) => Err(GratisPoolError::ProofInvalid(e)),
+    }
 }
 
 /// Build the Aztec "combined proof" blob: `[u32-BE num_public_inputs |
@@ -119,8 +129,17 @@ mod test_override {
 }
 
 #[cfg(any(test, feature = "test-helpers"))]
-pub fn verify(_public_inputs: &[U256; NUM_PUBLIC_INPUTS], _proof_body: &[u8]) -> bool {
-    test_override::OUTCOME.with(|c| c.get().unwrap_or(false))
+pub fn verify(
+    _public_inputs: &[U256; NUM_PUBLIC_INPUTS],
+    _proof_body: &[u8],
+) -> Result<(), GratisPoolError> {
+    if test_override::OUTCOME.with(|c| c.get().unwrap_or(false)) {
+        Ok(())
+    } else {
+        Err(GratisPoolError::ProofInvalid(
+            "verifier rejected the proof".to_string(),
+        ))
+    }
 }
 
 /// Force the verifier to return `outcome` for the duration of `f`.

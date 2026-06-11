@@ -182,9 +182,7 @@ fn verify_and_spend(
         U256::from(TAG_NULLIFIER_GRATIS),
         U256::from(TAG_MERKLE_GRATIS),
     ];
-    if !verifier::verify(&public_inputs, &args.proof) {
-        return Err(GratisPoolError::ProofInvalid.into());
-    }
+    verifier::verify(&public_inputs, &args.proof)?;
 
     // 4. Consume the nullifier last. `Set::insert` returns `false` if it was
     //    already present, which is the double-spend rejection.
