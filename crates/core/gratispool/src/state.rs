@@ -65,10 +65,6 @@ fn fr_to_u256(x: Fr) -> U256 {
 /// uses as *state* — most importantly the `nullifier_spent` set key — must be
 /// canonicalised first, otherwise `N` and `N + p` are distinct keys for the
 /// same nullifier and a note can be spent more than once.
-///
-/// Implemented as a round-trip through `Fr` (reduce, then re-serialise
-/// canonically) so the modulus never has to be transcribed by hand: the
-/// round-trip is the identity iff the input was already `< p`.
 pub fn require_canonical_field(x: U256) -> Result<U256> {
     if fr_to_u256(u256_to_fr(x)) != x {
         return Err(GratisPoolError::NonCanonicalFieldInput.into());

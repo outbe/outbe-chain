@@ -142,12 +142,6 @@ fn verify_and_spend(
 ) -> Result<U256> {
     let amount = denomination(args.denom_id).ok_or(GratisPoolError::DenomUnknown)?;
 
-    // 0. Reject non-canonical (>= scalar-field modulus) field-element inputs.
-    //    The Barretenberg verifier reduces public inputs modulo `p`, so
-    //    `N` and `N + p` verify identically; if the runtime then used a raw
-    //    `U256` as state (the `nullifier_spent` key in particular) those two
-    //    representatives would be distinct keys for the same nullifier and a
-    //    note could be spent multiple times. Canonicalise before any use.
     require_canonical_field(args.merkle_root)?;
     require_canonical_field(args.nullifier_hash)?;
     require_canonical_field(args.receiver_binding)?;
