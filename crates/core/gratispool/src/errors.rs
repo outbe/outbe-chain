@@ -14,6 +14,8 @@ pub enum GratisPoolError {
     RootStale,
     #[error("nullifier has already been spent")]
     NullifierSpent,
+    #[error("field-element input is not in canonical form (>= scalar field modulus)")]
+    NonCanonicalFieldInput,
     #[error("zk proof verification failed")]
     ProofInvalid,
     #[error("receiver binding does not match the proof's public input")]
