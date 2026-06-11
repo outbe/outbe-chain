@@ -232,11 +232,6 @@ const CACHE_DIR = resolve(
   OUTBE_CIRCUITS_VERSION,
 );
 
-const SIBLING_CIRCUITS_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../../outbe-circuits",
-);
-
 const CIRCUIT_JSON_REPO_PATH =
   "crates/outbe-zk-circuit-noir/data/commitment_nullifier_proof.json";
 const VK_REPO_PATH = "crates/outbe-zk-canonical/res/vks/commitment_nullifier.vk";
@@ -250,9 +245,6 @@ async function fetchCanonicalAsset(
 ): Promise<string> {
   const cachePath = resolve(CACHE_DIR, cacheFilename);
   if (existsSync(cachePath)) return cachePath;
-
-  const siblingPath = resolve(SIBLING_CIRCUITS_ROOT, repoRelativePath);
-  if (existsSync(siblingPath)) return siblingPath;
 
   const url = `${OUTBE_CIRCUITS_RAW_BASE}/${repoRelativePath}`;
   console.error(
