@@ -29,9 +29,44 @@ pub fn record_views_skipped(count: u64) {
     counter!("outbe_views_skipped_total").increment(count);
 }
 
+/// Record the highest Simplex view this node has observed activity for.
+///
+/// Unlike `outbe_finalized_view` (which freezes during a stall), this gauge
+/// advances on every view-bearing activity — notarize/certify/finalize votes and
+/// nullification certificates — so it keeps moving while a view-timeout storm
+/// nullifies views without finalizing any. The gap
+/// `outbe_current_view - outbe_finalized_view` is the primary consensus-stall
+/// signal: a sustained non-zero gap means views are advancing but nothing is
+/// finalizing. Cheap (one atomic gauge set); safe to call on the voter task.
+pub fn record_current_view(view: u64) {
+    gauge!("outbe_current_view").set(view as f64);
+}
+
+/// Record a nullified (view-timed-out / skipped) Simplex view.
+///
+/// Incremented when a `Nullification` certificate is observed. A rising rate
+/// means leaders are repeatedly failing to deliver proposals in time
+/// (network turbulence, an offline/byzantine leader run, or a liveness fault),
+/// which `outbe_finalized_view` alone cannot show.
+pub fn record_view_nullified() {
+    counter!("outbe_views_nullified_total").increment(1);
+}
+
 /// Record a finalized event dropped before block resolution.
 pub fn record_finalization_dropped(reason: &str) {
     counter!("outbe_finalization_dropped_total", "reason" => reason.to_string()).increment(1);
+}
+
+/// Record a full marshal-resolution retry cycle that exhausted without
+/// resolving a finalized block.
+///
+/// A finalized block is fetchable from any honest peer, so the actor keeps
+/// retrying rather than downing a healthy validator on a transient all-peers
+/// P2P stall. A SUSTAINED non-zero rate is the operator alarm: the block is
+/// unavailable network-wide or local state has diverged — investigate, because
+/// the actor (correctly) cannot advance finalization past an unresolved block.
+pub fn record_finalization_resolution_stalled() {
+    counter!("outbe_finalization_resolution_stalled_total").increment(1);
 }
 
 /// Record a pre-finalization canonical-head reorg at the same height.
@@ -74,9 +109,17 @@ pub fn record_epoch(epoch: u64) {
     gauge!("outbe_epoch_number").set(epoch as f64);
 }
 
-/// Record the Commonware P2P peer-manager target size.
+/// Record the Commonware P2P peer-manager *tracked peer-set* size.
+///
+/// This is the number of peers the peer-manager has registered/tracked for the
+/// current set (primary + secondary tiers), NOT the count of live TCP
+/// connections — the commonware network layer does not expose a live-connection
+/// count at this seam. Operators must read it as membership, not connectivity:
+/// it does not drop when peers disconnect, so it is not a stall/partition
+/// signal on its own. Pair it with `outbe_current_view` vs `outbe_finalized_view`
+/// for liveness diagnosis.
 pub fn record_commonware_p2p_active_peers(count: usize) {
-    gauge!("commonware_p2p_active_peers").set(count as f64);
+    gauge!("commonware_p2p_tracked_peer_set_size").set(count as f64);
 }
 
 /// Record consensus tip vs Reth provider canonical-state readiness.
@@ -142,6 +185,24 @@ pub fn record_reshare_completed() {
     counter!("outbe_reshares_completed_total").increment(1);
 }
 
+/// Record validators whose individual DKG/reshare share was publicly REVEALED
+/// during the ceremony.
+///
+/// A validator offline during its DKG/reshare has its share evaluation revealed
+/// in plaintext (the `feldman_desmedt` construction reveals a non-acking
+/// player's share so the ceremony can still complete), permanently committed
+/// on-chain in the `DealerLog` artifacts. A revealed share makes that
+/// validator's VRF threshold partial publicly forgeable. This is bounded — VRF
+/// drives leader election / fairness, not BFT safety (the BLS individual
+/// aggregate vote stays authoritative, and the group secret is safe up to `2f`
+/// reveals) — but a non-zero value is the operator's signal to rotate the
+/// affected validator's consensus key. The per-validator identities are logged
+/// at `WARN` on the `outbe::dkg` target.
+pub fn record_dkg_revealed_shares(count: usize) {
+    gauge!("outbe_dkg_revealed_shares").set(count as f64);
+    counter!("outbe_dkg_revealed_shares_total").increment(count as u64);
+}
+
 /// Record deterministic degraded leader election due to missing or invalid VRF.
 pub fn record_vrf_degraded_leader_selection() {
     counter!("outbe_vrf_degraded_leader_selection_total").increment(1);
@@ -150,6 +211,34 @@ pub fn record_vrf_degraded_leader_selection() {
 /// Record a byzantine evidence detection event.
 pub fn record_byzantine_evidence(evidence_type: &str) {
     counter!("outbe_byzantine_evidence_total", "type" => evidence_type.to_string()).increment(1);
+}
+
+/// Record an invalid threshold-VRF seed partial that was excluded from
+/// recovery during attestation verification AND is identity-attributable to its
+/// author (the rider identity signature verified). A non-zero value means a
+/// committee member deliberately emitted a garbage `bls_seed_partial` on the
+/// active material version (byzantine); the verifier neutralized it so it cannot
+/// poison `recover_proof`, and buffered slashable evidence for an external
+/// watcher to submit.
+pub fn record_invalid_vrf_partial() {
+    counter!("outbe_invalid_vrf_partial_total").increment(1);
+}
+
+/// Record an invalid threshold-VRF seed partial whose rider identity signature
+/// did NOT verify, so it cannot be attributed to the claimed signer — a
+/// probable in-transit relay forgery. It is neutralized (excluded from
+/// recovery) but never slashed.
+pub fn record_forged_seed_partial() {
+    counter!("outbe_forged_seed_partial_total").increment(1);
+}
+
+/// Record a finalized certificate whose embedded threshold-VRF proof did not
+/// verify against the committee group key for its own round. Under the
+/// seed-partial sanitization in attestation verification this must be zero; a
+/// non-zero value is a hard alarm that an unverifiable proof reached the
+/// finalized certificate and will fail the next height's mandatory V2 verify.
+pub fn record_finalized_cert_invalid_vrf_proof() {
+    counter!("outbe_finalized_cert_invalid_vrf_proof_total").increment(1);
 }
 
 /// Builder included exact-parent metadata in the Phase 1 system transaction.
@@ -228,6 +317,13 @@ pub fn record_parent_proof_unavailable_forfeit() {
 /// Proposer could not find a usable Phase 1 parent proof for the exact parent.
 pub fn record_phase1_parent_proof_unavailable() {
     counter!("outbe_phase1_parent_proof_unavailable_total").increment(1);
+}
+
+/// the proposer's in-process selection store missed the direct-parent
+/// proof but it was recovered from marshal's durable finalization archive,
+/// avoiding a slot forfeit (post-restart / late-join / finalization lag).
+pub fn record_parent_proof_recovered_from_marshal() {
+    counter!("outbe_parent_proof_recovered_from_marshal_total").increment(1);
 }
 
 /// Proposer used a locally observed certified-notarization witness after the

@@ -66,7 +66,7 @@ fn build_certificate(committee: &Committee, signer_indices: &[u32]) -> HybridCer
 
     let threshold_signature = sign_message::<MinSig>(
         &committee.vrf_threshold_private,
-        outbe_consensus::proof::OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &outbe_consensus::proof::hybrid_seed_namespace(),
         SEED_MESSAGE,
     );
     let vrf_proof = Some(VrfProof::<MinSig> {

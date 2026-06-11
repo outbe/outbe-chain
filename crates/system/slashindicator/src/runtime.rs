@@ -1,5 +1,11 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_consensus::proof::{invalid_vrf_evidence_hash_v2, verify_v2_proof, V2VerifyError};
+use commonware_codec::ReadExt as _;
+use commonware_cryptography::bls12381;
+use commonware_utils::ordered::Set;
+use outbe_consensus::proof::{
+    invalid_vrf_evidence_hash_v2, verify_seed_partial_against_commitment,
+    verify_seed_partial_attest_bytes, verify_v2_proof, V2VerifyError,
+};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
@@ -7,10 +13,13 @@ use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTxInputV2};
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::runtime::status as validator_status;
-use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
+use outbe_validatorset::state::{
+    committee_snapshot_key, read_committee_snapshot, read_committee_snapshot_for_epoch,
+};
 use tracing::{info, warn};
 
-use crate::evidence::EvidenceBlock;
+use crate::evidence::{EvidenceBlock, EvidenceCommittee};
+use crate::seed_partial_evidence::{InvalidSeedPartialEvidence, SeedPartialEquivocationEvidence};
 use crate::vrf_evidence::InvalidVrfProofEvidence;
 
 use crate::schema::SlashIndicator;
@@ -32,15 +41,22 @@ use crate::precompile::ISlashIndicator;
 // (`config_*_felony_threshold` slots).
 const DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD: u64 = 50;
 const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 150;
-const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 500;
-const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 150;
+// graduated escalation requires misdemeanor (warn) < felony (slash). The
+// two voter defaults were inverted (misdemeanor 500 > felony 150), so the harsh
+// penalty fired before the warning could ever emit. Restored to misdemeanor 150
+// < felony 500: both sit above the proposer thresholds (voters accrue ~1 miss
+// per finalized block vs a proposer's ~1 per own leader slot) and below the
+// prod epoch length (1200), so the felony can still trigger before the per-epoch
+// reset.
+const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 150;
+const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 500;
 const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 5;
 const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 10;
 
 impl SlashIndicator<'_> {
     // --- Config helpers ---
 
-    fn proposer_felony_threshold(&self) -> Result<u64> {
+    pub(crate) fn proposer_felony_threshold(&self) -> Result<u64> {
         let v = self.config_proposer_felony_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_PROPOSER_FELONY_THRESHOLD
@@ -49,7 +65,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    fn proposer_misdemeanor_threshold(&self) -> Result<u64> {
+    pub(crate) fn proposer_misdemeanor_threshold(&self) -> Result<u64> {
         let v = self.config_proposer_misdemeanor_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
@@ -58,7 +74,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    fn voter_misdemeanor_threshold(&self) -> Result<u64> {
+    pub(crate) fn voter_misdemeanor_threshold(&self) -> Result<u64> {
         let v = self.config_voter_misdemeanor_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_VOTER_MISDEMEANOR_THRESHOLD
@@ -67,7 +83,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    fn voter_felony_threshold(&self) -> Result<u64> {
+    pub(crate) fn voter_felony_threshold(&self) -> Result<u64> {
         let v = self.config_voter_felony_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_VOTER_FELONY_THRESHOLD
@@ -95,6 +111,17 @@ impl SlashIndicator<'_> {
     }
 
     // --- Slash actions ---
+
+    /// a validator already JAILED or EXITING is being removed from the
+    /// consensus set at the next reshare; while it lingers in the committee
+    /// snapshot it must NOT be re-felonied (re-jailed + re-slashed 5% at every
+    /// subsequent miss threshold) for the same continuous liveness fault, which
+    /// would compound to far more than the intended single-felony penalty.
+    fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
+        let vs = ValidatorSet::new(self.storage.clone());
+        let status = vs.val_status.read(&validator)?;
+        Ok(status == validator_status::JAILED || status == validator_status::EXITING)
+    }
 
     /// Records a proposer miss for `validator`.
     ///
@@ -132,13 +159,22 @@ impl SlashIndicator<'_> {
             "proposer miss recorded",
         );
 
+        // the miss is recorded above, but skip felony/misdemeanor
+        // punishment for a validator already JAILED/EXITING for this fault.
+        if self.validator_already_penalized(validator)? {
+            return Ok(());
+        }
+
         if count > 0 && count % felony_threshold == 0 {
             // Felony: increment cumulative counter, force exit and slash.
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
+            // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
-            vs.force_exit_validator(validator)?;
+            vs.jail_validator(validator)?;
 
             let slash_percent = self.slash_amount_percent()?;
             let mut staking = Staking::new(self.storage.clone());
@@ -235,6 +271,12 @@ impl SlashIndicator<'_> {
             "voter miss recorded",
         );
 
+        // the miss is recorded above, but skip felony/misdemeanor
+        // punishment for a validator already JAILED/EXITING for this fault.
+        if self.validator_already_penalized(validator)? {
+            return Ok(());
+        }
+
         if count > 0 && count % felony_threshold == 0 {
             // Felony: increment cumulative counter, force exit and slash. Mirrors
             // the proposer-felony path so missed finalize votes are punitive once
@@ -242,8 +284,11 @@ impl SlashIndicator<'_> {
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
+            // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
-            vs.force_exit_validator(validator)?;
+            vs.jail_validator(validator)?;
 
             let slash_percent = self.slash_amount_percent()?;
             let mut staking = Staking::new(self.storage.clone());
@@ -319,12 +364,53 @@ impl SlashIndicator<'_> {
     ///
     /// On success: the validator is forced out and slashed (felony), and the
     /// evidence submitter receives a reward (evidence_reward_percent of slashed amount).
+    /// Submitter ACL for the BLS-evidence precompile entry points: only
+    /// currently-ACTIVE validators may submit. The verifiers run heavy
+    /// cryptography (BLS pairings + ecrecover + storage reads); gating to the
+    /// staked set makes DoS self-destructive (a griefer pays gas AND has
+    /// slashable stake at risk) instead of free on the ZeroFee chain.
+    fn require_active_submitter(&self, caller: Address) -> Result<()> {
+        let vs = ValidatorSet::new(self.storage.clone());
+        let caller_status = vs.val_status.read(&caller)?;
+        if caller_status != validator_status::ACTIVE {
+            return Err(PrecompileError::Revert(format!(
+                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Build the ordered committee `Set` for `epoch` from the on-chain
+    /// `CommitteeSnapshot`. Equivocation vote signatures are committee-bound
+    /// (notarize/nullify/finalize namespaces fold `participant_set_commitment`), so
+    /// verification must use the SAME committee the Simplex signer used. The
+    /// snapshot committee order matches the signer's participant `Set` (both are
+    /// the canonical sorted/deduped pubkey set), so the commitment bytes agree.
+    fn committee_set_for_epoch(&self, epoch: u64) -> Result<EvidenceCommittee> {
+        let snapshot =
+            read_committee_snapshot_for_epoch(self.storage.clone(), epoch)?.ok_or_else(|| {
+                PrecompileError::Revert(format!(
+                    "no committee snapshot for evidence epoch {epoch}; cannot verify the \
+                     committee-bound vote signature"
+                ))
+            })?;
+        let mut keys = Vec::with_capacity(snapshot.committee.len());
+        for entry in &snapshot.committee {
+            let pk = bls12381::PublicKey::read(&mut entry.consensus_pubkey.as_slice()).map_err(
+                |_| PrecompileError::Revert("invalid committee pubkey in snapshot".into()),
+            )?;
+            keys.push(pk);
+        }
+        Ok(Set::from_iter_dedup(keys))
+    }
+
     pub fn submit_double_proposal_evidence(
         &mut self,
         caller: Address,
         block1: &[u8],
         block2: &[u8],
     ) -> Result<()> {
+        self.require_active_submitter(caller)?;
         let ev1 = EvidenceBlock::parse(block1)?;
         let ev2 = EvidenceBlock::parse(block2)?;
 
@@ -351,16 +437,18 @@ impl SlashIndicator<'_> {
             ));
         }
 
-        // A-03: Compute canonical evidence hash and reject duplicates.
+        // Compute canonical evidence hash and reject duplicates.
         // Normalize order so (block1, block2) and (block2, block1) produce the same hash.
         let evidence_hash = canonical_evidence_hash(block1, block2);
         if self.evidence_processed.read(&evidence_hash)? {
             return Err(PrecompileError::Revert("evidence already processed".into()));
         }
 
-        // Verify both signatures
-        ev1.verify_notarize_signature()?;
-        ev2.verify_notarize_signature()?;
+        // Verify both signatures under the committee that ran the evidence's epoch
+        // (notarize namespace is committee-bound).
+        let committee = self.committee_set_for_epoch(round1.0)?;
+        ev1.verify_notarize_signature(&committee)?;
+        ev2.verify_notarize_signature(&committee)?;
 
         // Look up validator by consensus pubkey hash (keccak256 of 48-byte BLS pubkey)
         let vs = ValidatorSet::new(self.storage.clone());
@@ -395,6 +483,7 @@ impl SlashIndicator<'_> {
         vote1: &[u8],
         vote2: &[u8],
     ) -> Result<()> {
+        self.require_active_submitter(caller)?;
         let ev1 = EvidenceBlock::parse(vote1)?;
         let ev2 = EvidenceBlock::parse(vote2)?;
 
@@ -414,17 +503,20 @@ impl SlashIndicator<'_> {
             ));
         }
 
-        // A-03: Compute canonical evidence hash and reject duplicates.
+        // Compute canonical evidence hash and reject duplicates.
         let evidence_hash = canonical_evidence_hash(vote1, vote2);
         if self.evidence_processed.read(&evidence_hash)? {
             return Err(PrecompileError::Revert("evidence already processed".into()));
         }
 
         // Verify conflicting vote types: one must be notarize, the other nullify.
-        // Try ev1=notarize + ev2=nullify first, then the reverse.
-        let valid = (ev1.verify_notarize_signature().is_ok()
-            && ev2.verify_nullify_signature().is_ok())
-            || (ev1.verify_nullify_signature().is_ok() && ev2.verify_notarize_signature().is_ok());
+        // Try ev1=notarize + ev2=nullify first, then the reverse. both
+        // namespaces are committee-bound, so verify under the epoch's committee.
+        let committee = self.committee_set_for_epoch(round1.0)?;
+        let valid = (ev1.verify_notarize_signature(&committee).is_ok()
+            && ev2.verify_nullify_signature(&committee).is_ok())
+            || (ev1.verify_nullify_signature(&committee).is_ok()
+                && ev2.verify_notarize_signature(&committee).is_ok());
 
         if !valid {
             return Err(PrecompileError::Revert(
@@ -448,6 +540,122 @@ impl SlashIndicator<'_> {
         self.apply_evidence_felony(validator_addr, caller)
     }
 
+    /// Shared verifier for the three commonware same-signer equivocation classes
+    /// (`ConflictingNotarize`, `ConflictingFinalize`, `NullifyFinalize`). Each is
+    /// two `EvidenceBlock`s from the SAME signer for the SAME round; the two
+    /// closures verify each block's signature against the appropriate Simplex
+    /// sub-namespace. `require_distinct_proposals` is set for same-vote-type
+    /// classes (two notarizes / two finalizes must differ); the nullify+finalize
+    /// class differs by construction. Dedup reuses the `evidence_processed`
+    /// guard (slot 8) keyed by the order-independent `canonical_evidence_hash`.
+    fn apply_equivocation_felony(
+        &mut self,
+        caller: Address,
+        block1: &[u8],
+        block2: &[u8],
+        require_distinct_proposals: bool,
+        verify1: impl Fn(&EvidenceBlock, &EvidenceCommittee) -> Result<()>,
+        verify2: impl Fn(&EvidenceBlock, &EvidenceCommittee) -> Result<()>,
+    ) -> Result<()> {
+        self.require_active_submitter(caller)?;
+        let ev1 = EvidenceBlock::parse(block1)?;
+        let ev2 = EvidenceBlock::parse(block2)?;
+
+        if ev1.pubkey != ev2.pubkey {
+            return Err(PrecompileError::Revert(
+                "evidence blocks must have the same signer".into(),
+            ));
+        }
+        let round1 = ev1.round()?;
+        if round1 != ev2.round()? {
+            return Err(PrecompileError::Revert(
+                "votes must be for the same round".into(),
+            ));
+        }
+        if require_distinct_proposals && ev1.proposal_bytes == ev2.proposal_bytes {
+            return Err(PrecompileError::Revert(
+                "conflicting votes must be for different proposals".into(),
+            ));
+        }
+
+        let evidence_hash = canonical_evidence_hash(block1, block2);
+        if self.evidence_processed.read(&evidence_hash)? {
+            return Err(PrecompileError::Revert("evidence already processed".into()));
+        }
+
+        // vote namespaces are committee-bound; verify under the committee
+        // that ran the evidence's epoch.
+        let committee = self.committee_set_for_epoch(round1.0)?;
+        verify1(&ev1, &committee)?;
+        verify2(&ev2, &committee)?;
+
+        let vs = ValidatorSet::new(self.storage.clone());
+        let validator_addr = vs.lookup_by_pubkey_hash(ev1.pubkey_hash())?;
+        if validator_addr.is_zero() {
+            return Err(PrecompileError::Revert(
+                "signer is not a registered validator".into(),
+            ));
+        }
+
+        self.evidence_processed.write(&evidence_hash, true)?;
+        self.apply_evidence_felony(validator_addr, caller)
+    }
+
+    /// `ConflictingNotarize`: the same signer notarized two DIFFERENT proposals
+    /// in one view.
+    pub fn submit_conflicting_notarize_evidence(
+        &mut self,
+        caller: Address,
+        block1: &[u8],
+        block2: &[u8],
+    ) -> Result<()> {
+        self.apply_equivocation_felony(
+            caller,
+            block1,
+            block2,
+            true,
+            |ev, c| ev.verify_notarize_signature(c),
+            |ev, c| ev.verify_notarize_signature(c),
+        )
+    }
+
+    /// `ConflictingFinalize`: the same signer finalized two DIFFERENT proposals
+    /// in one view.
+    pub fn submit_conflicting_finalize_evidence(
+        &mut self,
+        caller: Address,
+        block1: &[u8],
+        block2: &[u8],
+    ) -> Result<()> {
+        self.apply_equivocation_felony(
+            caller,
+            block1,
+            block2,
+            true,
+            |ev, c| ev.verify_finalize_signature(c),
+            |ev, c| ev.verify_finalize_signature(c),
+        )
+    }
+
+    /// `NullifyFinalize`: the same signer both nullified (voted to skip) and
+    /// finalized the same view. `nullify_block` is the nullify vote,
+    /// `finalize_block` the finalize vote.
+    pub fn submit_nullify_finalize_evidence(
+        &mut self,
+        caller: Address,
+        nullify_block: &[u8],
+        finalize_block: &[u8],
+    ) -> Result<()> {
+        self.apply_equivocation_felony(
+            caller,
+            nullify_block,
+            finalize_block,
+            false,
+            |ev, c| ev.verify_nullify_signature(c),
+            |ev, c| ev.verify_finalize_signature(c),
+        )
+    }
+
     /// Applies a felony penalty from evidence submission: forced exit, slash, reward submitter.
     fn apply_evidence_felony(
         &mut self,
@@ -455,8 +663,10 @@ impl SlashIndicator<'_> {
         evidence_submitter: Address,
     ) -> Result<()> {
         let block_number = self.storage.block_number().unwrap_or(0);
+        // Felony: JAIL (not force-exit) + slash. Jail before slash_stake (which
+        // leaves a JAILED status untouched).
         let mut vs = ValidatorSet::new(self.storage.clone());
-        vs.force_exit_validator(validator)?;
+        vs.jail_validator(validator)?;
 
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
@@ -491,7 +701,7 @@ impl SlashIndicator<'_> {
         );
 
         // Reward evidence submitter: mint evidence_reward_percent of slashed amount.
-        // A-05: slash_stake now burns slashed tokens from STAKING_ADDRESS, so we
+        // slash_stake now burns slashed tokens from STAKING_ADDRESS, so we
         // mint the reward directly to the submitter. Net effect: (slashed - reward)
         // is burned from supply, reward goes to the submitter.
         let mut reward = U256::ZERO;
@@ -743,7 +953,7 @@ impl SlashIndicator<'_> {
         // (10) Proposer must be in the snapshot's committee. Defends
         // against a future bug that signs a Phase 1 tx with a key not
         // bound to any active validator — without this check, the
-        // felony helper would call force_exit_validator on a
+        // felony helper would call jail_validator on a
         // non-existent validator and the slash path would silently
         // no-op.
         if !snapshot
@@ -823,6 +1033,297 @@ impl SlashIndicator<'_> {
         Ok(())
     }
 
+    /// Submit evidence that a validator equivocated on its VRF seed partial:
+    /// two DIFFERENT identity-signed `bls_seed_partial`s for the same
+    /// `(round, vrf_material_version)`. Self-authenticating from the two MinPk
+    /// identity signatures — no committee polynomial is needed — and reuses the
+    /// shared felony economics. An honest validator produces exactly one partial
+    /// per round/version and never identity-signs a second distinct one, so a
+    /// valid pair cannot frame an honest node.
+    pub fn submit_seed_partial_equivocation_evidence(
+        &mut self,
+        caller: Address,
+        evidence_bytes: &[u8],
+    ) -> Result<()> {
+        self.submit_seed_partial_equivocation_evidence_with_schedule(
+            caller,
+            evidence_bytes,
+            &OutbeProtocolSchedule::default(),
+        )
+    }
+
+    /// Test seam for [`Self::submit_seed_partial_equivocation_evidence`] (lets
+    /// integration tests relax the epoch-lag cap). Production goes through the
+    /// no-arg wrapper with the canonical schedule.
+    #[doc(hidden)]
+    pub fn submit_seed_partial_equivocation_evidence_with_schedule(
+        &mut self,
+        caller: Address,
+        evidence_bytes: &[u8],
+        schedule: &OutbeProtocolSchedule,
+    ) -> Result<()> {
+        // (1) Submitter ACL: ACTIVE validators only — verification is BLS-heavy,
+        // so gating to the staked set makes DoS self-destructive.
+        let vs = ValidatorSet::new(self.storage.clone());
+        let caller_status = vs.val_status.read(&caller)?;
+        if caller_status != validator_status::ACTIVE {
+            return Err(PrecompileError::Revert(format!(
+                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
+            )));
+        }
+
+        // (2) Decode the fixed-length wire form (length-checked inside).
+        let ev = SeedPartialEquivocationEvidence::decode(evidence_bytes)?;
+
+        // (3) Equivocation requires two DIFFERENT partials.
+        if ev.partial_1 == ev.partial_2 {
+            return Err(PrecompileError::Revert(
+                "not equivocation: the two partials are identical".into(),
+            ));
+        }
+
+        // (4) Both partials must carry a valid identity signature from the SAME
+        // signer over the same (round, version). This is the soundness anchor:
+        // it proves the accused signer itself produced both distinct partials.
+        let ok1 = verify_seed_partial_attest_bytes(
+            &ev.signer_pubkey,
+            ev.round_epoch,
+            ev.round_view,
+            ev.vrf_version,
+            &ev.partial_1,
+            &ev.identity_sig_1,
+        );
+        let ok2 = verify_seed_partial_attest_bytes(
+            &ev.signer_pubkey,
+            ev.round_epoch,
+            ev.round_view,
+            ev.vrf_version,
+            &ev.partial_2,
+            &ev.identity_sig_2,
+        );
+        if !(ok1 && ok2) {
+            return Err(PrecompileError::Revert(
+                "both partials must carry a valid identity signature from the accused signer"
+                    .into(),
+            ));
+        }
+
+        // (5) Epoch-lag admissibility: bound how old the offense round can be
+        // (reuses the shared evidence epoch-lag cap).
+        let current_epoch_u256 = vs.epoch_number.read()?;
+        let current_epoch: u64 = current_epoch_u256
+            .try_into()
+            .map_err(|_| PrecompileError::Revert("ValidatorSet.epoch_number exceeds u64".into()))?;
+        let max_acceptable_epoch = ev
+            .round_epoch
+            .saturating_add(schedule.invalid_vrf_evidence_max_epoch_lag);
+        if current_epoch > max_acceptable_epoch {
+            return Err(PrecompileError::Revert(format!(
+                "evidence epoch-stale: current_epoch {} > round_epoch {} + max_lag {}",
+                current_epoch, ev.round_epoch, schedule.invalid_vrf_evidence_max_epoch_lag,
+            )));
+        }
+
+        // (6) Attribution: map the identity pubkey to a registered validator.
+        let validator_addr = vs.lookup_by_pubkey_hash(ev.pubkey_hash())?;
+        if validator_addr.is_zero() {
+            return Err(PrecompileError::Revert(
+                "signer is not a registered validator".into(),
+            ));
+        }
+
+        // (7) Dedup BEFORE effects (order-independent in the two partials).
+        let dedup = ev.dedup_hash();
+        if self.seed_partial_equivocation_processed.read(&dedup)? {
+            return Err(PrecompileError::Revert("evidence already processed".into()));
+        }
+        self.seed_partial_equivocation_processed
+            .write(&dedup, true)?;
+
+        // (8) Felony: jail + slash + reward submitter.
+        self.apply_evidence_felony(validator_addr, caller)?;
+        self.emit(ISlashIndicator::SeedPartialEquivocationApplied {
+            validator: validator_addr,
+            submitter: caller,
+            roundEpoch: ev.round_epoch,
+            roundView: ev.round_view,
+            vrfVersion: ev.vrf_version,
+        })?;
+        Ok(())
+    }
+
+    /// Submit evidence that a validator emitted a single INVALID VRF seed
+    /// partial: an identity-signed partial that fails verification against the
+    /// committee's full public polynomial. Unlike equivocation, this needs the
+    /// committee polynomial — carried in the evidence and checked against the
+    /// `vrf_public_polynomial_hash` committed in the committee snapshot (which
+    /// the executor derives from the consensus-validated DKG boundary outcome,
+    /// so a proposer cannot forge it to frame an honest validator). Reuses the
+    /// shared felony economics.
+    pub fn submit_invalid_seed_partial_evidence(
+        &mut self,
+        caller: Address,
+        evidence_bytes: &[u8],
+    ) -> Result<()> {
+        self.submit_invalid_seed_partial_evidence_with_schedule(
+            caller,
+            evidence_bytes,
+            &OutbeProtocolSchedule::default(),
+        )
+    }
+
+    /// Test seam for [`Self::submit_invalid_seed_partial_evidence`].
+    #[doc(hidden)]
+    pub fn submit_invalid_seed_partial_evidence_with_schedule(
+        &mut self,
+        caller: Address,
+        evidence_bytes: &[u8],
+        schedule: &OutbeProtocolSchedule,
+    ) -> Result<()> {
+        // (1) Submitter ACL: ACTIVE validators only (BLS-heavy verification).
+        let vs = ValidatorSet::new(self.storage.clone());
+        let caller_status = vs.val_status.read(&caller)?;
+        if caller_status != validator_status::ACTIVE {
+            return Err(PrecompileError::Revert(format!(
+                "submitter {caller} is not an ACTIVE validator (status: {caller_status})"
+            )));
+        }
+
+        // (2) Size cap — the polynomial commitment dominates; reuse the VRF
+        // evidence cap (the only other commitment-carrying evidence).
+        if evidence_bytes.len() > schedule.invalid_vrf_evidence_max_bytes {
+            return Err(PrecompileError::Revert(format!(
+                "evidence too large: {} > {} bytes",
+                evidence_bytes.len(),
+                schedule.invalid_vrf_evidence_max_bytes,
+            )));
+        }
+
+        // (3) Decode.
+        let ev = InvalidSeedPartialEvidence::decode(evidence_bytes)?;
+
+        // (4) Epoch-lag admissibility.
+        let current_epoch: u64 =
+            vs.epoch_number.read()?.try_into().map_err(|_| {
+                PrecompileError::Revert("ValidatorSet.epoch_number exceeds u64".into())
+            })?;
+        let max_acceptable_epoch = ev
+            .round_epoch
+            .saturating_add(schedule.invalid_vrf_evidence_max_epoch_lag);
+        if current_epoch > max_acceptable_epoch {
+            return Err(PrecompileError::Revert(format!(
+                "evidence epoch-stale: current_epoch {} > round_epoch {} + max_lag {}",
+                current_epoch, ev.round_epoch, schedule.invalid_vrf_evidence_max_epoch_lag,
+            )));
+        }
+
+        // (5) Attribution.
+        let validator_addr = vs.lookup_by_pubkey_hash(ev.pubkey_hash())?;
+        if validator_addr.is_zero() {
+            return Err(PrecompileError::Revert(
+                "signer is not a registered validator".into(),
+            ));
+        }
+
+        // (6) Load the committee snapshot for this round's epoch + committee.
+        let snapshot_key = committee_snapshot_key(ev.round_epoch, ev.committee_set_hash);
+        let snapshot =
+            read_committee_snapshot(self.storage.clone(), snapshot_key)?.ok_or_else(|| {
+                PrecompileError::Revert(
+                    "no committee snapshot for (round_epoch, committee_set_hash)".into(),
+                )
+            })?;
+
+        // (7) Bind the signer index to the committee pubkey (and to the
+        // evidence's claimed pubkey), so PK_i is derived at the right index.
+        let idx = ev.signer_index as usize;
+        let entry = snapshot
+            .committee
+            .get(idx)
+            .ok_or_else(|| PrecompileError::Revert("signer index out of committee range".into()))?;
+        if entry.consensus_pubkey != ev.signer_pubkey {
+            return Err(PrecompileError::Revert(
+                "signer pubkey does not match committee entry at index".into(),
+            ));
+        }
+
+        // (8) Material version must match the snapshot's (the carried polynomial
+        // is the snapshot's polynomial).
+        if snapshot.vrf_material_version != ev.vrf_version {
+            return Err(PrecompileError::Revert(
+                "vrf material version does not match committee snapshot".into(),
+            ));
+        }
+
+        // (9) Commitment authenticity: the snapshot must carry a polynomial hash
+        // and it must match the carried commitment.
+        if snapshot.vrf_public_polynomial_hash.is_zero() {
+            return Err(PrecompileError::Revert(
+                "committee snapshot has no polynomial commitment".into(),
+            ));
+        }
+        if keccak256(&ev.commitment) != snapshot.vrf_public_polynomial_hash {
+            return Err(PrecompileError::Revert(
+                "commitment does not match committee snapshot polynomial hash".into(),
+            ));
+        }
+
+        // (10) Identity signature: proves the accused signer emitted THIS partial
+        // (a relay cannot forge it).
+        if !verify_seed_partial_attest_bytes(
+            &ev.signer_pubkey,
+            ev.round_epoch,
+            ev.round_view,
+            ev.vrf_version,
+            &ev.partial,
+            &ev.identity_sig,
+        ) {
+            return Err(PrecompileError::Revert(
+                "partial is not identity-signed by the accused signer".into(),
+            ));
+        }
+
+        // (11) The partial must FAIL verification against the committee
+        // polynomial. A valid partial is not slashable; malformed input rejects.
+        match verify_seed_partial_against_commitment(
+            &ev.commitment,
+            ev.signer_index,
+            ev.round_epoch,
+            ev.round_view,
+            &ev.partial,
+        ) {
+            None => {
+                return Err(PrecompileError::Revert(
+                    "malformed commitment or partial".into(),
+                ))
+            }
+            Some(true) => {
+                return Err(PrecompileError::Revert(
+                    "seed partial is valid; nothing to slash".into(),
+                ))
+            }
+            Some(false) => {}
+        }
+
+        // (12) Dedup before effects.
+        let dedup = ev.dedup_hash();
+        if self.invalid_seed_partial_processed.read(&dedup)? {
+            return Err(PrecompileError::Revert("evidence already processed".into()));
+        }
+        self.invalid_seed_partial_processed.write(&dedup, true)?;
+
+        // (13) Felony.
+        self.apply_evidence_felony(validator_addr, caller)?;
+        self.emit(ISlashIndicator::InvalidSeedPartialApplied {
+            validator: validator_addr,
+            submitter: caller,
+            roundEpoch: ev.round_epoch,
+            roundView: ev.round_view,
+            vrfVersion: ev.vrf_version,
+        })?;
+        Ok(())
+    }
+
     /// Applies a felony for byzantine behavior detected by the consensus layer.
     ///
     /// Called from post-execution hooks when the consensus layer detects equivocation
@@ -831,8 +1332,10 @@ impl SlashIndicator<'_> {
     /// so no reward is distributed.
     pub fn slash_byzantine(&mut self, validator: Address) -> Result<()> {
         let block_number = self.storage.block_number().unwrap_or(0);
+        // Felony: JAIL (not force-exit) + slash. Jail before slash_stake (which
+        // leaves a JAILED status untouched).
         let mut vs = ValidatorSet::new(self.storage.clone());
-        vs.force_exit_validator(validator)?;
+        vs.jail_validator(validator)?;
 
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
@@ -924,7 +1427,7 @@ impl SlashIndicator<'_> {
     }
 }
 
-/// A-03: Computes a canonical evidence hash that is order-independent.
+/// Computes a canonical evidence hash that is order-independent.
 ///
 /// Normalizes the order of two evidence payloads before hashing so that
 /// `(block1, block2)` and `(block2, block1)` produce the same hash.

@@ -310,7 +310,7 @@ impl LateFinalizeSigStore {
 mod tests {
     use super::*;
     use crate::proof::committee::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
-    use crate::proof::constants::OUTBE_FINALIZE_NAMESPACE_V2;
+    use crate::proof::constants::finalize_namespace;
     use crate::proof::verify_late_finalize_proof;
     use commonware_consensus::simplex::types::Proposal;
     use commonware_consensus::types::{Epoch, Round, View};
@@ -340,25 +340,35 @@ mod tests {
             committee,
             vrf_material_version: 1,
             vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         }
     }
 
     /// Sign the canonical finalize message for `(epoch, view, parent_view, fb_hash)`
-    /// with `key` and return the raw MinPk signature the store stores.
+    /// with `key` and return the raw MinPk signature the store stores. the
+    /// finalize namespace binds the full `committee`, so the signature only
+    /// verifies under that committee.
     fn finalize_sig(
+        committee: &[bls12381::PrivateKey],
         key: &bls12381::PrivateKey,
         epoch: u64,
         view: u64,
         parent_view: u64,
         fb_hash: B256,
     ) -> MinPkSig {
+        let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+            commonware_utils::ordered::Set::from_iter_dedup(
+                committee
+                    .iter()
+                    .map(|k| bls12381::PublicKey::from(k.clone())),
+            );
         let proposal = Proposal::new(
             Round::new(Epoch::new(epoch), View::new(view)),
             View::new(parent_view),
             crate::digest::Digest(fb_hash),
         );
         let message = proposal.encode().to_vec();
-        let signature = key.sign(OUTBE_FINALIZE_NAMESPACE_V2, &message);
+        let signature = key.sign(&finalize_namespace(&committee_set), &message);
         let inner: &MinPkSig = signature.as_ref();
         *inner
     }
@@ -381,7 +391,7 @@ mod tests {
                 parent_view,
                 fb,
                 i,
-                finalize_sig(&keys[i as usize], epoch, view, parent_view, fb),
+                finalize_sig(&keys, &keys[i as usize], epoch, view, parent_view, fb),
             );
         }
         store.resolve_finalized(
@@ -412,7 +422,7 @@ mod tests {
         let csh = committee_set_hash_v2(1, &snapshot);
         let fb = B256::repeat_byte(0x01);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys[0], 1, 9, 8, fb));
+        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
         store.resolve_finalized(1, 9, 8, 10, fb, csh, 4);
 
         // Proposer at block 14: window [11, 13] — target 10 is too old.
@@ -429,11 +439,18 @@ mod tests {
         let fb = B256::repeat_byte(0x02);
         let fb2 = B256::repeat_byte(0x22);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys[0], 1, 9, 8, fb));
+        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
         store.resolve_finalized(1, 9, 8, 10, fb, committee_set_hash_v2(1, &snapshot), 4);
         assert_eq!(store.resolved_len(), 1);
         // A much later finalization prunes the old target (10 < 100 - 3).
-        store.record_vote(1, 99, 98, fb2, 0, finalize_sig(&keys[0], 1, 99, 98, fb2));
+        store.record_vote(
+            1,
+            99,
+            98,
+            fb2,
+            0,
+            finalize_sig(&keys, &keys[0], 1, 99, 98, fb2),
+        );
         store.resolve_finalized(1, 99, 98, 100, fb2, committee_set_hash_v2(1, &snapshot), 4);
         assert_eq!(store.resolved_len(), 1);
     }
@@ -443,9 +460,9 @@ mod tests {
         let keys = keys(4);
         let fb = B256::repeat_byte(0x03);
         let mut store = LateFinalizeSigStore::new(3);
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys[0], 1, 9, 8, fb));
+        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
         // Second vote from the same signer/fb_hash must not overwrite or duplicate.
-        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys[0], 1, 9, 8, fb));
+        store.record_vote(1, 9, 8, fb, 0, finalize_sig(&keys, &keys[0], 1, 9, 8, fb));
         store.resolve_finalized(1, 9, 8, 10, fb, B256::ZERO, 4);
         let artifact = store.build_artifact(11);
         assert_eq!(artifact.batches.len(), 1);
@@ -480,7 +497,7 @@ mod tests {
             parent_view,
             fb,
             0,
-            finalize_sig(&keys[0], epoch, view, parent_view, fb),
+            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
         );
         store.resolve_finalized(
             epoch,
@@ -499,7 +516,7 @@ mod tests {
             parent_view,
             fb,
             1,
-            finalize_sig(&keys[1], epoch, view, parent_view, fb),
+            finalize_sig(&keys, &keys[1], epoch, view, parent_view, fb),
         );
         // Nothing left pending; both votes are in the resolved target.
         assert_eq!(store.pending_vote_count(fb), 0);
@@ -531,7 +548,7 @@ mod tests {
             parent_view,
             fb1,
             0,
-            finalize_sig(&keys[0], epoch, view, parent_view, fb1),
+            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb1),
         );
         store.record_vote(
             epoch,
@@ -539,7 +556,7 @@ mod tests {
             parent_view,
             fb2,
             0,
-            finalize_sig(&keys[0], epoch, view, parent_view, fb2),
+            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb2),
         );
         // Separate buffers — neither aggregate is poisoned by the other proposal.
         assert_eq!(store.pending_vote_count(fb1), 1);
@@ -581,7 +598,7 @@ mod tests {
             parent_view,
             fb,
             2,
-            finalize_sig(&keys[2], epoch, view, parent_view, fb),
+            finalize_sig(&keys, &keys[2], epoch, view, parent_view, fb),
         );
 
         let artifact = store.build_artifact(11);
@@ -624,7 +641,7 @@ mod tests {
             parent_view,
             fb,
             0,
-            finalize_sig(&keys[0], epoch, view, parent_view, fb),
+            finalize_sig(&keys, &keys[0], epoch, view, parent_view, fb),
         );
         store.record_vote(
             epoch,
@@ -632,7 +649,7 @@ mod tests {
             parent_view,
             fb,
             1,
-            finalize_sig(&keys[1], epoch, bad_view, parent_view, fb),
+            finalize_sig(&keys, &keys[1], epoch, bad_view, parent_view, fb),
         );
         store.resolve_finalized(
             epoch,
@@ -651,7 +668,7 @@ mod tests {
             parent_view,
             fb,
             2,
-            finalize_sig(&keys[2], epoch, bad_view, parent_view, fb),
+            finalize_sig(&keys, &keys[2], epoch, bad_view, parent_view, fb),
         );
 
         let artifact = store.build_artifact(11);

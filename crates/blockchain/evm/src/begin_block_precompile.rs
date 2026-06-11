@@ -158,8 +158,7 @@ pub fn dispatch(
 /// label `arch_debt`):
 ///
 /// - binding `committee_snapshot_hash` to the frozen V2 `committee_set_hash`
-///   (the producing tribute-DKG slice fixes the snapshot identity it commits to,
-///   tracked in `plan_tee_poc_completion.md`).
+///   (the producing tribute-DKG slice fixes the snapshot identity it
 pub(crate) fn run_tee_bootstrap(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap::TeeBootstrapPayload,
@@ -440,16 +439,28 @@ pub(crate) fn run_finalization_and_slashing(
         &voters,
     )?;
 
-    for (event_index, missed) in metadata.missed_proposers.iter().enumerate() {
-        outbe_slashindicator::hooks::slash_proposer_event(
-            ctx.storage.clone(),
-            metadata.finalized_block_hash,
-            event_index.try_into().map_err(|_| {
-                PrecompileError::Fatal("missed proposer event index overflow".into())
-            })?,
-            missed.validator,
-        )?;
-    }
+    // Missed-proposer slashing: idempotent + bounded via the per-`fb_hash`
+    // `proposer_window_slashed` guard. The whole event list for this
+    // finalized parent is processed atomically; duplicate proposers across
+    // skipped views are each slashed within the one pass.
+    let missed_validators: Vec<Address> = metadata
+        .missed_proposers
+        .iter()
+        .map(|m| m.validator)
+        .collect();
+    outbe_slashindicator::hooks::slash_window_proposers(
+        ctx.storage.clone(),
+        metadata.finalized_block_hash,
+        &missed_validators,
+    )?;
+
+    // advance the slash-guard prune ring once per finalized block. Phase 1
+    // sees every finalized block exactly once (as a direct parent), so this
+    // bounds both window guards to the last SLASH_GUARD_RETAIN finalized blocks.
+    outbe_slashindicator::hooks::prune_slash_guards(
+        ctx.storage.clone(),
+        metadata.finalized_block_hash,
+    )?;
 
     outbe_accounting::record_phase1_progress(ctx, expected_parent_number)?;
 
@@ -772,10 +783,13 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
     )?;
 
     // Punitive: increment voter_miss_count and force-exit + slash at the felony
-    // threshold. Idempotent via `slashed_voter_for_block[fb_hash][validator]`.
-    for absentee in &absentees {
-        outbe_slashindicator::hooks::slash_voter(ctx.storage.clone(), info.fb_hash, *absentee)?;
-    }
+    // threshold. Idempotent + bounded via the per-`fb_hash` `voter_window_slashed`
+    // guard; this whole absentee pass is atomic per finalized block.
+    outbe_slashindicator::hooks::slash_window_voters(
+        ctx.storage.clone(),
+        info.fb_hash,
+        &absentees,
+    )?;
 
     Ok(())
 }
@@ -892,6 +906,7 @@ mod tests {
             }],
             vrf_material_version: 1,
             vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         DkgBoundaryArtifact {
             epoch: 1,
@@ -1731,6 +1746,7 @@ mod tests {
                 ],
                 vrf_material_version: 1,
                 vrf_group_public_key_bytes: vec![0x11; 96],
+                vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
             };
             let csh = outbe_validatorset::committee_set_hash_v2(epoch, &snapshot);
             outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot)
@@ -1828,6 +1844,7 @@ mod tests {
                         .collect(),
                     vrf_material_version: 1,
                     vrf_group_public_key_bytes: vec![0x11; 96],
+                    vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
                 };
                 let csh = outbe_validatorset::committee_set_hash_v2(epoch, &snapshot);
                 outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot)
@@ -1923,6 +1940,7 @@ mod tests {
                 ],
                 vrf_material_version: 1,
                 vrf_group_public_key_bytes: vec![0x11; 96],
+                vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
             };
             let csh = outbe_validatorset::committee_set_hash_v2(epoch, &snapshot);
             outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot)

@@ -14,7 +14,8 @@
 //! The finalized-block-hash binding is enforced by the signature itself: the
 //! verified message is rebuilt as `Proposal{round, parent, payload = fb_hash}`,
 //! and the aggregate verifies only if every signer actually signed exactly that
-//! proposal under [`OUTBE_FINALIZE_NAMESPACE_V2`] (hardcoded — never from the
+//! proposal under the committee-bound finalize namespace
+//! (`finalize_namespace(committee)`, derived from the snapshot — never from the
 //! wire). The committee is pinned by `committee_set_hash`.
 //!
 //! The whole aggregate is verified FIRST; state-level dedup of already-credited
@@ -24,7 +25,7 @@
 
 use crate::digest::Digest as OutbeDigest;
 use crate::proof::committee::{committee_set_hash_v2, CommitteeSnapshot};
-use crate::proof::constants::OUTBE_FINALIZE_NAMESPACE_V2;
+use crate::proof::constants::finalize_namespace;
 use crate::proof::error::V2VerifyError;
 use bytes::Bytes;
 use commonware_codec::{DecodeExt, Encode};
@@ -118,10 +119,15 @@ pub fn verify_late_finalize_proof(
     ))
     .map_err(V2VerifyError::Decode)?;
 
+    // the late-finalize aggregate is over finalize votes, so it verifies
+    // under the committee-bound finalize namespace. Build the canonical `Set` from
+    // the same snapshot committee the signers used.
+    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        commonware_utils::ordered::Set::from_iter_dedup(participants.iter().cloned());
     let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
     aggregate::verify_same_message::<MinPk>(
         &aggregate_pk,
-        OUTBE_FINALIZE_NAMESPACE_V2,
+        &finalize_namespace(&committee_set),
         &message,
         &agg_sig,
     )
@@ -161,6 +167,7 @@ mod tests {
             committee,
             vrf_material_version: 1,
             vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         }
     }
 
@@ -193,11 +200,17 @@ mod tests {
             OutbeDigest(signed_hash),
         );
         let message = proposal.encode().to_vec();
+        // sign under the committee-bound finalize namespace, using the full
+        // committee (the same one the verifier rebuilds from the snapshot).
+        let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+            commonware_utils::ordered::Set::from_iter_dedup(
+                keys.iter().map(|k| bls12381::PublicKey::from(k.clone())),
+            );
         // Individual MinPk finalize votes, exactly as a validator produces them
         // (repo pattern: `key.sign(namespace, msg)` then `combine_signatures`).
         let sigs: Vec<bls12381::Signature> = signer_idxs
             .iter()
-            .map(|&i| keys[i].sign(OUTBE_FINALIZE_NAMESPACE_V2, &message))
+            .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &message))
             .collect();
         let agg = aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
         let mut aggregate_signature = [0u8; 96];

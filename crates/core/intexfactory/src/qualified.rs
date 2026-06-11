@@ -14,9 +14,11 @@ use outbe_primitives::{
 
 use outbe_intexregistry::IntexState;
 
-use crate::constants::{MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
-use crate::sol_ext::{IOriginMessenger, MessagingFee};
+use crate::constants::{
+    MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO,
+};
 use crate::schema::IntexFactoryContract;
+use crate::sol_ext::{IOriginMessenger, MessagingFee};
 
 pub struct IntexLifecycle;
 
@@ -126,10 +128,8 @@ fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()
         .abi_encode()
         .into(),
     )?;
-    let fee =
-        IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret).map_err(
-            |_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()),
-        )?;
+    let fee = IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret)
+        .map_err(|_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,

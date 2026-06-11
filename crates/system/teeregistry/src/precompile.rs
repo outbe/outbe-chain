@@ -2,11 +2,24 @@
 #![allow(clippy::too_many_arguments)]
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::sol;
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
 use outbe_primitives::error::Result;
 
 use crate::schema::TeeRegistry;
+
+sol! {
+    /// Emitted by `registerEnclave` on a TEE-bootstrapped chain: the resident
+    /// tribute offer key DETERMINISTICALLY sealed to the registrant's enclave X25519
+    /// key. An on-chain encrypted-seed analog, delivered via a
+    /// receipt event rather than a state slot — a joining validator reads this from
+    /// its own `registerEnclave` tx receipt and installs the offer key in its enclave
+    /// BEFORE the node starts executing offer blocks. Consensus-deterministic: every
+    /// committee enclave seals the same blob, so the log (and the receipts root) match.
+    #[derive(Debug)]
+    event OfferKeySealed(address indexed validator, bytes sealedOfferKey);
+}
 
 /// ABI surface for the TEE Registry.
 ///

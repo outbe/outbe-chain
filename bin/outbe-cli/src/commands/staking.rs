@@ -27,6 +27,8 @@ pub enum StakingCmd {
     },
     /// Claim tokens after unbonding period
     Claim,
+    /// Unjail your JAILED validator (requires stake >= min_stake) -> PENDING
+    Unjail,
     /// Show staking info for a validator
     Info {
         /// Validator address
@@ -44,6 +46,7 @@ impl StakingCmd {
             }
             Self::Unstake { amount } => unstake(client, private_key, amount).await,
             Self::Claim => claim(client, private_key).await,
+            Self::Unjail => unjail(client, private_key).await,
             Self::Info { address } => info(client, address).await,
             Self::Stats => stats(client).await,
         }
@@ -94,6 +97,21 @@ async fn unstake(
 async fn claim(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
     let signer = super::require_signer(private_key)?;
     let call = IStaking::claimUnbondedCall {};
+    let tx_hash = signer
+        .send_tx(
+            client,
+            abi::STAKING_ADDR,
+            call.abi_encode(),
+            Default::default(),
+        )
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
+async fn unjail(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let call = IStaking::unjailValidatorCall {};
     let tx_hash = signer
         .send_tx(
             client,

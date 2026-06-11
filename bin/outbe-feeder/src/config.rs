@@ -314,7 +314,8 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         let cfg = FeederConfig::load(&path).unwrap();
-        assert_eq!(cfg.chain.chain_id, 512215);
+        // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
+        assert_eq!(cfg.chain.chain_id, 54322345);
         assert_eq!(cfg.oracle.vote_period, 8);
         assert_eq!(cfg.currency_pairs.len(), 7);
         assert!(cfg

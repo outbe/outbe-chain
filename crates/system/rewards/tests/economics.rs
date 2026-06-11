@@ -177,9 +177,9 @@ fn insufficient_rewards_backing_rejects_phase1_and_leaves_progress_unchanged() {
         // Contradictory metadata (different fee sum) — fingerprint
         // returns `Fatal`. In the executor path this maps to a precompile
         // error which short-circuits Phase 1 before any per-voter
-        // write that would credit `pending_rewards`. Subsequent
-        // attempts with the original metadata see the original
-        // fingerprint still intact (read it back to prove).
+        // participation/fee accounting write. Subsequent attempts with the
+        // original metadata see the original fingerprint still intact (read
+        // it back to prove).
         let err = check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(999u64), VRF_HASH)
             .unwrap_err();
         let msg = format!("{err}");

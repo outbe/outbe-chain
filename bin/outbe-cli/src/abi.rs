@@ -7,6 +7,9 @@ use alloy_sol_types::sol;
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
 pub const SLASH_INDICATOR_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 pub const STAKING_ADDR: Address = address!("0x000000000000000000000000000000000000EE02");
+// Rewards precompile (EE03) exposes no callable methods — validator emission is
+// paid in gems — so it is referenced only by the address-pin test.
+#[cfg(test)]
 pub const REWARDS_ADDR: Address = address!("0x000000000000000000000000000000000000EE03");
 pub const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 pub const TRIBUTE_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001100");
@@ -51,6 +54,7 @@ sol! {
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
         function deactivateValidator(address validatorAddress) external;
+        function confirmValidatorReady() external;
         function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
 
         event ValidatorRegistered(address indexed validator, uint64 index);
@@ -86,16 +90,9 @@ sol! {
         function stake(address validatorAddress, uint256 amount) external;
         function unstake(uint256 amount) external;
         function claimUnbonded() external;
+        function unjailValidator() external;
         function getStake(address validator) external view returns (uint256);
         function getTotalStaked() external view returns (uint256);
-    }
-
-    #[derive(Debug)]
-    interface IRewards {
-        function claimRewards() external returns (uint256);
-        function pendingRewards(address validator) external view returns (uint256);
-
-        event RewardsClaimed(address indexed validator, uint256 amount);
     }
 
     #[derive(Debug)]
@@ -138,7 +135,17 @@ sol! {
     interface ITeeRegistry {
         function isBootstrapped() external view returns (bool);
         function tributeOfferPublicKey() external view returns (uint256);
+        function tributeOfferEpoch() external view returns (uint256);
         function registeredCount() external view returns (uint256);
+        function registerEnclave(
+            uint256 recipientX25519,
+            uint256 attestationPub,
+            uint256 noiseStaticPub,
+            uint256 mrenclave,
+            uint256 mrsigner,
+            uint16 isvSvn
+        ) external returns (bool);
+        event OfferKeySealed(address indexed validator, bytes sealedOfferKey);
     }
 
     #[derive(Debug)]
@@ -302,13 +309,11 @@ mod tests {
         // 4-byte selectors must not silently change
         let register = IValidatorSet::registerValidatorCall::SELECTOR;
         let stake = IStaking::stakeCall::SELECTOR;
-        let claim_rewards = IRewards::claimRewardsCall::SELECTOR;
         let submit_double = ISlashIndicator::submitDoubleProposalEvidenceCall::SELECTOR;
 
         // Selectors are deterministic from the signature — just assert they're stable
         assert_eq!(register.len(), 4);
         assert_eq!(stake.len(), 4);
-        assert_eq!(claim_rewards.len(), 4);
         assert_eq!(submit_double.len(), 4);
 
         // Pin specific known values (computed from keccak256 of signatures)
@@ -331,10 +336,6 @@ mod tests {
         assert_eq!(
             ISlashIndicator::ProposerFelony::SIGNATURE_HASH,
             keccak256("ProposerFelony(address,uint64,uint64)")
-        );
-        assert_eq!(
-            IRewards::RewardsClaimed::SIGNATURE_HASH,
-            keccak256("RewardsClaimed(address,uint256)")
         );
         assert_eq!(
             INod::NodBucketQualified::SIGNATURE_HASH,

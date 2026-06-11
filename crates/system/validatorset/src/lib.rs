@@ -28,8 +28,9 @@ pub mod logic {
 
 pub use errors::ActivationError;
 pub use state::{
-    committee_set_hash_v2, committee_snapshot_key, next_vrf_material_version,
-    read_committee_snapshot, snapshot_identity, write_committee_snapshot, CommitteeEntry,
-    CommitteeSnapshot, OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN, OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN,
-    VRF_MATERIAL_VERSION_GENESIS,
+    clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
+    next_vrf_material_version, read_committee_snapshot, read_committee_snapshot_for_epoch,
+    snapshot_identity, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
+    COMMITTEE_SNAPSHOT_RETAIN_EPOCHS, OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN,
+    OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, VRF_MATERIAL_VERSION_GENESIS,
 };

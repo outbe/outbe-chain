@@ -8,8 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-tee.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["alloy-sol-types"]

@@ -18,9 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A-10: Maximum retry attempts for marshal block resolution before structured application failure.
+/// Maximum retry attempts for marshal block resolution before structured application failure.
 pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
-/// A-10: Delay between retry attempts for marshal block resolution.
+/// Delay between retry attempts for marshal block resolution.
 pub(crate) const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
 /// Maximum time to wait for marshal block resolution during verify.
 pub(crate) const VERIFY_RESOLUTION_TIMEOUT: Duration = crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
@@ -172,6 +172,40 @@ fn unix_now_millis() -> eyre::Result<u64> {
         .as_millis()
         .try_into()
         .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+}
+
+/// Clamp a proposer's block timestamp (ms) into the deterministic drift band
+/// `[parent + min_advance, parent + band]`, with the genesis-child exception.
+///
+/// When `parent_timestamp_millis == 0` there is no finalized parent yet (the
+/// `finalization_view` is unseeded at genesis — it does NOT carry the genesis
+/// header timestamp), so the band is meaningless: capping at `0 + band` would
+/// clamp the real wall-clock time far below the genesis timestamp and reth
+/// would reject the payload as a past timestamp, stalling at block 0. In that
+/// case only monotonicity is enforced (`max(now, parent + 1)`), mirroring the
+/// validator-side genesis exemption (`parent.number() == 0`). For every real
+/// parent the full two-sided band applies, mirroring the validator-side
+/// `validate_against_parent_timestamp_millis`:
+/// - lower bound `parent + min_advance`: if the proposer's clock has not
+///   advanced `min_advance` past the parent, the timestamp is clamped *up* so
+///   the block still satisfies the validator minimum-advance rule and is never
+///   rejected; this is what denies a colluding leader majority the
+///   `parent + 1 ms` timestamp freeze.
+/// - upper bound `parent + band` (C-01): an honest proposer never emits an
+///   over-drifted block, and a long stall self-heals by ratcheting forward at
+///   most one band per block.
+fn clamp_proposed_timestamp_millis(
+    parent_timestamp_millis: u64,
+    now_millis: u64,
+    band_millis: u64,
+    min_advance_millis: u64,
+) -> u64 {
+    if parent_timestamp_millis == 0 {
+        return std::cmp::max(now_millis, parent_timestamp_millis.saturating_add(1));
+    }
+    let min_timestamp_millis = parent_timestamp_millis.saturating_add(min_advance_millis);
+    let max_timestamp_millis = parent_timestamp_millis.saturating_add(band_millis);
+    std::cmp::max(now_millis, min_timestamp_millis).min(max_timestamp_millis)
 }
 
 fn finalized_parent_attestation_from_phase1_system_tx(
@@ -1233,7 +1267,7 @@ impl ApplicationShared {
                 let view = self
                     .finalization_view
                     .read()
-                    .expect("FinalizationView lock poisoned in handle_genesis");
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if view.last_finalized_number > 0
                     && view.forkchoice.finalized_block_hash != B256::ZERO
                 {
@@ -1334,7 +1368,7 @@ impl ApplicationShared {
             let view = self
                 .finalization_view
                 .read()
-                .expect("FinalizationView lock poisoned in resolve_epoch_boundary_parent");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             (
                 view.last_finalized_number,
                 view.forkchoice.finalized_block_hash,
@@ -1453,7 +1487,7 @@ impl ApplicationShared {
                 let cached_parent = self
                     .block_cache
                     .lock()
-                    .expect("block_cache poisoned")
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&parent_digest);
                 let parent_block = if let Some(block) = cached_parent {
                     block
@@ -1546,7 +1580,7 @@ impl ApplicationShared {
                 let mut view = self
                     .finalization_view
                     .write()
-                    .expect("FinalizationView poisoned");
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 view.last_timestamp_millis =
                     std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
             }
@@ -1612,6 +1646,55 @@ impl ApplicationShared {
 
     /// Canonicalize parent and build a block on top of it.
     ///
+    /// recover the direct parent's canonical Finalization parent-proof
+    /// record from marshal's durable finalization archive when the in-process
+    /// selection store missed it (restart / late-join / brief finalization lag).
+    ///
+    /// `get_finalization` is a LOCAL archive read — it never triggers a network
+    /// fetch, so this cannot block consensus on a peer; the archive is the same
+    /// durable store marshal repopulates during sync. The rebuilt record mirrors
+    /// the live [`FinalizationActor`](crate::finalization::actor) writer
+    /// field-for-field (pinned by the `record_builder_parity` test), so the
+    /// proposer's Phase 1 metadata stays canonical and every validator accepts
+    /// it. Returns `None` when the archive has no finalization for `parent_height`,
+    /// the recovered finalization does not finalize this exact parent, or the
+    /// finalized epoch's committee scheme / ordered addresses are not registered.
+    // `pub(crate)` for the regression test in `handler_tests` (a sibling
+    // module): exercises the selection-store-miss recovery branch directly.
+    pub(crate) async fn recover_parent_proof_from_marshal(
+        &self,
+        parent_proof_key: crate::finalization::parent_cert_store::CertifiedParentProofKey,
+        parent_height: u64,
+    ) -> Option<crate::finalization::parent_cert_store::CertifiedParentProofRecord> {
+        use commonware_codec::Encode as _;
+
+        let finalization = self
+            .marshal_mailbox
+            .get_finalization(Height::new(parent_height))
+            .await?;
+        // Hash-exact: the recovered finalization must finalize THIS parent.
+        if finalization.proposal.payload.0 != parent_proof_key.block_hash {
+            return None;
+        }
+        let epoch = finalization.proposal.round.epoch();
+        let scheme = self.certificate_scheme_provider.scoped(epoch)?;
+        let ordered = self.committee_provider.ordered_committee(epoch)?;
+        let encoded: alloy_primitives::Bytes = finalization.encode().into();
+        Some(
+            crate::finalization::resolver::build_finalization_record_from_recovered(
+                epoch.get(),
+                finalization.proposal.round.view().get(),
+                finalization.proposal.parent.get(),
+                parent_height,
+                finalization.proposal.payload.0,
+                ordered.as_ref(),
+                &finalization.certificate,
+                encoded,
+                scheme.as_ref(),
+            ),
+        )
+    }
+
     /// Uses FCU-based flow (like tempo): sends fork_choice_updated with payload
     /// attributes through the executor actor, so the engine starts building
     /// a payload on the correct canonical state with txpool access.
@@ -1648,19 +1731,44 @@ impl ApplicationShared {
             return Ok(BuildBlockOutcome::EpochStale);
         }
 
-        let min_timestamp_millis = self
+        let parent_timestamp_millis = self
             .finalization_view
             .read()
-            .expect("FinalizationView poisoned")
-            .last_timestamp_millis
-            .saturating_add(1);
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .last_timestamp_millis;
         let now_millis = unix_now_millis()?;
-        let timestamp_millis = std::cmp::max(now_millis, min_timestamp_millis);
+        // Clamp the proposed timestamp into the deterministic two-sided drift band
+        // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
+        // forces each block to advance chain time, denying a colluding leader
+        // majority the `parent + 1 ms` timestamp freeze that stalls emission and
+        // unbonding maturity; the upper bound (C-01) mirrors the validator check
+        // in `outbe-node`'s `validate_against_parent_timestamp_millis`, so an
+        // honest proposer never emits a block validators would reject as
+        // over-drifted. Both bounds match the validator rule exactly, so the
+        // clamp only ever shifts the timestamp into the accepted band — never out
+        // of it. After a long stall `now_millis` may exceed the cap; the chain
+        // self-heals, ratcheting time forward by at most one band per block until
+        // it catches up to real time.
+        //
+        // Exception — the genesis child: before any block has finalized,
+        // `finalization_view.last_timestamp_millis` is 0 (it is NOT seeded with
+        // the genesis header timestamp), so the band is meaningless and only
+        // monotonicity is enforced. The validator side uses the genuine genesis
+        // header timestamp and exempts the genesis parent (`parent.number() == 0`)
+        // from both band bounds, so block 1 (≈ genesis + now) always validates and
+        // no unbonding-lock bypass is possible at the first block.
+        let timestamp_millis = clamp_proposed_timestamp_millis(
+            parent_timestamp_millis,
+            now_millis,
+            outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        );
         let prev_randao = {
             let mut view = self
                 .finalization_view
                 .write()
-                .expect("FinalizationView poisoned");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             view.last_timestamp_millis =
                 std::cmp::max(view.last_timestamp_millis, timestamp_millis);
             view.prev_randao
@@ -1744,11 +1852,12 @@ impl ApplicationShared {
         };
 
         // Non-blocking direct-parent proof selection
-        // (finalization first → certified-notarization → forfeit). The
-        // `payload_return_time` budget no longer gates the lookup — the
-        // selector returns synchronously. Remote-fetch fallback for the
-        // bounded path is added Batch 3 wiring; until then a
-        // missing record forfeits the slot deterministically with the
+        // (finalization first → certified-notarization → marshal-archive
+        // recovery → forfeit). The `payload_return_time` budget no longer gates
+        // the lookup — the selector returns synchronously. On a selection-store
+        // miss the None branch recovers the parent's finalization from marshal's
+        // durable archive (, `recover_parent_proof_from_marshal`); only if
+        // that also misses does the slot forfeit deterministically with the
         // parent-proof-unavailable metric.
         let parent_proof_record = if parent_height.get() == 0 {
             None
@@ -1777,10 +1886,33 @@ impl ApplicationShared {
             {
                 Some(record) => Some(record),
                 None => {
-                    crate::metrics::record_parent_cert_missing();
-                    crate::metrics::record_parent_proof_unavailable_forfeit();
-                    crate::metrics::record_phase1_parent_proof_unavailable();
-                    return Ok(BuildBlockOutcome::ParentProofUnavailable);
+                    // the in-process selection store missed the direct
+                    // parent's proof (post-restart, late-joining validator, or
+                    // brief finalization lag), but marshal's DURABLE finalization
+                    // archive may still hold the parent's finalization locally.
+                    // Recover it and rebuild the canonical Finalization
+                    // parent-proof record before forfeiting the slot.
+                    match self
+                        .recover_parent_proof_from_marshal(parent_proof_key, parent_height.get())
+                        .await
+                    {
+                        Some(record) => {
+                            crate::metrics::record_parent_proof_recovered_from_marshal();
+                            info!(
+                                %round,
+                                parent = %parent_digest.0,
+                                parent_height = parent_height.get(),
+                                "recovered direct-parent proof from marshal archive; slot not forfeited"
+                            );
+                            Some(record)
+                        }
+                        None => {
+                            crate::metrics::record_parent_cert_missing();
+                            crate::metrics::record_parent_proof_unavailable_forfeit();
+                            crate::metrics::record_phase1_parent_proof_unavailable();
+                            return Ok(BuildBlockOutcome::ParentProofUnavailable);
+                        }
+                    }
                 }
             }
         };
@@ -1906,7 +2038,10 @@ impl ApplicationShared {
         crate::metrics::record_block_proposed(block_number);
 
         {
-            let mut guard = self.block_cache.lock().expect("block_cache poisoned");
+            let mut guard = self
+                .block_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             crate::finalization::actor::insert_block_cache_bounded(
                 &mut guard,
                 digest,
@@ -2081,6 +2216,7 @@ impl ApplicationShared {
             round,
             &context.leader,
             self.chain_id,
+            self.proposer_evm_address.is_none(),
             &self.certificate_scheme_provider,
             &self.committee_provider,
             &self.dkg_manager,
@@ -2204,7 +2340,7 @@ impl ApplicationShared {
                 let mut view = self
                     .finalization_view
                     .write()
-                    .expect("FinalizationView poisoned");
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 view.last_timestamp_millis =
                     std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
             }
@@ -2306,7 +2442,7 @@ impl ApplicationShared {
             let mut view = self
                 .finalization_view
                 .write()
-                .expect("FinalizationView poisoned");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             view.last_timestamp_millis =
                 std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
         }
@@ -2331,7 +2467,7 @@ impl ApplicationShared {
         let cached = self
             .block_cache
             .lock()
-            .expect("block_cache poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&digest)
             .cloned();
         if let Some(block) = cached {
@@ -2441,11 +2577,24 @@ async fn validate_header_consensus_artifacts(
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
+    is_verifier: bool,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
     ancestry: &impl AncestryReader,
 ) -> Result<(), String> {
+    // Finalized-follower rule: a share-less verifier (a TEE full-node, no
+    // `proposer_evm_address`) does NOT validate live proposals — it follows
+    // FINALIZED blocks, whose threshold certificate is verified by the reporter
+    // against the GROUP public key (preserved across reshares). The leader-binding
+    // and DKG-boundary checks below are polynomial/DKG-view-dependent and would
+    // diverge on a verifier's stale post-rotation state, so they are skipped here;
+    // consensus safety for the follower comes from the finalization certificate, not
+    // from re-deriving the live proposal's leader. The verifier never votes (`me()`
+    // is None), so accepting the proposal here cannot affect the committee's quorum.
+    if is_verifier {
+        return Ok(());
+    }
     validate_rewards_beneficiary(block)?;
     validate_system_tx_leader_binding(
         block,
@@ -2522,6 +2671,63 @@ async fn validate_header_consensus_artifacts(
 #[cfg(test)]
 #[path = "handler_tests.rs"]
 mod handler_tests;
+
+#[cfg(test)]
+mod clamp_tests {
+    use super::clamp_proposed_timestamp_millis;
+
+    const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
+    const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+
+    #[test]
+    fn genesis_child_uses_wall_clock_not_band() {
+        // Regression: at genesis the finalization_view is unseeded (parent==0).
+        // The real wall-clock (≈1.78e12 ms) must NOT be clamped to 0+band, which
+        // would put block 1 before the genesis timestamp and stall the chain. The
+        // min-advance lower bound is also skipped at genesis (monotonic-only).
+        let now = 1_781_255_987_000u64;
+        assert_eq!(clamp_proposed_timestamp_millis(0, now, BAND, MIN), now);
+    }
+
+    #[test]
+    fn real_parent_applies_band() {
+        let parent = 1_781_255_987_000u64;
+        // within band, above min advance → wall clock used
+        assert_eq!(
+            clamp_proposed_timestamp_millis(parent, parent + 2_000, BAND, MIN),
+            parent + 2_000
+        );
+        // far-future now → capped at parent + band
+        assert_eq!(
+            clamp_proposed_timestamp_millis(parent, parent + 10 * BAND, BAND, MIN),
+            parent + BAND
+        );
+    }
+
+    #[test]
+    fn lagging_clock_clamps_up_to_min_advance() {
+        // when the proposer's clock has not advanced `MIN` past the parent
+        // (or is in the past), the timestamp is clamped UP to `parent + MIN` so
+        // the block satisfies the validator minimum-advance rule and is accepted,
+        // rather than emitting `parent + 1` which validators would now reject.
+        let parent = 1_781_255_987_000u64;
+        // now in the past → parent + MIN (not parent + 1).
+        assert_eq!(
+            clamp_proposed_timestamp_millis(parent, parent - 5, BAND, MIN),
+            parent + MIN
+        );
+        // now between parent+1 and parent+MIN → clamped up to parent + MIN.
+        assert_eq!(
+            clamp_proposed_timestamp_millis(parent, parent + 500, BAND, MIN),
+            parent + MIN
+        );
+        // now exactly at the min-advance boundary → unchanged.
+        assert_eq!(
+            clamp_proposed_timestamp_millis(parent, parent + MIN, BAND, MIN),
+            parent + MIN
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2679,7 +2885,7 @@ mod tests {
         )
         .expect("bootstrap dkg should succeed");
         let verifier = HybridScheme::<MinSig>::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants.clone(),
             dkg.polynomial,
         )
@@ -2887,7 +3093,7 @@ mod tests {
             keys.iter().map(|k| k.public_key()).try_collect().unwrap();
 
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             7,
             None,
             Mode::NonZeroCounter,
@@ -2991,7 +3197,7 @@ mod tests {
                 let pk = bls12381::PublicKey::from(key.clone());
                 let idx = participants.index(&pk).expect("participant index");
                 HybridScheme::signer(
-                    crate::config::NAMESPACE,
+                    &crate::config::outbe_app_namespace(),
                     participants.clone(),
                     key.clone(),
                     dkg.polynomial.clone(),
@@ -3001,7 +3207,7 @@ mod tests {
             })
             .collect();
         let verifier = HybridScheme::<MinSig>::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants.clone(),
             dkg.polynomial,
         )
@@ -3424,6 +3630,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3462,6 +3669,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3479,6 +3687,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3845,6 +4054,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3858,6 +4068,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -3886,6 +4097,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
+            false,
             &scheme_provider,
             &committee_provider,
             &manager,

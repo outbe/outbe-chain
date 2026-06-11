@@ -159,16 +159,25 @@ impl ConsensusArgs {
                  the EVM signer key will be ignored. Add --validator to run as a validator."
             );
         }
-        let manual_dkg_args = [
+        // Two valid manual-provisioning shapes:
+        //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
+        //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share
+        //     — a node joining a running chain that has no threshold share yet; it runs
+        //     the consensus engine in verifier (follow/verify) mode and acquires a share
+        //     at the next DKG reshare. Any other partial combination is an error.
+        let (share, poly, output) = (
             self.signing_share.is_some(),
             self.public_polynomial.is_some(),
             self.dkg_output.is_some(),
-        ];
-        if manual_dkg_args.iter().any(|present| *present)
-            && !manual_dkg_args.iter().all(|present| *present)
-        {
+        );
+        let signer_triplet = share && poly && output;
+        let verifier_pair = !share && poly && output;
+        if (share || poly || output) && !signer_triplet && !verifier_pair {
             eyre::bail!(
-                "manual DKG provisioning requires all of --consensus.signing-share, --consensus.public-polynomial, and --consensus.dkg-output."
+                "manual DKG provisioning requires either all of --consensus.signing-share, \
+                 --consensus.public-polynomial, --consensus.dkg-output (signer), or \
+                 --consensus.public-polynomial + --consensus.dkg-output without \
+                 --consensus.signing-share (verifier-join)."
             );
         }
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {

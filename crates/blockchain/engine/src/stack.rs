@@ -139,6 +139,21 @@ const EPOCH_RESTART_ANCHOR_TIMEOUT: std::time::Duration = std::time::Duration::f
 const EPOCH_RESTART_ANCHOR_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
 
+/// A verifier-follower's deferred adoption of a followed DKG rotation's
+/// boundary material. The activated cycle's `BoundaryOutcome` rides the FIRST
+/// new-epoch block (strictly above the activation height), so it can only be
+/// observed after the restarted engine executes past the activation height —
+/// the height-event path scans `[next_scan_height, current_height]` forward
+/// on each finalized height until the artifact appears, then adopts it.
+#[derive(Clone, Copy, Debug)]
+struct PendingVerifierBoundaryAdoption {
+    /// Activation height of the followed rotation; the adopted boundary must
+    /// be committed strictly above it and planned at or above it.
+    activation_height: u64,
+    /// Next unscanned height — each finalized header is examined once.
+    next_scan_height: u64,
+}
+
 /// Read `epochLengthBlocks` from genesis.json `config` section.
 /// Falls back to [`config::DEFAULT_EPOCH_LENGTH_BLOCKS`] if absent.
 fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
@@ -351,6 +366,49 @@ fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) -> B256 {
     alloy_primitives::keccak256(&group_pk_bytes)
 }
 
+/// Resolve the consensus participant set for restart/live-join recovery.
+///
+/// When the node recovers a finalized DKG boundary, the threshold material it
+/// restores (`signing_share`, `polynomial`, `last_dkg_output`) belongs to the
+/// committee the recovered ceremony ran for — recorded as the DKG output's
+/// `players()`. The latest on-chain consensus set may have DRIFTED from that
+/// committee (a join/exit/jail/slash after the recovered boundary activated but
+/// before the next reshare), so the scheme must NOT be reconstructed against the
+/// latest set: committee-dependent data (votes, VRF threshold partials) must be
+/// decoded against the committee it was encoded for.
+///
+/// The recovered output's `players()` is already a sorted, deduplicated
+/// `commonware_utils::ordered::Set`, so participant indices derive from it
+/// canonically regardless of how the set was assembled — only the *membership*
+/// matters, and the members ARE the share holders. In the common no-churn restart
+/// this set is identical to the latest committed set, so recovery is unchanged;
+/// it diverges only across a churn window, which is exactly the bug this closes.
+///
+/// **Drift guard.** The recovered boundary records the committee the ceremony ran
+/// for in `reshare.new_active_set` (built 1:1 from the same `players()` list at
+/// proposal time). A size mismatch between the recovered output's players and
+/// that record means the restored consensus material does not correspond to the
+/// recovered chain boundary (e.g. a stale or partial consensus-archive restore),
+/// so recovery fails fast with an explicit drift error rather than reconstruct
+/// the scheme against the wrong committee.
+fn select_recovery_participants(
+    recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
+    let recorded = boundary.reshare.new_active_set.len();
+    let recovered = recovered_output_players.len();
+    ensure!(
+        recovered > 0 && recovered == recorded,
+        "validator set has drifted from saved DKG: recovered DKG output has {recovered} \
+         player(s) but the recovered boundary (epoch {}, activation height {}) recorded an \
+         active set of {recorded} validator(s) — the restored consensus material does not \
+         match the chain's recovered DKG boundary",
+        boundary.epoch,
+        boundary.planned_activation_height,
+    );
+    Ok(recovered_output_players.clone())
+}
+
 fn recover_latest_boundary_artifact(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     last_execution_height: u64,
@@ -384,6 +442,80 @@ fn recover_latest_boundary_artifact(
         height = height.saturating_sub(1);
     }
     Ok(None)
+}
+
+/// Whether a scanned boundary artifact is the one a verifier-follower must
+/// adopt after following a DKG rotation that activated at `activation_height`.
+///
+/// The activated cycle's `BoundaryOutcome` is committed by the FIRST new-epoch
+/// block, i.e. strictly ABOVE the activation height (the old epoch is fenced at
+/// the activation boundary). A boundary found at or below the activation height
+/// is therefore the PREVIOUS cycle's artifact and must not be adopted — doing
+/// so would silently keep the follower one rotation stale (its reshare
+/// prev_output and round would diverge from the committee's, so a later stake
+/// would end ACTIVE-but-voteless). `planned >= activation` additionally rejects
+/// stale-cycle artifacts and accepts newer ones when the follower lags multiple
+/// rotations: adoption is monotone, newest wins.
+const fn verifier_should_adopt_followed_boundary(
+    commit_height: u64,
+    boundary_planned_activation_height: u64,
+    activation_height: u64,
+) -> bool {
+    commit_height > activation_height && boundary_planned_activation_height >= activation_height
+}
+
+/// Forward-scan `[from, to]` (inclusive) for the first header carrying a
+/// `BoundaryOutcome` artifact. Used by the verifier-follower's deferred
+/// boundary adoption, whose search window opens just above the followed
+/// rotation's activation height — the first boundary above it is the activated
+/// cycle's. Headers missing from the provider end the scan (they are not yet
+/// executed locally; the caller resumes from that height on the next finalized
+/// height event), so each header is examined at most once across retries.
+fn scan_first_boundary_after(
+    provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
+    from: u64,
+    to: u64,
+) -> Result<ForwardBoundaryScan> {
+    let mut height = from;
+    while height <= to {
+        let Some(header) = provider
+            .sealed_header(height)
+            .map_err(|error| eyre::eyre!("failed to read header {height}: {error}"))?
+        else {
+            return Ok(ForwardBoundaryScan::NotFound {
+                resume_from: height,
+            });
+        };
+        let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+            .map_err(|error| {
+                eyre::eyre!("failed to decode header artifacts at {height}: {error}")
+            })?;
+        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+            artifacts.consensus_header_artifact
+        {
+            return Ok(ForwardBoundaryScan::Found {
+                commit_height: height,
+                boundary: Box::new(boundary),
+            });
+        }
+        height = height.saturating_add(1);
+    }
+    Ok(ForwardBoundaryScan::NotFound {
+        resume_from: height,
+    })
+}
+
+#[derive(Clone, Debug)]
+enum ForwardBoundaryScan {
+    Found {
+        commit_height: u64,
+        boundary: Box<DkgBoundaryArtifact>,
+    },
+    NotFound {
+        /// First height not yet examined (missing from the provider or above
+        /// the scan ceiling).
+        resume_from: u64,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -668,6 +800,15 @@ enum ThresholdMaterial {
         bootstrap_from_live_dkg: bool,
     },
     StartupLiveJoinRequired,
+    /// Verifier-join: the node has the public group polynomial + DKG output but NO
+    /// threshold share. It runs the consensus engine as a VERIFIER — it follows and
+    /// verifies finalized blocks (driving its execution layer to sync) but cannot
+    /// propose/sign — and acquires a share at the next DKG reshare, after which the
+    /// epoch loop rebuilds its scheme as a signer (Stage 4).
+    VerifierOnly {
+        polynomial: Sharing<MinSig>,
+        last_dkg_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1164,7 +1305,7 @@ fn epoch_validation_inputs(
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
     let verifier_scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
-        config::NAMESPACE,
+        &config::outbe_app_namespace(),
         participants.clone(),
         vrf_materials.clone(),
     )
@@ -1197,6 +1338,7 @@ fn validate_validator_evm_signer(
     signing_key: &bls12381::PrivateKey,
     consensus_validator_set: &validators::ValidatorSet,
     active_validator_set: &validators::ValidatorSet,
+    verifier_join: bool,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
         return Ok(None);
@@ -1234,6 +1376,15 @@ fn validate_validator_evm_signer(
                 })
         });
     let Some((public_keys, index, source_set)) = authorized else {
+        if verifier_join {
+            info!(
+                %signer_address,
+                "verifier-join: EVM signer is not yet in the on-chain validator set; the node \
+                 syncs as a verifier and resolves its proposer address once a reshare grants \
+                 it a share"
+            );
+            return Ok(None);
+        }
         eyre::bail!(
             "validator EVM key address {} is neither in the active consensus participant set nor the active validator set",
             signer_address
@@ -1326,11 +1477,22 @@ where
     );
     let active_validator_set = validators::read_validators_at_latest(&node.provider)
         .wrap_err("failed to load active validator set for EVM signer validation")?;
-    let proposer_evm_address =
-        validate_validator_evm_signer(&args, &signing_key, &validator_set, &active_validator_set)?;
+    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
+    // --consensus.signing-share. The node may not yet be in the on-chain validator set
+    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
+    let verifier_join = args.signing_share.is_none()
+        && args.public_polynomial.is_some()
+        && args.dkg_output.is_some();
+    let proposer_evm_address = validate_validator_evm_signer(
+        &args,
+        &signing_key,
+        &validator_set,
+        &active_validator_set,
+        verifier_join,
+    )?;
 
     // ── 3. Set up P2P network ───────────────────────────────────────────
-    let p2p_namespace = commonware_utils::union_unique(config::NAMESPACE, b"_P2P");
+    let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
@@ -1758,11 +1920,15 @@ where
                 last_dkg_output,
                 bootstrap_from_live_dkg,
             } => (
-                signing_share,
+                Some(signing_share),
                 polynomial,
                 last_dkg_output,
                 bootstrap_from_live_dkg,
             ),
+            ThresholdMaterial::VerifierOnly {
+                polynomial,
+                last_dkg_output,
+            } => (None, polynomial, last_dkg_output, false),
             ThresholdMaterial::StartupLiveJoinRequired => {
                 startup_live_join_completed = true;
                 let joined = run_startup_live_join_reshare(
@@ -1812,7 +1978,7 @@ where
                     "startup live-join refreshed validator and peer set after activation"
                 );
                 (
-                    joined.signing_share,
+                    Some(joined.signing_share),
                     joined.polynomial,
                     Some(joined.output),
                     false,
@@ -1821,12 +1987,25 @@ where
         };
 
     // ── 7. Build participant set (updated after each DKG reshare) ───────
-    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
-        .public_keys
-        .clone()
-        .into_iter()
-        .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
+    // when recovering a finalized DKG boundary, reconstruct the scheme
+    // against the committee the recovered threshold material belongs to (the DKG
+    // output's players), NOT the latest on-chain set, which may have drifted
+    // across a churn window. `select_recovery_participants` also fails fast if the
+    // restored material does not match the recovered boundary. On a fresh chain or
+    // when no boundary/output is recovered, fall back to the latest committed set
+    // (the genesis committee on first start).
+    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        match (recovered_boundary.as_ref(), last_dkg_output.as_ref()) {
+            (Some((_, boundary)), Some(output)) => {
+                select_recovery_participants(output.players(), boundary)?
+            }
+            _ => validator_set
+                .public_keys
+                .clone()
+                .into_iter()
+                .try_collect()
+                .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
+        };
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
     // On a fresh chain (no executed blocks yet), if this validator runs a TEE
@@ -1989,7 +2168,7 @@ where
             }
 
             // Record THIS validator's current enclave keys on-chain via a
-            // normal EOA tx (mirrors Secret Network's node-submitted x/registration).
+            // normal EOA tx (a node-submitted on-chain enclave-registration tx).
             // The genesis bootstrap registered the committee at block 1; on an
             // existing-chain restart the enclave's ephemeral attestation/noise keys are
             // freshly generated, so re-submit to keep the on-chain registry accurate.
@@ -2124,7 +2303,9 @@ where
         if let Some(ref keys_dir) = args.keys_dir {
             save_pending_dkg_state(
                 keys_dir,
-                &signing_share,
+                signing_share
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("--testnet.force-dkg requires a threshold share"))?,
                 &polynomial,
                 recovery_output,
                 &key_backend,
@@ -2157,23 +2338,69 @@ where
     let mut vrf_material_version = recovered_boundary_artifact
         .map(|artifact| artifact.vrf_material_version)
         .unwrap_or(0);
-    validate_recovered_vrf_material(&polynomial, recovered_boundary_artifact)?;
-    if let (Some(output), Some(boundary)) = (&last_dkg_output, recovered_boundary_artifact) {
+    // These strict checks (saved polynomial / DKG output must equal the recovered
+    // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
+    // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
+    // set (not its polynomial), so its CLI `--public-polynomial`/`--dkg-output` may be
+    // off (e.g. a TEE chain's runtime-derived genesis consensus polynomial differs
+    // from the bootstrap file, or the chain has rotated past it) without affecting
+    // sync — only its local VRF/leader view is degraded (process-local, non-fatal,
+    // same as the post-rotation verifier-follower case). Enforcing these on a restarted
+    // verifier would fatally crash an otherwise-healthy follower, so gate them to
+    // signers; the verifier syncs and the running epoch loop advances it.
+    if signing_share.is_some() {
+        validate_recovered_vrf_material(&polynomial, recovered_boundary_artifact)?;
+        if let (Some(output), Some(boundary)) = (&last_dkg_output, recovered_boundary_artifact) {
+            let canonical_output = decode_boundary_output(boundary)
+                .wrap_err("failed to decode recovered DKG boundary output")?;
+            ensure!(
+                output == &canonical_output,
+                "saved DKG output does not match recovered canonical DKG boundary output"
+            );
+        }
+    } else if let Some(boundary) = recovered_boundary_artifact {
+        // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
+        // a TEE chain whose runtime genesis consensus output differs from the bootstrap
+        // CLI files): adopt the chain's CURRENT canonical DKG output as both the
+        // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
+        // FULL previous output into its `info_hash` (not just the group key), so if the
+        // verifier later becomes a frozen-target player it MUST present the committee's
+        // current output as prev_output — its stale `--consensus.dkg-output` would yield
+        // a divergent `info_hash`, the dealers' bundles get dropped, and the ceremony
+        // times out (the node never gets a share). The genesis/boundary artifact carries
+        // the full `Output`, so `decode_boundary_output` recovers exactly what the
+        // committee holds. Finality still verifies via the participant set regardless.
         let canonical_output = decode_boundary_output(boundary)
-            .wrap_err("failed to decode recovered DKG boundary output")?;
-        ensure!(
-            output == &canonical_output,
-            "saved DKG output does not match recovered canonical DKG boundary output"
-        );
+            .wrap_err("failed to decode recovered DKG boundary output for verifier")?;
+        polynomial = canonical_output.public().clone();
+        last_dkg_output = Some(canonical_output);
     }
     let vrf_materials = VrfMaterialProvider::new(
         vrf_material_version,
         polynomial.clone(),
-        Some(signing_share.clone()),
+        signing_share.clone(),
     );
     let mut last_dkg_activation_height = active_boundary
         .as_ref()
-        .map(|(height, _)| *height)
+        .map(|(height, artifact)| {
+            // The genesis epoch's DKG activated at height 0, but its mandatory
+            // BoundaryOutcome is committed in block 1. A never-restarted committee node
+            // has no recovered boundary at startup, so it keeps `last_dkg_activation_height
+            // = 0` for the genesis epoch — and from that derives `planned_activation_height`
+            // for the FIRST reshare. A node that recovers the genesis boundary on restart
+            // must use the SAME 0, not the boundary's commit height (1): otherwise its
+            // freeze/activation schedule is one block AHEAD of the committee's, it waits
+            // for an activation height the committee already passed, and (on a
+            // membership-changing first reshare) it can never verify the first new-epoch
+            // block with its old scheme — it deadlocks one block before activation. Only
+            // the genesis boundary (epoch 0) needs this; a recovered reshare boundary's
+            // commit height IS its activation height.
+            if artifact.epoch == 0 {
+                0
+            } else {
+                *height
+            }
+        })
         .unwrap_or(last_execution_height);
     let mut dkg_cycle = recovered_boundary_artifact
         .map(|artifact| artifact.dkg_cycle.saturating_add(1))
@@ -2562,6 +2789,25 @@ where
         .child("finalization")
         .spawn(move |ctx| finalization_actor.run(ctx));
 
+    // persistent off-thread finalize-vote verifier. Each per-epoch
+    // OutbeReporter enqueues raw finalize votes here instead of verifying
+    // O(committee) BLS pairings inline on the Simplex voter task; the actor
+    // resolves each vote's committee scheme by epoch through the shared
+    // `certificate_scheme_provider` and admits only verified votes to
+    // `late_sig_store`.
+    let (finalize_verify_actor, finalize_verify_mailbox) =
+        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+            certificate_scheme_provider.clone(),
+            late_sig_store.clone(),
+        );
+    // Best-effort actor: its exit is non-fatal (consensus continues; only late
+    // credits stop), so it is held for the engine's lifetime but not polled in
+    // the fatal-exit select below. The named `_`-binding keeps the task alive
+    // (a bare `_` would drop and abort it immediately).
+    let _finalize_verify_handle = ctx
+        .child("finalize_verify")
+        .spawn(move |_ctx| finalize_verify_actor.run());
+
     let mut executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
         .start(marshal_mailbox.clone(), last_consensus_finalized);
@@ -2590,6 +2836,18 @@ where
     let mut frozen_dkg_target: Option<FrozenDkgTarget> = None;
     let mut pending_dkg_activation: Option<PendingDkgActivation> = None;
     let mut dealer_only_dkg_activation: Option<DealerOnlyDkgActivation> = None;
+    // Finalized-follower: a share-less verifier (TEE full-node) never runs a DKG
+    // ceremony, so it never sets `pending_dkg_activation`. Instead it notes the
+    // upcoming activation height here (set at the freeze when it classifies as
+    // NotParticipant) and, when it syncs to that height, advances its epoch +
+    // restarts the engine — reusing its polynomial (the group key is preserved
+    // across reshares) so its per-epoch reporter keeps verifying finality.
+    let mut pending_verifier_activation: Option<u64> = None;
+    // Deferred follow-up to a verifier activation: the activated cycle's
+    // `BoundaryOutcome` rides the first new-epoch block, which this follower
+    // can only execute AFTER its engine restarts, so the activation block
+    // queues the adoption here and the height-event path completes it.
+    let mut pending_verifier_boundary_adoption: Option<PendingVerifierBoundaryAdoption> = None;
     let mut latest_consensus_tip = *consensus_tip_rx.borrow();
     let mut pending_provider_ready_height: Option<u64> = None;
     let mut watchdog_unhealthy_since: Option<SystemTime> = None;
@@ -2631,17 +2889,42 @@ where
 
         // ── b. Build HybridScheme for this epoch ────────────────────────
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
-        let scheme = HybridScheme::<MinSig>::signer_with_vrf_provider(
-            config::NAMESPACE,
-            participants.clone(),
-            signing_key.clone(),
-            vrf_materials.clone(),
-        )
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "signing key or BLS share invalid for validator set (epoch {current_epoch})"
+        let scheme = if signing_share.is_some() {
+            HybridScheme::<MinSig>::signer_with_vrf_provider(
+                &config::outbe_app_namespace(),
+                participants.clone(),
+                signing_key.clone(),
+                vrf_materials.clone(),
             )
-        })?;
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "signing key or BLS share invalid for validator set (epoch {current_epoch})"
+                )
+            })?
+        } else {
+            // Verifier mode (no threshold share this epoch): the engine follows and
+            // verifies finalized blocks — driving its execution layer to sync — but
+            // cannot propose or sign. `me()` is None, so the simplex engine never
+            // invokes signing. The node acquires a share at the next reshare, after
+            // which the next epoch iteration rebuilds this scheme as a signer (Stage 4).
+            info!(
+                epoch = %current_epoch,
+                "no threshold share for this epoch — running consensus engine in VERIFIER mode"
+            );
+            HybridScheme::<MinSig>::verifier_with_vrf_provider(
+                &config::outbe_app_namespace(),
+                participants.clone(),
+                vrf_materials.clone(),
+            )
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "verifier scheme invalid for validator set (epoch {current_epoch}): \
+                     polynomial total ({}) must equal participant count ({})",
+                    vrf_materials.active_polynomial_total().unwrap_or(0),
+                    participants.len(),
+                )
+            })?
+        };
 
         // ── c. Create reporter for this epoch ───────────────────────────
         let (verifier_scheme, ordered_addresses) =
@@ -2664,7 +2947,7 @@ where
             reporter_elector,
             current_epoch,
             finalized_parent_cert_store.clone(),
-            late_sig_store.clone(),
+            finalize_verify_mailbox.clone(),
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter
@@ -3180,7 +3463,11 @@ where
                                 if let Some(ref keys_dir) = args.keys_dir {
                                     save_dkg_state(
                                         keys_dir,
-                                        &signing_share,
+                                        signing_share.as_ref().ok_or_else(|| {
+                                            eyre::eyre!(
+                                                "cannot promote finalized DKG state without a share"
+                                            )
+                                        })?,
                                         &polynomial,
                                         &boundary_output,
                                         &key_backend,
@@ -3203,6 +3490,187 @@ where
                                 "no consensus tip available for DKG/VRF scheduling; retrying"
                             );
                             continue;
+                        }
+                    }
+
+                    // Deferred verifier-follower boundary adoption: refresh this
+                    // follower's DKG material from the boundary of the rotation it just
+                    // followed, so its NEXT reshare presents what the committee holds.
+                    // The ceremony id binds round + FULL previous output + participants,
+                    // so a long-lived full-node that follows >=1 reshare then stakes
+                    // must track BOTH the chain's current output (stale prev_output ->
+                    // info_hash mismatch -> dealer bundles ignored) AND the chain's
+                    // dkg_cycle (the follower skips the freeze-path `dkg_cycle`
+                    // increment at its `continue`, so its round goes stale -> wrong mux
+                    // sub-channel + dealer logs fail verification) -> ceremony timeout
+                    // -> ACTIVE-but-voteless. Mirrors startup recovery (`dkg_cycle =
+                    // artifact.dkg_cycle + 1`), which is why the restart path never had
+                    // this gap. Group key is preserved across reshares, so finality
+                    // (verified via the participant set) is unaffected while the
+                    // adoption is pending.
+                    if let Some(adoption) = pending_verifier_boundary_adoption {
+                        if current_height >= adoption.next_scan_height {
+                            match scan_first_boundary_after(
+                                &node.provider,
+                                adoption.next_scan_height,
+                                current_height,
+                            ) {
+                                Ok(ForwardBoundaryScan::Found {
+                                    commit_height,
+                                    boundary: activated_boundary,
+                                }) => {
+                                    pending_verifier_boundary_adoption = None;
+                                    if verifier_should_adopt_followed_boundary(
+                                        commit_height,
+                                        activated_boundary.planned_activation_height,
+                                        adoption.activation_height,
+                                    ) {
+                                        match decode_boundary_output(&activated_boundary) {
+                                            Ok(activated_output) => {
+                                                vrf_material_version =
+                                                    activated_boundary.vrf_material_version;
+                                                dkg_cycle = activated_boundary
+                                                    .dkg_cycle
+                                                    .saturating_add(1);
+                                                polynomial = activated_output.public().clone();
+                                                vrf_materials.activate(
+                                                    vrf_material_version,
+                                                    polynomial.clone(),
+                                                    None,
+                                                );
+                                                last_dkg_output = Some(activated_output);
+                                                vrf_safety.note_activated(
+                                                    vrf_material_version,
+                                                    last_dkg_activation_height,
+                                                    dkg_rotation_params
+                                                        .planned_activation_height(
+                                                            last_dkg_activation_height,
+                                                        ),
+                                                    dkg_rotation_params.activation_grace_blocks,
+                                                );
+                                                publish_randomness_status(&bridge, &vrf_safety);
+                                                info!(
+                                                    commit_height,
+                                                    activation_height =
+                                                        adoption.activation_height,
+                                                    dkg_cycle,
+                                                    vrf_material_version,
+                                                    "verifier-follower: adopted activated DKG boundary output"
+                                                );
+                                            }
+                                            Err(error) => warn!(
+                                                %error,
+                                                "verifier-follower: failed to decode activated boundary output; keeping prior DKG material"
+                                            ),
+                                        }
+                                    } else {
+                                        warn!(
+                                            commit_height,
+                                            boundary_planned_activation_height =
+                                                activated_boundary.planned_activation_height,
+                                            activation_height = adoption.activation_height,
+                                            "verifier-follower: boundary found above the followed activation belongs to a stale cycle; keeping prior DKG material"
+                                        );
+                                    }
+                                }
+                                Ok(ForwardBoundaryScan::NotFound { resume_from }) => {
+                                    // The first new-epoch block is not executed locally
+                                    // yet — resume from the first unexamined height on
+                                    // the next finalized height event.
+                                    pending_verifier_boundary_adoption =
+                                        Some(PendingVerifierBoundaryAdoption {
+                                            activation_height: adoption.activation_height,
+                                            next_scan_height: resume_from,
+                                        });
+                                }
+                                Err(error) => warn!(
+                                    %error,
+                                    next_scan_height = adoption.next_scan_height,
+                                    "verifier-follower: failed to scan for activated boundary; retrying on next finalized height"
+                                ),
+                            }
+                        }
+                    }
+
+                    // Verifier-follower DKG activation: a share-less verifier that noted an
+                    // upcoming rotation (above) advances its epoch once it has synced to the
+                    // activation height. It does NOT run a ceremony and reuses its polynomial
+                    // (the reshare preserves the group public key, so the per-epoch reporter
+                    // built at the top of `'epoch_loop` keeps verifying the new epoch's
+                    // finality); only `current_epoch` advances and the Simplex engine restarts.
+                    if let Some(activation_height) = pending_verifier_activation {
+                        if current_height >= activation_height {
+                            let next_epoch =
+                                next_consensus_epoch_after_dkg_activation(current_epoch);
+                            info!(
+                                epoch = %current_epoch,
+                                next_epoch = %next_epoch,
+                                activation_height,
+                                "verifier-follower: DKG rotation activated — advancing epoch (reusing preserved group key) and restarting the Simplex engine"
+                            );
+                            pending_verifier_activation = None;
+                            // Anchor on the OBSERVED height (mirror the participant path's
+                            // `current_height.max(activation_height)`), not the planned height —
+                            // `last_dkg_activation_height` is a local accumulator that drives the
+                            // next freeze/activation schedule, so storing the bare planned value
+                            // would let schedule skew accumulate vs the committee across cycles.
+                            last_dkg_activation_height = current_height.max(activation_height);
+                            application_epoch_fence.advance_epoch(next_epoch);
+                            engine_handle_task.abort();
+                            current_epoch = next_epoch;
+                            // Same FinalizationActor anchor wait as the participant activation
+                            // path: the restarted engine's floor needs the activation block
+                            // finalized before `'epoch_loop` rebuilds the scheme.
+                            let deadline =
+                                std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                            loop {
+                                let (finalized, finalized_hash, round_ready) = {
+                                    let view = finalization_view.read().map_err(|_| {
+                                        eyre::eyre!(
+                                            "FinalizationView lock poisoned during verifier DKG activation wait"
+                                        )
+                                    })?;
+                                    (
+                                        view.last_finalized_number,
+                                        view.forkchoice.finalized_block_hash,
+                                        view.last_finalized_round.is_some(),
+                                    )
+                                };
+                                if finalized >= activation_height
+                                    && finalized_hash != alloy_primitives::B256::ZERO
+                                    && round_ready
+                                {
+                                    break;
+                                }
+                                if std::time::Instant::now() >= deadline {
+                                    return Err(eyre::eyre!(
+                                        "verifier DKG activation race after {:?}: \
+                                         finalized=(height={}, hash={}, round_ready={}) \
+                                         activation_height={}",
+                                        EPOCH_RESTART_ANCHOR_TIMEOUT,
+                                        finalized,
+                                        finalized_hash,
+                                        round_ready,
+                                        activation_height
+                                    ));
+                                }
+                                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                            }
+                            // Queue adoption of the just-activated boundary's DKG
+                            // material. It CANNOT be read here: the activated cycle's
+                            // `BoundaryOutcome` rides the FIRST new-epoch block —
+                            // strictly ABOVE the activation height — and this follower
+                            // executes finalized blocks only while its (just aborted)
+                            // engine runs, so waiting for the artifact in this block
+                            // would deadlock against our own engine restart. The
+                            // height-event path performs the scan + adoption once the
+                            // restarted engine executes past the activation height.
+                            pending_verifier_boundary_adoption =
+                                Some(PendingVerifierBoundaryAdoption {
+                                    activation_height,
+                                    next_scan_height: activation_height.saturating_add(1),
+                                });
+                            continue 'epoch_loop;
                         }
                     }
 
@@ -3316,11 +3784,11 @@ where
                             vrf_material_version = activated_vrf_material_version;
                             polynomial = activated_polynomial;
                             last_dkg_output = Some(canonical_output.clone());
-                            signing_share = activated_signing_share;
+                            signing_share = Some(activated_signing_share);
                             vrf_materials.activate(
                                 vrf_material_version,
                                 polynomial.clone(),
-                                Some(signing_share.clone()),
+                                signing_share.clone(),
                             );
 
                             dkg_manager.note_ceremony_completed(boundary_artifact);
@@ -3430,11 +3898,21 @@ where
                         }
                     }
 
-                    if let Some(dealer_only) = dealer_only_dkg_activation.as_mut() {
-                        let activation_height = current_height.max(dealer_only.completed_at_height);
+                    // Read the dealer-only decision WITHOUT holding a borrow on
+                    // `dealer_only_dkg_activation` so the Activate arm can `.take()` it.
+                    let dealer_only_decision = dealer_only_dkg_activation.as_ref().map(|d| {
+                        (
+                            current_height.max(d.completed_at_height),
+                            d.target.planned_activation_height,
+                            d.target.dkg_cycle,
+                        )
+                    });
+                    if let Some((activation_height, planned_activation_height, target_dkg_cycle)) =
+                        dealer_only_decision
+                    {
                         match pending_dkg_activation_decision(
                             activation_height,
-                            dealer_only.target.planned_activation_height,
+                            planned_activation_height,
                             dkg_rotation_params.activation_grace_blocks,
                         ) {
                             PendingDkgActivationDecision::Expired { deadline } => {
@@ -3442,19 +3920,124 @@ where
                                 publish_randomness_status(&bridge, &vrf_safety);
                                 return Err(eyre::eyre!(
                                     "dealer-only DKG activation missed VRF expiry: cycle {}, height {}, deadline {}",
-                                    dealer_only.target.dkg_cycle,
+                                    target_dkg_cycle,
                                     activation_height,
                                     deadline
                                 ));
                             }
                             PendingDkgActivationDecision::Wait => {}
                             PendingDkgActivationDecision::Activate => {
+                                // S3 demotion: an exited validator (deactivated/unstaked) is a
+                                // previous-output dealer but not a frozen-target player, so it
+                                // finishes its dealer duties for the resharded committee and then,
+                                // instead of looping until VRF expiry kills the process, DEMOTES to
+                                // a share-less verifier-follower of the smaller (N-1) committee. It
+                                // adopts the new group polynomial reconstructed from the finalized
+                                // dealer logs it just helped produce (`canonical_output` for the
+                                // ceremony epoch), drops its share, advances its epoch, and restarts
+                                // the Simplex engine in verifier mode — the same finalized-follower
+                                // path a non-staked TEE full-node uses. The reshared output is a
+                                // membership change, so unlike the same-membership verifier-follow
+                                // the node MUST take the new polynomial + participant set here (it
+                                // has them from the ceremony) rather than reusing the old ones.
+                                let Some(canonical_output) =
+                                    dkg_manager.canonical_output(current_epoch)
+                                else {
+                                    warn!(
+                                        epoch = %current_epoch,
+                                        activation_height,
+                                        "exited validator: dealer-only activation reached but resharded canonical output not yet reconstructed; waiting"
+                                    );
+                                    continue;
+                                };
+                                let Some(dealer_only) = dealer_only_dkg_activation.take() else {
+                                    return Err(eyre::eyre!(
+                                        "dealer-only activation missing after decision at height {activation_height}"
+                                    ));
+                                };
+                                let target = dealer_only.target;
+                                let next_epoch =
+                                    next_consensus_epoch_after_dkg_activation(current_epoch);
                                 info!(
-                                    dkg_cycle = dealer_only.target.dkg_cycle,
+                                    epoch = %current_epoch,
+                                    next_epoch = %next_epoch,
                                     activation_height,
-                                    "dealer-only DKG duties complete; staying online until boundary finalization or VRF expiry"
+                                    old = participants.len(),
+                                    new = target.participants.len(),
+                                    "exited validator: dealer-only DKG duties complete — demoting to verifier-follower of the resharded committee"
                                 );
-                                continue;
+                                let new_vrf_material_version =
+                                    match outbe_validatorset::next_vrf_material_version(
+                                        vrf_material_version,
+                                    ) {
+                                        Ok(version) => version,
+                                        Err(error) => {
+                                            warn!(%error, "exited validator: vrf material version overflow during demotion; reusing current");
+                                            vrf_material_version
+                                        }
+                                    };
+                                signing_share = None;
+                                polynomial = canonical_output.public().clone();
+                                last_dkg_output = Some(canonical_output);
+                                validator_set = target.validator_set.clone();
+                                participants = target.participants.clone();
+                                vrf_material_version = new_vrf_material_version;
+                                dkg_cycle = target.dkg_cycle.saturating_add(1);
+                                vrf_materials.activate(
+                                    vrf_material_version,
+                                    polynomial.clone(),
+                                    None,
+                                );
+                                let anchored_height = current_height.max(activation_height);
+                                last_dkg_activation_height = anchored_height;
+                                vrf_safety.note_activated(
+                                    vrf_material_version,
+                                    anchored_height,
+                                    dkg_rotation_params.planned_activation_height(anchored_height),
+                                    dkg_rotation_params.activation_grace_blocks,
+                                );
+                                publish_randomness_status(&bridge, &vrf_safety);
+                                application_epoch_fence.advance_epoch(next_epoch);
+                                engine_handle_task.abort();
+                                current_epoch = next_epoch;
+                                // Anchor wait (mirror the verifier activation): the restarted
+                                // verifier engine's floor needs the activation block finalized
+                                // before `'epoch_loop` rebuilds the verifier scheme.
+                                let deadline =
+                                    std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                loop {
+                                    let (finalized, finalized_hash, round_ready) = {
+                                        let view = finalization_view.read().map_err(|_| {
+                                            eyre::eyre!(
+                                                "FinalizationView lock poisoned during exited-validator demotion wait"
+                                            )
+                                        })?;
+                                        (
+                                            view.last_finalized_number,
+                                            view.forkchoice.finalized_block_hash,
+                                            view.last_finalized_round.is_some(),
+                                        )
+                                    };
+                                    if finalized >= activation_height
+                                        && finalized_hash != alloy_primitives::B256::ZERO
+                                        && round_ready
+                                    {
+                                        break;
+                                    }
+                                    if std::time::Instant::now() >= deadline {
+                                        return Err(eyre::eyre!(
+                                            "exited-validator demotion activation race after {:?}: \
+                                             finalized=(height={}, hash={}, round_ready={}) activation_height={}",
+                                            EPOCH_RESTART_ANCHOR_TIMEOUT,
+                                            finalized,
+                                            finalized_hash,
+                                            round_ready,
+                                            activation_height
+                                        ));
+                                    }
+                                    tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                }
+                                continue 'epoch_loop;
                             }
                         }
                     }
@@ -3493,6 +4076,17 @@ where
                                     let progress_tx = dkg_progress_tx.clone();
                                     let key = signing_key.clone();
                                     let parts = target.participants.clone();
+                                    // Share-less joiner: refresh prev_output from the chain so
+                                    // the ceremony info_hash matches the committee's (see
+                                    // refresh_verifier_join_prev_output).
+                                    if signing_share.is_none() {
+                                        refresh_verifier_join_prev_output(
+                                            &node.provider,
+                                            target.freeze_height,
+                                            dkg_rotation_params,
+                                            &mut last_dkg_output,
+                                        );
+                                    }
                                     let prev_output = last_dkg_output.clone();
                                     let prev_share = signing_share.clone();
                                     let role = classify_local_reshare_role(
@@ -3522,7 +4116,7 @@ where
                                                     key,
                                                     parts,
                                                     prev_output,
-                                                    Some(prev_share),
+                                                    prev_share,
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
@@ -3548,13 +4142,13 @@ where
                                                 .await
                                                 .map(DkgTaskOutcome::Complete)
                                             }
-                                            LocalDkgRole::DealerOnly => match prev_output {
-                                                Some(output) => dkg_actor::run_reshare_dealer_only(
+                                            LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
+                                                (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
                                                     output,
-                                                    prev_share,
+                                                    share,
                                                     round,
                                                     progress_tx,
                                                     dkg_tx,
@@ -3562,8 +4156,11 @@ where
                                                 )
                                                 .await
                                                 .map(DkgTaskOutcome::DealerOnly),
-                                                None => Err(eyre::eyre!(
+                                                (None, _) => Err(eyre::eyre!(
                                                     "dealer-only DKG retry requires previous output"
+                                                )),
+                                                (Some(_), None) => Err(eyre::eyre!(
+                                                    "dealer-only DKG requires a previous share"
                                                 )),
                                             },
                                             LocalDkgRole::NotParticipant => Err(eyre::eyre!(
@@ -3584,12 +4181,14 @@ where
                     }
 
                     let freeze_height = dkg_rotation_params.freeze_height(last_dkg_activation_height);
-                    if should_start_dkg_rotation(
-                        frozen_dkg_target.is_some(),
-                        pending_dkg_activation.is_some(),
-                        current_height,
-                        freeze_height,
-                    ) {
+                    if pending_verifier_activation.is_none()
+                        && should_start_dkg_rotation(
+                            frozen_dkg_target.is_some(),
+                            pending_dkg_activation.is_some(),
+                            current_height,
+                            freeze_height,
+                        )
+                    {
                         let planned_activation_height =
                             dkg_rotation_params.planned_activation_height(last_dkg_activation_height);
                         info!(
@@ -3614,6 +4213,40 @@ where
                                     &new_participants,
                                 );
                                 if local_role == LocalDkgRole::NotParticipant {
+                                    // A share-less verifier-follower (TEE full-node) is not a
+                                    // committee member: neither a previous dealer nor a frozen
+                                    // target player. It must NOT crash or run a ceremony — it
+                                    // notes the activation height and keeps following; when it
+                                    // syncs to that height it advances its epoch (reusing its
+                                    // polynomial, since the group key is preserved across
+                                    // reshares) so its per-epoch reporter verifies the new epoch's
+                                    // finality. A node that HELD a share but is now NotParticipant
+                                    // is a real error and still fails.
+                                    if signing_share.is_none() {
+                                        // Finalized-follow is only valid for a SAME-MEMBERSHIP
+                                        // reshare: certificate verification binds the ordered
+                                        // participant set (not just the preserved group key), and
+                                        // the rebuilt verifier scheme requires polynomial-total ==
+                                        // participant-count. On a membership change the verifier
+                                        // would need the NEW group polynomial (only the group key,
+                                        // not the full polynomial, is on-chain), so fail loudly +
+                                        // resync rather than silently reuse a stale committee.
+                                        if new_participants != participants {
+                                            return Err(eyre::eyre!(
+                                                "verifier-follower cannot follow a membership-changing DKG reshare at height {freeze_height} \
+                                                 (committee {} → {}); resync required",
+                                                participants.len(),
+                                                new_participants.len()
+                                            ));
+                                        }
+                                        info!(
+                                            freeze_height,
+                                            planned_activation_height,
+                                            "verifier-follower: DKG rotation noted; will advance epoch at the activation height"
+                                        );
+                                        pending_verifier_activation = Some(planned_activation_height);
+                                        continue;
+                                    }
                                     return Err(eyre::eyre!(
                                         "local validator is neither previous DKG dealer nor frozen target player at height {freeze_height}"
                                     ));
@@ -3697,7 +4330,21 @@ where
                                 let progress_tx = dkg_progress_tx.clone();
                                 let key = signing_key.clone();
                                 let parts = target_participants.clone();
-                                // A-12: Capture previous DKG state for reshare.
+                                // Share-less joiner (verifier-join becoming a player): refresh
+                                // prev_output from the chain's canonical output so the ceremony
+                                // info_hash matches the committee's. Without this a long-lived
+                                // TEE full-node joining at its FIRST reshare presents its stale
+                                // CLI `--consensus.dkg-output` -> info_hash mismatch -> dealer
+                                // bundles dropped -> timeout -> ACTIVE-but-voteless.
+                                if signing_share.is_none() {
+                                    refresh_verifier_join_prev_output(
+                                        &node.provider,
+                                        freeze_height,
+                                        dkg_rotation_params,
+                                        &mut last_dkg_output,
+                                    );
+                                }
+                                // Capture previous DKG state for reshare.
                                 let prev_output = last_dkg_output.clone();
                                 let prev_share = signing_share.clone();
                                 let role = classify_local_reshare_role(
@@ -3728,7 +4375,7 @@ where
                                                 key,
                                                 parts,
                                                 prev_output,
-                                                Some(prev_share),
+                                                prev_share,
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
@@ -3754,13 +4401,13 @@ where
                                             .await
                                             .map(DkgTaskOutcome::Complete)
                                         }
-                                        LocalDkgRole::DealerOnly => match prev_output {
-                                            Some(output) => dkg_actor::run_reshare_dealer_only(
+                                        LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
+                                            (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
                                                 output,
-                                                prev_share,
+                                                share,
                                                 round,
                                                 progress_tx,
                                                 dkg_tx,
@@ -3768,8 +4415,11 @@ where
                                             )
                                             .await
                                             .map(DkgTaskOutcome::DealerOnly),
-                                            None => Err(eyre::eyre!(
+                                            (None, _) => Err(eyre::eyre!(
                                                 "dealer-only live DKG requires previous output"
+                                            )),
+                                            (Some(_), None) => Err(eyre::eyre!(
+                                                "dealer-only live DKG requires a previous share"
                                             )),
                                         },
                                         LocalDkgRole::NotParticipant => Err(eyre::eyre!(
@@ -4054,6 +4704,52 @@ fn decode_boundary_output(
         "trailing bytes after DKG output in boundary artifact"
     );
     Ok(output)
+}
+
+/// A share-less node (verifier-join TEE full-node) that is about to participate in
+/// a DKG reshare as a player must present the COMMITTEE's current output as the
+/// ceremony `prev_output` — the DKG ceremony id binds the full previous output, so
+/// a divergent prev_output yields a divergent `info_hash`, every dealer bundle is
+/// dropped ("received DKG message for a different ceremony"), the ceremony times
+/// out, and the joiner goes ACTIVE-but-voteless. Its in-memory `last_dkg_output`
+/// may be the stale CLI `--consensus.dkg-output` bootstrap value (on a TEE chain
+/// the runtime-derived genesis consensus output differs from the bootstrap file)
+/// when it joins WITHOUT first following a reshare or restarting. Refresh it from
+/// the chain's latest finalized DKG boundary (scanning back from `scan_height`)
+/// before the ceremony. Signers already hold the correct output from their prior
+/// ceremony, so this only runs for the share-less case. Best-effort: on any
+/// recovery/decode failure it keeps the local value and warns.
+fn refresh_verifier_join_prev_output(
+    provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
+    scan_height: u64,
+    dkg_rotation_params: DkgRotationParams,
+    last_dkg_output: &mut Option<Output<MinSig, bls12381::PublicKey>>,
+) {
+    match recover_latest_boundary_artifact(provider, scan_height, dkg_rotation_params) {
+        Ok(Some((commit_height, boundary))) => match decode_boundary_output(&boundary) {
+            Ok(output) => {
+                if last_dkg_output.as_ref() != Some(&output) {
+                    info!(
+                        commit_height,
+                        "verifier-join: adopted chain canonical DKG output as reshare prev_output"
+                    );
+                }
+                *last_dkg_output = Some(output);
+            }
+            Err(error) => warn!(
+                %error,
+                "verifier-join: failed to decode boundary output for reshare prev_output; using local"
+            ),
+        },
+        Ok(None) => warn!(
+            scan_height,
+            "verifier-join: no boundary artifact for reshare prev_output; using local"
+        ),
+        Err(error) => warn!(
+            %error,
+            "verifier-join: failed to recover boundary for reshare prev_output; using local"
+        ),
+    }
 }
 
 fn encode_pending_dkg_boundary_snapshot(snapshot: &PendingDkgBoundarySnapshot) -> Result<Vec<u8>> {
@@ -4687,7 +5383,20 @@ async fn obtain_threshold_material(
             }
 
             if startup_dkg_context.has_chain_finalized_dkg_boundary() {
-                return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+                // A verifier-join (no signing share, has --public-polynomial) must NOT
+                // enter the startup live-join reshare path on RESTART: that path waits
+                // for the freeze height WITHOUT driving sync, so a restarted-but-behind
+                // verifier deadlocks (current_height frozen below freeze_height forever —
+                // it can never reach the freeze without the engine running). Instead it
+                // falls through to the VerifierOnly path below, loads its polynomial,
+                // and syncs as a verifier; the running epoch loop then handles any
+                // reshare once it is synced + in the frozen target (the finalized-follower
+                // path for a non-staked full-node, the participant path once it is a
+                // PENDING frozen-target player). Only a share-holding node (a
+                // reconnecting signer) needs the immediate startup live-join reshare.
+                if !(args.signing_share.is_none() && args.public_polynomial.is_some()) {
+                    return Ok(ThresholdMaterial::StartupLiveJoinRequired);
+                }
             }
         }
 
@@ -4745,6 +5454,30 @@ async fn obtain_threshold_material(
                 last_dkg_output: cli_dkg_output,
                 bootstrap_from_live_dkg: false,
             });
+        }
+
+        // Path 2b: Verifier-join — public group material (--consensus.public-polynomial
+        // + --consensus.dkg-output) WITHOUT a signing share. The node runs the consensus
+        // engine in verifier mode (follow/verify finalized blocks → sync its execution
+        // layer) and acquires a share at the next reshare. See ThresholdMaterial::VerifierOnly.
+        if args.signing_share.is_none() {
+            if let (Some(poly_path), Some(output_path)) =
+                (&args.public_polynomial, &args.dkg_output)
+            {
+                let polynomial = bls::load_public_polynomial(poly_path, key_backend)
+                    .wrap_err("failed to load BLS public polynomial for verifier-join")?;
+                let output = bls::load_dkg_output(output_path, key_backend)
+                    .wrap_err("failed to load BLS DKG output for verifier-join")?;
+                info!(
+                    vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
+                    "verifier-join: no threshold share; running consensus in VERIFIER mode \
+                     (follow + verify) until the next reshare grants a share"
+                );
+                return Ok(ThresholdMaterial::VerifierOnly {
+                    polynomial,
+                    last_dkg_output: Some(output),
+                });
+            }
         }
     } else {
         info!("--testnet.force-dkg: ignoring saved and CLI DKG material");
@@ -4963,8 +5696,12 @@ fn refresh_validator_set_at_height(
     let state = provider
         .state_by_block_hash(block_hash)
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
-    let new_set = validators::read_validators_from_state(&state)
-        .wrap_err("failed to read active validators from frozen EVM state")?;
+    // The reshare TARGET (next_players) is ACTIVE∪PENDING: ACTIVE members stay and
+    // PENDING joiners are activated by this ceremony. EXITING validators are excluded
+    // (the reshare removes them). Using the reshare-target reader — not the ACTIVE-only
+    // voting reader — is what lets a staked PENDING joiner receive a share.
+    let new_set = validators::read_reshare_target_from_state(&state)
+        .wrap_err("failed to read reshare target set from frozen EVM state")?;
 
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = new_set
         .public_keys

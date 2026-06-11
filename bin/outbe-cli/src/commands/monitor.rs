@@ -138,6 +138,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
                     3 => "Exiting",
                     4 => "Unbonding",
                     5 => "Inactive",
+                    6 => "Jailed",
                     _ => "Unknown",
                 };
                 println!(
@@ -350,7 +351,7 @@ async fn run_metrics(endpoint: &str, show_all: bool) -> Result<()> {
     Ok(())
 }
 
-/// A-30: Interprets a validator status code from the on-chain ValidatorSet.
+/// Interprets a validator status code from the on-chain ValidatorSet.
 ///
 /// Returns (human-readable label, is_ready). Only ACTIVE (2) is considered ready.
 /// Corrected status codes matching runtime enum:
@@ -363,6 +364,7 @@ fn interpret_validator_status(status: u8) -> (&'static str, bool) {
         3 => ("exiting", false),
         4 => ("unbonding", false),
         5 => ("inactive", false),
+        6 => ("jailed", false),
         _ => ("unknown", false),
     }
 }

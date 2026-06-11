@@ -40,8 +40,8 @@ use commonware_cryptography::{
 };
 use commonware_utils::Participant;
 use outbe_consensus::proof::{
-    canonical_vrf_proof_hash_v2, constants::OUTBE_FINALIZE_NAMESPACE_V2, verify_v2_proof,
-    HybridCertificate, VrfProof, OUTBE_HYBRID_SEED_NAMESPACE_V2,
+    canonical_vrf_proof_hash_v2, constants::finalize_namespace, hybrid_seed_namespace,
+    verify_v2_proof, HybridCertificate, VrfProof,
 };
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
@@ -100,6 +100,7 @@ fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
         committee,
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 
@@ -127,16 +128,20 @@ fn build_cert_with_vrf_proof(
     );
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
+    // finalize votes bind the ordered committee; build the canonical `Set`
+    // from the DKG committee (matches the snapshot the verifier reads).
+    let committee_set: commonware_utils::ordered::Set<_> =
+        commonware_utils::ordered::Set::from_iter_dedup(dkg.keys.iter().map(|k| k.public_key()));
     let sigs: Vec<_> = signer_indices
         .iter()
-        .map(|&i| dkg.keys[i as usize].sign(OUTBE_FINALIZE_NAMESPACE_V2, &vote_message))
+        .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
         .collect();
     let bls_aggregated_vote =
         aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
 
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
-        OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &hybrid_seed_namespace(),
         &seed_message,
     );
     let vrf_proof = VrfProof::<MinSig> {

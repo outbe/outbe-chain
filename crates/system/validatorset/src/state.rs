@@ -24,7 +24,7 @@
 //! observed via a checkpoint-rolled-back transaction is never reachable: the
 //! reader gates every other slot behind `exists`.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -73,6 +73,59 @@ fn join_pubkey(lo: B256, hi: B256) -> [u8; 48] {
     pubkey
 }
 
+/// Number of recent epochs whose committee snapshots stay live. Every reader
+/// (`read_committee_snapshot`) only touches the current finalized epoch ± the
+/// K-block late-finalize window (≪ 1 epoch), so this is a generous retention;
+/// `write_committee_snapshot` prunes older snapshots to bound state growth.
+/// Changing it is a hard fork (it changes which slots are zero → the state root).
+pub const COMMITTEE_SNAPSHOT_RETAIN_EPOCHS: u64 = 8;
+
+/// Zeroes every slot of the committee snapshot at `key` — the inverse of
+/// [`write_committee_snapshot`] — reclaiming its EVM storage (a slot set to its
+/// default is empty in the state trie). `exists` is cleared FIRST so any read
+/// during the clear sees the snapshot as already gone. No-op if absent.
+pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()> {
+    let vs = ValidatorSet::new(storage);
+    if !vs.committee_snapshot_exists.read(&key)? {
+        return Ok(());
+    }
+    vs.committee_snapshot_exists.write(&key, false)?;
+
+    let committee_len = vs.committee_snapshot_len.read(&key)?;
+    for i in 0..committee_len {
+        vs.committee_snapshot_address_at
+            .get_nested(&key)
+            .write(&i, Address::ZERO)?;
+        vs.committee_snapshot_pubkey_lo_at
+            .get_nested(&key)
+            .write(&i, B256::ZERO)?;
+        vs.committee_snapshot_pubkey_hi_at
+            .get_nested(&key)
+            .write(&i, B256::ZERO)?;
+    }
+    vs.committee_snapshot_len.write(&key, 0)?;
+
+    let vrf_pk_len = vs.committee_snapshot_vrf_group_public_key_len.read(&key)?;
+    let num_chunks = if vrf_pk_len > 0 {
+        vrf_pk_len.div_ceil(32)
+    } else {
+        0
+    };
+    for i in 0..num_chunks {
+        vs.committee_snapshot_vrf_group_public_key_chunk_at
+            .get_nested(&key)
+            .write(&i, B256::ZERO)?;
+    }
+    vs.committee_snapshot_vrf_material_version.write(&key, 0)?;
+    vs.committee_snapshot_vrf_group_public_key_hash
+        .write(&key, B256::ZERO)?;
+    vs.committee_snapshot_vrf_group_public_key_len
+        .write(&key, 0)?;
+    vs.committee_snapshot_vrf_public_polynomial_hash
+        .write(&key, B256::ZERO)?;
+    Ok(())
+}
+
 /// Writes a committee snapshot into the store at the canonical
 /// `(epoch, committee_set_hash)` key derived from `snapshot`.
 ///
@@ -104,7 +157,7 @@ pub fn write_committee_snapshot(
         .map_err(|_| PrecompileError::Revert("vrf group pk bytes length exceeds u64".into()))?;
     let vrf_pk_hash = alloy_primitives::keccak256(&snapshot.vrf_group_public_key_bytes);
 
-    let vs = ValidatorSet::new(storage);
+    let vs = ValidatorSet::new(storage.clone());
 
     vs.committee_snapshot_len.write(&key, committee_len)?;
     for (i, entry) in snapshot.committee.iter().enumerate() {
@@ -127,6 +180,8 @@ pub fn write_committee_snapshot(
         .write(&key, vrf_pk_hash)?;
     vs.committee_snapshot_vrf_group_public_key_len
         .write(&key, vrf_pk_len)?;
+    vs.committee_snapshot_vrf_public_polynomial_hash
+        .write(&key, snapshot.vrf_public_polynomial_hash)?;
     for (i, chunk) in snapshot.vrf_group_public_key_bytes.chunks(32).enumerate() {
         let idx = i as u64;
         let mut buf = [0u8; 32];
@@ -138,6 +193,16 @@ pub fn write_committee_snapshot(
 
     // `exists` LAST: gates every read path on a fully-written snapshot.
     vs.committee_snapshot_exists.write(&key, true)?;
+
+    // Prune ring: retain only the last COMMITTEE_SNAPSHOT_RETAIN_EPOCHS epochs.
+    // A boundary writes outgoing(epoch-1) + incoming(epoch) — distinct epochs →
+    // distinct ring slots. Writing epoch E evicts the snapshot from epoch E-RETAIN.
+    let ring_idx = epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+    let evicted = vs.committee_snapshot_key_ring.read(&ring_idx)?;
+    if evicted != B256::ZERO && evicted != key {
+        clear_committee_snapshot(storage.clone(), evicted)?;
+    }
+    vs.committee_snapshot_key_ring.write(&ring_idx, key)?;
 
     Ok((hash, key))
 }
@@ -209,11 +274,43 @@ pub fn read_committee_snapshot(
         }
     }
 
+    let vrf_public_polynomial_hash = vs
+        .committee_snapshot_vrf_public_polynomial_hash
+        .read(&snapshot_key)?;
+
     Ok(Some(CommitteeSnapshot {
         committee,
         vrf_material_version,
         vrf_group_public_key_bytes,
+        vrf_public_polynomial_hash,
     }))
+}
+
+/// Read the committee snapshot for `epoch` via the prune ring (slot 44), WITHOUT
+/// needing the `committee_set_hash`.
+///
+/// The ring maps `epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS -> snapshot_key`. For
+/// an epoch within the retained window the slot holds that epoch's key; for an
+/// epoch older than the window the slot has been overwritten by a newer epoch
+/// that collides on the ring index, so this returns that newer committee (the
+/// snapshot does not store its own epoch). Callers that bind the result to a
+/// specific epoch (SlashIndicator evidence) MUST therefore verify against
+/// the returned committee and treat a verification failure as "unverifiable",
+/// never trusting the epoch match implicitly. Returns `None` when the ring slot
+/// is empty.
+pub fn read_committee_snapshot_for_epoch(
+    storage: StorageHandle,
+    epoch: u64,
+) -> Result<Option<CommitteeSnapshot>> {
+    let key = {
+        let vs = ValidatorSet::new(storage.clone());
+        let ring_idx = epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+        vs.committee_snapshot_key_ring.read(&ring_idx)?
+    };
+    if key == B256::ZERO {
+        return Ok(None);
+    }
+    read_committee_snapshot(storage, key)
 }
 
 /// Pre-computes `(committee_set_hash, snapshot_key)` without touching storage.

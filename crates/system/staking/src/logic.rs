@@ -19,7 +19,7 @@ impl Staking<'_> {
             return Err(PrecompileError::Revert("amount must be non-zero".into()));
         }
 
-        // A-43: Enforce self-stake only — no third-party delegation.
+        // Enforce self-stake only — no third-party delegation.
         // Without full delegation accounting, a delegator's funds would be
         // locked with no protocol-level withdrawal mechanism.
         if caller != validator {
@@ -28,7 +28,7 @@ impl Staking<'_> {
             ));
         }
 
-        // A-01: Do NOT call transfer_balance here. For payable precompile calls,
+        // Do NOT call transfer_balance here. For payable precompile calls,
         // the EVM already transfers msg.value from caller to STAKING_ADDRESS
         // via CallValue::Transfer. A second transfer would double-charge the caller.
 
@@ -52,7 +52,10 @@ impl Staking<'_> {
                 if val_set.is_validator(validator)? {
                     let current_status = val_set.val_status.read(&validator)?;
                     if new_stake >= min_stake && current_status == status::REGISTERED {
-                        val_set.activate_validator(validator)?;
+                        // PoS: stake reaching min_stake marks the validator PENDING
+                        // (admitted, syncing, not yet voting). The next DKG reshare
+                        // grants a share and promotes PENDING→ACTIVE.
+                        val_set.mark_pending(validator)?;
                     }
                 }
 
@@ -79,14 +82,16 @@ impl Staking<'_> {
         // Update val_stake in ValidatorSet
         val_set.val_stake.write(&validator, new_stake)?;
 
-        // Phase 1 auto-activation: if validator is REGISTERED and now meets
-        // min_stake, activate directly. In Phase 2+ with DKG, activation
-        // happens via activateResharedSet() instead.
+        // PoS staking: when a REGISTERED validator reaches min_stake it becomes
+        // PENDING (admitted to the validator set, syncing, not yet voting). The next
+        // DKG reshare grants it a share and activate_reshared_set promotes
+        // PENDING→ACTIVE. mark_pending also raises pending_set_change so consensus
+        // schedules that reshare.
         let min_stake = self.config_min_stake.read()?;
         if val_set.is_validator(validator)? {
             let current_status = val_set.val_status.read(&validator)?;
             if new_stake >= min_stake && current_status == status::REGISTERED {
-                val_set.activate_validator(validator)?;
+                val_set.mark_pending(validator)?;
             }
         }
 
@@ -203,6 +208,24 @@ impl Staking<'_> {
                     .write(&caller, val_set.storage.block_number()?)?;
                 // Signal consensus to trigger DKG reshare
                 val_set.pending_set_change.write(true)?;
+            } else if new_stake < min_stake && current_status == status::PENDING {
+                // A PENDING joiner that drops below min_stake before its activating
+                // reshare reverts to REGISTERED, so the reshare target (ACTIVE∪PENDING)
+                // no longer selects it and it cannot be promoted to ACTIVE without
+                // re-staking. Re-signal so consensus refreshes the target.
+                val_set.val_status.write(&caller, status::REGISTERED)?;
+                val_set.pending_set_change.write(true)?;
+            } else if new_stake < min_stake && current_status == status::JAILED {
+                // A JAILED validator that unstakes below min_stake LEAVES the set:
+                // it enters the EXITING → UNBONDING → INACTIVE drain (the next reshare
+                // excludes it + clears its share; process_unbonding drains the stake).
+                // This is the "I no longer want to be a validator" exit from jail.
+                val_set.val_status.write(&caller, status::EXITING)?;
+                val_set
+                    .val_deactivated_at_height
+                    .write(&caller, val_set.storage.block_number()?)?;
+                val_set.val_jailed_at_height.write(&caller, 0)?;
+                val_set.pending_set_change.write(true)?;
             }
         }
 
@@ -214,6 +237,25 @@ impl Staking<'_> {
         val_set.val_unbonding_end.write(&caller, complete_time)?;
 
         Ok(())
+    }
+
+    /// Unjails the caller's JAILED validator back to PENDING. Requires the
+    /// caller's bonded stake to be ≥ min_stake (top up via `stake` first if a
+    /// felony slash dropped it below). The JAILED→PENDING transition, the unjail
+    /// cooldown, the readiness reset, and the reshare signal live in ValidatorSet
+    /// (`unjail_to_pending`); afterwards the validator re-confirms readiness and is
+    /// promoted PENDING→ACTIVE by the next DKG reshare. Self-only: `caller` is the
+    /// validator (the precompile passes the tx sender).
+    pub fn unjail_validator(&mut self, caller: Address) -> Result<()> {
+        let stake = self.stake_amount.read(&caller)?;
+        let min_stake = self.config_min_stake.read()?;
+        if stake < min_stake {
+            return Err(PrecompileError::Revert(format!(
+                "unjailValidator requires stake >= min_stake: have {stake}, need {min_stake}"
+            )));
+        }
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.unjail_to_pending(caller)
     }
 
     /// Claims matured unbonding entries for the caller.
@@ -280,8 +322,8 @@ impl Staking<'_> {
     /// Slashes a validator by `percent` of their staked amount and unbonding entries.
     ///
     /// - Reduces stake_amount[validator] and total_staked by the slash amount.
-    /// - A-04: Also proportionally reduces pending unbonding entries.
-    /// - A-05: Burns slashed tokens from STAKING_ADDRESS native balance.
+    /// - Also proportionally reduces pending unbonding entries.
+    /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Updates val_stake in ValidatorSet.
     /// - Returns the total slashed amount (for evidence reward calculation).
     /// - Does NOT change validator status — severe faults are handled by
@@ -306,7 +348,7 @@ impl Staking<'_> {
             total_slashed += slash;
         }
 
-        // A-04: Slash unbonding entries proportionally.
+        // Slash unbonding entries proportionally.
         // Walk the per-validator linked list and reduce each pending entry.
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
         let slash_complete_time = self.checked_complete_time(
@@ -332,7 +374,7 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // A-05: Burn slashed tokens from STAKING_ADDRESS so native balance stays
+        // Burn slashed tokens from STAKING_ADDRESS so native balance stays
         // in sync with accounting. Without this, slashed amounts become orphaned.
         if !total_slashed.is_zero() {
             self.storage
@@ -344,7 +386,9 @@ impl Staking<'_> {
         let val_set = ValidatorSet::new(self.storage.clone());
         val_set.val_stake.write(&validator, remaining_stake)?;
 
-        // If stake dropped below min_stake and validator is ACTIVE, transition to EXITING
+        // If stake dropped below min_stake, demote: an ACTIVE validator exits
+        // (ACTIVE→EXITING, removed at the next reshare); a PENDING joiner that never
+        // activated reverts to REGISTERED so the reshare target no longer selects it.
         let min_stake = self.config_min_stake.read()?;
         if !min_stake.is_zero() && remaining_stake < min_stake && val_set.is_validator(validator)? {
             let current_status = val_set.val_status.read(&validator)?;
@@ -353,6 +397,9 @@ impl Staking<'_> {
                 val_set
                     .val_deactivated_at_height
                     .write(&validator, val_set.storage.block_number()?)?;
+                val_set.pending_set_change.write(true)?;
+            } else if current_status == status::PENDING {
+                val_set.val_status.write(&validator, status::REGISTERED)?;
                 val_set.pending_set_change.write(true)?;
             }
         }

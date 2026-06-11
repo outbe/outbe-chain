@@ -239,12 +239,23 @@ pub fn settle_window(
     //  free the per-window state now that it is settled. After
     // `fee_settled = true`, `record_late_credit` short-circuits, so nothing more
     // is written for this `fb_hash` and the data is dead — freeing it here
-    // prevents unbounded state growth. `fee_settled` itself is retained as a
-    // permanent tombstone (double-settle / re-escrow guard).
+    // prevents unbounded state growth. `fee_settled` is the immediate
+    // double-settle / re-escrow guard; it is itself pruned later by the
+    // ring in `on_finalized_metadata` (`BLOCK_GUARD_RETAIN` blocks after the
+    // block was first counted, long past the K-block window) so it is bounded,
+    // not permanent.
+    //
+    // the nested `participation_counted_for_block[fb_hash]` map is freed
+    // here too. `late_voter_at` is a superset of the participation-counted
+    // voters (every base voter passed to `escrow_block_fee` is seeded into it at
+    // k=0), so clearing the guard for each credited voter clears every entry;
+    // any non-counted late voter is a harmless write of the default `false`.
+    let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
     for idx in 0..count {
         let voter = at.read(&idx)?;
         kmap.write(&voter, 0)?;
         at.write(&idx, Address::ZERO)?;
+        participation_guard.write(&voter, false)?;
     }
     rewards.late_voter_count.write(&fb_hash, 0)?;
     rewards.pending_fees.write(&fb_hash, U256::ZERO)?;
@@ -360,6 +371,47 @@ mod tests {
                 );
             }
             assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::ZERO);
+        });
+    }
+
+    /// settling a window frees the nested
+    /// `participation_counted_for_block[fb_hash]` guard for every credited voter,
+    /// so it does not grow unbounded across finalized blocks.
+    #[test]
+    fn settle_window_clears_participation_guard() {
+        run(|ctx| {
+            let committee = 4u64;
+            let pending = U256::from(committee) * U256::from(1_000u64);
+            fund(ctx, pending);
+            let rewards = ctx.storage.contract::<Rewards>();
+            // Simulate the participation count `on_finalized_metadata` records.
+            let guard = rewards.participation_counted_for_block.get_nested(&FB);
+            for v in [V0, V1, V2, V3] {
+                guard.write(&v, true).unwrap();
+            }
+            escrow_block_fee(
+                ctx,
+                10,
+                FB,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2, V3],
+            )
+            .unwrap();
+
+            settle_window(ctx, FB, committee).unwrap();
+
+            let guard = rewards.participation_counted_for_block.get_nested(&FB);
+            for v in [V0, V1, V2, V3] {
+                assert!(
+                    !guard.read(&v).unwrap(),
+                    "participation guard for {v} must be freed at settlement"
+                );
+            }
         });
     }
 

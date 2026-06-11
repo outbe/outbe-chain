@@ -7,6 +7,19 @@ use k256::ecdsa::SigningKey;
 
 use crate::rpc::Rpc;
 
+/// Buffer the suggested gas price so a legacy tx survives an EIP-1559 base-fee rise
+/// between the `eth_gasPrice` read and inclusion. `eth_gasPrice` returns the current
+/// base fee, but the begin-zone system txs (and offer decryption) make blocks bursty,
+/// so the base fee can climb several steps before the tx lands — leaving a tx priced
+/// exactly at the read-time base fee rejected as `gas price is less than basefee`.
+/// The chain is ZeroFee, so over-pricing costs the sender nothing; a `2x` headroom
+/// plus a 1-gwei floor (well above observed localnet base fees) keeps txs admittable.
+pub(crate) fn buffered_gas_price(suggested: U256) -> U256 {
+    suggested
+        .saturating_mul(U256::from(2))
+        .max(U256::from(1_000_000_000u64))
+}
+
 /// Transaction signer backed by a secp256k1 private key.
 pub struct TxSigner {
     key: SigningKey,
@@ -55,7 +68,7 @@ impl TxSigner {
     ) -> Result<String> {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = client.eth_gas_price().await?;
+        let gas_price = buffered_gas_price(client.eth_gas_price().await?);
         let gas_limit = client.eth_estimate_gas(self.address, to, &data).await?;
         // Add 20% buffer to gas estimate
         let gas_limit = gas_limit
@@ -81,7 +94,7 @@ impl TxSigner {
     ) -> Result<String> {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = client.eth_gas_price().await?;
+        let gas_price = buffered_gas_price(client.eth_gas_price().await?);
         let raw_tx =
             self.sign_legacy_tx(nonce, gas_price, gas_limit, to, value, &data, chain_id)?;
         client.eth_send_raw_transaction(&raw_tx).await
@@ -441,7 +454,7 @@ mod tests {
         signer
             .sign_legacy_tx_for_test(
                 NONCE,
-                gas_price(),
+                buffered_gas_price(gas_price()),
                 gas_limit,
                 tx_target(),
                 tx_value(),

@@ -65,6 +65,20 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   40: _reserved_committee_snapshot_slot_40       — Slot<B256>
 ///       reserved for future snapshot pruning metadata; must remain zero in
 ///       genesis V2.
+///   41: val_join_confirmed       — mapping(address => bool)
+///       stale-join activation guard; set by `confirmValidatorReady()` once a
+///       PENDING joiner's node has caught up to head, gating its inclusion in
+///       the DKG reshare target.
+///   42: config_unjail_cooldown_blocks — u64 (default 0)
+///       blocks a JAILED validator must wait before `unjailValidator()`.
+///   43: val_jailed_at_height     — mapping(address => uint64)
+///       block height the validator was JAILED; drives the unjail cooldown.
+///   44: committee_snapshot_key_ring — mapping(u64 => bytes32)
+///       prune ring bounding the committee-snapshot store (slots 31..40).
+///   45: finalized_participation_ring — mapping(u64 => bytes32)
+///       prune ring bounding the participation guard (slot 30).
+///   46: finalized_participation_ring_seq — u64
+///       monotonic index counter for slot 45.
 #[contract(addr = VALIDATOR_SET_ADDRESS)]
 pub struct ValidatorSet {
     // Config (slots 0-4)
@@ -150,4 +164,54 @@ pub struct ValidatorSet {
     /// Slot 40 — reserved for future snapshot pruning metadata. Genesis V2
     /// requires this to remain zero.
     pub _reserved_committee_snapshot_slot_40: Slot<B256>,
+
+    /// Slot 41 — stale-join activation guard. A PENDING joiner is included in
+    /// the DKG reshare target (and thus activated) only once it has confirmed,
+    /// on-chain, that its node has caught up to head — set by
+    /// `confirmValidatorReady()` (caller = the validator itself). Cleared when
+    /// the validator leaves PENDING. Without this flag a behind/stale joiner
+    /// would be frozen into the ceremony and flipped ACTIVE before it can vote.
+    pub val_join_confirmed: Mapping<Address, bool>,
+
+    /// Slot 42 — unjail cooldown in blocks. A JAILED validator may call
+    /// `unjailValidator()` only once `block_number >= val_jailed_at_height +
+    /// config_unjail_cooldown_blocks`. Default 0 (read via
+    /// `unjail_cooldown_blocks()`): immediate unjail allowed, but the mechanism
+    /// exists so a non-zero cooldown can be configured at genesis.
+    pub config_unjail_cooldown_blocks: Slot<u64>,
+
+    /// Slot 43 — block height at which a validator was JAILED (set by
+    /// `jail_validator`). Drives the unjail cooldown check; meaningless unless
+    /// the validator is currently JAILED.
+    pub val_jailed_at_height: Mapping<Address, u64>,
+
+    /// Slot 44 — committee-snapshot prune ring (`epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS
+    /// → snapshot_key`). `write_committee_snapshot` pushes each new key here and
+    /// clears the snapshot it evicts, bounding the V2 `CommitteeSnapshotStore`
+    /// (slots 31..40) to the last `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs instead
+    /// of growing one full committee per epoch forever. Safe because every reader
+    /// only touches the current finalized epoch (± the K-block late-finalize
+    /// window); see `state::write_committee_snapshot`.
+    pub committee_snapshot_key_ring: Mapping<u64, B256>,
+
+    /// Slot 45 — finalized-participation guard prune ring (`seq %
+    /// FINALIZED_PARTICIPATION_RETAIN → fb_hash`). Bounds slot 30
+    /// (`finalized_participation_recorded`, one entry per finalized block) to the
+    /// last `FINALIZED_PARTICIPATION_RETAIN` finalized blocks: recording a new
+    /// block evicts the guard flag of the block `RETAIN` records ago. Safe because
+    /// a finalized block older than the K-block late-finalize window can never be
+    /// replayed.
+    pub finalized_participation_ring: Mapping<u64, B256>,
+
+    /// Slot 46 — monotonic counter for the slot-45 ring index (incremented once
+    /// per distinct finalized block recorded).
+    pub finalized_participation_ring_seq: Slot<u64>,
+
+    /// Slot 47 — `keccak256(Encode(full public polynomial))` per committee
+    /// snapshot, keyed by `snapshot_key` (same key as slots 31..40). Written by
+    /// `write_committee_snapshot` and zeroed by `clear_committee_snapshot` so it
+    /// is pruned in lockstep with the snapshot it belongs to. Lets SlashIndicator
+    /// derive any signer's threshold pubkey to verify an invalid-seed-partial
+    /// slash offense. `B256::ZERO` means no full polynomial was available.
+    pub committee_snapshot_vrf_public_polynomial_hash: Mapping<B256, B256>,
 }

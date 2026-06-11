@@ -196,7 +196,7 @@ impl Gratis<'_> {
     /// Converts gratis to coen (native token) at 1:1 ratio.
     ///
     /// Burns gratis and returns the amount to be minted as native token by
-    /// the precompile dispatch layer (A-32 pattern).
+    /// the precompile dispatch layer (pattern).
     pub fn mine_coen(&mut self, account: Address, amount: U256) -> Result<U256> {
         if amount.is_zero() {
             return Err(PrecompileError::Revert("amount must be positive".into()));

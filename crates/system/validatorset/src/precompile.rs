@@ -159,6 +159,9 @@ pub fn dispatch(
                 deactivateValidator(c) => mutate_void(c, caller, |sender, c| {
                     vs.deactivate_validator(sender, c.validatorAddress)
                 }),
+                confirmValidatorReady(c) => {
+                    mutate_void(c, caller, |sender, _c| vs.confirm_validator_ready(sender))
+                }
                 activateResharedSet(c) => mutate_void(c, caller, |sender, c| {
                     // Only the config owner (system) can call activateResharedSet
                     let owner = vs.config_owner.read()?;

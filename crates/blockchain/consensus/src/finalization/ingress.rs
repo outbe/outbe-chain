@@ -6,6 +6,7 @@
 //! [`FinalizationMailboxClosed`] error.
 
 use crate::digest::Digest;
+use crate::finalization::parent_cert_store::CertifiedParentProofRecord;
 use alloy_primitives::B256;
 use commonware_consensus::types::Round;
 use futures::channel::mpsc;
@@ -26,11 +27,20 @@ impl core::fmt::Display for FinalizationMailboxClosed {
 
 impl std::error::Error for FinalizationMailboxClosed {}
 
-/// Messages accepted by the `FinalizationActor`. Currently only
-/// `Finalized` is in scope; block-cache eviction is performed by the actor
-/// as part of processing accepted finalizations.
+/// Messages accepted by the `FinalizationActor`.
+///
+/// `Finalized` carries a finalization notification; `CertifiedNotarization`
+/// carries a pre-built certified-parent witness record for off-thread
+/// durable persistence. Routing the certified-notarization write through this
+/// actor (a) moves the synchronous MDBX commit off the Simplex voter task and
+/// (b) keeps the actor the single durable writer to `FinalizedParentCertStore`
+/// (the reporter previously wrote it inline on the voter thread). The
+/// parity-critical record (including `committee_set_hash`) is built by the
+/// reporter before enqueue and is byte-identical to before — only the write
+/// moves — so there is no proposer/validator divergence risk.
 pub enum Message {
     Finalized(Finalized),
+    CertifiedNotarization(CertifiedParentProofRecord),
 }
 
 /// Finalization notification routed from the consensus voter (via
@@ -71,6 +81,19 @@ impl Mailbox {
             .unbounded_send(Message::Finalized(f))
             .map_err(|_| FinalizationMailboxClosed)
     }
+
+    /// enqueue a pre-built certified-parent witness record for off-thread
+    /// durable persistence. Returns immediately via `unbounded_send`, so the
+    /// Simplex voter task no longer blocks on the synchronous MDBX commit. The
+    /// caller (`OutbeReporter::handle_certification`) logs + meters on `Err`.
+    pub fn persist_certified_notarization(
+        &self,
+        record: CertifiedParentProofRecord,
+    ) -> Result<(), FinalizationMailboxClosed> {
+        self.inner
+            .unbounded_send(Message::CertifiedNotarization(record))
+            .map_err(|_| FinalizationMailboxClosed)
+    }
 }
 
 #[cfg(test)]
@@ -103,7 +126,35 @@ mod tests {
             Message::Finalized(f) => {
                 assert_eq!(f.digest.0, B256::with_last_byte(0xAA));
             }
+            Message::CertifiedNotarization(_) => panic!("expected Finalized"),
         }
+    }
+
+    // certified-notarization persistence is routed off-thread through the
+    // same mailbox as a distinct message variant.
+    #[tokio::test]
+    async fn persist_certified_notarization_delivers_record() {
+        let (tx, mut rx) = mpsc::unbounded::<Message>();
+        let mailbox = Mailbox::from_sender(tx);
+
+        mailbox
+            .persist_certified_notarization(CertifiedParentProofRecord::default())
+            .unwrap();
+
+        let received = rx.next().await.expect("message delivered");
+        assert!(matches!(received, Message::CertifiedNotarization(_)));
+    }
+
+    #[tokio::test]
+    async fn persist_certified_notarization_returns_err_on_closed_receiver() {
+        let (tx, rx) = mpsc::unbounded::<Message>();
+        let mailbox = Mailbox::from_sender(tx);
+        drop(rx);
+
+        let err = mailbox
+            .persist_certified_notarization(CertifiedParentProofRecord::default())
+            .unwrap_err();
+        assert_eq!(err, FinalizationMailboxClosed);
     }
 
     #[tokio::test]

@@ -6845,6 +6845,7 @@ dependencies = [
  "outbe-common",
  "outbe-primitives",
  "outbe-rpc",
+ "outbe-tee",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -7074,6 +7075,7 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "commonware-math",
+ "commonware-utils",
  "eyre",
  "hex",
  "k256 0.13.4",
@@ -7339,6 +7341,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types-engine",
+ "either",
  "eyre",
  "hex",
  "outbe-evm",
@@ -7605,6 +7608,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
 ]
 
 [[package]]

@@ -40,6 +40,7 @@ fn fixture_snapshot(n: usize) -> CommitteeSnapshot {
         committee,
         vrf_material_version: 7,
         vrf_group_public_key_bytes: vec![0u8; <MinSig as Variant>::Public::SIZE],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 

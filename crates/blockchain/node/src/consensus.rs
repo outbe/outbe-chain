@@ -55,6 +55,9 @@ use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use std::{fmt::Debug, sync::Arc};
 
 pub use outbe_primitives::consensus::OUTBE_MAX_EXTRA_DATA_SIZE;
+use outbe_primitives::consensus::{
+    MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
+};
 
 const MILLIS_PER_SECOND: u64 = 1000;
 
@@ -189,6 +192,7 @@ where
         &self,
         block: &SealedBlock<OutbeBlock>,
     ) -> Result<(), ConsensusError> {
+        validate_block_transport_size(block)?;
         validate_system_tx_consensus_boundary(block.body(), block.header())?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution(
             &self.inner,
@@ -201,6 +205,7 @@ where
         block: &SealedBlock<OutbeBlock>,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
+        validate_block_transport_size(block)?;
         validate_system_tx_consensus_boundary(block.body(), block.header())?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution_with_tx_root(
             &self.inner,
@@ -208,6 +213,22 @@ where
             transaction_root,
         )
     }
+}
+
+/// Reject a block whose RLP-encoded size exceeds the consensus P2P transport
+/// cap (`OUTBE_MAX_BLOCK_SIZE`). Deterministic (RLP length of the same sealed
+/// block on every validator), so an over-sized byzantine block is rejected
+/// here rather than panicking commonware's bounded sender on dissemination.
+/// Honest proposers cap the block at build time, so this never rejects a valid
+/// block. See README "Consensus Artifact Transport".
+fn validate_block_transport_size(block: &SealedBlock<OutbeBlock>) -> Result<(), ConsensusError> {
+    let rlp_length = block.rlp_length();
+    if rlp_length > OUTBE_MAX_BLOCK_SIZE {
+        return Err(consensus_other(format!(
+            "block RLP size {rlp_length} exceeds the {OUTBE_MAX_BLOCK_SIZE}-byte P2P transport cap"
+        )));
+    }
+    Ok(())
 }
 
 impl<ChainSpec> FullConsensus<OutbePrimitives> for OutbeBeaconConsensus<ChainSpec>
@@ -363,6 +384,40 @@ fn validate_against_parent_timestamp_millis(
             parent_timestamp,
             timestamp,
         });
+    }
+
+    // Upper bound on forward drift. Stock Ethereum only checks monotonicity,
+    // which lets a single byzantine proposer ratchet chain time arbitrarily far
+    // forward in one block — maturing every unbonding entry and the slashed
+    // withdrawal delay (unbonding-lock + slashing-window bypass) and skipping
+    // the day-indexed emission schedule. The bound is deterministic and
+    // chain-state-only (header + parent, no wall clock), so proposer and every
+    // validator agree. Honest proposers cap their assigned timestamp at
+    // `parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS` (see the consensus handler
+    // build path), so this never rejects an honest block; a long outage
+    // self-heals as chain time ratchets forward in bounded steps.
+    let drift = timestamp - parent_timestamp;
+    if drift > MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS {
+        return Err(consensus_other(format!(
+            "block timestamp_millis {timestamp} exceeds parent {parent_timestamp} by {drift} ms, \
+             above the {MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS} ms maximum drift"
+        )));
+    }
+
+    // Lower bound on forward advance. Monotonicity alone lets a colluding
+    // leader majority hold `timestamp = parent + 1 ms` while real time advances,
+    // freezing day-indexed emission and unbonding maturity. Each non-genesis
+    // block must advance chain time by at least `MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS`.
+    // Deterministic and chain-state-only; the proposer clamps its assigned
+    // timestamp up to `parent + this` (see the consensus handler build path) so an
+    // honest block is never rejected. The genesis child (parent number 0) is
+    // exempt — its `finalization_view` is unseeded, so block 1 is monotonic-only,
+    // matching the proposer's genesis exception.
+    if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
+        return Err(consensus_other(format!(
+            "block timestamp_millis {timestamp} advances parent {parent_timestamp} by only \
+             {drift} ms, below the {MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS} ms minimum advance"
+        )));
     }
 
     Ok(())
@@ -581,10 +636,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_same_second_child_when_millis_increases() {
+    fn accepts_same_second_genesis_child_when_millis_increases() {
+        // Proves the validator compares timestamps at millisecond granularity
+        // (seconds*1000 + millis_part), not whole seconds: a same-UNIX-second
+        // child with a higher millis part is monotonic and accepted. After
+        // this sub-second advance is only valid at the genesis boundary (parent
+        // block number 0), which is exempt from the minimum-advance bound; for
+        // any real parent the same-second child is below the 1000 ms minimum and
+        // correctly rejected (see `rejects_child_below_min_advance_timestamp_freeze`).
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
-        let parent = header(1, 100, 900, B256::ZERO);
-        let child = header(2, 100, 901, parent.hash());
+        let parent = header(0, 100, 900, B256::ZERO);
+        let child = header(1, 100, 901, parent.hash());
 
         consensus
             .validate_header_against_parent(&child, &parent)
@@ -612,9 +674,14 @@ mod tests {
 
     #[test]
     fn accepts_next_second_child_with_zero_millis() {
+        // A non-genesis child rolling forward to a later UNIX second with a zero
+        // millis part validates: parent 100.999 s, child 102.000 s advances
+        // 1001 ms, at or above the 1000 ms minimum. Exercises the
+        // seconds + millis_part combine across a second boundary on the normal
+        // (non-genesis) validation path.
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let parent = header(1, 100, 999, B256::ZERO);
-        let child = header(2, 101, 0, parent.hash());
+        let child = header(2, 102, 0, parent.hash());
 
         consensus
             .validate_header_against_parent(&child, &parent)
@@ -650,9 +717,10 @@ mod tests {
     fn accepts_paced_block_two_seconds_after_parent() {
         // A min-block-time-paced block is emitted ~2s after build, but its header
         // timestamp is fixed at build time (= max(now, parent + 1ms)). The validator
-        // timestamp rule is a strict parent-relative increase with NO future/arrival
-        // bound, so a paced (delayed-emission) block always validates — proposer
-        // pacing is invisible to header validation.
+        // timestamp rule is a parent-relative increase with NO wall-clock/arrival
+        // bound — only a deterministic max-drift band (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`,
+        // 1h) far above any paced interval — so a paced (delayed-emission) block
+        // always validates and proposer pacing stays invisible to header validation.
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let parent = header(1, 100, 0, B256::ZERO);
         // +2000 ms relative to the parent (the default 2s floor), as +2 seconds.
@@ -673,5 +741,101 @@ mod tests {
         assert!(
             matches!(err, ConsensusError::Other(message) if message.to_string().contains("timestamp_millis_part 1000"))
         );
+    }
+
+    #[test]
+    fn accepts_child_at_max_drift_boundary() {
+        // Parent at 100_000 ms; child exactly MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
+        // (3_600_000 ms = +3600 s) later is the largest accepted forward drift.
+        let parent = header(1, 100, 0, B256::ZERO);
+        let child = header(2, 100 + 3600, 0, parent.hash());
+        assert_eq!(
+            child.header().timestamp_millis() - parent.header().timestamp_millis(),
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
+        );
+        validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap();
+    }
+
+    #[test]
+    fn rejects_child_one_milli_over_max_drift() {
+        // One millisecond past the band must be rejected.
+        let parent = header(1, 100, 0, B256::ZERO);
+        let child = header(2, 100 + 3600, 1, parent.hash());
+        assert_eq!(
+            child.header().timestamp_millis() - parent.header().timestamp_millis(),
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1
+        );
+        let err =
+            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        assert!(matches!(
+            err,
+            ConsensusError::Other(message) if message.to_string().contains("maximum drift")
+        ));
+    }
+
+    #[test]
+    fn rejects_far_future_timestamp_unbonding_bypass() {
+        // C-01 regression: a byzantine proposer ratchets the timestamp 21 days
+        // forward (the default unbonding period) to mature its own unbonding
+        // entry and escape the slashing window in a single block. The drift
+        // bound must reject it on every validator (chain-state only, no clock).
+        let parent = header(10, 1_000_000, 0, B256::ZERO);
+        let twenty_one_days_s = 21 * 24 * 3600;
+        let child = header(11, 1_000_000 + twenty_one_days_s, 0, parent.hash());
+        let err =
+            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        assert!(matches!(
+            err,
+            ConsensusError::Other(message) if message.to_string().contains("maximum drift")
+        ));
+    }
+
+    #[test]
+    fn accepts_child_at_min_advance_boundary() {
+        // a non-genesis child advancing exactly MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+        // (1000 ms = +1 s) over its parent is the smallest accepted advance.
+        let parent = header(1, 100, 0, B256::ZERO);
+        let child = header(2, 101, 0, parent.hash());
+        assert_eq!(
+            child.header().timestamp_millis() - parent.header().timestamp_millis(),
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+        );
+        validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap();
+    }
+
+    #[test]
+    fn rejects_child_below_min_advance_timestamp_freeze() {
+        // regression: a colluding leader majority holds chain time near the
+        // parent (here +999 ms, one below the 1000 ms minimum) to freeze
+        // day-indexed emission and unbonding maturity. A non-genesis child below
+        // the minimum advance must be rejected on every validator (chain-state
+        // only, no clock).
+        let parent = header(1, 100, 0, B256::ZERO);
+        let child = header(2, 100, 999, parent.hash());
+        assert_eq!(
+            child.header().timestamp_millis() - parent.header().timestamp_millis(),
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS - 1
+        );
+        let err =
+            validate_against_parent_timestamp_millis(child.header(), parent.header()).unwrap_err();
+        assert!(matches!(
+            err,
+            ConsensusError::Other(message) if message.to_string().contains("minimum advance")
+        ));
+    }
+
+    #[test]
+    fn genesis_child_exempt_from_min_advance() {
+        // The genesis parent (block number 0) is exempt from the minimum-advance
+        // bound: the proposer's `finalization_view` is unseeded at genesis, so
+        // block 1 is monotonic-only on both proposer and validator paths. A
+        // sub-minimum advance over genesis must still be accepted.
+        let genesis = header(0, 100, 0, B256::ZERO);
+        let block_one = header(1, 100, 999, genesis.hash());
+        assert!(
+            block_one.header().timestamp_millis() - genesis.header().timestamp_millis()
+                < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+        );
+        validate_against_parent_timestamp_millis(block_one.header(), genesis.header()).unwrap();
     }
 }

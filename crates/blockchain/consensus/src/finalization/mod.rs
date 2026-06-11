@@ -12,6 +12,7 @@
 //! through steps 16-21.
 
 pub mod actor;
+pub mod finalize_verify;
 pub mod ingress;
 pub mod late_sig_store;
 pub mod parent_cert_store;

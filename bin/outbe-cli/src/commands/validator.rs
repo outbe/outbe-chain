@@ -44,6 +44,10 @@ pub enum ValidatorCmd {
     },
     /// Deactivate your validator
     Deactivate,
+    /// Confirm your PENDING validator has caught up to head and is ready to be
+    /// included in the next DKG reshare target (stale-join guard). Send only
+    /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
+    ConfirmReady,
     /// Set a validator Commonware P2P address in the on-chain registry
     SetP2p {
         /// Validator address to update. Defaults to the signer address.
@@ -86,6 +90,7 @@ impl ValidatorCmd {
                 register(client, private_key, pubkey, bls_sig).await
             }
             Self::Deactivate => deactivate(client, private_key).await,
+            Self::ConfirmReady => confirm_ready(client, private_key).await,
             Self::SetP2p {
                 validator,
                 symmetric,
@@ -285,6 +290,22 @@ async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Re
     Ok(())
 }
 
+async fn confirm_ready(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let call = IValidatorSet::confirmValidatorReadyCall {};
+
+    let tx_hash = signer
+        .send_tx(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            call.abi_encode(),
+            Default::default(),
+        )
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
 async fn set_p2p(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -431,6 +452,7 @@ fn status_label(status: u8) -> &'static str {
         3 => "Exiting",
         4 => "Unbonding",
         5 => "Inactive",
+        6 => "Jailed",
         _ => "Unknown",
     }
 }
@@ -440,10 +462,12 @@ fn status_label(status: u8) -> &'static str {
 fn parse_status_filter(s: &str) -> u8 {
     match s.to_lowercase().as_str() {
         "registered" => 0,
+        "pending" => 1,
         "active" => 2,
         "exiting" => 3,
         "unbonding" => 4,
         "inactive" => 5,
+        "jailed" => 6,
         _ => 255,
     }
 }
@@ -454,12 +478,14 @@ mod tests {
 
     #[test]
     fn test_status_filter_maps_to_correct_codes() {
-        // Must match validatorset/logic.rs:42-48
+        // Must match `validator_status` in validatorset/src/runtime.rs.
         assert_eq!(parse_status_filter("registered"), 0);
+        assert_eq!(parse_status_filter("pending"), 1);
         assert_eq!(parse_status_filter("active"), 2);
         assert_eq!(parse_status_filter("exiting"), 3);
         assert_eq!(parse_status_filter("unbonding"), 4);
         assert_eq!(parse_status_filter("inactive"), 5);
+        assert_eq!(parse_status_filter("jailed"), 6);
         // Case insensitive
         assert_eq!(parse_status_filter("Active"), 2);
         assert_eq!(parse_status_filter("UNBONDING"), 4);
@@ -467,9 +493,12 @@ mod tests {
 
     #[test]
     fn test_unknown_status_filter_returns_255() {
+        // 255 is the "matches nothing" sentinel for strings that are not a
+        // canonical status name. PENDING (1) is a real lifecycle status, so it
+        // IS user-filterable and is covered by the positive test above.
         assert_eq!(parse_status_filter("bogus"), 255);
         assert_eq!(parse_status_filter(""), 255);
-        assert_eq!(parse_status_filter("pending"), 255); // pending=1 is not user-filterable
+        assert_eq!(parse_status_filter("notastatus"), 255);
     }
 
     // --- Mock RPC tests ---

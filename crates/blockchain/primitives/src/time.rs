@@ -42,7 +42,10 @@ impl core::fmt::Display for TimeError {
 
 /// Converts a unix timestamp to a yyyymmdd date key in UTC.
 pub fn timestamp_to_date_key(timestamp: u64) -> u32 {
-    let days = (timestamp / SECONDS_PER_DAY) as i64;
+    // `timestamp / SECONDS_PER_DAY` is at most `u64::MAX / 86_400` ≈ 2.1e14, far
+    // below `i64::MAX`, so this never saturates; `try_from` (not `as`) keeps the
+    // conversion non-narrowing and deterministic on the consensus date path.
+    let days = i64::try_from(timestamp / SECONDS_PER_DAY).unwrap_or(i64::MAX);
     civil_date_from_days(days)
 }
 
@@ -93,7 +96,10 @@ pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, Tim
         utc_day,
         genesis_utc_day,
     })?;
-    Ok((delta / SECONDS_PER_DAY) as u32)
+    // Day count since genesis. `u32` covers ~11.7M years of days; saturating
+    // `try_from` (not `as`) keeps it non-narrowing and deterministic — an
+    // unreachable overflow clamps rather than silently wrapping.
+    Ok(u32::try_from(delta / SECONDS_PER_DAY).unwrap_or(u32::MAX))
 }
 
 fn civil_date_from_days(days_since_epoch: i64) -> u32 {

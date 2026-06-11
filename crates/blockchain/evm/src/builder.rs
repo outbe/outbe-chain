@@ -435,7 +435,7 @@ mod tests {
         );
         let mut provider = DirectStorageProvider::new(db, ctx);
         StorageHandle::enter(&mut provider, |storage| {
-            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.config_max_validators.write(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
@@ -449,12 +449,35 @@ mod tests {
             }
             vs.activate_reshared_set(validators, B256::repeat_byte(0xBB))
                 .unwrap();
+            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
+            // floor-price promotion reads a registered pair instead of reverting
+            // "pair not registered".
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .set_exchange_rate(
+                    Address::ZERO,
+                    "COEN",
+                    "0xUSD",
+                    U256::from(1_000_000_000_000_000_000u128),
+                    0,
+                    0,
+                )
+                .unwrap();
         });
         provider.flush().expect("validator seed flush must succeed");
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::ORACLE_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -749,6 +772,7 @@ mod tests {
             }],
             vrf_material_version: 0,
             vrf_group_public_key_bytes: vrf_group_public_key_bytes.to_vec(),
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &committee_snapshot);
 

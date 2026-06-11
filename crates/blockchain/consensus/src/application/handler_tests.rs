@@ -869,7 +869,7 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
             let pk = bls12381::PublicKey::from(key.clone());
             let idx = participants.index(&pk).expect("participant should exist");
             HybridScheme::signer(
-                crate::config::NAMESPACE,
+                &crate::config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -880,7 +880,7 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
         .collect();
 
     let verifier = HybridScheme::<MinSig>::verifier(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         participants,
         dkg.polynomial.clone(),
     )
@@ -1017,6 +1017,97 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
     assert!(
         accepted,
         "metadata whose hash maps to the same finalized height in marshal must pass"
+    );
+}
+
+// regression: the proposer's in-process selection store can miss the direct
+// parent's proof (post-restart, late-joining validator, brief finalization lag),
+// but marshal's DURABLE finalization archive may still hold it locally. Recovery
+// rebuilds the canonical parent-proof record so the slot is NOT forfeited. This
+// drives `recover_parent_proof_from_marshal` — the exact branch `build_block`
+// takes on a selection-store miss — and asserts: happy path recovers, the
+// hash-exact guard rejects a different parent, and a missing archive entry yields
+// None (deterministic forfeit, not a fabricated record).
+#[test]
+fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
+    use crate::finalization::parent_cert_store::CertifiedParentProofKey;
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let epoch = Epoch::new(0);
+            let round = Round::new(epoch, View::new(5));
+            let parent_height = 4u64;
+            let block = consensus_block_with_number(0x71, parent_height);
+            let digest = block.digest();
+            let (scheme_provider, committee_provider, _metadata, finalization) =
+                finalization_metadata_fixture(&block, round);
+            let committee = (*committee_provider
+                .ordered_committee(epoch)
+                .expect("fixture registers the committee"))
+            .clone();
+            let clock = context.child("recover");
+
+            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
+                context,
+                scheme_provider.clone(),
+                EmptyMarshalBuffer::default(),
+            )
+            .await;
+
+            // Seed marshal's durable archive: propose the parent block (servable)
+            // and report its finalization, so `get_finalization(height)` returns it
+            // — the post-restart state where the in-process selection store is
+            // empty but marshal still holds the parent.
+            let _ = marshal_mailbox.proposed(round, block.clone()).await;
+            let mut reporter = marshal_mailbox.clone();
+            let _ = reporter.report(Activity::Finalization(finalization));
+            let info = wait_for_marshal_info(&clock, &marshal_mailbox, digest).await;
+            assert!(
+                info.is_some(),
+                "marshal must hold the seeded parent finalization before recovery"
+            );
+
+            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            // Recovery resolves the committee for the finalization's epoch.
+            let _ = shared.committee_provider.register(epoch, committee);
+
+            // Happy path: key hash matches the seeded finalization → recovered.
+            let key_ok = CertifiedParentProofKey::new(epoch.get(), round.view().get(), digest.0);
+            let recovered = shared
+                .recover_parent_proof_from_marshal(key_ok, parent_height)
+                .await
+                .expect("matching parent finalization in marshal must be recovered, not forfeited");
+            assert_eq!(recovered.finalized_block_hash, digest.0);
+            assert_eq!(recovered.finalized_block_number, parent_height);
+
+            // Hash-exact guard: a finalization for a DIFFERENT parent hash must not
+            // be accepted (prevents recovering the wrong parent).
+            let key_wrong_hash = CertifiedParentProofKey::new(
+                epoch.get(),
+                round.view().get(),
+                B256::repeat_byte(0xEE),
+            );
+            assert!(
+                shared
+                    .recover_parent_proof_from_marshal(key_wrong_hash, parent_height)
+                    .await
+                    .is_none(),
+                "hash-exact guard must reject a finalization for a different parent"
+            );
+
+            // Missing height: nothing in the archive → None (deterministic forfeit).
+            assert!(
+                shared
+                    .recover_parent_proof_from_marshal(key_ok, parent_height + 99)
+                    .await
+                    .is_none(),
+                "absent finalization must yield None (forfeit), not a fabricated record"
+            );
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+        },
     );
 }
 

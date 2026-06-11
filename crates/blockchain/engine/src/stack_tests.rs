@@ -182,7 +182,7 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -971,7 +971,7 @@ fn recovery_finalization_fixture(
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -980,9 +980,12 @@ fn recovery_finalization_fixture(
             .unwrap()
         })
         .collect();
-    let verifier =
-        HybridScheme::<MinSig>::verifier(config::NAMESPACE, participants, dkg.polynomial.clone())
-            .unwrap();
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial.clone(),
+    )
+    .unwrap();
 
     let proposal = Proposal::new(
         round,
@@ -1352,6 +1355,64 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
         .to_string();
     assert!(error.contains("refusing to recover DKG artifacts from unfinalized execution head"));
     assert_eq!(startup_live_join_scan_height(5, 0, true).unwrap(), 0);
+}
+
+#[test]
+fn test_verifier_boundary_adoption_rejects_prior_cycle_boundary() {
+    // The trigger fires at exactly the activation height, where the newest
+    // committed BoundaryOutcome is still the PREVIOUS cycle's (the activated
+    // cycle's artifact rides the first new-epoch block, strictly above the
+    // activation height). Adopting it would keep the follower one rotation
+    // stale -> stale reshare prev_output/round -> ACTIVE-but-voteless after a
+    // later stake. Regression for the wrong-boundary adoption bug.
+    let activation_height = 120;
+    // Prior cycle's boundary: committed one epoch earlier, planned for the
+    // previous activation. Must not be adopted.
+    assert!(!verifier_should_adopt_followed_boundary(
+        1,
+        0,
+        activation_height
+    ));
+    assert!(!verifier_should_adopt_followed_boundary(
+        91,
+        activation_height,
+        activation_height
+    ));
+    // A boundary committed AT the activation height is still not the
+    // activated cycle's (the old epoch is fenced at the boundary).
+    assert!(!verifier_should_adopt_followed_boundary(
+        activation_height,
+        activation_height,
+        activation_height
+    ));
+    // The activated cycle's boundary: first new-epoch block, planned for this
+    // activation. Adopt.
+    assert!(verifier_should_adopt_followed_boundary(
+        121,
+        activation_height,
+        activation_height
+    ));
+}
+
+#[test]
+fn test_verifier_boundary_adoption_is_monotone_for_lagging_followers() {
+    // A follower processing rotation R_k's activation while the chain has
+    // already committed R_{k+1}'s boundary adopts the newest one (planned
+    // above this activation): adoption is monotone, and the follow of
+    // R_{k+1} re-adopts idempotently.
+    let activation_height = 120;
+    assert!(verifier_should_adopt_followed_boundary(
+        241,
+        240,
+        activation_height
+    ));
+    // But a boundary planned BELOW this activation is a stale cycle's
+    // artifact regardless of commit height.
+    assert!(!verifier_should_adopt_followed_boundary(
+        241,
+        119,
+        activation_height
+    ));
 }
 
 #[test]
@@ -1777,7 +1838,7 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 // shifts the indices of every original key by +1. Production code that builds
 // `participants` from a live 4-key set after a 3-key DKG would therefore observe
 // participant indices that no longer match the share.index baked into the
-// saved DKG output (hybrid.rs:472-481, A-13 invariant).
+// saved DKG output (hybrid.rs:472-481, invariant).
 //
 // This is a structural assertion about ordered::Set, not a probabilistic one.
 // =============================================================================
@@ -2364,9 +2425,28 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     };
 
     let address =
-        super::validate_validator_evm_signer(&args, &bls_key, &consensus_set, &active_set).unwrap();
+        super::validate_validator_evm_signer(&args, &bls_key, &consensus_set, &active_set, false)
+            .unwrap();
 
     assert_eq!(address, Some(evm_signer.address()));
+
+    // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
+    // is true — it returns None (the node syncs as a verifier). The same signer with
+    // verifier_join=false bails (the existing member-required contract).
+    let empty = crate::validators::ValidatorSet {
+        public_keys: Vec::new(),
+        addresses: Vec::new(),
+        p2p_addresses: Vec::new(),
+    };
+    assert!(
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, false).is_err(),
+        "non-member must bail when not verifier-join"
+    );
+    assert_eq!(
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, true).unwrap(),
+        None,
+        "non-member must run as verifier (None) when verifier-join"
+    );
 }
 
 // T-3 / behavioural counterpart of the removed source-grep test in
@@ -2401,29 +2481,62 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 — recovery picks historical participants at boundary freeze_height.
+// T4 — recovery picks participants from the recovered DKG output's committee
+//      (the share holders), NOT the latest on-chain set, and fails fast when
+// the restored material does not match the recovered boundary.
 //
-// IGNORED: this test asserts the *desired* recovery behaviour. As a passing
-// regression test it requires production changes in stack.rs:411-427 and
-// validate_recovered_vrf_material (stack.rs:144-158). The recovery-fix PR
-// will unignore this test as its acceptance criterion.
+// `select_recovery_participants` is the pure decision the recovery path now
+// uses at stack.rs §7. The output's `players()` is already a sorted/deduped
+// `commonware_utils::ordered::Set`, so participant indices derive from it
+// canonically — the test asserts membership and the explicit drift error.
 // =============================================================================
-#[ignore = "expected to pass once recovery uses freeze_height instead of latest()"]
+
+/// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
+/// distinct validator addresses — the committee the ceremony ran for.
+fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
+    let mut boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0xC1), 7);
+    boundary.reshare.new_active_set = (0..n).map(|i| Address::repeat_byte(i as u8 + 1)).collect();
+    boundary
+}
+
 #[test]
-fn recovery_uses_historical_freeze_height() {
-    // Subcase 1: latest() = 4 BLS keys, state at freeze_height = 3 keys.
-    //   Assert recovery succeeds and HybridScheme::signer_with_vrf_provider
-    //   constructs against the historical 3-key set.
-    //
-    // Subcase 2: state at freeze_height also has 4 keys (DKG ran for 3 but
-    //   chain state already had 4 by the time the boundary was committed).
-    //   Assert recovery fails fast with an explicit "validator set has
-    //   drifted from saved DKG" error message.
-    //
-    // Implementation will need a stub provider for state-at-height plus a
-    // fabricated DkgBoundaryArtifact carrying freeze_height and a 3-key
-    // polynomial. Pending recovery refactor.
-    panic!("T4 stub: implement once recovery is refactored to use freeze_height");
+fn recovery_uses_recovered_committee_not_latest() {
+    // Recovered DKG output for a 3-validator committee. `players()` is the
+    // sorted set of the three consensus pubkeys — the share holders.
+    let recovered_players: commonware_utils::ordered::Set<bls12381::PublicKey> = (1u64..=3)
+        .map(bls12381::PrivateKey::from_seed)
+        .map(|key| key.public_key())
+        .try_collect()
+        .expect("3-key recovered participant set");
+
+    // Subcase 1: the latest on-chain set has drifted to 4 keys, but the recovered
+    // boundary recorded the 3-validator committee the material belongs to.
+    // Recovery reconstructs against the recovered 3-key committee, ignoring latest.
+    let boundary_ok = test_boundary_with_active_set_len(3);
+    let resolved = super::select_recovery_participants(&recovered_players, &boundary_ok)
+        .expect("matching committee size must reconstruct against the recovered committee");
+    assert_eq!(
+        resolved.len(),
+        3,
+        "must reconstruct against the recovered 3-key committee, not the drifted latest set"
+    );
+    assert_eq!(
+        resolved, recovered_players,
+        "resolved participants must be exactly the recovered DKG output's player set"
+    );
+
+    // Subcase 2: the recovered boundary records a 4-validator active set while the
+    // restored DKG output has only 3 players — the consensus material does not
+    // match the recovered chain boundary. Recovery must fail fast with an explicit
+    // drift error rather than build the scheme against the wrong committee.
+    let boundary_drift = test_boundary_with_active_set_len(4);
+    let err = super::select_recovery_participants(&recovered_players, &boundary_drift)
+        .expect_err("size mismatch between recovered material and boundary must fail fast");
+    assert!(
+        err.to_string()
+            .contains("validator set has drifted from saved DKG"),
+        "operator-facing drift error must surface in the rejection: got {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------

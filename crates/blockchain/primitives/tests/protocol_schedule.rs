@@ -60,34 +60,20 @@ fn protocol_schedule_is_shared_by_node_evm_payload_codec_and_verifier() {
     let _buckets: &'static [u64] = &PHASE1_PREFLIGHT_VALIDATOR_COUNT_BUCKETS;
 }
 
-/// AC6 / merge-to-main tripwire.
-///
-/// This test must FAIL as long as `slash_indicator_vrf_evidence_base_gas`
-/// keeps its initial reject-everything placeholder value of `u64::MAX`.
-/// bench-calibrates the replacement value; once that lands the
-/// `#[ignore]` attribute is removed and the assertion becomes a positive
-/// guard (`assert_ne!(..., u64::MAX, ...)`). Until then, the test is
-/// `#[ignore]`-tagged so the suite is green for development but the manual
-/// override `cargo nextest run --run-ignored only` documents the gate.
+/// Merge-to-main gate: no `u64::MAX` reject-everything placeholder may
+/// ship for the evidence base gas. The value was calibrated to the heavy
+/// base (`200_000`) and wired into `outbe_slashindicator::precompile::base_gas`,
+/// so this is now a live guard rather than an `#[ignore]`-tagged tripwire.
 #[test]
-#[ignore = "merge-to-main gate: clear once replaces u64::MAX placeholder"]
-fn vrf_evidence_base_gas_is_placeholder_max() {
+fn vrf_evidence_base_gas_is_calibrated() {
     let s = OutbeProtocolSchedule::default();
     assert_ne!(
         s.slash_indicator_vrf_evidence_base_gas,
         u64::MAX,
-        " must replace u64::MAX with the bench-calibrated value before merge-to-main",
+        "evidence base gas must not be the u64::MAX reject-everything placeholder",
     );
-}
-
-/// Positive companion to the tripwire: documents the current placeholder
-/// value and locks the AC6 contract that the initial value IS `u64::MAX`.
-#[test]
-fn vrf_evidence_base_gas_initial_value_is_u64_max() {
-    let s = OutbeProtocolSchedule::default();
     assert_eq!(
-        s.slash_indicator_vrf_evidence_base_gas,
-        u64::MAX,
-        "AC6: initial slash_indicator_vrf_evidence_base_gas must be the u64::MAX reject-everything placeholder",
+        s.slash_indicator_vrf_evidence_base_gas, 200_000,
+        "evidence base gas is the-chosen heavy base; any change is hard-fork-equivalent",
     );
 }

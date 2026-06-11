@@ -9,7 +9,7 @@
 //!   the same absent address against two distinct `fb_hash` values
 //!   that represent the two proof types and asserting identical
 //!   per-validator counters.
-//! (e2e guard): non-empty `missed_proposers` in V2 metadata
+//!   (e2e guard): non-empty `missed_proposers` in V2 metadata
 //!   is rejected by `outbe_consensus::proof::verify_v2_proof` BEFORE
 //!   the Phase 1 commit reaches the slashindicator entry. Verified
 //!   structurally because constructing a full executor in this test
@@ -44,8 +44,8 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     // proof kinds have been processed — the SAME outcome you'd get if
     // both kinds were Finalization, or both were CertifiedNotarization.
     let final_count = with_storage(|storage| {
-        hooks::slash_voter(storage.clone(), FB_HASH_FINAL, ABSENT_VAL).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_NOTAR, ABSENT_VAL).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_NOTAR, &[ABSENT_VAL]).unwrap();
 
         let si = SlashIndicator::new(storage);
         si.voter_miss_count.read(&ABSENT_VAL).unwrap()
@@ -55,8 +55,8 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
         // Same two fb_hashes, both pretending to be Finalization
         // (proof_kind is not an input to `slash_voter`). Counter
         // outcome must match the heterogeneous case.
-        hooks::slash_voter(storage.clone(), FB_HASH_FINAL, ABSENT_VAL).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_NOTAR, ABSENT_VAL).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_NOTAR, &[ABSENT_VAL]).unwrap();
 
         let si = SlashIndicator::new(storage);
         si.voter_miss_count.read(&ABSENT_VAL).unwrap()
@@ -77,9 +77,9 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     // regardless of how the absent address was discovered (which
     // certificate type produced it).
     let dedup_count = with_storage(|storage| {
-        hooks::slash_voter(storage.clone(), FB_HASH_FINAL, ABSENT_VAL).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_FINAL, ABSENT_VAL).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_FINAL, ABSENT_VAL).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
 
         let si = SlashIndicator::new(storage);
         si.voter_miss_count.read(&ABSENT_VAL).unwrap()

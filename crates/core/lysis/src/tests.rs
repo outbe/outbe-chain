@@ -212,7 +212,7 @@ fn test_many_fi_groups() {
     }
 }
 
-/// A-25: deficit_fp must clamp to u128::MAX when gratis >> total_interest.
+/// deficit_fp must clamp to u128::MAX when gratis >> total_interest.
 #[test]
 fn test_deficit_fp_clamp_at_u128_max() {
     // If gratis_allocation * SCALE / total_interest > u128::MAX, the downcast
@@ -229,7 +229,7 @@ fn test_deficit_fp_clamp_at_u128_max() {
     );
 }
 
-/// A-27: f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
+/// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
 fn test_f_fp_clamp_boundaries() {
     // Below minimum → floor

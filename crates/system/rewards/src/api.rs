@@ -14,11 +14,12 @@
 //!   pool to Metadosis or emitting a topup.
 //! * [`read_voters_for_day`] — ordered (Address, participation count)
 //!   pairs for a UTC day; first-seen-on-day order is deterministic.
-//! * [`add_topup_for_voters`] — credits the day's emission topup
-//!   proportionally onto `pending_rewards`, mints onto REWARDS_ADDRESS
-//!   to keep mint/burn parity with eventual claims, and burns the
-//!   undistributed dust. Idempotent per UTC day via the dedicated
-//!   `daily_topup_settled` guard.
+//! * [`add_topup_for_voters`] — delivers the day's emission topup to voters
+//!   as gems (`outbe_gemfactory::mint_gem`: Genesis gems for the first 21
+//!   days, Validator gems thereafter), proportionally to participation.
+//!   Idempotent per UTC day via the dedicated `daily_topup_settled` guard.
+//!   Validator emission is paid in gems; there is no claimable native
+//!   `pending_rewards` balance.
 
 use alloy_primitives::{Address, U256};
 use outbe_gemfactory::GemTypes;
@@ -63,25 +64,22 @@ pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(A
     Ok(out)
 }
 
-/// Distributes `topup_total` proportionally to `voters` on REWARDS_ADDRESS-backed
-/// `pending_rewards` credit. Steps:
+/// Distributes `topup_total` proportionally to `voters` as gems (validator
+/// emission is paid in gems, not a claimable native balance). Steps:
 ///
 /// 1. Idempotency guard: if `daily_topup_settled[day]` is already set,
-///    return `Ok(U256::ZERO)` without minting or crediting. This makes
-///    the call safe to retry from the orchestrator without bookkeeping
-///    on the caller side.
+///    return `Ok(U256::ZERO)` without minting. This makes the call safe to
+///    retry from the orchestrator without bookkeeping on the caller side.
 /// 2. Trivial cases: if `topup_total` is zero, `voters` is empty, or
 ///    the sum of participation counts is zero, mark the day settled and
-///    return `Ok(U256::ZERO)` without any storage mutations on
-///    `pending_rewards` or `REWARDS_ADDRESS`.
-/// 3. Mint `topup_total` onto `REWARDS_ADDRESS` so the eventual claims
-///    are balance-backed.
-/// 4. For each voter with non-zero count, credit
-///    `floor(topup_total * count / sum_count)` into
-///    `pending_rewards[voter]`. Tracks the running `distributed`.
-/// 5. Set `daily_topup_settled[day] = true`.
+///    return `Ok(U256::ZERO)` without minting any gems.
+/// 3. For each voter with non-zero count, mint `floor(topup_total * count /
+///    sum_count)` gems to the voter via `outbe_gemfactory::api::mint_gem`
+///    (Genesis gems for the first 21 days from genesis, Validator gems
+///    thereafter). Tracks the running `distributed`.
+/// 4. Set `daily_topup_settled[day] = true`.
 ///
-/// Returns the total credited (`distributed`) — useful for orchestrator
+/// Returns the total minted (`distributed`) — useful for orchestrator
 /// logging or downstream reconciliation.
 ///
 /// Caller contract: `voters` should be the canonical ordered list from
@@ -152,6 +150,15 @@ pub fn add_topup_for_voters(
 pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_settled.write(&day, true)
+}
+
+/// Whether `day` has already been fully settled by the daily Cycle
+/// orchestrator (counterpart to [`mark_day_settled`]). The orchestrator reads
+/// this before doing any minting so a re-fire for an already-settled day is a
+/// no-op rather than a double-mint (idempotency).
+pub fn is_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<bool> {
+    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    rewards.daily_settled.read(&day)
 }
 
 #[cfg(test)]
