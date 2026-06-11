@@ -1,4 +1,4 @@
-//! Tribute offer key-handoff host protocol (Secret-Network-style onboarding).
+//! Tribute offer key-handoff host protocol (TEE full-node onboarding).
 //!
 //! The tribute offer key is resident per-enclave, so a new/returning committee
 //! member does not run a DKG reshare — it asks the committee to hand off the key.

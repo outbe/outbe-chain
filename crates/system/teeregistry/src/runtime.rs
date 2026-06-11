@@ -185,8 +185,8 @@ impl TeeRegistry<'_> {
 
     /// On-chain attestation verification for a mid-chain `registerEnclave` call.
     ///
-    /// MIRRORS Secret Network's `x/registration`, where a node submits its enclave
-    /// keys + attestation quote and the chain verifies the RA proof on-chain. The
+    /// A node submits its enclave keys + attestation quote and the chain verifies
+    /// the RA proof on-chain. The
     /// real verification — DCAP signature + `REPORT_DATA` key binding + measurement
     /// allowlist (genesis `teePolicy`) + caller ∈ active validator set — is **NOT
     /// YET wired** (same posture as the dev `dev_accept_any` policy + the `dcap`
@@ -258,6 +258,35 @@ impl TeeRegistry<'_> {
         if first_time {
             let count = self.registered_count.read()?.saturating_add(1);
             self.registered_count.write(count)?;
+        }
+
+        // On-chain offer-key delivery: on a TEE-bootstrapped
+        // chain, deterministically seal the resident tribute offer key to the
+        // registrant's recipient X25519 key (inside the enclave) and EMIT it as an
+        // `OfferKeySealed` event, so the joining validator reads the blob from THIS
+        // tx's receipt and installs the offer key in its enclave before its node
+        // starts executing offer blocks. Skipped when the chain has no offer key yet
+        // (non-TEE chain) or this node has no enclave configured (unit tests). The
+        // seal is deterministic, so every committee enclave emits the same log and
+        // the receipts root agrees; a TEE node without a working enclave cannot
+        // execute offer blocks anyway, so its divergence here is its own fault.
+        if !self.tribute_offer_public_key.read()?.is_zero() {
+            match outbe_tee::seal_offer_key_for_registry(recipient_x25519.0) {
+                Ok(Some(sealed)) => {
+                    self.emit(crate::precompile::OfferKeySealed {
+                        validator: caller,
+                        sealedOfferKey: sealed.into(),
+                    })?;
+                }
+                Ok(None) => {
+                    // No enclave on this node (unit test / non-TEE) — nothing to seal.
+                }
+                Err(e) => {
+                    return Err(PrecompileError::Revert(format!(
+                        "offer-key seal for registration failed: {e}"
+                    )))
+                }
+            }
         }
         Ok(true)
     }

@@ -51,6 +51,7 @@ sol! {
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
         function deactivateValidator(address validatorAddress) external;
+        function confirmValidatorReady() external;
         function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey) external;
 
         event ValidatorRegistered(address indexed validator, uint64 index);
@@ -86,6 +87,7 @@ sol! {
         function stake(address validatorAddress, uint256 amount) external;
         function unstake(uint256 amount) external;
         function claimUnbonded() external;
+        function unjailValidator() external;
         function getStake(address validator) external view returns (uint256);
         function getTotalStaked() external view returns (uint256);
     }
@@ -138,7 +140,17 @@ sol! {
     interface ITeeRegistry {
         function isBootstrapped() external view returns (bool);
         function tributeOfferPublicKey() external view returns (uint256);
+        function tributeOfferEpoch() external view returns (uint256);
         function registeredCount() external view returns (uint256);
+        function registerEnclave(
+            uint256 recipientX25519,
+            uint256 attestationPub,
+            uint256 noiseStaticPub,
+            uint256 mrenclave,
+            uint256 mrsigner,
+            uint16 isvSvn
+        ) external returns (bool);
+        event OfferKeySealed(address indexed validator, bytes sealedOfferKey);
     }
 
     #[derive(Debug)]

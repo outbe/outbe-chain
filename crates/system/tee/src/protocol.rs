@@ -194,6 +194,15 @@ pub enum EnclaveRequest {
         chain_id: B256,
         tribute_offer_epoch: u64,
     },
+
+    /// On-chain key delivery, SERVER side: DETERMINISTICALLY
+    /// seal this enclave's resident group signature to `recipient_x25519` so the
+    /// sealed blob can be COMMITTED ON-CHAIN. Unlike `SealTributeOfferHandoff` (a
+    /// per-reply P2P seal with a random ephemeral key + nonce), every committee
+    /// enclave returns a BYTE-IDENTICAL blob for the same recipient — the prerequisite
+    /// for storing it in `TeeRegistry` as a consensus-validated artifact. Returns
+    /// `SealedOfferKeyForRegistry`. The newcomer opens it with `IngestTributeOfferHandoff`.
+    SealOfferKeyForRegistry { recipient_x25519: [u8; 32] },
 }
 
 /// Deterministic hash over the canonical batch inputs — each offer's
@@ -316,6 +325,12 @@ pub enum EnclaveResponse {
     /// Key-handoff SERVER result: the resident group signature sealed to the
     /// newcomer's X25519 key (an opaque `EncryptedShare` blob the host relays).
     SealedTributeOfferHandoff {
+        sealed: Vec<u8>,
+    },
+    /// On-chain key delivery SERVER result: the resident group signature
+    /// DETERMINISTICALLY sealed to `recipient_x25519` — byte-identical across all
+    /// committee enclaves, for committing to `TeeRegistry`.
+    SealedOfferKeyForRegistry {
         sealed: Vec<u8>,
     },
     /// Key-handoff NEWCOMER result: the offer public derived from the

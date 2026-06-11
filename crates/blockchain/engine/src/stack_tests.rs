@@ -1355,6 +1355,64 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
 }
 
 #[test]
+fn test_verifier_boundary_adoption_rejects_prior_cycle_boundary() {
+    // The trigger fires at exactly the activation height, where the newest
+    // committed BoundaryOutcome is still the PREVIOUS cycle's (the activated
+    // cycle's artifact rides the first new-epoch block, strictly above the
+    // activation height). Adopting it would keep the follower one rotation
+    // stale -> stale reshare prev_output/round -> ACTIVE-but-voteless after a
+    // later stake. Regression for the wrong-boundary adoption bug.
+    let activation_height = 120;
+    // Prior cycle's boundary: committed one epoch earlier, planned for the
+    // previous activation. Must not be adopted.
+    assert!(!verifier_should_adopt_followed_boundary(
+        1,
+        0,
+        activation_height
+    ));
+    assert!(!verifier_should_adopt_followed_boundary(
+        91,
+        activation_height,
+        activation_height
+    ));
+    // A boundary committed AT the activation height is still not the
+    // activated cycle's (the old epoch is fenced at the boundary).
+    assert!(!verifier_should_adopt_followed_boundary(
+        activation_height,
+        activation_height,
+        activation_height
+    ));
+    // The activated cycle's boundary: first new-epoch block, planned for this
+    // activation. Adopt.
+    assert!(verifier_should_adopt_followed_boundary(
+        121,
+        activation_height,
+        activation_height
+    ));
+}
+
+#[test]
+fn test_verifier_boundary_adoption_is_monotone_for_lagging_followers() {
+    // A follower processing rotation R_k's activation while the chain has
+    // already committed R_{k+1}'s boundary adopts the newest one (planned
+    // above this activation): adoption is monotone, and the follow of
+    // R_{k+1} re-adopts idempotently.
+    let activation_height = 120;
+    assert!(verifier_should_adopt_followed_boundary(
+        241,
+        240,
+        activation_height
+    ));
+    // But a boundary planned BELOW this activation is a stale cycle's
+    // artifact regardless of commit height.
+    assert!(!verifier_should_adopt_followed_boundary(
+        241,
+        119,
+        activation_height
+    ));
+}
+
+#[test]
 fn test_startup_live_join_round_follows_chain_dkg_cycle() {
     let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
 
@@ -2364,9 +2422,28 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     };
 
     let address =
-        super::validate_validator_evm_signer(&args, &bls_key, &consensus_set, &active_set).unwrap();
+        super::validate_validator_evm_signer(&args, &bls_key, &consensus_set, &active_set, false)
+            .unwrap();
 
     assert_eq!(address, Some(evm_signer.address()));
+
+    // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
+    // is true — it returns None (the node syncs as a verifier). The same signer with
+    // verifier_join=false bails (the existing member-required contract).
+    let empty = crate::validators::ValidatorSet {
+        public_keys: Vec::new(),
+        addresses: Vec::new(),
+        p2p_addresses: Vec::new(),
+    };
+    assert!(
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, false).is_err(),
+        "non-member must bail when not verifier-join"
+    );
+    assert_eq!(
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, true).unwrap(),
+        None,
+        "non-member must run as verifier (None) when verifier-join"
+    );
 }
 
 // T-3 / behavioural counterpart of the removed source-grep test in

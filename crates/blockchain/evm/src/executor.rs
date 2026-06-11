@@ -3080,6 +3080,21 @@ mod tests {
             }
             let active: Vec<Address> = validators.iter().map(|(validator, _)| *validator).collect();
             vs.activate_reshared_set(&active, B256::ZERO).unwrap();
+            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
+            // floor-price promotion reads a registered pair instead of reverting
+            // "pair not registered".
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .set_exchange_rate(
+                    Address::ZERO,
+                    "COEN",
+                    "0xUSD",
+                    U256::from(1_000_000_000_000_000_000u128),
+                    0,
+                    0,
+                )
+                .unwrap();
             seed_extra(storage);
         });
 
@@ -3150,6 +3165,21 @@ mod tests {
             vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
                 .unwrap();
             vs.activate_reshared_set(&[active], B256::with_last_byte(0x01))
+                .unwrap();
+            // Seed the COEN/0xUSD oracle pair + a 1.0 rate so begin-block NOD/GEM/INTEX
+            // floor-price promotion reads a registered pair instead of reverting
+            // "pair not registered".
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .set_exchange_rate(
+                    Address::ZERO,
+                    "COEN",
+                    "0xUSD",
+                    U256::from(1_000_000_000_000_000_000u128),
+                    0,
+                    0,
+                )
                 .unwrap();
             seed_extra(storage);
         });
@@ -4802,12 +4832,12 @@ mod tests {
             // Voter miss is now counted at the inclusion-window close (N+K), not at
             // CPA: block 2's CPA leaves voter_miss_count untouched.
             assert_eq!(si.voter_miss_count.read(&absent)?, 0);
-            // Proposer slashing stays at CPA; the missed proposer is force-exited
+            // Proposer slashing stays at CPA; the missed proposer is JAILED
             // (felony threshold 1) and its proposer miss recorded.
             assert_eq!(si.proposer_miss_count.read(&absent)?, 1);
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             let record = vs.get_validator(absent)?.expect("absent validator exists");
-            assert_eq!(record.status, outbe_validatorset::logic::status::EXITING);
+            assert_eq!(record.status, outbe_validatorset::logic::status::JAILED);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
         .expect("slashing state should be readable");
@@ -5498,7 +5528,7 @@ mod tests {
                 .expect("old active validator should still exist");
             assert_eq!(
                 old_record.status,
-                outbe_validatorset::logic::status::EXITING,
+                outbe_validatorset::logic::status::JAILED,
                 "Oracle slash applies after activation without making the block invalid"
             );
             let staking = outbe_staking::contract::Staking::new(storage.clone());
@@ -5743,8 +5773,7 @@ mod tests {
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_registered_active_validator(storage.clone(), validator, &pk);
 
-            let mut oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.register_pair("COEN", "0xUSD")?;
+            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
             oracle.feeder_delegation.write(&validator, feeder)?;
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
@@ -6356,6 +6385,20 @@ mod tests {
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, pk).unwrap();
         vs.activate_reshared_set(&[validator], B256::ZERO).unwrap();
+        // Seed COEN/0xUSD pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
+        // reads a registered pair instead of reverting "pair not registered".
+        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                "COEN",
+                "0xUSD",
+                U256::from(1_000_000_000_000_000_000u128),
+                0,
+                0,
+            )
+            .unwrap();
     }
 
     #[test]

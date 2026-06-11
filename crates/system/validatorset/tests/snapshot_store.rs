@@ -771,3 +771,59 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         );
     });
 }
+
+// ---------------------------------------------------------------------------
+// Prune ring: state-growth bound — only the last RETAIN epochs stay live.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let snap = CommitteeSnapshot {
+            committee: vec![CommitteeEntry {
+                address: address!("0x0000000000000000000000000000000000000001"),
+                consensus_pubkey: pubkey_filled(0x11),
+            }],
+            vrf_material_version: 0,
+            vrf_group_public_key_bytes: vec![0x22u8; 96],
+        };
+        let retain = outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+        let total = retain + 2;
+        let keys: Vec<B256> = (0..total)
+            .map(|epoch| {
+                write_committee_snapshot(storage.clone(), epoch, &snap)
+                    .unwrap()
+                    .1
+            })
+            .collect();
+
+        // The oldest (total - retain) epochs are evicted: snapshot gone, exists
+        // flag cleared, length zeroed — their slots are reclaimed.
+        for epoch in 0..(total - retain) {
+            let key = keys[epoch as usize];
+            assert!(
+                read_committee_snapshot(storage.clone(), key)
+                    .unwrap()
+                    .is_none(),
+                "epoch {epoch} snapshot must be pruned"
+            );
+            let vs = ValidatorSet::new(storage.clone());
+            assert!(
+                !vs.committee_snapshot_exists.read(&key).unwrap(),
+                "epoch {epoch} exists flag must be cleared"
+            );
+            assert_eq!(
+                vs.committee_snapshot_len.read(&key).unwrap(),
+                0,
+                "epoch {epoch} len must be zeroed"
+            );
+        }
+        // The last `retain` epochs remain fully readable.
+        for epoch in (total - retain)..total {
+            let read = read_committee_snapshot(storage.clone(), keys[epoch as usize]).unwrap();
+            assert!(read.is_some(), "epoch {epoch} snapshot must be retained");
+            assert_eq!(read.unwrap().committee.len(), 1, "epoch {epoch} intact");
+        }
+    });
+}

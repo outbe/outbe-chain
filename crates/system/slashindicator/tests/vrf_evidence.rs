@@ -751,7 +751,7 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
 // Pins:
 //   * proposer recovered from phase1_tx_bytes matches the registered
 //     validator (ecrecover ↔ ValidatorSet identity wiring is correct)
-//   * proposer status flips ACTIVE → EXITING
+//   * proposer status flips ACTIVE → JAILED
 //   * stake is slashed by 5% (the helper's config default)
 //   * submitter receives 10% of slashed amount in their balance
 //   * dedup slot is marked
@@ -782,12 +782,12 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         si.submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap();
 
-        // (a) Validator force-exited.
+        // (a) Validator JAILED (felony, not force-exited).
         let vs = ValidatorSet::new(storage.clone());
         assert_eq!(
             vs.val_status.read(&proposer).unwrap(),
-            status::EXITING,
-            "proposer must be force-exited"
+            status::JAILED,
+            "proposer must be jailed"
         );
 
         // (b) Stake slashed by 5% (the default config_slash_amount_percent).

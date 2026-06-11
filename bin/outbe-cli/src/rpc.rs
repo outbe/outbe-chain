@@ -342,7 +342,9 @@ pub mod mock {
         const GAS_ESTIMATE: u64 = 21_000;
         const TX_HASH: &str = "0xdeadbeef";
 
-        let gas_price = U256::from(1_000_000_000u64);
+        // `eth_gasPrice` returns `suggested`; `send_tx` signs with the buffered price.
+        let suggested = U256::from(1_000_000_000u64);
+        let gas_price = crate::tx::buffered_gas_price(suggested);
         let signer = TxSigner::new(private_key)?;
         let gas_limit = GAS_ESTIMATE + GAS_ESTIMATE / 5;
         let raw_tx = signer
@@ -361,7 +363,7 @@ pub mod mock {
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price),
+                RecordedRpcResponse::U256(suggested),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {

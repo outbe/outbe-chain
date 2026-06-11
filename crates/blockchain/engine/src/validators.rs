@@ -90,10 +90,51 @@ pub fn read_consensus_validators_from_state(
     read_validator_set_from_state(state_access, ValidatorSetKind::ConsensusParticipants)
 }
 
+/// Read the DKG reshare TARGET set (`status ∈ {ACTIVE, PENDING}`) from on-chain
+/// state. This is `next_players`: the committee the upcoming reshare grants shares
+/// to. PENDING joiners are included (so the ceremony activates them); EXITING
+/// validators are excluded (the reshare removes them). Distinct from
+/// [`read_validators_from_state`] (ACTIVE-only voting set).
+pub fn read_reshare_target_from_state(state_access: &dyn RethStateAccess) -> Result<ValidatorSet> {
+    read_validator_set_from_state(state_access, ValidatorSetKind::ReshareTarget)
+}
+
+/// Read PENDING validators (`status == PENDING`) from on-chain state — staked
+/// joiners admitted to the set but not yet share-holders. Used to admit them to
+/// consensus P2P as SECONDARY peers so they sync before their activating reshare.
+pub fn read_pending_validators_from_state(
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(state_access, ValidatorSetKind::PendingValidators)
+}
+
+/// Read non-voting peers admitted to consensus P2P (`status ∈ {REGISTERED, PENDING}`)
+/// from on-chain state — staked PENDING joiners PLUS TEE
+/// full-nodes (REGISTERED, P2P-announced, NOT staked). Used as the secondary-tier P2P
+/// admission source so both sync + execute offer blocks without voting.
+pub fn read_admitted_non_consensus_from_state(
+    state_access: &dyn RethStateAccess,
+) -> Result<ValidatorSet> {
+    read_validator_set_from_state(state_access, ValidatorSetKind::AdmittedNonConsensus)
+}
+
 #[derive(Clone, Copy)]
 enum ValidatorSetKind {
     ActiveValidators,
     ConsensusParticipants,
+    /// DKG reshare target / `next_players`: `status ∈ {ACTIVE, PENDING}`. PENDING
+    /// joiners must be in the target so the ceremony grants them a share and they
+    /// are promoted PENDING→ACTIVE.
+    ReshareTarget,
+    /// PENDING joiners only — admitted to consensus P2P as SECONDARY peers so they
+    /// sync to head before the reshare that makes them signers.
+    PendingValidators,
+    /// Non-voting peers admitted to consensus P2P as SECONDARY so they sync + execute
+    /// offer blocks: `status ∈ {REGISTERED, PENDING}`. Adds TEE
+    /// full-nodes (REGISTERED, P2P-announced, enclave-registered, NOT staked) to the
+    /// staked PENDING joiners. Voting still needs `has_bls_share`, so this cannot
+    /// affect consensus; distinct from `ReshareTarget` ({ACTIVE, PENDING}).
+    AdmittedNonConsensus,
 }
 
 fn read_validator_set_from_state(
@@ -114,6 +155,15 @@ fn read_validator_set_from_state(
         ValidatorSetKind::ConsensusParticipants => vs
             .get_active_consensus_set()
             .map_err(|e| eyre::eyre!("failed to read active consensus set: {e}")),
+        ValidatorSetKind::ReshareTarget => vs
+            .get_reshare_target_set()
+            .map_err(|e| eyre::eyre!("failed to read reshare target set: {e}")),
+        ValidatorSetKind::PendingValidators => vs
+            .get_pending_validators()
+            .map_err(|e| eyre::eyre!("failed to read pending validators: {e}")),
+        ValidatorSetKind::AdmittedNonConsensus => vs
+            .get_admitted_non_consensus_validators()
+            .map_err(|e| eyre::eyre!("failed to read admitted non-consensus validators: {e}")),
     }?;
 
     let mut public_keys = Vec::with_capacity(records.len());
@@ -218,6 +268,31 @@ pub fn read_consensus_validators_at_block(
         .state_by_block_hash(block_hash)
         .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
     read_consensus_validators_from_state(&state)
+}
+
+/// Read PENDING validators from the EVM state at a given block hash (secondary-tier
+/// P2P admission candidates).
+pub fn read_pending_validators_at_block(
+    provider: &dyn StateProviderFactory,
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    read_pending_validators_from_state(&state)
+}
+
+/// Read non-voting admitted peers (`status ∈ {REGISTERED, PENDING}`) from the EVM
+/// state at a given block hash — the secondary-tier P2P admission candidates,
+/// including TEE full-nodes.
+pub fn read_admitted_non_consensus_at_block(
+    provider: &dyn StateProviderFactory,
+    block_hash: B256,
+) -> Result<ValidatorSet> {
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    read_admitted_non_consensus_from_state(&state)
 }
 
 /// Read the active validator set from the latest committed state.

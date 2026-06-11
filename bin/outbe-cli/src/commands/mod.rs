@@ -5,6 +5,7 @@ pub mod oracle;
 pub mod rewards;
 pub mod slash;
 pub mod staking;
+pub mod tee;
 pub mod tribute;
 pub mod validator;
 pub mod zerofee;

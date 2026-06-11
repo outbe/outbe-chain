@@ -11,6 +11,7 @@
 
 pub mod bootstrap;
 pub mod client;
+pub mod client_global;
 pub mod codec;
 pub mod errors;
 pub mod handoff;
@@ -22,6 +23,9 @@ pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistrati
 pub use client::{
     verify_peer_quote, verify_tribute_offer_attestation, AttestedPeerKeys, EnclaveClient,
     QuotePolicy,
+};
+pub use client_global::{
+    install_enclave_client, is_enclave_configured, seal_offer_key_for_registry, try_with_enclave,
 };
 pub use errors::TransportError;
 pub use handoff::{

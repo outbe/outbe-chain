@@ -254,8 +254,11 @@ async fn offer(
     });
     let plaintext = serde_json::to_vec(&payload)?;
 
-    // 3. Encrypt to the offer key. The enclave's fixed offer salt is [0x03; 32].
-    let salt = [0x03u8; 32];
+    // 3. Encrypt to the offer key. The HKDF salt is the protocol constant
+    //    `OFFER_HKDF_SALT` shared with the enclave decrypt path — NOT the legacy
+    //    `[0x03; 32]`, which silently produces a different AEAD key (offer rejected
+    //    `AEAD decryption failed`).
+    let salt = outbe_tee::OFFER_HKDF_SALT;
     let (cipher_text, nonce, eph_pub) = encrypt_offer(&offer_pub, &salt, &plaintext)?;
 
     // 4. Build + send `offerTribute` (msg.value MUST be 0; ZK fields are stubs).

@@ -517,7 +517,8 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
                 // slash/reset failure must roll back forced-exit state.
                 let mut vs_mut =
                     outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
-                vs_mut.force_exit_validator(addr)?;
+                // Oracle underperformance felony: JAIL (not force-exit) + slash.
+                vs_mut.jail_validator(addr)?;
                 let event = IOracle::ValidatorForcedExit { validator: addr };
                 let _ = oracle
                     .storage

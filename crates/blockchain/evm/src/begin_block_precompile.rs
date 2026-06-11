@@ -158,8 +158,7 @@ pub fn dispatch(
 /// label `arch_debt`):
 ///
 /// - binding `committee_snapshot_hash` to the frozen V2 `committee_set_hash`
-///   (the producing tribute-DKG slice fixes the snapshot identity it commits to,
-///   tracked in `plan_tee_poc_completion.md`).
+///   (the producing tribute-DKG slice fixes the snapshot identity it
 pub(crate) fn run_tee_bootstrap(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap::TeeBootstrapPayload,

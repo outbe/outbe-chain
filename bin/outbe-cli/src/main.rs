@@ -78,6 +78,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::zerofee::ZeroFeeCmd,
     },
+    /// TEE: register a joining validator's enclave and install the offer key.
+    Tee {
+        #[command(subcommand)]
+        cmd: commands::tee::TeeCmd,
+    },
 }
 
 #[tokio::main]
@@ -96,6 +101,7 @@ async fn main() -> Result<()> {
         Commands::Oracle { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Tribute { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::ZeroFee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Tee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
     }
 }
 
@@ -134,6 +140,18 @@ mod tests {
             "rewards",
             "pending",
             "0x1111111111111111111111111111111111111111",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_tee_join() {
+        let cli = Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "join",
+            "--enclave-socket",
+            "/tmp/enclave.sock",
         ]);
         assert!(cli.is_ok());
     }

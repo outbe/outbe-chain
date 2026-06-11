@@ -117,7 +117,7 @@ fn test_stake_accumulates() {
 }
 
 #[test]
-fn test_stake_activates_registered_validator() {
+fn test_stake_marks_registered_validator_pending() {
     with_staking(|storage, s| {
         let validator = address!("0x2222222222222222222222222222222222222222");
         register_validator(storage.clone(), validator);
@@ -133,10 +133,14 @@ fn test_stake_activates_registered_validator() {
         s.stake(validator, validator, U256::from(MIN_STAKE))
             .unwrap();
 
-        // Validator should now be ACTIVE
+        // PoS: staking to min_stake marks the validator PENDING (admitted, syncing,
+        // not yet voting). The DKG reshare promotes PENDING→ACTIVE once it gets a
+        // share. The pending_set_change flag is raised so consensus schedules it.
         let val_set = ValidatorSet::new(storage.clone());
         let post_status = val_set.val_status.read(&validator).unwrap();
-        assert_eq!(post_status, status::ACTIVE);
+        assert_eq!(post_status, status::PENDING);
+        assert!(val_set.pending_set_change.read().unwrap());
+        assert!(!val_set.val_has_bls_share.read(&validator).unwrap());
     });
 }
 
@@ -188,8 +192,14 @@ fn test_unstake_below_min_sets_exiting_status() {
         s.stake(validator, validator, U256::from(MIN_STAKE))
             .unwrap();
 
-        // Confirm ACTIVE
-        let val_set = ValidatorSet::new(storage.clone());
+        // Stake marks PENDING; simulate the reshare promotion to ACTIVE so the
+        // unstake-below-min ACTIVE→EXITING path is what is exercised here.
+        let mut val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::PENDING
+        );
+        val_set.activate_validator(validator).unwrap();
         assert_eq!(val_set.val_status.read(&validator).unwrap(), status::ACTIVE);
 
         // Unstake to drop below min_stake
@@ -200,6 +210,93 @@ fn test_unstake_below_min_sets_exiting_status() {
         assert_eq!(
             val_set.val_status.read(&validator).unwrap(),
             status::EXITING
+        );
+    });
+}
+
+#[test]
+fn test_unstake_below_min_reverts_pending_to_registered() {
+    with_staking_timed(0, |storage, s| {
+        let validator = address!("0x4A44444444444444444444444444444444444444");
+        register_validator(storage.clone(), validator);
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        s.stake(validator, validator, U256::from(MIN_STAKE))
+            .unwrap();
+        // PENDING joiner (not yet activated) unstaking below min reverts to REGISTERED.
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::PENDING
+        );
+        s.unstake(validator, U256::from(500u64)).unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::REGISTERED
+        );
+    });
+}
+#[test]
+fn test_unstake_from_jailed_goes_exiting() {
+    // Leave-from-jail: unstaking the full stake from JAILED routes to EXITING, then
+    // the normal EXITING → UNBONDING → INACTIVE drain runs.
+    with_staking_timed(0, |storage, s| {
+        let validator = address!("0x4B44444444444444444444444444444444444444");
+        register_validator(storage.clone(), validator);
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        s.stake(validator, validator, U256::from(MIN_STAKE))
+            .unwrap();
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set.activate_validator(validator).unwrap();
+        val_set.jail_validator(validator).unwrap();
+        assert_eq!(val_set.val_status.read(&validator).unwrap(), status::JAILED);
+
+        s.unstake(validator, U256::from(MIN_STAKE)).unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::EXITING
+        );
+    });
+}
+
+#[test]
+fn test_unjail_requires_min_stake_and_explicit_tx() {
+    // unjailValidator needs stake >= min_stake AND is always explicit: a top-up
+    // alone does NOT auto-unjail.
+    with_staking_timed(0, |storage, s| {
+        let validator = address!("0x4D44444444444444444444444444444444444444");
+        register_validator(storage.clone(), validator);
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set.activate_validator(validator).unwrap();
+        val_set.jail_validator(validator).unwrap();
+
+        // No stake yet → unjail rejected (needs >= min_stake).
+        assert!(
+            s.unjail_validator(validator).is_err(),
+            "unjail must require stake >= min_stake"
+        );
+
+        // Top up to min_stake; this does NOT change the JAILED status by itself.
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        s.stake(validator, validator, U256::from(MIN_STAKE))
+            .unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::JAILED,
+            "a stake top-up alone must NOT unjail"
+        );
+
+        // Explicit unjail now succeeds → PENDING.
+        s.unjail_validator(validator).unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::PENDING
         );
     });
 }
@@ -270,12 +367,19 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
         let validator = address!("0x9999999999999999999999999999999999999999");
         register_validator(storage.clone(), validator);
 
-        // Stake exactly at min and activate
+        // Stake exactly at min → PENDING, then simulate a DKG reshare promotion to
+        // ACTIVE via manual activation (the slash-below-min path under test demotes a
+        // consensus-ACTIVE validator to EXITING).
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), MIN_STAKE);
         s.stake(validator, validator, U256::from(MIN_STAKE))
             .unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
+        let mut val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::PENDING
+        );
+        val_set.activate_validator(validator).unwrap();
         assert_eq!(val_set.val_status.read(&validator).unwrap(), status::ACTIVE);
 
         // Slash 50% — new stake = 500, below min_stake (1000)
@@ -293,6 +397,35 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
         assert_eq!(s.get_stake(validator).unwrap(), U256::from(500u64));
 
         // Pending set change flagged
+        assert!(val_set.pending_set_change.read().unwrap());
+    });
+}
+
+#[test]
+fn test_slash_below_min_stake_reverts_pending_to_registered() {
+    with_staking(|storage, s| {
+        let validator = address!("0x9A99999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+
+        // Stake → PENDING (staked joiner, not yet activated by a reshare).
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        s.stake(validator, validator, U256::from(MIN_STAKE))
+            .unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::PENDING
+        );
+
+        // Slash below min before activation → revert PENDING→REGISTERED so the next
+        // reshare target does not select an under-staked joiner.
+        s.slash_stake(validator, 50).unwrap();
+        let val_set = ValidatorSet::new(storage.clone());
+        assert_eq!(
+            val_set.val_status.read(&validator).unwrap(),
+            status::REGISTERED
+        );
         assert!(val_set.pending_set_change.read().unwrap());
     });
 }

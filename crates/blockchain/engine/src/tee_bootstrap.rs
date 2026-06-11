@@ -664,7 +664,7 @@ fn register_enclave_gas_price(base_fee: u64) -> u128 {
 }
 
 /// Submit this validator's on-chain enclave registration as a normal
-/// EOA transaction, mirroring Secret Network's node-submitted `x/registration`.
+/// EOA transaction (a node-submitted on-chain enclave-registration tx).
 ///
 /// Reads the enclave's current key material from its attested quote
 /// (`recipient_x25519`, `attestation_pub`, `noise_static_pub`, `mrenclave`,

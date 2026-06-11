@@ -366,6 +366,31 @@ pub fn dispatch(
                 },
             }
         }
+        EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 } => {
+            // On-chain key delivery SERVER: DETERMINISTICALLY
+            // seal the resident group signature to `recipient_x25519` so the blob can
+            // be committed on-chain. static-static ECDH from the resident offer secret
+            // makes every committee enclave produce a byte-identical blob; the
+            // plaintext group signature never leaves the enclave. The newcomer opens
+            // it with `IngestTributeOfferHandoff`.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "SealOfferKeyForRegistry: no resident offer key to seal".to_string(),
+                };
+            };
+            match crate::crypto::encrypt_share_deterministic(
+                derived.secret(),
+                &recipient_x25519,
+                derived.group_sig(),
+            ) {
+                Ok(blob) => EnclaveResponse::SealedOfferKeyForRegistry {
+                    sealed: blob.to_bytes(),
+                },
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
         EnclaveRequest::IngestTributeOfferHandoff {
             sealed,
             expected_tribute_offer_public,
@@ -974,7 +999,7 @@ mod tests {
         );
     }
 
-    // ---- Tribute offer key-handoff (Secret-Network-style) ----
+    // ---- Tribute offer key-handoff ----
 
     /// A server enclave with a resident group signature seals it to a newcomer's
     /// X25519 key; the newcomer ingests it, verifies it against the on-chain

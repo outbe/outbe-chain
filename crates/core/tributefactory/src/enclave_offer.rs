@@ -17,7 +17,6 @@
 //! typed `tee_sidecar_unavailable` error (the offer reverts).
 
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 use alloy_primitives::B256;
 use outbe_tee::protocol::{
@@ -25,13 +24,12 @@ use outbe_tee::protocol::{
 };
 use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient, QuotePolicy};
 
-static ENCLAVE_CLIENT: OnceLock<Mutex<EnclaveClient>> = OnceLock::new();
-
 /// True once an enclave client is installed. Offers always route through the
 /// enclave (single path); when no client is configured, `offerTribute` reverts
-/// with a typed `tee_sidecar_unavailable` error.
+/// with a typed `tee_sidecar_unavailable` error. Delegates to the process-global
+/// enclave client in `outbe-tee` (shared with the TEE registry seal).
 pub fn is_enclave_configured() -> bool {
-    ENCLAVE_CLIENT.get().is_some()
+    outbe_tee::is_enclave_configured()
 }
 
 /// Connect to the enclave sidecar at `socket` under the host attestation
@@ -80,9 +78,7 @@ pub fn init_enclave_client(socket: &Path, policy: &QuotePolicy) -> eyre::Result<
              NOT confidential. Use gramine-sgx + a strict QuotePolicy for production."
         );
     }
-    ENCLAVE_CLIENT
-        .set(Mutex::new(client))
-        .map_err(|_| eyre::eyre!("enclave client already initialized"))?;
+    outbe_tee::install_enclave_client(client).map_err(|e| eyre::eyre!(e))?;
     Ok(())
 }
 
@@ -102,21 +98,20 @@ pub fn init_enclave_client(socket: &Path, policy: &QuotePolicy) -> eyre::Result<
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
 ) -> eyre::Result<Vec<TributeOfferResult>> {
-    let mutex = ENCLAVE_CLIENT
-        .get()
-        .ok_or_else(|| eyre::eyre!("enclave client not configured (tee_sidecar_unavailable)"))?;
-    let mut client = mutex
-        .lock()
-        .map_err(|_| eyre::eyre!("enclave client mutex poisoned"))?;
-    // Pin the attestation key from this session's verified quote before the call.
-    let attestation_pub = client.attestation_pub();
-    let response = client
-        .request(&EnclaveRequest::ProcessTributeOfferBatch {
+    // Route through the process-global enclave client (shared with the TEE registry
+    // seal). Pin the attestation key from this session's verified quote before the
+    // call. `None` means no client is configured → typed `tee_sidecar_unavailable`.
+    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
+        let attestation_pub = client.attestation_pub();
+        let response = client.request(&EnclaveRequest::ProcessTributeOfferBatch {
             offers: offers.to_vec(),
-        })
-        .map_err(|e| {
-            eyre::eyre!("enclave ProcessTributeOfferBatch failed (tee_sidecar_unavailable): {e}")
-        })?;
+        });
+        (attestation_pub, response)
+    })
+    .ok_or_else(|| eyre::eyre!("enclave client not configured (tee_sidecar_unavailable)"))?;
+    let response = response.map_err(|e| {
+        eyre::eyre!("enclave ProcessTributeOfferBatch failed (tee_sidecar_unavailable): {e}")
+    })?;
 
     match response {
         EnclaveResponse::TributeOfferBatch {

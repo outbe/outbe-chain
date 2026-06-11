@@ -137,8 +137,11 @@ impl SlashIndicator<'_> {
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
+            // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
-            vs.force_exit_validator(validator)?;
+            vs.jail_validator(validator)?;
 
             let slash_percent = self.slash_amount_percent()?;
             let mut staking = Staking::new(self.storage.clone());
@@ -242,8 +245,11 @@ impl SlashIndicator<'_> {
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
+            // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
-            vs.force_exit_validator(validator)?;
+            vs.jail_validator(validator)?;
 
             let slash_percent = self.slash_amount_percent()?;
             let mut staking = Staking::new(self.storage.clone());
@@ -455,8 +461,10 @@ impl SlashIndicator<'_> {
         evidence_submitter: Address,
     ) -> Result<()> {
         let block_number = self.storage.block_number().unwrap_or(0);
+        // Felony: JAIL (not force-exit) + slash. Jail before slash_stake (which
+        // leaves a JAILED status untouched).
         let mut vs = ValidatorSet::new(self.storage.clone());
-        vs.force_exit_validator(validator)?;
+        vs.jail_validator(validator)?;
 
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
@@ -743,7 +751,7 @@ impl SlashIndicator<'_> {
         // (10) Proposer must be in the snapshot's committee. Defends
         // against a future bug that signs a Phase 1 tx with a key not
         // bound to any active validator — without this check, the
-        // felony helper would call force_exit_validator on a
+        // felony helper would call jail_validator on a
         // non-existent validator and the slash path would silently
         // no-op.
         if !snapshot
@@ -831,8 +839,10 @@ impl SlashIndicator<'_> {
     /// so no reward is distributed.
     pub fn slash_byzantine(&mut self, validator: Address) -> Result<()> {
         let block_number = self.storage.block_number().unwrap_or(0);
+        // Felony: JAIL (not force-exit) + slash. Jail before slash_stake (which
+        // leaves a JAILED status untouched).
         let mut vs = ValidatorSet::new(self.storage.clone());
-        vs.force_exit_validator(validator)?;
+        vs.jail_validator(validator)?;
 
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
