@@ -73,7 +73,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         );
         onftBatch = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
-        escrow = new EscrowAdapter(admin, admin);
+        escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);

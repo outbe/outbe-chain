@@ -3,7 +3,9 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
@@ -41,7 +43,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 18);
@@ -71,19 +73,21 @@ contract EscrowAdapterTest is Test {
 
     // --- Constructor Tests ---
     function test_Constructor() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         assertTrue(newEscrow.hasRole(newEscrow.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(newEscrow.hasRole(newEscrow.RELAYER_ROLE(), bridger));
     }
 
     function test_Constructor_ZeroAdmin() public {
+        EscrowAdapter impl = new EscrowAdapter();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "defaultAdmin"));
-        new EscrowAdapter(address(0), bridger);
+        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (address(0), bridger)));
     }
 
     function test_Constructor_ZeroBridger() public {
+        EscrowAdapter impl = new EscrowAdapter();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bridger"));
-        new EscrowAdapter(admin, address(0));
+        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (admin, address(0))));
     }
 
     // --- Wire Tests ---
@@ -97,35 +101,35 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Wire_ZeroAuction() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
         vm.prank(admin);
         newEscrow.wire(address(0), address(compact), address(provider), address(paymentToken));
     }
 
     function test_Wire_ZeroCompact() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "compact"));
         vm.prank(admin);
         newEscrow.wire(auction, address(0), address(provider), address(paymentToken));
     }
 
     function test_Wire_ZeroVaultProvider() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "vaultProvider"));
         vm.prank(admin);
         newEscrow.wire(auction, address(compact), address(0), address(paymentToken));
     }
 
     function test_Wire_ZeroPaymentToken() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "paymentToken"));
         vm.prank(admin);
         newEscrow.wire(auction, address(compact), address(provider), address(0));
     }
 
     function test_Wire_EmitsWired_OnInitial() public {
-        EscrowAdapter freshEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
         // Initial wire: every `*Old` field is the zero address.
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.Wired(
@@ -163,7 +167,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Wire_OnlyAdmin() public {
-        EscrowAdapter newEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert();
         vm.prank(outsider);
         newEscrow.wire(auction, address(compact), address(provider), address(paymentToken));

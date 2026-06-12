@@ -17,3 +17,7 @@ export async function deployIntexNFT1155(viem: Viem, args: readonly unknown[]) {
 export async function deployIntexAuction(viem: Viem, args: readonly unknown[]) {
   return deployUupsProxy(viem, "IntexAuction", args);
 }
+
+export async function deployEscrowAdapter(viem: Viem, args: readonly unknown[]) {
+  return deployUupsProxy(viem, "EscrowAdapter", args);
+}

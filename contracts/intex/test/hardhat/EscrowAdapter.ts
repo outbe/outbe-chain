@@ -1,5 +1,6 @@
 // We don't have Ethereum specific assertions in Hardhat 3 yet
 import assert from "node:assert/strict";
+import { deployEscrowAdapter } from "./_helpers.js";
 import { describe, it } from "node:test";
 import { network } from "hardhat";
 
@@ -38,7 +39,7 @@ describe("EscrowAdapter", async function () {
     await vaultProvider.write.addVault([mockVault.address]);
 
     // Deploy EscrowAdapter
-    const escrow = await viem.deployContract("EscrowAdapter", [
+    const escrow = await deployEscrowAdapter(viem, [
       deployer.account.address,
       bridger.account.address,
     ]);
@@ -84,7 +85,7 @@ describe("EscrowAdapter", async function () {
 
     it("Should revert constructor with zero admin", async function () {
       await assert.rejects(
-        viem.deployContract("EscrowAdapter", [
+        deployEscrowAdapter(viem, [
           "0x0000000000000000000000000000000000000000",
           bridger.account.address,
         ]),
@@ -94,7 +95,7 @@ describe("EscrowAdapter", async function () {
 
     it("Should revert constructor with zero bridger", async function () {
       await assert.rejects(
-        viem.deployContract("EscrowAdapter", [
+        deployEscrowAdapter(viem, [
           deployer.account.address,
           "0x0000000000000000000000000000000000000000",
         ]),
@@ -131,7 +132,7 @@ describe("EscrowAdapter", async function () {
     });
 
     it("Should revert wire with zero addresses", async function () {
-      const escrow = await viem.deployContract("EscrowAdapter", [
+      const escrow = await deployEscrowAdapter(viem, [
         deployer.account.address,
         bridger.account.address,
       ]);
@@ -189,7 +190,7 @@ describe("EscrowAdapter", async function () {
     });
 
     it("Should only allow admin to wire", async function () {
-      const escrow = await viem.deployContract("EscrowAdapter", [
+      const escrow = await deployEscrowAdapter(viem, [
         deployer.account.address,
         bridger.account.address,
       ]);
