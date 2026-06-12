@@ -944,6 +944,21 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@layerzerolabs/oapp-evm-upgradeable@npm:0.1.3":
+  version: 0.1.3
+  resolution: "@layerzerolabs/oapp-evm-upgradeable@npm:0.1.3"
+  dependencies:
+    ethers: "npm:^5.7.2"
+  peerDependencies:
+    "@layerzerolabs/lz-evm-messagelib-v2": ^3.0.148
+    "@layerzerolabs/lz-evm-protocol-v2": ^3.0.148
+    "@layerzerolabs/lz-evm-v1-0.7": ^3.0.148
+    "@openzeppelin/contracts": ^4.8.1 || ^5.0.0
+    "@openzeppelin/contracts-upgradeable": ^4.8.1 || ^5.0.0
+  checksum: 10c0/8fd995812987aed35160378a45698e92b76e602de4271e13fd8921df432ebb09e27c7f6fdb4749b19b61031d6e5418c8de0af652b048a476692ce30920a3c7c9
+  languageName: node
+  linkType: hard
+
 "@layerzerolabs/oapp-evm@npm:0.4.1":
   version: 0.4.1
   resolution: "@layerzerolabs/oapp-evm@npm:0.4.1"
@@ -1685,6 +1700,7 @@ __metadata:
     "@layerzerolabs/lz-v2-utilities": "npm:^3.0.148"
     "@layerzerolabs/metadata-tools": "npm:^3.0.3"
     "@layerzerolabs/oapp-evm": "npm:0.4.1"
+    "@layerzerolabs/oapp-evm-upgradeable": "npm:0.1.3"
     "@layerzerolabs/onft-evm": "npm:0.2.4"
     "@layerzerolabs/test-devtools-evm-foundry": "npm:^8.0.1"
     "@layerzerolabs/toolbox-foundry": "npm:^0.1.12"

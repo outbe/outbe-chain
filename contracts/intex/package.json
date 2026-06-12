@@ -67,6 +67,7 @@
     "@layerzerolabs/lz-evm-v1-0.7": "^3.0.154",
     "@layerzerolabs/lz-v2-utilities": "^3.0.148",
     "@layerzerolabs/oapp-evm": "0.4.1",
+    "@layerzerolabs/oapp-evm-upgradeable": "0.1.3",
     "@layerzerolabs/onft-evm": "0.2.4",
     "@layerzerolabs/test-devtools-evm-foundry": "^8.0.1",
     "@layerzerolabs/toolbox-foundry": "^0.1.12",
