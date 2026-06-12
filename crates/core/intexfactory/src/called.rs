@@ -166,10 +166,8 @@ fn notify_lz_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
         .abi_encode()
         .into(),
     )?;
-    let fee =
-        IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret).map_err(
-            |_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()),
-        )?;
+    let fee = IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret)
+        .map_err(|_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
