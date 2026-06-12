@@ -212,44 +212,44 @@ fn test_many_fi_groups() {
     }
 }
 
-/// A-25: deficit_fp must clamp to u128::MAX when gratis >> total_interest.
+/// D3 / A-25: an extreme deficit (gratis >> total_interest) must cap the per-FI
+/// floor at LYSIS_LIMIT_MIN (8%), matching the reference `f = min(MIN, deficit)`
+/// semantics in outbe-cosmos `x/lysis/keeper/keeper.go`.
 #[test]
-fn test_deficit_fp_clamp_at_u128_max() {
-    // If gratis_allocation * SCALE / total_interest > u128::MAX, the downcast
-    // must clamp, not silently truncate.
-    // We can't easily trigger this via lysis() (U256 arithmetic), but verify
-    // the clamp constant is correct.
-    let max_u128 = u128::MAX;
-    // After clamp, f_fp should still be at most LYSIS_LIMIT_MAX / 2
-    let clamped = max_u128.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
+fn test_deficit_caps_floor_at_min() {
+    let deficit = u128::MAX; // abundant gratis
+    let f_fp = deficit.min(LYSIS_LIMIT_MIN);
+    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
     assert_eq!(
-        clamped,
-        LYSIS_LIMIT_MAX / 2,
-        "extreme deficit must clamp to MAX/2"
+        f_fp, LYSIS_LIMIT_MIN,
+        "abundant gratis caps the floor at 8%"
     );
+    assert_eq!(fmax_fp, LYSIS_LIMIT_MAX, "fmax = min(MAX, 2*8%) = 16%");
 }
 
-/// A-27: f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
+/// D3: the per-FI floor `f` must adapt DOWN when gratis is scarce (deficit < 8%),
+/// and cap at 8% when gratis is abundant; `fmax = min(MAX, 2*f)`.
+///
+/// Regression for the degenerate `clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2)`,
+/// where both bounds equalled 0.08 and pinned `f_fp` to exactly 8% in every case.
 #[test]
-fn test_f_fp_clamp_boundaries() {
-    // Below minimum → floor
-    let small: u128 = 1_000;
-    let clamped = small.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    assert_eq!(clamped, LYSIS_LIMIT_MIN, "below-minimum must floor to MIN");
+fn test_deficit_derivation_scarce_and_abundant() {
+    // Scarce: deficit below the 8% floor → f = deficit (adapts down).
+    let scarce = LYSIS_LIMIT_MIN / 2; // 4%
+    let f_fp = scarce.min(LYSIS_LIMIT_MIN);
+    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
+    assert_eq!(f_fp, scarce, "scarce gratis must lower the floor below 8%");
+    assert_eq!(fmax_fp, scarce * 2, "fmax tracks 2*f when below the cap");
 
-    // Above MAX/2 → ceiling
-    let large: u128 = LYSIS_LIMIT_MAX;
-    let clamped = large.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
+    // Abundant: deficit at/above 8% → f capped at 8%, fmax at 16%.
+    let abundant = LYSIS_LIMIT_MAX; // 16% deficit
+    let f_fp = abundant.min(LYSIS_LIMIT_MIN);
+    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
     assert_eq!(
-        clamped,
-        LYSIS_LIMIT_MAX / 2,
-        "above-ceiling must cap to MAX/2"
+        f_fp, LYSIS_LIMIT_MIN,
+        "abundant gratis caps the floor at 8%"
     );
-
-    // At boundary: MIN == MAX/2 (both are 0.08 * SCALE), so clamp range is a single point.
-    let exact = LYSIS_LIMIT_MIN;
-    let clamped = exact.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    assert_eq!(clamped, LYSIS_LIMIT_MIN, "exact boundary must stay at MIN");
+    assert_eq!(fmax_fp, LYSIS_LIMIT_MAX, "fmax caps at 16%");
 }
 
 #[test]
@@ -541,6 +541,103 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             "cost_amount_minor {} looks like a 10^36-scaled value; \
              likely a scale-mismatch regression",
             item.cost_amount_minor
+        );
+    });
+}
+
+/// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
+/// floor must adapt DOWN so the whole — small — allocation is loaded onto the
+/// tribute. Under the previous degenerate `clamp(MIN, MAX/2)` the floor was pinned
+/// to 8%, computing a gratis_load of 8% of nominal (> the 4% allocation), which
+/// exceeds `remaining` and causes the NOD issuance to be SKIPPED entirely.
+///
+/// Reference behavior: outbe-cosmos `x/lysis/keeper/keeper.go` `x = min(8%, deficit)`.
+#[test]
+fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
+    use alloy_primitives::{address, U256};
+    use outbe_common::WorldwideDay;
+    use outbe_nod::NodContract;
+    use outbe_oracle::contract::OracleContract;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+    use outbe_tribute::{TributeContract, TributeData};
+
+    use crate::runtime::lysis;
+
+    let wwd = WorldwideDay::new(20241221);
+    const T_NOW: u64 = 1_700_000_000;
+    let owner = address!("0x2222222222222222222222222222222222222222");
+    let nominal = U256::in_units(100u64);
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+
+    // Scarce: allocation is only 4% of nominal → deficit (4%) is BELOW the 8% floor.
+    let gratis_allocation = nominal * U256::from(4u64) / U256::from(100u64);
+    let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
+
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut storage, |s| {
+        let mut oracle = OracleContract::new(s.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        let mut tribute = TributeContract::new(s.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&TributeData {
+                token_id: U256::from(1u64),
+                owner,
+                worldwide_day: wwd,
+                issuance_amount_minor: U256::in_units(50u64),
+                issuance_currency: 1,
+                nominal_amount_minor: nominal,
+                reference_currency: 840,
+                tribute_price_minor: U256::ZERO,
+            })
+            .unwrap();
+
+        let result = lysis(s.clone(), wwd, gratis_allocation).unwrap();
+
+        // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
+        // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
+        assert_eq!(
+            result.nod_ids.len(),
+            1,
+            "scarce-gratis day must still issue the NOD (floor adapts to the 4% deficit)"
+        );
+
+        let nod = NodContract::new(s.clone());
+        let item = nod.get_item(result.nod_ids[0]).unwrap().expect("NOD");
+
+        // Single-FI fast path returns f_fp == deficit (4%), so load == 4% of nominal,
+        // which is the full scarce allocation — strictly below an 8% load.
+        assert_eq!(
+            item.gratis_load_minor, gratis_allocation,
+            "scarce day must load the full 4% allocation, not a pinned 8%"
+        );
+        assert!(
+            item.gratis_load_minor < eight_percent_load,
+            "gratis load {} must be below the 8% pin {} (floor adapted down)",
+            item.gratis_load_minor,
+            eight_percent_load
+        );
+        assert!(
+            result.remaining_gratis.is_zero(),
+            "the full scarce allocation must be consumed"
         );
     });
 }
