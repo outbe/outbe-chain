@@ -57,7 +57,7 @@ contract DuplicateProtectionTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         desis = address(new MockDesis());
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 

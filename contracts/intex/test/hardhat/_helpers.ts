@@ -13,3 +13,7 @@ async function deployUupsProxy(viem: Viem, contractName: string, initArgs: reado
 export async function deployIntexNFT1155(viem: Viem, args: readonly unknown[]) {
   return deployUupsProxy(viem, "IntexNFT1155", args);
 }
+
+export async function deployIntexAuction(viem: Viem, args: readonly unknown[]) {
+  return deployUupsProxy(viem, "IntexAuction", args);
+}

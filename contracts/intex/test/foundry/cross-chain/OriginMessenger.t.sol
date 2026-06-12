@@ -60,7 +60,7 @@ contract OriginMessengerTest is TestHelperOz5 {
         vm.deal(intexFactory, 1000 ether);
 
         // Deploy mock BNB contracts
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter

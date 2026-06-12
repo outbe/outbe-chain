@@ -57,7 +57,7 @@ contract TargetMessengerTest is TestHelperOz5 {
         vm.deal(desis, 1000 ether);
 
         // Deploy mock contracts
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy BNB adapter

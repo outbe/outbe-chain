@@ -72,7 +72,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
 
         // ---- Deploy BSC contracts ----
         intexBnb = DeployProxy.intexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
         bnbAdapter = TargetMessenger(
             payable(_deployOApp(

@@ -59,7 +59,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
         bnbMessenger = TargetMessenger(
             payable(_deployOApp(

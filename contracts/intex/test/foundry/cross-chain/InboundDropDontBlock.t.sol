@@ -40,7 +40,7 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
 
         desis = address(new MockDesis());
         intexFactory = makeAddr("factory");
-        auction = new IntexAuction(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = TargetMessenger(
