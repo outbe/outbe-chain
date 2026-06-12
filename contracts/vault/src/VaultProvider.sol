@@ -35,10 +35,7 @@ contract VaultProvider is
     EnumerableSet.AddressSet private _liquidityTargets;
     mapping(address account => LiquidityTarget) public liquidityTargetTypes;
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
+    constructor() {}
 
     /// @notice Initializes the proxy. Replaces the constructor for upgradeable deployments.
     function initialize(address initialOwner) external initializer {
