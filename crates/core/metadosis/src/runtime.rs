@@ -66,23 +66,6 @@ impl MetadosisContract<'_> {
         })
     }
 
-    /// Returns (gratis_allocation, remainder) where:
-    /// - gratis_allocation = min(demand, limit) adjusted for RED days
-    /// - remainder = limit - gratis_allocation
-    pub fn calculate_metadosis(
-        &self,
-        wwd: WorldwideDay,
-        tribute_nominal_total: U256,
-        day_metadosis_limit: U256,
-    ) -> Result<(U256, U256)> {
-        let calc =
-            self.calculate_metadosis_details(wwd, tribute_nominal_total, day_metadosis_limit)?;
-        Ok((
-            calc.day_gratis_allocation,
-            calc.day_metadosis_limit_remainder,
-        ))
-    }
-
     /// Returns effective lookback and offering hours based on chain identity.
     pub fn effective_hours(&self, chain_id: u64) -> Result<(u64, u64)> {
         if chain::is_devnet(chain_id) || chain::is_testnet(chain_id) {
