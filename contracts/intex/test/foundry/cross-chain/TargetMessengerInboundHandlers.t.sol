@@ -9,6 +9,7 @@ import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
@@ -57,7 +58,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
         auction = new IntexAuction(admin, admin);
 
         bnbMessenger = TargetMessenger(

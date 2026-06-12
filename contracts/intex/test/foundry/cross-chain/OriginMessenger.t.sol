@@ -9,6 +9,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 import {MessagingFee, MessagingReceipt, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
@@ -60,7 +61,7 @@ contract OriginMessengerTest is TestHelperOz5 {
 
         // Deploy mock BNB contracts
         auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
         outbeAdapter = OriginMessenger(

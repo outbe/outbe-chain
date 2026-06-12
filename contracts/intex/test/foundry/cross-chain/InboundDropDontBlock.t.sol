@@ -12,6 +12,7 @@ import {IOriginMessenger} from "@contracts/outbe/interfaces/IOriginMessenger.sol
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundDropDontBlockTest
@@ -40,7 +41,7 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
         desis = address(new MockDesis());
         intexFactory = makeAddr("factory");
         auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = TargetMessenger(
             payable(_deployOApp(

@@ -18,6 +18,7 @@ import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155Adapt
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundValidationTest
@@ -53,7 +54,7 @@ contract InboundValidationTest is TestHelperOz5 {
         desis = address(new MockDesis());
         intexFactory = makeAddr("factory");
         auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = TargetMessenger(
             payable(_deployOApp(
@@ -67,7 +68,7 @@ contract InboundValidationTest is TestHelperOz5 {
         );
         onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
-        IntexNFT1155 intexOutbe = new IntexNFT1155(admin, admin);
+        IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
         onftBnb = ONFT1155Adapter(
             _deployOApp(
                 type(ONFT1155Adapter).creationCode,

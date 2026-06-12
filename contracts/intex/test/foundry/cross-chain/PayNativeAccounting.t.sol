@@ -14,6 +14,7 @@ import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title PayNativeAccountingTest
@@ -48,7 +49,7 @@ contract PayNativeAccountingTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         desis = address(new MockDesis());
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = TargetMessenger(
             payable(_deployOApp(

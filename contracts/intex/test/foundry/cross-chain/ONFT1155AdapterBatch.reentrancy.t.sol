@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {
     IONFT1155AdapterBatch,
@@ -101,8 +102,8 @@ contract ONFT1155AdapterBatchReentrancyTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
         adapterA = ONFT1155AdapterBatch(
             payable(_deployOApp(

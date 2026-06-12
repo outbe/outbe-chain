@@ -8,6 +8,7 @@ import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `ONFT1155AdapterBatch`: a per-item
@@ -34,7 +35,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
         onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
         onftBatchOutbe = new ONFT1155AdapterBatch(address(intex), address(endpoints[OUTBE_EID]), admin);
 

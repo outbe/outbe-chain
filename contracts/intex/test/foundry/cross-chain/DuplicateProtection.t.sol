@@ -15,6 +15,7 @@ import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCode
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @dev Fallback-only stub used as `auction` for nonce-advancement tests so the TM dispatch
@@ -57,8 +58,8 @@ contract DuplicateProtectionTest is TestHelperOz5 {
 
         desis = address(new MockDesis());
         auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
-        intexOutbe = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = TargetMessenger(
             payable(_deployOApp(

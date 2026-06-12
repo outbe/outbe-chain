@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
 import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -40,8 +41,8 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
         adapterA = ONFT1155Adapter(
             _deployOApp(
