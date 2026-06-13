@@ -50,11 +50,10 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
     ///      duplicates and out-of-order deliveries at the transport layer.
     mapping(uint32 srcEid => mapping(bytes32 sender => uint64)) public inboundNonce;
 
-    constructor(
-        address _lzEndpoint,
-        address _delegate,
-        uint32 _bnbEid
-    ) OApp(_lzEndpoint, _delegate) Ownable(_delegate) {
+    constructor(address _lzEndpoint, address _delegate, uint32 _bnbEid)
+        OApp(_lzEndpoint, _delegate)
+        Ownable(_delegate)
+    {
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
         BNB_EID = _bnbEid;
     }
@@ -133,11 +132,11 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
     }
 
     /// @inheritdoc IOriginMessenger
-    function quoteSendAuctionStageClearing(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteSendAuctionStageClearing(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         bytes memory message = BridgeMsgCodec.encodeAuctionStageClearing(seriesId);
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, extraOptions);
         return _quote(BNB_EID, message, options, payInLzToken);
@@ -221,22 +220,22 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
     }
 
     /// @inheritdoc IOriginMessenger
-    function quoteSendMarkCalled(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteSendMarkCalled(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         bytes memory message = BridgeMsgCodec.encodeMarkCalled(seriesId);
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_MARK_CALLED, extraOptions);
         return _quote(BNB_EID, message, options, payInLzToken);
     }
 
     /// @inheritdoc IOriginMessenger
-    function quoteSendMarkQualified(
-        uint32 seriesId,
-        bytes calldata extraOptions,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteSendMarkQualified(uint32 seriesId, bytes calldata extraOptions, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         bytes memory message = BridgeMsgCodec.encodeMarkQualified(seriesId);
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_MARK_QUALIFIED, extraOptions);
         return _quote(BNB_EID, message, options, payInLzToken);
@@ -392,7 +391,11 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
         address,
         /*_executor*/
         bytes calldata /*_extraData*/
-    ) internal override nonReentrant {
+    )
+        internal
+        override
+        nonReentrant
+    {
         // Bump the per-channel nonce so `nextNonce` advances by exactly one. Endpoint already
         // verified `_origin.nonce == inboundNonce + 1` before calling us; recording here keeps the
         // invariant for the next delivery on this `(srcEid, sender)` channel.

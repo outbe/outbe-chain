@@ -33,9 +33,7 @@ interface ILzOAppV2 {
         bytes calldata message,
         address executor,
         bytes calldata extraData
-    )
-        external
-        payable;
+    ) external payable;
 }
 
 /// @notice Упрощённый мок EndpointV2 для локальных тестов.
@@ -122,7 +120,7 @@ contract EndpointV2Mock {
 
     /// @notice External hook for delivering message from another endpoint
     function deliverMessage(uint32 _srcEid, bytes32 _sender, bytes calldata _message) external {
-        Origin memory origin = Origin({ srcEid: _srcEid, sender: _sender, nonce: 1 });
+        Origin memory origin = Origin({srcEid: _srcEid, sender: _sender, nonce: 1});
 
         ILzOAppV2(oapp)
             .lzReceive(

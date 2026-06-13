@@ -9,11 +9,7 @@ library RouterMessage {
      * @param _ordersFillerData Per-order filler data (bytes32-encoded receiver address for settle).
      * @return Encoded message bytes.
      */
-    function encode(
-        bool _settle,
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function encode(bool _settle, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         pure
         returns (bytes memory)
@@ -32,10 +28,7 @@ library RouterMessage {
         return abi.decode(_message, (bool, bytes32[], bytes[]));
     }
 
-    function encodeSettle(
-        bytes32[] memory _orderIds,
-        bytes[] memory _ordersFillerData
-    )
+    function encodeSettle(bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)
         internal
         pure
         returns (bytes memory)

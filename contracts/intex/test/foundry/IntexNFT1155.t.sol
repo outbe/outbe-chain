@@ -27,13 +27,10 @@ contract MidCallbackSnapshotReceiver is IERC1155Receiver {
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
-    function onERC1155BatchReceived(
-        address,
-        address,
-        uint256[] calldata ids,
-        uint256[] calldata,
-        bytes calldata
-    ) external returns (bytes4) {
+    function onERC1155BatchReceived(address, address, uint256[] calldata ids, uint256[] calldata, bytes calldata)
+        external
+        returns (bytes4)
+    {
         // Snapshot the last id in the batch — the mid-callback inconsistency exists
         // after the full _mint loop, before the post-loop totalSupply write.
         uint256 last = ids[ids.length - 1];

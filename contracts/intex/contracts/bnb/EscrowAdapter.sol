@@ -81,12 +81,11 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     /// @dev `_vaultProvider` must have `addVault(vaultV2)` + `addLiquiditySource(this, IntexBidPrice)`
     ///      called on it by the outbe-vault owner before any `finalizeAuction()` paid-portion call;
     ///      otherwise the deposit reverts `ReserveVaultNotConfigured` or `InvalidLiquiditySource`.
-    function wire(
-        address _intexAuction,
-        address _compact,
-        address _vaultProvider,
-        address _paymentToken
-    ) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+    function wire(address _intexAuction, address _compact, address _vaultProvider, address _paymentToken)
+        external
+        override
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
         if (_compact == address(0)) revert ZeroAddress("compact");
         if (_vaultProvider == address(0)) revert ZeroAddress("vaultProvider");
@@ -145,13 +144,12 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
 
     // --- IAllocator Implementation ---
     /// @inheritdoc IAllocator
-    function attest(
-        address _operator,
-        address _from,
-        address _to,
-        uint256 id,
-        uint256 _amount
-    ) external view override returns (bytes4) {
+    function attest(address _operator, address _from, address _to, uint256 id, uint256 _amount)
+        external
+        view
+        override
+        returns (bytes4)
+    {
         if (id != lockId) revert UnexpectedLockId(id);
         return IAllocator.attest.selector;
     }
@@ -184,22 +182,24 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(
-        uint32 seriesId,
-        address bidder,
-        uint64 amount
-    ) external override onlyRole(AUCTION_ROLE) nonReentrant {
+    function lockFunds(uint32 seriesId, address bidder, uint64 amount)
+        external
+        override
+        onlyRole(AUCTION_ROLE)
+        nonReentrant
+    {
         _validateLockInputs(seriesId, bidder, amount);
         _executeLock(seriesId, bidder, amount);
     }
 
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
-    function finalizeAuction(
-        uint32 seriesId,
-        bytes32 guid,
-        FinalizationInstruction[] calldata instructions
-    ) external override onlyRole(RELAYER_ROLE) nonReentrant {
+    function finalizeAuction(uint32 seriesId, bytes32 guid, FinalizationInstruction[] calldata instructions)
+        external
+        override
+        onlyRole(RELAYER_ROLE)
+        nonReentrant
+    {
         if (auctionEscrowState[seriesId].finalized) {
             revert AlreadyFinalized();
         }
@@ -259,11 +259,12 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     }
 
     /// @inheritdoc IEscrowAdapter
-    function retryFinalize(
-        uint32 seriesId,
-        bytes32 guid,
-        FinalizationInstruction calldata inst
-    ) external override onlyRole(RELAYER_ROLE) nonReentrant {
+    function retryFinalize(uint32 seriesId, bytes32 guid, FinalizationInstruction calldata inst)
+        external
+        override
+        onlyRole(RELAYER_ROLE)
+        nonReentrant
+    {
         if (!auctionEscrowState[seriesId].finalized) {
             revert NotFinalizedYet(seriesId);
         }

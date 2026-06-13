@@ -304,10 +304,10 @@ contract BidsRefundRejector {
         messenger = TargetMessenger(payable(_messenger));
     }
 
-    function callSendBidsBatch(
-        ITargetMessenger.BidsBatchParams calldata params,
-        MessagingFee calldata fee
-    ) external payable {
+    function callSendBidsBatch(ITargetMessenger.BidsBatchParams calldata params, MessagingFee calldata fee)
+        external
+        payable
+    {
         messenger.sendBidsBatch{value: msg.value}(params, fee);
     }
 
@@ -324,11 +324,10 @@ contract RefundRejectingCaller {
         messenger = OriginMessenger(payable(_messenger));
     }
 
-    function callSendAuctionStageClearing(
-        uint32 seriesId,
-        bytes calldata options,
-        MessagingFee calldata fee
-    ) external payable {
+    function callSendAuctionStageClearing(uint32 seriesId, bytes calldata options, MessagingFee calldata fee)
+        external
+        payable
+    {
         messenger.sendAuctionStageClearing{value: msg.value}(seriesId, options, fee, address(this));
     }
 

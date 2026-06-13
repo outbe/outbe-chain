@@ -1,0 +1,134 @@
+[
+  {
+    "type": "function",
+    "name": "seriesAt",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "seriesData",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexRegistry.SeriesData",
+        "components": [
+          {
+            "name": "seriesId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "intexSize",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "intexStrikePrice",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "coenPriceFloor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuedIntexCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindowDays",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callThresholdDays",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "coenPriceCallTrigger",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "intexCallPeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "seriesExists",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalSeries",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  }
+]

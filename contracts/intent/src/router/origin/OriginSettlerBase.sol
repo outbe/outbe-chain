@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import { TypeCasts } from "../../libs/TypeCasts.sol";
-import { OrderStatusStorage } from "../common/OrderStatusStorage.sol";
-import { RouterAccessors } from "../common/RouterAccessors.sol";
+import {TypeCasts} from "../../libs/TypeCasts.sol";
+import {OrderStatusStorage} from "../common/OrderStatusStorage.sol";
+import {RouterAccessors} from "../common/RouterAccessors.sol";
 
-import { OnchainCrossChainOrder, ResolvedCrossChainOrder } from "../../interfaces/OrderTypes.sol";
-import { IOriginSettler } from "../../interfaces/IOriginSettler.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
+import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../../interfaces/OrderTypes.sol";
+import {IOriginSettler} from "../../interfaces/IOriginSettler.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 
 /**
  * @title OriginSettlerBase
@@ -81,7 +81,7 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
 
         // Deposit native ETH into The Compact
         if (totalValue > 0) {
-            compact.depositNative{ value: totalValue }(lockTag, address(this));
+            compact.depositNative{value: totalValue}(lockTag, address(this));
         }
 
         emit Open(orderId, resolvedOrder);

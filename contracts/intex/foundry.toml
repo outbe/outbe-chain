@@ -1,6 +1,8 @@
 [profile.default]
 solc_version = '0.8.30'
-evm_version = 'cancun'
+evm_version = 'Prague'
+bytecode_hash = 'none'
+cbor_metadata = false
 src = 'contracts'
 out = 'out'
 test = 'test/foundry'
@@ -34,9 +36,6 @@ remappings = [
     # OpenZeppelin
     '@openzeppelin/=node_modules/@openzeppelin/',
 ]
-
-[fmt]
-multiline_func_header = "params_first_multi"
 
 [fuzz]
 runs = 256

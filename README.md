@@ -177,11 +177,10 @@ outbe-chain/
 ├── crates/
 │   ├── blockchain/         # consensus, engine, evm, node, primitives, rpc, txpool, macros
 │   ├── system/             # validatorset, staking, rewards, slashindicator, oracle, ...
-│   └── core/               # business modules: tribute, gratis, nod, credis, metadosis, ...
+│   └── core/               # core modules: tribute, gratis, nod, credis, metadosis, ...
 ├── contracts/              # Solidity interfaces for precompiles + external contracts
 ├── scripts/                # genesis seeding, testnet bootstrap
-├── deploy/                 # systemd units, monitoring
-└── e2e/                    # end-to-end scenarios
+└── deploy/                 # systemd units, monitoring
 ```
 
 ## Quick Start
@@ -218,5 +217,4 @@ Full nodes sync and serve RPC without consensus key material; validators additio
 
 ## Documentation
 
-- `CLAUDE.md` / `AGENTS.md` — generated agent rules (source of truth in `.ruler/`)
 - `docker-compose.yml`, `deploy/` — local testnet and deployment

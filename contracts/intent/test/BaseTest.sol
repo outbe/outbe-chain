@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { Test, Vm } from "forge-std/Test.sol";
-import { console2 } from "forge-std/console2.sol";
+import {Test, Vm} from "forge-std/Test.sol";
+import {console2} from "forge-std/console2.sol";
 
-import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 import {
     OnchainCrossChainOrder,
@@ -14,7 +14,7 @@ import {
     FillInstruction
 } from "../src/interfaces/OrderTypes.sol";
 
-import { OrderData, OrderEncoder } from "../src/libs/OrderEncoder.sol";
+import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 
 event Open(bytes32 indexed orderId, ResolvedCrossChainOrder resolvedOrder);
 
@@ -67,17 +67,12 @@ contract BaseTest is Test {
         users.push(counterpart);
     }
 
-    function _prepareOnchainOrder(
-        bytes memory orderData,
-        uint32 fillDeadline,
-        bytes32 orderDataType
-    )
+    function _prepareOnchainOrder(bytes memory orderData, uint32 fillDeadline, bytes32 orderDataType)
         internal
         pure
         returns (OnchainCrossChainOrder memory)
     {
-        return
-            OnchainCrossChainOrder({ fillDeadline: fillDeadline, orderDataType: orderDataType, orderData: orderData });
+        return OnchainCrossChainOrder({fillDeadline: fillDeadline, orderDataType: orderDataType, orderData: orderData});
     }
 
     function _getOrderIDFromLogs() internal returns (bytes32, ResolvedCrossChainOrder memory) {
@@ -127,10 +122,7 @@ contract BaseTest is Test {
         uint64 _originChainId,
         address _inputToken,
         address _outputToken
-    )
-        internal
-        view
-    {
+    ) internal view {
         assertEq(resolvedOrder.maxSpent.length, 1);
         assertEq(resolvedOrder.maxSpent[0].token, TypeCasts.addressToBytes32(address(_outputToken)));
         assertEq(resolvedOrder.maxSpent[0].amount, amount);

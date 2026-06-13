@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { OptionsBuilder } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
+import {MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
 
-import { LayerZeroRouter } from "../src/router/LayerZeroRouter.sol";
-import { Auction } from "../src/Auction.sol";
-import { SolverAllocator } from "../src/allocators/SolverAllocator.sol";
-import { SolverEscrow } from "../src/SolverEscrow.sol";
-import { IAuction } from "../src/interfaces/IAuction.sol";
-import { ISolverEscrow } from "../src/interfaces/ISolverEscrow.sol";
-import { OnchainCrossChainOrder } from "../src/interfaces/OrderTypes.sol";
-import { OrderData, OrderEncoder } from "../src/libs/OrderEncoder.sol";
-import { RouterMessage } from "../src/libs/RouterMessage.sol";
-import { TypeCasts } from "../src/libs/TypeCasts.sol";
+import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {Auction} from "../src/Auction.sol";
+import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
+import {SolverEscrow} from "../src/SolverEscrow.sol";
+import {IAuction} from "../src/interfaces/IAuction.sol";
+import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
+import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
+import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {RouterMessage} from "../src/libs/RouterMessage.sol";
+import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
-import { BaseTest } from "./BaseTest.sol";
-import { EndpointV2Mock } from "./mocks/MockLayerZeroEndpoint.sol";
-import { MockTheCompact } from "./mocks/MockTheCompact.sol";
+import {BaseTest} from "./BaseTest.sol";
+import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
+import {MockTheCompact} from "./mocks/MockTheCompact.sol";
 
 event Filled(bytes32 orderId, bytes originData, bytes fillerData);
 event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
@@ -41,9 +41,7 @@ contract LayerZeroRouterWithDomain is LayerZeroRouter {
         bytes12 _lockTag,
         address _escrow,
         address _auction
-    )
-        LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction)
-    {
+    ) LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction) {
         _fixedLocalDomain = fixedDomain;
     }
 
@@ -122,7 +120,7 @@ contract LayerZeroRouterE2E is BaseTest {
             destCompact.setOperator(address(destEscrow), true);
             outputToken.approve(address(destEscrow), collateralDeposit);
             destEscrow.deposit(address(outputToken), collateralDeposit);
-            destEscrow.deposit{ value: collateralDeposit }(address(0), 0);
+            destEscrow.deposit{value: collateralDeposit}(address(0), 0);
             vm.stopPrank();
         }
 
@@ -168,7 +166,7 @@ contract LayerZeroRouterE2E is BaseTest {
         users.push(address(destinationRouter));
     }
 
-    receive() external payable { }
+    receive() external payable {}
 
     // ========== Helpers ==========
 
@@ -207,9 +205,7 @@ contract LayerZeroRouterE2E is BaseTest {
         uint256 amount2,
         bytes32 orderId,
         bytes memory originData
-    )
-        internal
-    {
+    ) internal {
         vm.prank(solver1);
         auction.commit(orderId, keccak256(abi.encode(orderId, amount1, bytes32(uint256(1)))));
         vm.prank(solver2);
@@ -231,10 +227,7 @@ contract LayerZeroRouterE2E is BaseTest {
         uint32 fixedDomain,
         MockTheCompact compact,
         uint256 collateralBps
-    )
-        internal
-        returns (LayerZeroRouterWithDomain router, SolverEscrow esc)
-    {
+    ) internal returns (LayerZeroRouterWithDomain router, SolverEscrow esc) {
         SolverAllocator alloc = new SolverAllocator(address(compact));
         bytes12 tag = alloc.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
 
@@ -308,7 +301,7 @@ contract LayerZeroRouterE2E is BaseTest {
         vm.expectEmit(false, false, false, true, address(destinationRouter));
         emit Settle(orderIds, ordersFillerData);
 
-        destinationRouter.settle{ value: fee.nativeFee }(orderIds);
+        destinationRouter.settle{value: fee.nativeFee}(orderIds);
 
         vm.stopPrank();
 
@@ -338,7 +331,7 @@ contract LayerZeroRouterE2E is BaseTest {
 
         vm.startPrank(kakaroto);
         vm.recordLogs();
-        originRouter.open{ value: amount }(order);
+        originRouter.open{value: amount}(order);
 
         bytes32 orderId = OrderEncoder.id(orderData);
 
@@ -355,7 +348,7 @@ contract LayerZeroRouterE2E is BaseTest {
         uint256[] memory balancesBeforeFill = _balances();
 
         bytes memory fillerData = abi.encode(TypeCasts.addressToBytes32(vegeta));
-        destinationRouter.fill{ value: amount }(orderId, order.orderData, fillerData);
+        destinationRouter.fill{value: amount}(orderId, order.orderData, fillerData);
 
         assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.FILLED());
 
@@ -377,7 +370,7 @@ contract LayerZeroRouterE2E is BaseTest {
         vm.expectEmit(false, false, false, true, address(destinationRouter));
         emit Settle(orderIds, ordersFillerData);
 
-        destinationRouter.settle{ value: fee.nativeFee }(orderIds);
+        destinationRouter.settle{value: fee.nativeFee}(orderIds);
 
         vm.stopPrank();
 
@@ -429,7 +422,7 @@ contract LayerZeroRouterE2E is BaseTest {
         vm.expectEmit(false, false, false, true, address(destinationRouter));
         emit Refund(orderIds);
 
-        destinationRouter.refund{ value: fee.nativeFee }(orders);
+        destinationRouter.refund{value: fee.nativeFee}(orders);
 
         assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.UNKNOWN());
 
@@ -459,7 +452,7 @@ contract LayerZeroRouterE2E is BaseTest {
 
         vm.startPrank(kakaroto);
         vm.recordLogs();
-        originRouter.open{ value: amount }(order);
+        originRouter.open{value: amount}(order);
 
         bytes32 orderId = OrderEncoder.id(orderData);
 
@@ -480,7 +473,7 @@ contract LayerZeroRouterE2E is BaseTest {
         vm.expectEmit(false, false, false, true, address(destinationRouter));
         emit Refund(orderIds);
 
-        destinationRouter.refund{ value: fee.nativeFee }(orders);
+        destinationRouter.refund{value: fee.nativeFee}(orders);
 
         assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.UNKNOWN());
 
@@ -547,7 +540,7 @@ contract LayerZeroRouterE2E is BaseTest {
         bytes memory payload = RouterMessage.encodeSettle(orderIds, ordersFillerData);
         MessagingFee memory fee = destinationRouter.quote(origin, payload, false);
 
-        destinationRouter.settle{ value: fee.nativeFee }(orderIds);
+        destinationRouter.settle{value: fee.nativeFee}(orderIds);
         vm.stopPrank();
 
         // Verify settle completed — vegeta received input tokens on origin
@@ -603,7 +596,7 @@ contract LayerZeroRouterE2E is BaseTest {
         bytes memory payload = RouterMessage.encodeRefund(orderIds);
         MessagingFee memory fee = destinationRouter.quote(origin, payload, false);
 
-        destinationRouter.refund{ value: fee.nativeFee }(orders);
+        destinationRouter.refund{value: fee.nativeFee}(orders);
 
         // Collateral should be slashed (lock removed)
         assertEq(esc.totalLocked(vegeta, lockId), 0, "lock consumed after slash");
@@ -700,7 +693,7 @@ contract LayerZeroRouterE2E is BaseTest {
         bytes memory payload = RouterMessage.encodeRefund(orderIds);
         MessagingFee memory fee = destinationRouter.quote(origin, payload, false);
 
-        destinationRouter.refund{ value: fee.nativeFee }(orders);
+        destinationRouter.refund{value: fee.nativeFee}(orders);
 
         // Collateral untouched
         (uint256 total,, uint256 available) = esc.getBalance(vegeta, address(outputToken));
@@ -898,7 +891,7 @@ contract LayerZeroRouterE2E is BaseTest {
         MessagingFee memory fee = destinationRouter.quote(origin, payload, false);
 
         uint256 vegetaBefore = inputToken.balanceOf(vegeta);
-        destinationRouter.settle{ value: fee.nativeFee }(orderIds);
+        destinationRouter.settle{value: fee.nativeFee}(orderIds);
         vm.stopPrank();
 
         // Verify: vegeta received amountIn + 1.5% reward

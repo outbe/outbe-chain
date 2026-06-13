@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "TypeScript examples for LayerZero7683 contract",
   "scripts": {
-    "typechain": "typechain --target ethers-v6 --out-dir typechain '../abi/*.json'",
+    "typechain": "typechain --target ethers-v6 --out-dir typechain '../abi-export/*.json'",
     "build": "npm run typechain && tsc",
     "open-order": "tsx scripts/open_order.ts",
     "fill-by-id": "tsx scripts/fill_by_id.ts",

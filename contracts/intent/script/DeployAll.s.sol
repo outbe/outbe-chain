@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { console2 } from "forge-std/console2.sol";
+import {console2} from "forge-std/console2.sol";
 
-import { DeployCreateXDeterministic } from "./0_DeployCreateX.s.sol";
-import { DeploySolverEscrow } from "./1_DeploySolverEscrow.s.sol";
-import { DeployAuction } from "./2_DeployAuction.s.sol";
-import { DeployLayerZeroRouter } from "./3_DeployLayerZeroRouter.s.sol";
-import { ConfigureAll } from "./4_ConfigureAll.s.sol";
+import {DeployCreateXDeterministic} from "./0_DeployCreateX.s.sol";
+import {DeploySolverEscrow} from "./1_DeploySolverEscrow.s.sol";
+import {DeployAuction} from "./2_DeployAuction.s.sol";
+import {DeployLayerZeroRouter} from "./3_DeployLayerZeroRouter.s.sol";
+import {ConfigureAll} from "./4_ConfigureAll.s.sol";
 
 /// @dev Full deployment + configuration in a single script.
 ///

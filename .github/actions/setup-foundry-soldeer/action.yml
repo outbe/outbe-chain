@@ -1,0 +1,18 @@
+name: Setup Foundry + soldeer
+description: Install Foundry and restore soldeer dependencies after repository checkout
+
+inputs:
+  working-directory:
+    description: Directory containing foundry.toml and soldeer.lock
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+
+    - name: Restore soldeer dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: forge soldeer install

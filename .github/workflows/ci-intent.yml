@@ -5,114 +5,21 @@ on:
     branches: ["main"]
     paths:
       - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
       - "contracts/intent/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
       - "contracts/intent/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
-  format:
-    name: Forge Format
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/intent
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Check formatting
-        run: forge fmt --check
-
-  compile:
-    name: Compile Contracts
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/intent
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Setup
-        uses: ./.github/actions/setup-foundry-node-contract
-        with:
-          working-directory: contracts/intent
-
-      - name: Compile contracts
-        run: forge build
-
-  test:
-    name: Foundry Tests
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/intent
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Setup
-        uses: ./.github/actions/setup-foundry-node-contract
-        with:
-          working-directory: contracts/intent
-
-      - name: Run tests
-        run: forge test -vvv
-
-  lint:
-    name: Forge Lint
-    runs-on: depot-ubuntu-24.04
-    defaults:
-      run:
-        working-directory: contracts/intent
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Setup
-        uses: ./.github/actions/setup-foundry-node-contract
-        with:
-          working-directory: contracts/intent
-
-      - name: Run lint
-        run: forge lint --severity high
-
-  ci-success:
-    name: ci success
-    runs-on: depot-ubuntu-24.04
-    if: always()
-    needs:
-      - format
-      - compile
-      - test
-      - lint
-    timeout-minutes: 5
-    steps:
-      - name: Decide whether all jobs succeeded or failed
-        uses: re-actors/alls-green@release/v1
-        with:
-          allowed-skips: test
-          jobs: ${{ toJSON(needs) }}
+  ci:
+    uses: ./.github/workflows/_contract-ci.yml
+    with:
+      project: intent
+      abi-check: true

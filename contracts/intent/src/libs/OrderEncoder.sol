@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import { OrderData } from "../interfaces/OrderTypes.sol";
+import {OrderData} from "../interfaces/OrderTypes.sol";
 
 library OrderEncoder {
     bytes constant ORDER_DATA_TYPE = abi.encodePacked(

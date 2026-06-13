@@ -234,13 +234,8 @@ interface IIntexAuction {
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(
-        uint32 seriesId,
-        uint16 quantity,
-        uint64 bidPrice,
-        uint64 chainId,
-        bytes memory signature
-    ) external;
+    function revealBid(uint32 seriesId, uint16 quantity, uint64 bidPrice, uint64 chainId, bytes memory signature)
+        external;
 
     // --- Views ---
 

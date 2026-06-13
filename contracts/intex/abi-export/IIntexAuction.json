@@ -1,0 +1,786 @@
+{
+  "contractName": "IIntexAuction",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "AuctionAlreadyExists",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "AuctionNotFound",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BidAlreadyCommitted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BidAlreadyRevealed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint16",
+          "name": "quantity",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint64",
+          "name": "bidPrice",
+          "type": "uint64"
+        }
+      ],
+      "name": "BidAmountOverflow",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BidBelowMinIntexBidPrice",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BidBelowMinIntexBidQuantity",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BidNotFound",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "clearingPrice",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "minIntexBidPrice",
+          "type": "uint64"
+        }
+      ],
+      "name": "ClearingPriceBelowMin",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "commitEnd",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "nowTs",
+          "type": "uint32"
+        }
+      ],
+      "name": "CommitWindowClosed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidCommitHash",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidSchedule",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "RevealHashMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum IIntexAuction.AuctionStage",
+          "name": "requiredStage",
+          "type": "uint8"
+        },
+        {
+          "internalType": "enum IIntexAuction.AuctionStage",
+          "name": "currentStage",
+          "type": "uint8"
+        }
+      ],
+      "name": "StageRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "wonBidsCount",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "revealedBidsCount",
+          "type": "uint32"
+        }
+      ],
+      "name": "WonBidsExceedRevealed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "expected",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "got",
+          "type": "uint256"
+        }
+      ],
+      "name": "WrongChain",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "f",
+          "type": "string"
+        }
+      ],
+      "name": "ZeroAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "f",
+          "type": "string"
+        }
+      ],
+      "name": "ZeroValue",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "auctionIntexClearingPrice",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "issuedIntexCount",
+          "type": "uint32"
+        }
+      ],
+      "name": "AuctionClearingExecuted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IIntexAuction.AuctionStage",
+          "name": "auctionStage",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "timestamp",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "name": "AuctionStageUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "bidder",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "commitHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "BidCommitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "bidder",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint16",
+          "name": "quantity",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "bidPrice",
+          "type": "uint64"
+        }
+      ],
+      "name": "BidRevealed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "bidder",
+          "type": "address"
+        }
+      ],
+      "name": "CommitCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "previous",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "current",
+          "type": "address"
+        }
+      ],
+      "name": "EscrowWired",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint32",
+              "name": "commitEnd",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "revealEnd",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "issuanceEnd",
+              "type": "uint32"
+            }
+          ],
+          "internalType": "struct IIntexAuction.AuctionSchedule",
+          "name": "schedule",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint128",
+              "name": "intexSize",
+              "type": "uint128"
+            },
+            {
+              "internalType": "uint64",
+              "name": "minIntexBidPrice",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "intexStrikePrice",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "coenPriceFloor",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint16",
+              "name": "minIntexBidQuantity",
+              "type": "uint16"
+            }
+          ],
+          "internalType": "struct IIntexAuction.AuctionParams",
+          "name": "params",
+          "type": "tuple"
+        }
+      ],
+      "name": "auctionStart",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        }
+      ],
+      "name": "cancelCommit",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "commitHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "commitBid",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "issuedIntexCount",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "auctionIntexClearingPrice",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint32",
+          "name": "wonBidsCount",
+          "type": "uint32"
+        }
+      ],
+      "name": "executeAuctionClearing",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        }
+      ],
+      "name": "getAuctionDetails",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "enum IIntexAuction.WorldwideDayState",
+              "name": "worldwideDayState",
+              "type": "uint8"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint32",
+                  "name": "commitEnd",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "revealEnd",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "issuanceEnd",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionSchedule",
+              "name": "schedule",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint128",
+                  "name": "intexSize",
+                  "type": "uint128"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "minIntexBidPrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "intexStrikePrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "coenPriceFloor",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "minIntexBidQuantity",
+                  "type": "uint16"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionParams",
+              "name": "params",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint128",
+                  "name": "issuedIntexLoadedPromis",
+                  "type": "uint128"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "auctionIntexClearingPrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "issuedIntexCount",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "wonBidsCount",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionResult",
+              "name": "result",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct IIntexAuction.AuctionData",
+          "name": "auctionData",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "bidderAddress",
+              "type": "address"
+            },
+            {
+              "internalType": "uint64",
+              "name": "intexBidPrice",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint32",
+              "name": "timestamp",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint16",
+              "name": "intexQuantity",
+              "type": "uint16"
+            }
+          ],
+          "internalType": "struct IIntexAuction.SubmittedBidData[]",
+          "name": "bidsData",
+          "type": "tuple[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        }
+      ],
+      "name": "getAuctionInfo",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "enum IIntexAuction.WorldwideDayState",
+              "name": "worldwideDayState",
+              "type": "uint8"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint32",
+                  "name": "commitEnd",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "revealEnd",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "issuanceEnd",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionSchedule",
+              "name": "schedule",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint128",
+                  "name": "intexSize",
+                  "type": "uint128"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "minIntexBidPrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "intexStrikePrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "coenPriceFloor",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "minIntexBidQuantity",
+                  "type": "uint16"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionParams",
+              "name": "params",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint128",
+                  "name": "issuedIntexLoadedPromis",
+                  "type": "uint128"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "auctionIntexClearingPrice",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "issuedIntexCount",
+                  "type": "uint32"
+                },
+                {
+                  "internalType": "uint32",
+                  "name": "wonBidsCount",
+                  "type": "uint32"
+                }
+              ],
+              "internalType": "struct IIntexAuction.AuctionResult",
+              "name": "result",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct IIntexAuction.AuctionData",
+          "name": "auctionData",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        }
+      ],
+      "name": "getAuctionStage",
+      "outputs": [
+        {
+          "internalType": "enum IIntexAuction.AuctionStage",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint16",
+          "name": "quantity",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint64",
+          "name": "bidPrice",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "chainId",
+          "type": "uint64"
+        },
+        {
+          "internalType": "bytes",
+          "name": "signature",
+          "type": "bytes"
+        }
+      ],
+      "name": "revealBid",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        }
+      ],
+      "name": "startClearingStage",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "seriesId",
+          "type": "uint32"
+        },
+        {
+          "internalType": "bool",
+          "name": "isGreenDay",
+          "type": "bool"
+        }
+      ],
+      "name": "startRevealingBidsStage",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_escrow",
+          "type": "address"
+        }
+      ],
+      "name": "wire",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ]
+}

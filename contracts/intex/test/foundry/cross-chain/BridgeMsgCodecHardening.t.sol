@@ -22,9 +22,11 @@ contract BridgeMsgCodecHardeningHarness {
         );
     }
 
-    function encodeIssuanceInstructions(
-        BridgeMsgCodec.IssuanceInstructionsPayload calldata payload
-    ) external pure returns (bytes memory) {
+    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload calldata payload)
+        external
+        pure
+        returns (bytes memory)
+    {
         return BridgeMsgCodec.encodeIssuanceInstructions(payload);
     }
 

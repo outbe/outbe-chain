@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { IAllocator } from "the-compact/src/interfaces/IAllocator.sol";
-import { ITheCompact } from "the-compact/src/interfaces/ITheCompact.sol";
-import { IdLib } from "the-compact/src/lib/IdLib.sol";
-import { ResetPeriod } from "the-compact/src/types/ResetPeriod.sol";
-import { Scope } from "the-compact/src/types/Scope.sol";
+import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
+import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IdLib} from "the-compact/src/lib/IdLib.sol";
+import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
+import {Scope} from "the-compact/src/types/Scope.sol";
 
 /// @title SolverAllocator
 /// @notice Allocator for The Compact that manages solver collateral resource locks.
@@ -51,7 +51,7 @@ contract SolverAllocator is IAllocator {
     /// @notice Thrown when caller is not the authorized arbiter
     error UnauthorizedArbiter();
     /// @notice Thrown when caller is not the contract owner
-    error OnlyOwner();
+    error UnauthorizedOwner();
     /// @notice Thrown when arbiter has already been set
     error ArbiterAlreadySet();
     /// @notice Thrown when a zero address is supplied as the arbiter
@@ -73,7 +73,7 @@ contract SolverAllocator is IAllocator {
     /// @notice Set the arbiter contract address. Can only be called once by OWNER.
     /// @param _arbiter SolverEscrow contract address
     function setArbiter(address _arbiter) external {
-        if (msg.sender != OWNER) revert OnlyOwner();
+        if (msg.sender != OWNER) revert UnauthorizedOwner();
         if (_arbiter == address(0)) revert ZeroArbiter();
         if (arbiter != address(0)) revert ArbiterAlreadySet();
         arbiter = _arbiter;
@@ -118,12 +118,7 @@ contract SolverAllocator is IAllocator {
         uint256 expires,
         uint256[2][] calldata idsAndAmounts,
         bytes calldata allocatorData
-    )
-        external
-        view
-        override
-        returns (bytes4)
-    {
+    ) external view override returns (bytes4) {
         if (block.timestamp > expires) revert ClaimExpired(expires, block.timestamp);
         if (!isClaimAuthorized(claimHash, claimArbiter, sponsor, nonce, expires, idsAndAmounts, allocatorData)) {
             revert UnauthorizedArbiter();
@@ -140,12 +135,7 @@ contract SolverAllocator is IAllocator {
         uint256 expires,
         uint256[2][] calldata, /* idsAndAmounts */
         bytes calldata /* allocatorData */
-    )
-        public
-        view
-        override
-        returns (bool)
-    {
+    ) public view override returns (bool) {
         // Only the arbiter (escrow) can claim — solvers must go through escrow — and not past expiry.
         return claimArbiter == arbiter && block.timestamp <= expires;
     }

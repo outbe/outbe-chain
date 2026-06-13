@@ -1,0 +1,29 @@
+[[dependencies]]
+name = "LayerZero-v2"
+version = "3.0.0"
+git = "https://github.com/LayerZero-Labs/LayerZero-v2"
+rev = "9c741e7f9790639537b1710a203bcdfd73b0b9ac"
+
+[[dependencies]]
+name = "forge-std"
+version = "1.8.1"
+git = "https://github.com/foundry-rs/forge-std"
+rev = "bb4ceea94d6f10eeb5b41dc2391c6c8bf8e734ef"
+
+[[dependencies]]
+name = "openzeppelin-contracts"
+version = "4.9.6"
+git = "https://github.com/OpenZeppelin/openzeppelin-contracts"
+rev = "dc44c9f1a4c3b10af99492eed84f83ed244203f6"
+
+[[dependencies]]
+name = "solidity-bytes-utils"
+version = "0.8.4"
+git = "https://github.com/GNSPS/solidity-bytes-utils"
+rev = "fc502455bb2a7e26a743378df042612dd50d1eb9"
+
+[[dependencies]]
+name = "the-compact"
+version = "1.0.0"
+git = "https://github.com/Uniswap/the-compact"
+rev = "c84929affb77436f2b0722cd61c70c96d886d251"
