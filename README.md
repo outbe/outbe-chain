@@ -60,8 +60,7 @@ reshare completes on threshold participation, so an unreachable validator does n
 block it. The one exception is the **genesis bootstrap DKG**, which requires all
 `n` genesis dealer logs and fail-fast aborts if a genesis validator is unreachable
 — a one-time coordinated launch where every genesis validator is up by
-construction, operator-recoverable by restarting the launch (recorded as a
-design note, not debt, in `audit_consensus.md`).
+construction, operator-recoverable by restarting the launch.
 
 **Revealed-share exposure.** A validator that is offline during its DKG/reshare
 has its individual share evaluation publicly revealed (so the ceremony can
@@ -121,10 +120,6 @@ contract, not ad-hoc per-module APIs:
   (`storage.contract::<T>()` / `ctx.contract::<T>()`), never implicit context or
   process globals; facades are short-lived and never escape the execution scope.
 
-Where this normative contract is ahead of the implementation, the relevant
-section carries a `Current implementation note(s):` block that references the
-corresponding `audit_*.md` deviation entry.
-
 ## Emission Model
 
 Validator daily emission is delivered as **gems** (`Genesis` gems for the first
@@ -153,9 +148,10 @@ trusted operators. `outbe-cli` never transmits key material to a remote RPC.
 
 Register (BLS proof-of-key, no stake) → stake at least the configured minimum
 (`config_min_stake`) to enter `PENDING` → activate at the next reshare boundary
-to become `ACTIVE`. Only staked (`PENDING`/`ACTIVE`) validators are admitted to
-the consensus P2P secondary tier. See `docs/becoming-a-validator.md` for the full
-operator flow.
+to become `ACTIVE`. Current consensus signers are validators that still hold a
+BLS share (`ACTIVE`, `EXITING`, and temporarily `JAILED` until the next reshare
+clears the share). Non-voting consensus followers may include `REGISTERED`,
+`PENDING`, and `JAILED` validators so they can sync, recover, or rejoin.
 
 ## Upgrades
 
@@ -217,4 +213,5 @@ Full nodes sync and serve RPC without consensus key material; validators additio
 
 ## Documentation
 
+- `docs/becoming-a-validator.md` — validator lifecycle and operator flow.
 - `docker-compose.yml`, `deploy/` — local testnet and deployment

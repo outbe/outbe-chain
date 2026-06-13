@@ -199,7 +199,7 @@ jobs:
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
 
   # Non-blocking audit jobs (continue-on-error). Promote to required after the
-  # first clean run on main; see .ruler/skills/rust-module-audit for context.
+  # first clean run on main.
   deny:
     name: cargo deny
     if: github.event_name == 'push' || !github.event.pull_request.draft

@@ -3,7 +3,7 @@
 *.swo
 .DS_Store
 
-# Ruler-generated local tool output. Source of truth is `.ruler/`.
+# Ruler-generated local tool output.
 .codex/
 .claude/
 

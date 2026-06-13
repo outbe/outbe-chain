@@ -1276,6 +1276,82 @@ fn ordered_validator_addresses(
     Ok(ordered)
 }
 
+fn active_set_hash_from_addresses(addresses: &[EthAddress]) -> B256 {
+    let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
+    bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
+    for address in addresses {
+        bytes.extend_from_slice(address.as_slice());
+    }
+    alloy_primitives::keccak256(bytes)
+}
+
+/// Recover the participant-index-aligned EVM address vector from a finalized DKG
+/// boundary instead of provider-latest validator state.
+///
+/// This is the recovery/live-join counterpart of [`ordered_validator_addresses`].
+/// `build_boundary_artifact` constructs `reshare.new_active_set` by iterating
+/// `output.players()` in Commonware participant order, so the boundary itself is
+/// the canonical source of the old epoch's address mapping. That matters on
+/// restart when Reth head may have executed an unfinalized membership-changing
+/// `BoundaryOutcome` while marshal-finalized consensus still needs the old
+/// committee.
+fn ordered_addresses_from_recovered_boundary(
+    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<Vec<EthAddress>> {
+    let boundary_output = decode_boundary_output(boundary)
+        .wrap_err("failed to decode recovered DKG boundary output for address mapping")?;
+    ensure!(
+        boundary_output.players() == participants,
+        "recovered DKG boundary output players do not match active participant set"
+    );
+
+    let ordered_addresses = boundary.reshare.new_active_set.clone();
+    ensure!(
+        ordered_addresses.len() == participants.len(),
+        "recovered DKG boundary active-set length {} does not match participant count {}",
+        ordered_addresses.len(),
+        participants.len(),
+    );
+    ensure!(
+        active_set_hash_from_addresses(&ordered_addresses) == boundary.reshare.active_set_hash,
+        "recovered DKG boundary active-set hash does not match active-set addresses"
+    );
+    ensure!(
+        alloy_primitives::keccak256(boundary.vrf_group_public_key_bytes.as_ref())
+            == boundary.vrf_group_public_key,
+        "recovered DKG boundary VRF group public key bytes do not match hash"
+    );
+
+    let mut committee = Vec::with_capacity(participants.len());
+    for (address, bls_pk) in ordered_addresses.iter().zip(participants.iter()) {
+        let encoded = commonware_codec::Encode::encode(bls_pk).to_vec();
+        let consensus_pubkey: [u8; 48] = encoded.as_slice().try_into().map_err(|_| {
+            eyre::eyre!(
+                "encoded MinPk consensus pubkey has unexpected length: expected 48, got {}",
+                encoded.len()
+            )
+        })?;
+        committee.push(outbe_consensus::proof::CommitteeEntry {
+            address: *address,
+            consensus_pubkey,
+        });
+    }
+    let snapshot = outbe_consensus::proof::CommitteeSnapshot {
+        committee,
+        vrf_material_version: boundary.vrf_material_version,
+        vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
+        vrf_public_polynomial_hash: dkg_manager::public_polynomial_hash(boundary_output.public()),
+    };
+    ensure!(
+        outbe_consensus::proof::committee_set_hash_v2(boundary.epoch, &snapshot)
+            == boundary.committee_set_hash,
+        "recovered DKG boundary committee_set_hash does not match boundary committee/address mapping"
+    );
+
+    Ok(ordered_addresses)
+}
+
 /// Load the validator EVM signer and the committee address set for the one-time
 /// TEE bootstrap coordination.
 fn tee_bootstrap_setup(
@@ -1302,6 +1378,7 @@ fn epoch_validation_inputs(
     epoch: Epoch,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
+    recovered_boundary: Option<&DkgBoundaryArtifact>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
     let verifier_scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
@@ -1314,7 +1391,13 @@ fn epoch_validation_inputs(
     })?;
     // Simplex participant indices follow ordered::Set pubkey ordering, not the
     // original validator_set order; certificate signer bitmaps use this order.
-    let ordered_addresses = ordered_validator_addresses(participants, validator_set)?;
+    // On restart/live-join with a recovered DKG boundary, provider-latest state
+    // may include an unfinalized membership-changing head. Use the boundary's
+    // own participant-index-aligned address vector for that recovered epoch.
+    let ordered_addresses = match recovered_boundary {
+        Some(boundary) => ordered_addresses_from_recovered_boundary(participants, boundary)?,
+        None => ordered_validator_addresses(participants, validator_set)?,
+    };
     Ok((verifier_scheme, ordered_addresses))
 }
 
@@ -1322,12 +1405,18 @@ fn register_epoch_validation_providers(
     epoch: Epoch,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
+    recovered_boundary: Option<&DkgBoundaryArtifact>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
 ) -> Result<()> {
-    let (verifier_scheme, ordered_addresses) =
-        epoch_validation_inputs(epoch, participants, validator_set, vrf_materials)?;
+    let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
+        epoch,
+        participants,
+        validator_set,
+        recovered_boundary,
+        vrf_materials,
+    )?;
     let _ = certificate_scheme_provider.register(epoch, verifier_scheme);
     let _ = committee_provider.register(epoch, ordered_addresses);
     Ok(())
@@ -1338,6 +1427,10 @@ fn validate_validator_evm_signer(
     signing_key: &bls12381::PrivateKey,
     consensus_validator_set: &validators::ValidatorSet,
     active_validator_set: &validators::ValidatorSet,
+    recovered_committee: Option<(
+        &commonware_utils::ordered::Set<bls12381::PublicKey>,
+        &DkgBoundaryArtifact,
+    )>,
     verifier_join: bool,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
@@ -1351,6 +1444,49 @@ fn validate_validator_evm_signer(
             )
         })?;
     let signer_address = signer.address();
+
+    if let Some((participants, boundary)) = recovered_committee {
+        let ordered_addresses =
+            ordered_addresses_from_recovered_boundary(participants, boundary)
+                .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
+        let local_public_key = signing_key.public_key();
+        let Some(participant_index) = participants.position(&local_public_key) else {
+            if verifier_join {
+                info!(
+                    %signer_address,
+                    epoch = boundary.epoch,
+                    "verifier-join: local BLS key is not in the recovered DKG boundary committee; \
+                     the node syncs as a verifier"
+                );
+                return Ok(None);
+            }
+            eyre::bail!(
+                "local BLS key is not in recovered DKG boundary committee for epoch {}; \
+                 refusing latest-state EVM signer authorization",
+                boundary.epoch
+            );
+        };
+        let expected_address = ordered_addresses.get(participant_index).ok_or_else(|| {
+            eyre::eyre!(
+                "recovered DKG boundary address mapping missing participant index {}",
+                participant_index
+            )
+        })?;
+        ensure!(
+            *expected_address == signer_address,
+            "validator EVM key address {} does not match recovered DKG boundary address {} \
+             for local BLS consensus key",
+            signer_address,
+            expected_address
+        );
+        info!(
+            address = %signer_address,
+            epoch = boundary.epoch,
+            "validated validator EVM signer against recovered DKG boundary"
+        );
+        return Ok(Some(signer_address));
+    }
+
     let authorized = consensus_validator_set
         .addresses
         .iter()
@@ -1475,21 +1611,6 @@ where
         count = validator_set.public_keys.len(),
         "loaded validator set"
     );
-    let active_validator_set = validators::read_validators_at_latest(&node.provider)
-        .wrap_err("failed to load active validator set for EVM signer validation")?;
-    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
-    // --consensus.signing-share. The node may not yet be in the on-chain validator set
-    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
-    let verifier_join = args.signing_share.is_none()
-        && args.public_polynomial.is_some()
-        && args.dkg_output.is_some();
-    let proposer_evm_address = validate_validator_evm_signer(
-        &args,
-        &signing_key,
-        &validator_set,
-        &active_validator_set,
-        verifier_join,
-    )?;
 
     // ── 3. Set up P2P network ───────────────────────────────────────────
     let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
@@ -2006,6 +2127,26 @@ where
                 .try_collect()
                 .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
         };
+
+    let active_validator_set = validators::read_validators_at_latest(&node.provider)
+        .wrap_err("failed to load active validator set for EVM signer validation")?;
+    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
+    // --consensus.signing-share. The node may not yet be in the on-chain validator set
+    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
+    let verifier_join = args.signing_share.is_none()
+        && args.public_polynomial.is_some()
+        && args.dkg_output.is_some();
+    let recovered_committee_for_signer = recovered_boundary
+        .as_ref()
+        .map(|(_, boundary)| (&participants, boundary));
+    let proposer_evm_address = validate_validator_evm_signer(
+        &args,
+        &signing_key,
+        &validator_set,
+        &active_validator_set,
+        recovered_committee_for_signer,
+        verifier_join,
+    )?;
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
     // On a fresh chain (no executed blocks yet), if this validator runs a TEE
@@ -2927,8 +3068,15 @@ where
         };
 
         // ── c. Create reporter for this epoch ───────────────────────────
-        let (verifier_scheme, ordered_addresses) =
-            epoch_validation_inputs(current_epoch, &participants, &validator_set, &vrf_materials)?;
+        let recovered_boundary_for_epoch =
+            recovered_boundary_artifact.filter(|artifact| artifact.epoch == current_epoch.get());
+        let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
+            current_epoch,
+            &participants,
+            &validator_set,
+            recovered_boundary_for_epoch,
+            &vrf_materials,
+        )?;
 
         let elector_config =
             epoch_elector_config(current_epoch, &reporter_continuity, vrf_materials.clone())?;
@@ -3828,6 +3976,7 @@ where
                                 next_epoch,
                                 &activated_participants,
                                 &activated_validator_set,
+                                None,
                                 &vrf_materials,
                                 &certificate_scheme_provider,
                                 &committee_provider,

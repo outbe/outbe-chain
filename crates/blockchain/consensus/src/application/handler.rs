@@ -928,6 +928,12 @@ enum BuildBlockOutcome {
     BoundaryUnavailable,
 }
 
+enum ParentProofLookup {
+    NoProofNeeded,
+    Found(CertifiedParentProofRecord),
+    Unavailable,
+}
+
 pub struct ApplicationHandler {
     /// Receiver for messages from the Automaton/Relay side.
     rx: futures::channel::mpsc::Receiver<Message>,
@@ -1695,6 +1701,72 @@ impl ApplicationShared {
         )
     }
 
+    async fn select_parent_proof_for_proposal(
+        &self,
+        clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
+        round: Round,
+        parent_digest: Digest,
+        parent_height: Height,
+        parent_proof_key: Option<CertifiedParentProofKey>,
+    ) -> ParentProofLookup {
+        if parent_height.get() == 0 {
+            return ParentProofLookup::NoProofNeeded;
+        }
+        let Some(parent_proof_key) = parent_proof_key else {
+            warn!(
+                %round,
+                parent = %parent_digest.0,
+                parent_height = parent_height.get(),
+                "non-genesis proposal missing exact parent proof key"
+            );
+            crate::metrics::record_parent_cert_missing();
+            crate::metrics::record_parent_proof_unavailable_forfeit();
+            crate::metrics::record_phase1_parent_proof_unavailable();
+            return ParentProofLookup::Unavailable;
+        };
+        match self
+            .finalization_selector
+            .select_direct_parent_proof_by_key_with_wait(
+                clock,
+                parent_proof_key,
+                parent_height.get(),
+                crate::finalization::selection::PHASE1_FINALIZATION_WAIT_DEFAULT,
+            )
+            .await
+        {
+            Some(record) => ParentProofLookup::Found(record),
+            None => {
+                // The in-process selection store missed the direct parent's proof
+                // (post-restart, late-joining validator, or brief finalization lag),
+                // but marshal's DURABLE finalization archive may still hold the
+                // parent's finalization locally. Recover it and rebuild the
+                // canonical Finalization parent-proof record before forfeiting the
+                // slot.
+                match self
+                    .recover_parent_proof_from_marshal(parent_proof_key, parent_height.get())
+                    .await
+                {
+                    Some(record) => {
+                        crate::metrics::record_parent_proof_recovered_from_marshal();
+                        info!(
+                            %round,
+                            parent = %parent_digest.0,
+                            parent_height = parent_height.get(),
+                            "recovered direct-parent proof from marshal archive; slot not forfeited"
+                        );
+                        ParentProofLookup::Found(record)
+                    }
+                    None => {
+                        crate::metrics::record_parent_cert_missing();
+                        crate::metrics::record_parent_proof_unavailable_forfeit();
+                        crate::metrics::record_phase1_parent_proof_unavailable();
+                        ParentProofLookup::Unavailable
+                    }
+                }
+            }
+        }
+    }
+
     /// Uses FCU-based flow (like tempo): sends fork_choice_updated with payload
     /// attributes through the executor actor, so the engine starts building
     /// a payload on the correct canonical state with txpool access.
@@ -1859,62 +1931,19 @@ impl ApplicationShared {
         // durable archive (, `recover_parent_proof_from_marshal`); only if
         // that also misses does the slot forfeit deterministically with the
         // parent-proof-unavailable metric.
-        let parent_proof_record = if parent_height.get() == 0 {
-            None
-        } else {
-            let Some(parent_proof_key) = parent_proof_key else {
-                warn!(
-                    %round,
-                    parent = %parent_digest.0,
-                    parent_height = parent_height.get(),
-                    "non-genesis proposal missing exact parent proof key"
-                );
-                crate::metrics::record_parent_cert_missing();
-                crate::metrics::record_parent_proof_unavailable_forfeit();
-                crate::metrics::record_phase1_parent_proof_unavailable();
-                return Ok(BuildBlockOutcome::ParentProofUnavailable);
-            };
-            match self
-                .finalization_selector
-                .select_direct_parent_proof_by_key_with_wait(
-                    clock,
-                    parent_proof_key,
-                    parent_height.get(),
-                    crate::finalization::selection::PHASE1_FINALIZATION_WAIT_DEFAULT,
-                )
-                .await
-            {
-                Some(record) => Some(record),
-                None => {
-                    // the in-process selection store missed the direct
-                    // parent's proof (post-restart, late-joining validator, or
-                    // brief finalization lag), but marshal's DURABLE finalization
-                    // archive may still hold the parent's finalization locally.
-                    // Recover it and rebuild the canonical Finalization
-                    // parent-proof record before forfeiting the slot.
-                    match self
-                        .recover_parent_proof_from_marshal(parent_proof_key, parent_height.get())
-                        .await
-                    {
-                        Some(record) => {
-                            crate::metrics::record_parent_proof_recovered_from_marshal();
-                            info!(
-                                %round,
-                                parent = %parent_digest.0,
-                                parent_height = parent_height.get(),
-                                "recovered direct-parent proof from marshal archive; slot not forfeited"
-                            );
-                            Some(record)
-                        }
-                        None => {
-                            crate::metrics::record_parent_cert_missing();
-                            crate::metrics::record_parent_proof_unavailable_forfeit();
-                            crate::metrics::record_phase1_parent_proof_unavailable();
-                            return Ok(BuildBlockOutcome::ParentProofUnavailable);
-                        }
-                    }
-                }
-            }
+        let parent_proof_record = match self
+            .select_parent_proof_for_proposal(
+                clock,
+                round,
+                parent_digest,
+                parent_height,
+                parent_proof_key,
+            )
+            .await
+        {
+            ParentProofLookup::NoProofNeeded => None,
+            ParentProofLookup::Found(record) => Some(record),
+            ParentProofLookup::Unavailable => return Ok(BuildBlockOutcome::ParentProofUnavailable),
         };
         // V2 wire-format swap landed. Build the V2
         // `CertifiedParentAccountingMetadata` directly from the proof record
