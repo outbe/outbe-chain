@@ -28,6 +28,7 @@ const config: HardhatUserConfig = {
     tests: "./test/hardhat",
   },
   solidity: {
+    npmFilesToBuild: ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"],
     profiles: {
       default: {
         version: "0.8.30",
@@ -35,7 +36,7 @@ const config: HardhatUserConfig = {
           evmVersion: "prague",
           optimizer: {
             enabled: true,
-            runs: 10000,
+            runs: 200,
           },
           viaIR: true
         }
@@ -46,7 +47,7 @@ const config: HardhatUserConfig = {
           evmVersion: "prague",
           optimizer: {
             enabled: true,
-            runs: 10000,
+            runs: 200,
           },
           viaIR: true
         },

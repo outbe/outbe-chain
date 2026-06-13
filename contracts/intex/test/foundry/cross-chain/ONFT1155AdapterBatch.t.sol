@@ -12,6 +12,7 @@ import {
     MultiRecipientSendParam
 } from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @title ONFT1155AdapterBatchTest
 /// @notice direct coverage for the ONFT-Batch outbound entry points
@@ -42,8 +43,8 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        srcToken = new IntexNFT1155(admin, admin);
-        dstToken = new IntexNFT1155(admin, admin);
+        srcToken = DeployProxy.intexNFT1155(admin, admin);
+        dstToken = DeployProxy.intexNFT1155(admin, admin);
         srcBatch = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
         dstBatch = new ONFT1155AdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
 

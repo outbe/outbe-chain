@@ -8,6 +8,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -70,14 +71,10 @@ contract IntexCallFlowTest is TestHelperOz5 {
         vm.deal(intexFactory, 1000 ether);
 
         // ---- Deploy BSC contracts ----
-        intexBnb = new IntexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        intexBnb = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         batchAdapterBnb = ONFT1155AdapterBatch(
             payable(_deployOApp(
@@ -87,13 +84,9 @@ contract IntexCallFlowTest is TestHelperOz5 {
         );
 
         // ---- Deploy Outbe contracts ----
-        intexOutbe = new IntexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         batchAdapterOutbe = ONFT1155AdapterBatch(
             payable(_deployOApp(

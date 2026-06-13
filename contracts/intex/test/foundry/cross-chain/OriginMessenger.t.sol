@@ -9,6 +9,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 import {MessagingFee, MessagingReceipt, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
@@ -59,22 +60,14 @@ contract OriginMessengerTest is TestHelperOz5 {
         vm.deal(intexFactory, 1000 ether);
 
         // Deploy mock BNB contracts
-        auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         // Deploy BNB adapter (for cross-chain testing)
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         // Deploy batch adapter on BNB
         batchAdapter = new ONFT1155AdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
@@ -141,7 +134,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginMessenger newAdapter = new OriginMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        OriginMessenger newAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);

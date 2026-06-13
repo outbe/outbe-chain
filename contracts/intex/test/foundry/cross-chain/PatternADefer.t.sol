@@ -21,6 +21,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
 // Re-import inside contract context not needed; lib usage via `OptionsBuilder for bytes` declared below.
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
@@ -138,14 +139,10 @@ contract PatternADeferTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(3, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
-        intexOutbe = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
         onftBnb = ONFT1155Adapter(
             _deployOApp(
                 type(ONFT1155Adapter).creationCode,

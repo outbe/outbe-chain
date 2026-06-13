@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {OApp, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OAppOptionsType3} from "@layerzerolabs/oapp-evm/oapp/libs/OAppOptionsType3.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {
+    OAppUpgradeable,
+    Origin,
+    MessagingFee,
+    MessagingReceipt
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/OAppUpgradeable.sol";
+import {
+    OAppOptionsType3Upgradeable
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 
 import {IOriginMessenger} from "./interfaces/IOriginMessenger.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
@@ -15,9 +23,18 @@ import {LzGasEstimator} from "../shared/libs/LzGasEstimator.sol";
 /// @title OriginMessenger
 /// @author Outbe
 /// @notice LayerZero bridge adapter for Outbe Chain.
-/// @dev Sends messages to BNB, receives messages from BNB. All auction/series
+/// @dev UUPS upgradeable: deployed behind an ERC1967 proxy; the LayerZero endpoint stays an
+///      implementation immutable, so every upgrade must pass the same endpoint to the constructor.
+///      Sends messages to BNB, receives messages from BNB. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
-contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessControl, ReentrancyGuard {
+contract OriginMessenger is
+    IOriginMessenger,
+    OAppUpgradeable,
+    OAppOptionsType3Upgradeable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
     /// @notice Gates the demand-side sends: auction stages, AUCTION_RESULT, REFUND_INSTRUCTIONS.
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
     /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_QUALIFIED, MARK_CALLED.
@@ -37,25 +54,71 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
     ///         only accepted inbound source.
     uint32 public immutable BNB_EID;
 
+    /// @custom:storage-location erc7201:outbe.intex.OriginMessenger
+    struct OriginMessengerStorage {
+        /// @dev Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
+        address desis;
+        /// @dev IntexFactory authorized for the supply-side sends (holds `INTEX_FACTORY_ROLE`).
+        address intexFactory;
+        /// @dev Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
+        ///      Backs the `nextNonce` override that switches this OApp into ORDERED-delivery mode.
+        mapping(uint32 srcEid => mapping(bytes32 sender => uint64 nonce)) inboundNonce;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginMessenger")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xb52fe309ffa163cf95d112f1416b87c89560d9d1ded95f235e82ca4df07af800;
+
+    function _s() private pure returns (OriginMessengerStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _lzEndpoint, uint32 _bnbEid) OAppUpgradeable(_lzEndpoint) {
+        BNB_EID = _bnbEid;
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy: LayerZero delegate, contract owner, and admin role holder.
+    /// @param _delegate Owner, endpoint delegate, and receiver of `DEFAULT_ADMIN_ROLE`.
+    function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
+
+        __Ownable_init(_delegate);
+        __OApp_init(_delegate);
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // --- Storage getters ---
     /// @notice Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
-    address public desis;
+    /// @return The wired Desis address.
+    function desis() public view returns (address) {
+        return _s().desis;
+    }
 
     /// @notice IntexFactory authorized for the supply-side sends (holds `INTEX_FACTORY_ROLE`).
-    address public intexFactory;
+    /// @return The wired IntexFactory address.
+    function intexFactory() external view returns (address) {
+        return _s().intexFactory;
+    }
 
-    /// @notice Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
-    /// @dev Backs the `nextNonce` override that switches this OApp into LayerZero's ORDERED-delivery
-    ///      mode. The endpoint queries `nextNonce(srcEid, sender)` before delivery and refuses to
-    ///      route any packet whose `_origin.nonce` does not equal `inboundNonce + 1`, rejecting both
-    ///      duplicates and out-of-order deliveries at the transport layer.
-    mapping(uint32 srcEid => mapping(bytes32 sender => uint64)) public inboundNonce;
-
-    constructor(address _lzEndpoint, address _delegate, uint32 _bnbEid)
-        OApp(_lzEndpoint, _delegate)
-        Ownable(_delegate)
-    {
-        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
-        BNB_EID = _bnbEid;
+    /// @notice Last inbound LayerZero nonce successfully processed for a `(srcEid, sender)` pair.
+    /// @param srcEid LayerZero source endpoint id of the channel.
+    /// @param sender Bytes32-encoded peer address on the source chain.
+    /// @return The last processed inbound nonce.
+    function inboundNonce(uint32 srcEid, bytes32 sender) external view returns (uint64) {
+        return _s().inboundNonce[srcEid][sender];
     }
 
     // --- Admin ---
@@ -65,14 +128,15 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
         if (_intexFactory == address(0)) revert ZeroAddress("intexFactory");
         _assertDesisInterface(_desis);
 
-        address desisOld = desis;
-        address intexFactoryOld = intexFactory;
+        OriginMessengerStorage storage $ = _s();
+        address desisOld = $.desis;
+        address intexFactoryOld = $.intexFactory;
 
-        if (desis != address(0)) _revokeRole(DESIS_ROLE, desis);
-        if (intexFactory != address(0)) _revokeRole(INTEX_FACTORY_ROLE, intexFactory);
+        if ($.desis != address(0)) _revokeRole(DESIS_ROLE, $.desis);
+        if ($.intexFactory != address(0)) _revokeRole(INTEX_FACTORY_ROLE, $.intexFactory);
 
-        desis = _desis;
-        intexFactory = _intexFactory;
+        $.desis = _desis;
+        $.intexFactory = _intexFactory;
 
         _grantRole(DESIS_ROLE, _desis);
         _grantRole(INTEX_FACTORY_ROLE, _intexFactory);
@@ -399,7 +463,7 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
         // Bump the per-channel nonce so `nextNonce` advances by exactly one. Endpoint already
         // verified `_origin.nonce == inboundNonce + 1` before calling us; recording here keeps the
         // invariant for the next delivery on this `(srcEid, sender)` channel.
-        inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
+        _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
 
         // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or the
         // downstream Desis call must not escape `_lzReceive` and wedge the ORDERED lane.
@@ -455,7 +519,8 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
 
         if (bodySrcEid != _originSrcEid) revert SrcEidBodyMismatch(_originSrcEid, bodySrcEid);
 
-        IDesis(desis)
+        address desisRecipient = _s().desis;
+        IDesis(desisRecipient)
             .processBidsBatch(
                 seriesId,
                 _originSrcEid,
@@ -471,8 +536,8 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
 
         // Auto-fire clearing once bids are committed. Local try/catch so a clearing-side revert
         // does not roll back the bid intake — operators can retry clearAuction manually if needed.
-        if (IDesis(desis).getAuctionStage(seriesId) == IDesis.AuctionStage.BidsReceived) {
-            try IDesis(desis).clearAuction(seriesId) {
+        if (IDesis(desisRecipient).getAuctionStage(seriesId) == IDesis.AuctionStage.BidsReceived) {
+            try IDesis(desisRecipient).clearAuction(seriesId) {
                 emit ClearingAutoDispatched(seriesId);
             } catch (bytes memory reason) {
                 emit ClearingAutoDispatchFailed(seriesId, reason);
@@ -489,13 +554,13 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _sender Bytes32-encoded peer address on the source chain.
     /// @return The next inbound nonce the endpoint must deliver on this channel.
     function nextNonce(uint32 _srcEid, bytes32 _sender) public view override returns (uint64) {
-        return inboundNonce[_srcEid][_sender] + 1;
+        return _s().inboundNonce[_srcEid][_sender] + 1;
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.
     /// @param interfaceId Interface id to check.
     /// @return True if the interface is supported.
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControl) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 

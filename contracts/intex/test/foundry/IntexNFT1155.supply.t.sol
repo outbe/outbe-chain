@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Test} from "forge-std/Test.sol";
@@ -24,7 +25,7 @@ contract IntexNFT1155SupplyTest is Test {
     uint32 constant CALL_PERIOD = uint32(1 days);
 
     function setUp() public {
-        nft = new IntexNFT1155(admin, bridger);
+        nft = DeployProxy.intexNFT1155(admin, bridger);
         vm.startPrank(admin);
         nft.grantRole(nft.SETTLEMENT_ROLE(), settler);
         nft.grantRole(nft.PROMIS_ROLE(), promis);
