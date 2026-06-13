@@ -32,7 +32,7 @@ pub fn dispatch(
             totalSupply(_) => metadata::<IPromis::totalSupplyCall>(|| promis.total_supply()),
             balanceOf(c) => view(c, |c| promis.balance_of(c.account)),
             mineCoen(c) => mutate(c, caller, |sender, c| {
-                // A-32: mine_coen burns synthetic promis and returns amount.
+                // mine_coen burns synthetic promis and returns amount.
                 // We must mint native tokens to the caller.
                 let amount = promis.mine_coen(sender, c.amount)?;
                 if !amount.is_zero() {

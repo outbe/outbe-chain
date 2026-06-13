@@ -30,6 +30,7 @@ use commonware_utils::{
     N3f1, TryCollect as _,
 };
 use futures::channel::mpsc;
+use futures::StreamExt as _;
 use outbe_consensus::{
     bls::bootstrap_dkg,
     digest::Digest as OutbeDigest,
@@ -147,10 +148,25 @@ fn verifier_scheme_from(fx: &Fixture) -> HybridScheme<MinSig> {
     .unwrap()
 }
 
-fn build_reporter(fx: &Fixture, store: FinalizedParentCertStore) -> OutbeReporter {
+fn build_reporter(
+    fx: &Fixture,
+    store: FinalizedParentCertStore,
+) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     use commonware_consensus::simplex::elector::Config as _;
-    let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-    OutbeReporter::new(
+    // certified-notarization persistence is enqueued to the
+    // FinalizationActor mailbox; keep the receiver so the test can drain it and
+    // apply the write (what the actor does) before asserting on the store.
+    let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
+    // Certified-parent proof-store test: no finalize votes, so a verify actor
+    // whose receiver is dropped (mailbox.verify is a no-op) is sufficient.
+    let (_verify_actor, verify_mailbox) =
+        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+            outbe_consensus::hybrid::HybridSchemeProvider::new(),
+            outbe_consensus::finalization::late_sig_store::shared(
+                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
+            ),
+        );
+    let reporter = OutbeReporter::new(
         ReporterContinuity::default(),
         ordered_addresses(),
         FinalizationMailbox::from_sender(tx),
@@ -159,10 +175,9 @@ fn build_reporter(fx: &Fixture, store: FinalizedParentCertStore) -> OutbeReporte
         HybridRandom::default().build(&fx.participants),
         Epoch::new(0),
         store,
-        outbe_consensus::finalization::late_sig_store::shared(
-            outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
-        ),
-    )
+        verify_mailbox,
+    );
+    (reporter, rx)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -181,8 +196,22 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
 
     let persisted = {
         let store = FinalizedParentCertStore::open(&dir).unwrap();
-        let mut reporter = build_reporter(&fx, store.clone());
+        let (mut reporter, mut rx) = build_reporter(&fx, store.clone());
         let _ = reporter.report(Activity::Certification(notarization));
+        // the durable write is now off the voter task — the reporter
+        // built + verified the record inline and enqueued it. Drain the mailbox
+        // and apply the write exactly as the FinalizationActor would, then
+        // assert on the store.
+        match rx
+            .next()
+            .await
+            .expect("certification enqueued for persistence")
+        {
+            FinalizationMessage::CertifiedNotarization(record) => {
+                store.put_certified_notarization(record).unwrap();
+            }
+            FinalizationMessage::Finalized(_) => panic!("expected CertifiedNotarization"),
+        }
         // Capture pre-drop state for byte-equal comparison post-reopen.
         // `store` is dropped at end of scope after this expression.
         store

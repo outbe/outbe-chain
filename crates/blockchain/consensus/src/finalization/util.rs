@@ -511,4 +511,94 @@ mod tests {
             ReplayClassification::FatalInconsistency,
         );
     }
+
+    // the finalization actor's recovery loop calls `retry_with_backoff` per
+    // cycle and, on exhaustion, records the stall metric and retries the NEXT
+    // cycle instead of returning a node-fatal error (actor.rs `handle_finalized`).
+    // The loop can only EXIT via `Ok(..) => process_finalization(..)`, so a
+    // persistent failure can never return the fatal error — it parks and retries.
+    // These tests pin the building block the loop depends on: exhaustion after
+    // exactly `max_retries` and recovery when the resolver clears mid-cycle.
+
+    #[test]
+    fn retry_with_backoff_exhausts_after_max_retries_on_persistent_failure() {
+        use commonware_runtime::Runner as _;
+        use std::sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        };
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(600)).start(
+            |context| async move {
+                let calls = Arc::new(AtomicU32::new(0));
+                let calls_resolver = calls.clone();
+                let resolve = move || {
+                    let calls = calls_resolver.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Err::<(), ()>(())
+                    }
+                };
+                let failure = retry_with_backoff(
+                    &context,
+                    resolve,
+                    3,
+                    Duration::from_millis(50),
+                    Duration::from_millis(100),
+                )
+                .await
+                .expect_err("persistent failure must exhaust the retry budget");
+                assert_eq!(failure.attempts, 3, "exactly max_retries attempts");
+                assert_eq!(failure.last_kind, RetryFailureKind::Unavailable);
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    3,
+                    "resolver invoked exactly max_retries times before Err"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn retry_with_backoff_recovers_when_resolver_succeeds_before_exhaustion() {
+        use commonware_runtime::Runner as _;
+        use std::sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        };
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(600)).start(
+            |context| async move {
+                // Fail the first two attempts, succeed on the third — models a
+                // transient all-peers stall that clears mid-cycle: the loop
+                // resolves and advances rather than staying parked.
+                let calls = Arc::new(AtomicU32::new(0));
+                let calls_resolver = calls.clone();
+                let resolve = move || {
+                    let calls = calls_resolver.clone();
+                    async move {
+                        let n = calls.fetch_add(1, Ordering::SeqCst);
+                        if n < 2 {
+                            Err::<u64, ()>(())
+                        } else {
+                            Ok(42)
+                        }
+                    }
+                };
+                let value = retry_with_backoff(
+                    &context,
+                    resolve,
+                    5,
+                    Duration::from_millis(50),
+                    Duration::from_millis(100),
+                )
+                .await
+                .expect("resolver recovering before the budget must yield Ok");
+                assert_eq!(value, 42);
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    3,
+                    "stopped retrying as soon as the resolver succeeded"
+                );
+            },
+        );
+    }
 }

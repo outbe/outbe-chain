@@ -7,6 +7,9 @@ use alloy_sol_types::sol;
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
 pub const SLASH_INDICATOR_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 pub const STAKING_ADDR: Address = address!("0x000000000000000000000000000000000000EE02");
+// Rewards precompile (EE03) exposes no callable methods — validator emission is
+// paid in gems — so it is referenced only by the address-pin test.
+#[cfg(test)]
 pub const REWARDS_ADDR: Address = address!("0x000000000000000000000000000000000000EE03");
 pub const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 pub const TRIBUTE_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001100");
@@ -90,14 +93,6 @@ sol! {
         function unjailValidator() external;
         function getStake(address validator) external view returns (uint256);
         function getTotalStaked() external view returns (uint256);
-    }
-
-    #[derive(Debug)]
-    interface IRewards {
-        function claimRewards() external returns (uint256);
-        function pendingRewards(address validator) external view returns (uint256);
-
-        event RewardsClaimed(address indexed validator, uint256 amount);
     }
 
     #[derive(Debug)]
@@ -314,13 +309,11 @@ mod tests {
         // 4-byte selectors must not silently change
         let register = IValidatorSet::registerValidatorCall::SELECTOR;
         let stake = IStaking::stakeCall::SELECTOR;
-        let claim_rewards = IRewards::claimRewardsCall::SELECTOR;
         let submit_double = ISlashIndicator::submitDoubleProposalEvidenceCall::SELECTOR;
 
         // Selectors are deterministic from the signature — just assert they're stable
         assert_eq!(register.len(), 4);
         assert_eq!(stake.len(), 4);
-        assert_eq!(claim_rewards.len(), 4);
         assert_eq!(submit_double.len(), 4);
 
         // Pin specific known values (computed from keccak256 of signatures)
@@ -343,10 +336,6 @@ mod tests {
         assert_eq!(
             ISlashIndicator::ProposerFelony::SIGNATURE_HASH,
             keccak256("ProposerFelony(address,uint64,uint64)")
-        );
-        assert_eq!(
-            IRewards::RewardsClaimed::SIGNATURE_HASH,
-            keccak256("RewardsClaimed(address,uint256)")
         );
         assert_eq!(
             INod::NodBucketQualified::SIGNATURE_HASH,

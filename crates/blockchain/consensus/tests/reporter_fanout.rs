@@ -114,10 +114,24 @@ fn verifier_scheme() -> HybridScheme<MinSig> {
     HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap()
 }
 
-fn build_reporter(store: FinalizedParentCertStore) -> OutbeReporter {
+fn build_reporter(
+    store: FinalizedParentCertStore,
+) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     let (_, participants) = test_participants(3);
-    let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-    OutbeReporter::new(
+    // certified-notarization persistence is enqueued to the
+    // FinalizationActor mailbox; the test keeps the receiver to drain it.
+    let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
+    // This test exercises only the certification fan-out, not finalize votes, so
+    // a verify actor whose receiver is immediately dropped (its `mailbox.verify`
+    // becomes a no-op) is sufficient.
+    let (_verify_actor, verify_mailbox) =
+        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+            outbe_consensus::hybrid::HybridSchemeProvider::new(),
+            outbe_consensus::finalization::late_sig_store::shared(
+                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
+            ),
+        );
+    let reporter = OutbeReporter::new(
         ReporterContinuity::default(),
         ordered_addresses(),
         FinalizationMailbox::from_sender(tx),
@@ -126,21 +140,35 @@ fn build_reporter(store: FinalizedParentCertStore) -> OutbeReporter {
         HybridRandom::default().build(&participants),
         Epoch::new(0),
         store,
-        outbe_consensus::finalization::late_sig_store::shared(
-            outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
-        ),
-    )
+        verify_mailbox,
+    );
+    (reporter, rx)
+}
+
+/// apply the off-thread certified-notarization writes the reporter
+/// enqueued, exactly as the `FinalizationActor` would, so a test can assert on
+/// the store after `report(Activity::Certification(..))`.
+fn drain_certification_writes(
+    rx: &mut mpsc::UnboundedReceiver<FinalizationMessage>,
+    store: &FinalizedParentCertStore,
+) {
+    while let Ok(msg) = rx.try_recv() {
+        if let FinalizationMessage::CertifiedNotarization(record) = msg {
+            store.put_certified_notarization(record).unwrap();
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_fanout_persists_certification_activity_before_marshal_filter() {
     let store = FinalizedParentCertStore::new();
-    let mut reporter = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(store.clone());
     let notarization = valid_notarization();
     let parent_hash = notarization.proposal.payload.0;
     let proof_key = CertifiedParentProofKey::new(0, 2, parent_hash);
 
     let _ = reporter.report(Activity::Certification(notarization.clone()));
+    drain_certification_writes(&mut rx, &store);
 
     let record = store
         .get_certified_notarization(proof_key)
@@ -182,9 +210,13 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     assert_ne!(original_hash, tampered_hash);
 
     let store = FinalizedParentCertStore::new();
-    let mut reporter = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(store.clone());
 
     let _ = reporter.report(Activity::Certification(notarization));
+    // A verify failure drops on-thread before enqueue, so draining finds
+    // nothing — but apply any writes so the "nothing persisted" assertion is
+    // exact even if behavior regresses.
+    drain_certification_writes(&mut rx, &store);
 
     // Verify-before-write contract: no record persisted on signature mismatch.
     assert!(
@@ -205,10 +237,11 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_handle_certification_records_witness_flag_true() {
     let store = FinalizedParentCertStore::new();
-    let mut reporter = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(store.clone());
     let notarization = valid_notarization();
     let parent_hash = notarization.proposal.payload.0;
     let _ = reporter.report(Activity::Certification(notarization));
+    drain_certification_writes(&mut rx, &store);
     let record = store
         .get_certified_notarization(CertifiedParentProofKey::new(0, 2, parent_hash))
         .unwrap();

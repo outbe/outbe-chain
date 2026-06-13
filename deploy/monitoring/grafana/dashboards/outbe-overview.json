@@ -88,7 +88,7 @@
         "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
         "targets": [
           {
-            "expr": "commonware_p2p_active_peers",
+            "expr": "commonware_p2p_tracked_peer_set_size",
             "legendFormat": "peer set"
           }
         ],

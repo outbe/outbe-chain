@@ -478,12 +478,14 @@ mod tests {
 
     #[test]
     fn test_status_filter_maps_to_correct_codes() {
-        // Must match validatorset/logic.rs:42-48
+        // Must match `validator_status` in validatorset/src/runtime.rs.
         assert_eq!(parse_status_filter("registered"), 0);
+        assert_eq!(parse_status_filter("pending"), 1);
         assert_eq!(parse_status_filter("active"), 2);
         assert_eq!(parse_status_filter("exiting"), 3);
         assert_eq!(parse_status_filter("unbonding"), 4);
         assert_eq!(parse_status_filter("inactive"), 5);
+        assert_eq!(parse_status_filter("jailed"), 6);
         // Case insensitive
         assert_eq!(parse_status_filter("Active"), 2);
         assert_eq!(parse_status_filter("UNBONDING"), 4);
@@ -491,9 +493,12 @@ mod tests {
 
     #[test]
     fn test_unknown_status_filter_returns_255() {
+        // 255 is the "matches nothing" sentinel for strings that are not a
+        // canonical status name. PENDING (1) is a real lifecycle status, so it
+        // IS user-filterable and is covered by the positive test above.
         assert_eq!(parse_status_filter("bogus"), 255);
         assert_eq!(parse_status_filter(""), 255);
-        assert_eq!(parse_status_filter("pending"), 255); // pending=1 is not user-filterable
+        assert_eq!(parse_status_filter("notastatus"), 255);
     }
 
     // --- Mock RPC tests ---

@@ -1,60 +1,94 @@
-use alloy_primitives::{keccak256, Address, B256};
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use alloy_primitives::{Address, B256};
+use outbe_primitives::{
+    error::{PrecompileError, Result},
+    storage::StorageHandle,
+};
 
 use crate::schema::SlashIndicator;
 
-/// Called from post-execution when a voter was absent for a finalized
-/// block. Idempotent under metadata-tx replays: the
-/// `slashed_voter_for_block[fb_hash][validator]` guard short-circuits
-/// the inner counter increment if this `(fb_hash, validator)` pair has
-/// already been processed.
-///
-/// `fb_hash` is the finalized block hash (`metadata.finalized_block_hash`)
-/// — the natural composite key for "was this miss already counted?".
-pub fn slash_voter(storage: StorageHandle, fb_hash: B256, validator: Address) -> Result<()> {
-    let mut si = SlashIndicator::new(storage);
-    if si
-        .slashed_voter_for_block
-        .get_nested(&fb_hash)
-        .read(&validator)?
-    {
-        return Ok(());
-    }
-    si.slash_voter(validator)?;
-    si.slashed_voter_for_block
-        .get_nested(&fb_hash)
-        .write(&validator, true)?;
-    Ok(())
-}
+/// number of recent finalized blocks whose per-`fb_hash` slash-window
+/// guards (`voter_window_slashed`, `proposer_window_slashed`) stay live. The
+/// replay horizon is the K-block late-finalize window, so retaining the last 64
+/// finalized blocks is generous; older guards are pruned by
+/// [`prune_slash_guards`]. Mirrors `FINALIZED_PARTICIPATION_RETAIN` /
+/// `BLOCK_GUARD_RETAIN`. Changing it is a hard fork.
+pub const SLASH_GUARD_RETAIN: u64 = 64;
 
-/// Called from Phase 1 finalized-parent metadata for each missed-proposer event.
+/// Slash every window-close absentee of the finalized block `fb_hash`, exactly
+/// once across metadata replays.
 ///
-/// `metadata.missed_proposers` is an ordered event list, so the same proposer may
-/// appear multiple times before one finalized block when multiple views were
-/// skipped. The idempotency key includes the event index to replay exact
-/// metadata safely without collapsing those duplicate events.
-pub fn slash_proposer_event(
+/// The window-close absentee pass is atomic per finalized block, so a single
+/// `voter_window_slashed[fb_hash]` bool replaces the former unbounded
+/// `mapping(fb_hash => mapping(address => bool))`: if the guard is already set
+/// the whole pass is a no-op, otherwise every absentee is slashed and the guard
+/// is set. `absentees` is the deterministic absentee set the caller computed
+/// from the committed committee snapshot.
+pub fn slash_window_voters(
     storage: StorageHandle,
     fb_hash: B256,
-    event_index: u64,
-    validator: Address,
+    absentees: &[Address],
 ) -> Result<()> {
     let mut si = SlashIndicator::new(storage);
-    let event_key = proposer_event_key(fb_hash, event_index, validator);
-    if si.slashed_proposer_event.read(&event_key)? {
+    if si.voter_window_slashed.read(&fb_hash)? {
         return Ok(());
     }
-    si.slash_proposer(validator)?;
-    si.slashed_proposer_event.write(&event_key, true)?;
+    for absentee in absentees {
+        si.slash_voter(*absentee)?;
+    }
+    si.voter_window_slashed.write(&fb_hash, true)?;
     Ok(())
 }
 
-fn proposer_event_key(fb_hash: B256, event_index: u64, validator: Address) -> B256 {
-    let mut bytes = [0u8; 60];
-    bytes[..32].copy_from_slice(fb_hash.as_slice());
-    bytes[32..40].copy_from_slice(&event_index.to_be_bytes());
-    bytes[40..].copy_from_slice(validator.as_slice());
-    keccak256(bytes)
+/// Slash the missed-proposer events of the finalized block `fb_hash`, exactly
+/// once across metadata replays.
+///
+/// `missed` is the ordered missed-proposer event list from the finalized
+/// parent's Phase 1 metadata; the same proposer may appear more than once
+/// (multiple skipped views) and is slashed once per occurrence within this one
+/// atomic pass. A single `proposer_window_slashed[fb_hash]` bool replaces the
+/// former per-event `keccak256(fb_hash||index||addr)` guard, which grew without
+/// bound.
+pub fn slash_window_proposers(
+    storage: StorageHandle,
+    fb_hash: B256,
+    missed: &[Address],
+) -> Result<()> {
+    let mut si = SlashIndicator::new(storage);
+    if si.proposer_window_slashed.read(&fb_hash)? {
+        return Ok(());
+    }
+    for validator in missed {
+        si.slash_proposer(*validator)?;
+    }
+    si.proposer_window_slashed.write(&fb_hash, true)?;
+    Ok(())
+}
+
+/// record `fb_hash` in the prune ring and clear the slash-window guards of
+/// the finalized block evicted `SLASH_GUARD_RETAIN` records ago.
+///
+/// Called once per finalized block from the Phase 1 (`CertifiedParentAccounting`)
+/// path, which sees every finalized block exactly once as a direct parent. The
+/// evicted block is `SLASH_GUARD_RETAIN` ≫ K blocks old, so its window can no
+/// longer be replayed and clearing its guards cannot weaken replay protection
+/// for any block still inside the window. Without this, `voter_window_slashed`
+/// and `proposer_window_slashed` accumulate one entry per finalized block with
+/// any persistent miss rate, forever.
+pub fn prune_slash_guards(storage: StorageHandle, fb_hash: B256) -> Result<()> {
+    let si = SlashIndicator::new(storage);
+    let seq = si.slash_guard_ring_seq.read()?;
+    let idx = seq % SLASH_GUARD_RETAIN;
+    let evicted = si.slash_guard_ring.read(&idx)?;
+    if evicted != B256::ZERO && evicted != fb_hash {
+        si.voter_window_slashed.write(&evicted, false)?;
+        si.proposer_window_slashed.write(&evicted, false)?;
+    }
+    si.slash_guard_ring.write(&idx, fb_hash)?;
+    si.slash_guard_ring_seq.write(
+        seq.checked_add(1)
+            .ok_or_else(|| PrecompileError::Revert("slash_guard_ring_seq overflow".into()))?,
+    )?;
+    Ok(())
 }
 
 /// Called from post-execution when consensus detects byzantine behavior

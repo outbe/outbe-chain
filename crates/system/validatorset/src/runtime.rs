@@ -33,6 +33,24 @@ pub mod status {
     pub const JAILED: u8 = 6;
 }
 
+/// maximum number of validators that may be in the `REGISTERED`
+/// (self-registered, not-yet-staked) state at once.
+///
+/// `REGISTERED` self-registration is permissionless and free on the ZeroFee
+/// chain, and a `REGISTERED` node is intentionally admitted to the consensus
+/// P2P secondary tier so a TEE verifier full-node can sync and execute offer
+/// blocks before staking (see
+/// [`ValidatorSet::get_admitted_non_consensus_validators`]). That admission is
+/// by design, but without a bound an attacker can self-register up to
+/// `config_max_validators` free Sybil identities — consuming registration slots
+/// (griefing legitimate staked joins with "max validators reached") and
+/// consensus-P2P connection / handshake / decode slots. This caps the unstaked
+/// self-registration surface well below `config_max_validators` (default 128),
+/// so legitimate verifiers (few) still register while Sybils cannot fill the
+/// validator set. The owner (`config_owner`) is NOT subject to this cap and may
+/// register validators directly beyond it.
+pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
+
 /// A fully-hydrated validator record read from storage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidatorRecord {
@@ -227,6 +245,22 @@ impl ValidatorSet<'_> {
         Ok(count)
     }
 
+    /// number of validators currently in the `REGISTERED` (self-registered,
+    /// not-yet-staked) state. Used to bound the free, permissionless
+    /// self-registration Sybil surface; see [`MAX_SELF_REGISTERED_UNSTAKED`].
+    pub fn registered_count(&self) -> Result<u32> {
+        let all = self.get_all_validators()?;
+        let count: u32 = all
+            .iter()
+            .filter(|v| v.status == status::REGISTERED)
+            .count()
+            .try_into()
+            .map_err(|_| {
+                PrecompileError::Revert("registered validator count exceeds u32".into())
+            })?;
+        Ok(count)
+    }
+
     /// Returns the number of validators in the active consensus set.
     pub fn active_consensus_count(&self) -> Result<u32> {
         let all = self.get_all_validators()?;
@@ -354,7 +388,7 @@ impl ValidatorSet<'_> {
             ));
         }
 
-        // A-45: BLS proof-of-key-ownership is mandatory for self-registration.
+        // BLS proof-of-key-ownership is mandatory for self-registration.
         // Owner registrations (caller == owner && caller != validator_addr) may
         // skip the signature for system bootstrapping.
         if caller == validator_addr {
@@ -370,11 +404,50 @@ impl ValidatorSet<'_> {
                 }
             }
         } else if let Some(sig_bytes) = bls_signature {
-            // Owner registration with optional signature verification
+            // Owner registration WITH a proof-of-key-ownership signature: verify
+            // it (defence against the owner inserting a key it does not possess).
             verify_bls_registration_sig(consensus_pubkey, sig_bytes, &validator_addr)?;
+        } else {
+            // owner registration WITHOUT a PoP signature. Permitted because
+            // the owner is a trusted role used for system/genesis bootstrapping,
+            // but the committee's MinPk aggregate vote uses the rogue-key-vulnerable
+            // same-message construction, so an externally-supplied key whose
+            // possession the owner did not verify is a rogue-key surface. TRUST
+            // ASSUMPTION: the owner MUST verify proof-of-possession out-of-band for
+            // any externally-supplied consensus key (genesis-set collusion is out
+            // of the BFT model). The full on-chain defence — mandatory PoP for every
+            // committee-bound key, including genesis-seeded keys — would break the
+            // bootstrap flow and is disproportionate to a privilege-gated threat;
+            // see audit.md. Surface the unverified insertion so it is
+            // auditable.
+            warn!(
+                target: "outbe::validatorset",
+                event = "owner_registration_without_pop",
+                validator = %validator_addr,
+                "owner registered a validator WITHOUT a BLS proof-of-possession signature; the \
+                 owner must verify key possession out-of-band (rogue-key surface on the MinPk \
+                 aggregate —)"
+            );
         }
 
-        // A-18: Verify BLS pubkey is not already used by another validator.
+        // bound the free, permissionless self-registration Sybil surface.
+        // A self-registered REGISTERED node is admitted to the consensus P2P
+        // secondary tier (the TEE verifier flow), so cap how many unstaked
+        // REGISTERED validators can exist at once — far below
+        // `config_max_validators` — so an attacker cannot fill the validator set
+        // (or the consensus P2P set) with free Sybils. Owner registrations
+        // (`caller == owner`) bypass this cap. Checked before any state mutation
+        // (including the re-registration path), so an over-cap self-registration
+        // never consumes a registration slot.
+        if caller == validator_addr && self.registered_count()? >= MAX_SELF_REGISTERED_UNSTAKED {
+            return Err(PrecompileError::Revert(
+                "self-registration limit reached: too many unstaked REGISTERED validators \
+                 (owner may register directly)"
+                    .into(),
+            ));
+        }
+
+        // Verify BLS pubkey is not already used by another validator.
         // Without this check, two validators could register the same BLS key,
         // causing undefined behavior during DKG/reshare.
         let pk_hash = Self::consensus_pubkey_hash(consensus_pubkey);
@@ -585,7 +658,7 @@ impl ValidatorSet<'_> {
 
     /// Activates a registered validator (sets status to ACTIVE).
     ///
-    /// A-21: Only REGISTERED and PENDING statuses are allowed as source states.
+    /// Only REGISTERED and PENDING statuses are allowed as source states.
     /// Also signals `pending_set_change` so the consensus layer triggers a DKG
     /// reshare to include the newly-activated validator. Retained for owner/manual
     /// activation; the normal PoS path is [`Self::mark_pending`] →
@@ -599,7 +672,7 @@ impl ValidatorSet<'_> {
         if current_status == status::ACTIVE {
             return Ok(()); // already active — no spurious churn
         }
-        // A-21: Only REGISTERED and PENDING can transition to ACTIVE.
+        // Only REGISTERED and PENDING can transition to ACTIVE.
         // This prevents exiting/unbonding validators from bypassing
         // their lifecycle constraints.
         if current_status != status::REGISTERED && current_status != status::PENDING {
@@ -1100,7 +1173,7 @@ impl ValidatorSet<'_> {
         let all = self.get_all_validators()?;
         for v in all {
             // Only reset counters for validators that accumulate them.
-            // A-44: Include EXITING — they still participate in consensus
+            // Include EXITING — they still participate in consensus
             // until reshare completes and accumulate per-epoch counters.
             // JAILED is likewise still in the live committee until the next
             // reshare clears its share, so reset its counters too.

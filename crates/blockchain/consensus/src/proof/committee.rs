@@ -59,6 +59,22 @@ pub struct CommitteeSnapshot {
     pub committee: Vec<CommitteeEntry>,
     pub vrf_material_version: u64,
     pub vrf_group_public_key_bytes: Vec<u8>,
+    /// `keccak256(commonware_codec::Encode(polynomial))` of the active DKG
+    /// output's FULL public polynomial (the Sharing commitment vector), or
+    /// `B256::ZERO` when no full polynomial is available (e.g. a group-key-only
+    /// bootstrap outcome).
+    ///
+    /// Unlike [`Self::vrf_group_public_key_bytes`] (only the constant term /
+    /// group key), this commits to ALL coefficients, which is what lets a
+    /// verifier derive any signer's threshold public key `PK_i` and check an
+    /// individual seed partial. Stored so SlashIndicator can verify an
+    /// "invalid seed partial" slash offense; the executor derives it from the
+    /// already-consensus-validated boundary `outcome`, so a proposer cannot
+    /// forge it (which would otherwise let an attacker frame an honest
+    /// validator). Intentionally NOT folded into [`committee_set_hash_v2`] —
+    /// its authenticity comes from the validated boundary artifact, not the
+    /// committee fingerprint, so adding it changes no V2 binding.
+    pub vrf_public_polynomial_hash: B256,
 }
 
 impl CommitteeSnapshot {

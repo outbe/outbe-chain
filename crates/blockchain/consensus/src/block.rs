@@ -9,6 +9,7 @@ use commonware_consensus::{types::Height, Heightable};
 use commonware_cryptography::{Committable, Digestible};
 use outbe_primitives::OutbeBlock;
 use reth_ethereum::primitives::{AlloyBlockHeader, Block as RethBlockTrait, SealedBlock};
+use std::sync::Arc;
 
 use crate::digest::Digest;
 
@@ -16,19 +17,33 @@ use crate::digest::Digest;
 ///
 /// Wraps a sealed Ethereum block and implements Commonware's consensus traits
 /// so blocks can flow through the Simplex engine.
+///
+/// the inner `SealedBlock` is `Arc`-backed so that cloning a
+/// `ConsensusBlock` — which happens on every propose/verify/finalize hop, in the
+/// shared block cache, and across mailbox channels — is a cheap refcount bump
+/// instead of a full deep block copy. `Clone`/`PartialEq`/`Eq`/`Debug` keep
+/// value semantics (`Arc`'s `PartialEq` compares the pointed-to value, and the
+/// codec encodes the inner block), so this is observationally identical to the
+/// previous by-value wrapper — only cheaper. A genuine owned `SealedBlock` is
+/// still recoverable via [`ConsensusBlock::into_inner`] (which clones only when
+/// the `Arc` is shared).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ConsensusBlock(pub SealedBlock<OutbeBlock>);
+pub struct ConsensusBlock(Arc<SealedBlock<OutbeBlock>>);
 
 impl ConsensusBlock {
     /// Create from a Reth sealed block.
     pub fn from_sealed(block: SealedBlock<OutbeBlock>) -> Self {
-        Self(block)
+        Self(Arc::new(block))
     }
 
     /// Unwrap into the inner sealed block.
+    ///
+    /// Returns the owned `SealedBlock` without copying when this is the sole
+    /// holder of the `Arc`; otherwise clones the inner block once (the same deep
+    /// copy the old by-value wrapper always paid).
     pub fn into_inner(self) -> SealedBlock<OutbeBlock> {
-        self.0
+        Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
     }
 
     /// Block hash.
@@ -70,7 +85,7 @@ impl ConsensusBlock {
 impl std::ops::Deref for ConsensusBlock {
     type Target = SealedBlock<OutbeBlock>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0.as_ref()
     }
 }
 
@@ -79,7 +94,10 @@ impl std::ops::Deref for ConsensusBlock {
 impl Write for ConsensusBlock {
     fn write(&self, buf: &mut impl BufMut) {
         use alloy_rlp::Encodable as _;
-        self.0.encode(buf);
+        // Encode the inner SealedBlock explicitly (not the Arc wrapper) so the
+        // wire bytes are byte-identical to the pre-Arc wrapper — consensus codec
+        // determinism.
+        self.0.as_ref().encode(buf);
     }
 }
 
@@ -108,7 +126,7 @@ impl Read for ConsensusBlock {
 impl EncodeSize for ConsensusBlock {
     fn encode_size(&self) -> usize {
         use alloy_rlp::Encodable as _;
-        self.0.length()
+        self.0.as_ref().length()
     }
 }
 
@@ -196,5 +214,40 @@ mod tests {
                 "decode must consume exactly the encoded block bytes"
             );
         }
+    }
+
+    /// cloning a `ConsensusBlock` must be a cheap `Arc` refcount bump, not
+    /// a deep block copy, while keeping value semantics (equality, digest, and
+    /// byte-identical encoding) identical to the previous by-value wrapper.
+    #[test]
+    fn clone_is_arc_shared_and_preserves_value_semantics() {
+        let original = sample_block(42, b"arc-backed");
+        assert_eq!(Arc::strong_count(&original.0), 1);
+
+        let cloned = original.clone();
+        assert_eq!(
+            Arc::strong_count(&original.0),
+            2,
+            "clone must share the Arc, not deep-copy the block"
+        );
+
+        // Value semantics preserved across the shared clone.
+        assert_eq!(cloned, original);
+        assert_eq!(cloned.digest(), original.digest());
+        assert_eq!(
+            cloned.encode(),
+            original.encode(),
+            "encoding is the inner block's RLP, unaffected by Arc backing"
+        );
+
+        // into_inner on a shared Arc yields an owned, equal SealedBlock (the one
+        // deep copy the old wrapper always paid) and releases the clone's ref.
+        let inner = cloned.into_inner();
+        assert_eq!(inner.hash(), original.block_hash());
+        assert_eq!(
+            Arc::strong_count(&original.0),
+            1,
+            "consuming the clone releases its Arc ref"
+        );
     }
 }

@@ -113,7 +113,7 @@ mod tests {
         let participants = test_participants(3);
 
         let scheme = BlsVrfScheme::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants,
             dkg.polynomial.clone(),
         );
@@ -124,7 +124,7 @@ mod tests {
         let dkg_replacement = bootstrap_dkg(3).unwrap();
         let participants_replacement = test_participants(3);
         let replacement = BlsVrfScheme::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants_replacement,
             dkg_replacement.polynomial.clone(),
         );
@@ -152,7 +152,7 @@ mod tests {
 
         // Create a signer scheme for participant 0
         let scheme = BlsVrfScheme::signer(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants,
             dkg.polynomial.clone(),
             dkg.shares[0].clone(),
@@ -176,7 +176,7 @@ mod tests {
         let participants = test_participants(3);
 
         let scheme = BlsVrfScheme::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants,
             dkg.polynomial.clone(),
         );
@@ -197,7 +197,7 @@ mod tests {
         let dkg2 = bootstrap_dkg(3).unwrap();
         let participants2 = test_participants(3);
         let scheme2 = BlsVrfScheme::verifier(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             participants2,
             dkg2.polynomial.clone(),
         );

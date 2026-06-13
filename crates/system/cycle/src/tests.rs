@@ -377,6 +377,69 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     });
 }
 
+/// a second `run_emission_limit_daily` invocation for an already-settled
+/// `prev_day` is a no-op — the CCA/Merchant agent pools (and terminal Metadosis)
+/// are NOT minted twice. Guards the per-day idempotency added on top of the
+/// C-01 timestamp drift band.
+#[test]
+fn emission_dispatch_is_idempotent_per_prev_day() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enter(|handle| {
+        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&ctx_anchor);
+        dispatch_triggers(&ctx_anchor).unwrap();
+
+        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+        account_parent(&ctx, 2);
+
+        // First settlement of prev_day = 20240101: mints the pools + seals.
+        crate::handler::run_emission_limit_daily(&ctx).unwrap();
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(
+            rewards.daily_settled.read(&20_240_101).unwrap(),
+            "first fire must seal prev_day"
+        );
+        let cca_after_first = ctx
+            .storage
+            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .unwrap();
+        let merchant_after_first = ctx
+            .storage
+            .balance(outbe_primitives::addresses::MERCHANT_ADDRESS)
+            .unwrap();
+        let metadosis_after_first = ctx
+            .storage
+            .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
+            .unwrap();
+        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
+
+        // Second invocation for the SAME prev_day: the idempotency guard sees
+        // `daily_settled[20240101] == true` and returns early — no double-mint.
+        crate::handler::run_emission_limit_daily(&ctx).unwrap();
+        assert_eq!(
+            ctx.storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            cca_after_first,
+            "CCA pool must not be minted twice for the same prev_day"
+        );
+        assert_eq!(
+            ctx.storage
+                .balance(outbe_primitives::addresses::MERCHANT_ADDRESS)
+                .unwrap(),
+            merchant_after_first,
+            "Merchant pool must not be minted twice for the same prev_day"
+        );
+        assert_eq!(
+            ctx.storage
+                .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
+                .unwrap(),
+            metadosis_after_first,
+            "terminal Metadosis must not be re-dispatched for the same prev_day"
+        );
+    });
+}
+
 #[test]
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC

@@ -73,9 +73,17 @@ outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
 outbe-chain node \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
   --bootnodes "<enode URLs>" \
-  --http --http.addr 0.0.0.0 --http.port 8545 --http.api eth,net,web3,outbe \
+  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --tee-enclave-socket 127.0.0.1:7000
 ```
+
+> **RPC exposure.** Examples bind RPC to `127.0.0.1` and enable only the
+> `eth,net,web3,outbe` modules. Never add `admin` or `debug` to `--http.api` on a
+> public (`0.0.0.0`) binding: that exposes unauthenticated node control. To serve
+> RPC off-host, put it behind authentication or a firewall that restricts access
+> to trusted operators, or keep `admin`/`debug` on a local IPC socket. The
+> `--consensus.listen-addr 0.0.0.0:30400` P2P port below is the consensus gossip
+> listener and is meant to be reachable by peers.
 
 Check it with `outbe-cli monitor health` / `cast block finalized`. A full node’s
 `outbe_consensusStatus` reports zeros — those fields are validator-only.
@@ -135,7 +143,7 @@ share yet). The node runs the consensus engine as a share-less follower:
 outbe-chain node --validator \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
   --bootnodes "<enode URLs>" \
-  --http --http.addr 0.0.0.0 --http.port 8545 --http.api eth,net,web3,outbe \
+  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --consensus.signing-key       /var/lib/outbe/keys/signing-key.hex \
   --validator.evm-key           /var/lib/outbe/keys/evm-key.hex \
   --consensus.public-polynomial /path/to/polynomial.hex \

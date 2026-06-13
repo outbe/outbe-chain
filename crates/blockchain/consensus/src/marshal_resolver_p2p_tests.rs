@@ -69,7 +69,9 @@ use crate::digest::Digest;
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::marshal_types::MarshalMailbox;
 
-const NAMESPACE: &[u8] = crate::config::NAMESPACE;
+fn namespace() -> Vec<u8> {
+    crate::config::outbe_app_namespace()
+}
 const MARSHAL_CHANNEL: u64 = crate::config::MARSHAL_CHANNEL;
 const BROADCAST_CHANNEL: u64 = crate::config::BROADCAST_CHANNEL;
 const TEST_QUOTA: Quota = Quota::per_second(NZU32!(1024));
@@ -117,7 +119,7 @@ fn build_scheme_fixture() -> SchemeFixture {
             let pk = bls12381::PublicKey::from(key.clone());
             let idx = participants.index(&pk).expect("participant should exist");
             HybridScheme::signer(
-                NAMESPACE,
+                &namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -127,7 +129,7 @@ fn build_scheme_fixture() -> SchemeFixture {
         })
         .collect();
     let verifier =
-        HybridScheme::<MinSig>::verifier(NAMESPACE, participants, dkg.polynomial.clone())
+        HybridScheme::<MinSig>::verifier(&namespace(), participants, dkg.polynomial.clone())
             .expect("verifier should build");
     SchemeFixture { signers, verifier }
 }

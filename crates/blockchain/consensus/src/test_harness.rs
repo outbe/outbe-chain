@@ -70,7 +70,9 @@ use crate::epoch_subchannels::{
 };
 use crate::hybrid::HybridScheme;
 
-const NAMESPACE: &[u8] = crate::config::NAMESPACE;
+fn namespace() -> Vec<u8> {
+    crate::config::outbe_app_namespace()
+}
 const VOTES_CHANNEL: u64 = crate::config::VOTES_CHANNEL;
 const CERTIFICATES_CHANNEL: u64 = crate::config::CERTIFICATES_CHANNEL;
 const RESOLVER_CHANNEL: u64 = crate::config::RESOLVER_CHANNEL;
@@ -547,7 +549,7 @@ impl Harness {
                     };
                     // (5) Build HybridScheme signer for this node.
                     let scheme = HybridScheme::<MinSig>::signer(
-                        NAMESPACE,
+                        &namespace(),
                         participants.clone(),
                         signing_key,
                         polynomial.clone(),

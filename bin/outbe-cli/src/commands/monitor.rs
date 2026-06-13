@@ -351,7 +351,7 @@ async fn run_metrics(endpoint: &str, show_all: bool) -> Result<()> {
     Ok(())
 }
 
-/// A-30: Interprets a validator status code from the on-chain ValidatorSet.
+/// Interprets a validator status code from the on-chain ValidatorSet.
 ///
 /// Returns (human-readable label, is_ready). Only ACTIVE (2) is considered ready.
 /// Corrected status codes matching runtime enum:
