@@ -23,7 +23,7 @@
 //!
 //! This store is **not** an EVM `StorageHandle` consumer — it is node-local
 //! proposer-side state, parallel to (not a replacement for) the canonical
-//! chain. Per `.ruler/storage_handle.md`, it is out of scope for the
+//! chain. it is out of scope for the
 //! storage-handle survey.
 //!
 //! Record schema discriminant: every record carries

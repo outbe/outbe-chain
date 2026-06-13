@@ -423,8 +423,7 @@ fn genesis_committee_snapshot_exists_before_block2_accounting() {
 }
 
 /// T-6 / block 1 emits `BoundaryOutcome` strictly before any block 2
-/// activity. Block ordering is monotonic (`finalization is monotonic`,
-/// `.ruler/consensus_execution.md` line 14), so a successful BoundaryOutcome
+/// activity. Block ordering is monotonic (`finalization is monotonic`), so a successful BoundaryOutcome
 /// at block 1 is observable to any block N ≥ 2 via the
 /// `CommitteeSnapshotStore`.
 #[test]

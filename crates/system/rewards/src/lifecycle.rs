@@ -18,8 +18,7 @@ use crate::runtime;
 /// Zero-sized marker implementing the block-lifecycle contract for the
 /// Rewards module. Registered in
 /// `outbe_evm::executor::run_outbe_pre_execution_hooks` so the executor
-/// can keep ordering explicit and hard-fork governed (per
-/// `.ruler/architecture.md`).
+/// can keep ordering explicit and hard-fork governed
 pub struct RewardsLifecycle;
 
 impl BlockLifecycle for RewardsLifecycle {

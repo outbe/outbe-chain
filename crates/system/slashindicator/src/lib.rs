@@ -1,4 +1,4 @@
-//! Module-structure standard layout (per `.ruler/module_structure.md`):
+//! Module-structure standard layout:
 //! - `schema.rs` — storage schema for the `SlashIndicator` facade.
 //! - `runtime.rs` — slashing use-cases.
 //! - `evidence.rs` — byzantine evidence handling.
