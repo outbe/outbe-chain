@@ -1,4 +1,4 @@
-//! Module-structure standard layout (per `.ruler/module_structure.md`):
+//! Module-structure standard layout:
 //! - `schema.rs` — storage schema for the `ValidatorSet` facade.
 //! - `state.rs` — `CommitteeSnapshotStore` helpers.
 //! - `runtime.rs` — validator-set use-cases (status submodule lives here).

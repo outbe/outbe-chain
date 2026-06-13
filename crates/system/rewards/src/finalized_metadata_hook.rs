@@ -17,7 +17,6 @@
 //!    the day-boundary settle (step 11).
 //! 4. Advance `max_observed_finalized_day` (monotonic).
 //!
-//! All arithmetic uses `checked_*` per `.ruler/economics_numeric_rules.md`.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{

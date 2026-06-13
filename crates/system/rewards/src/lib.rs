@@ -1,4 +1,3 @@
-//! Module-structure standard layout (per `.ruler/module_structure.md`):
 //! - `schema.rs` — storage schema (the `Rewards` `#[contract]` facade).
 //! - `runtime.rs` — runtime helpers (genesis anchor, fingerprint,
 //!   claim_rewards, day-number conversion).
