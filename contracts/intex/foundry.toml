@@ -25,6 +25,8 @@ remappings = [
     'forge-std/=node_modules/@layerzerolabs/toolbox-foundry/lib/forge-std/',
     # LayerZero packages - for contracts (import without /contracts/ prefix)
     '@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/contracts/',
+    '@layerzerolabs/oapp-evm-upgradeable/=node_modules/@layerzerolabs/oapp-evm-upgradeable/contracts/',
+    'node_modules/@layerzerolabs/oapp-evm-upgradeable/:@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/',
     '@layerzerolabs/onft-evm/=node_modules/@layerzerolabs/onft-evm/contracts/',
     # LayerZero packages - for test-devtools (import WITH /contracts/ prefix, map to root)
     '@layerzerolabs/lz-evm-protocol-v2/=node_modules/@layerzerolabs/lz-evm-protocol-v2/',

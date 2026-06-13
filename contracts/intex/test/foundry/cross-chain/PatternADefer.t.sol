@@ -142,11 +142,7 @@ contract PatternADeferTest is TestHelperOz5 {
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
         onftBnb = ONFT1155Adapter(
             _deployOApp(
                 type(ONFT1155Adapter).creationCode,

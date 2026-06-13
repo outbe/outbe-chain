@@ -61,18 +61,10 @@ contract TargetMessengerTest is TestHelperOz5 {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy BNB adapter
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         // Deploy Outbe adapter (for cross-chain testing)
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         // Deploy batch adapter on BNB
         batchAdapter = new ONFT1155AdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
@@ -143,28 +135,28 @@ contract TargetMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        TargetMessenger newAdapter = new TargetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "auction"));
         newAdapter.wire(address(0), address(intex), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetMessenger newAdapter = new TargetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "intex"));
         newAdapter.wire(address(auction), address(0), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetMessenger newAdapter = new TargetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "escrowAdapter"));
         newAdapter.wire(address(auction), address(intex), address(0), address(batchAdapter));
     }
 
     function test_wire_revert_zero_onftBatchAdapter() public {
-        TargetMessenger newAdapter = new TargetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "onftBatchAdapter"));
         newAdapter.wire(address(auction), address(intex), admin, address(0));

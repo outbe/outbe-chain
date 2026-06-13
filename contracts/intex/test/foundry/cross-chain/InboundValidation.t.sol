@@ -56,16 +56,8 @@ contract InboundValidationTest is TestHelperOz5 {
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
@@ -355,20 +347,20 @@ contract InboundValidationTest is TestHelperOz5 {
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);

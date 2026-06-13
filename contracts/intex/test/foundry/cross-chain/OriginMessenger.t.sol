@@ -64,18 +64,10 @@ contract OriginMessengerTest is TestHelperOz5 {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         // Deploy BNB adapter (for cross-chain testing)
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         // Deploy batch adapter on BNB
         batchAdapter = new ONFT1155AdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
@@ -142,7 +134,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginMessenger newAdapter = new OriginMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        OriginMessenger newAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);
