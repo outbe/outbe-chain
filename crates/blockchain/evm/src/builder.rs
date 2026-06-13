@@ -772,6 +772,7 @@ mod tests {
             }],
             vrf_material_version: 0,
             vrf_group_public_key_bytes: vrf_group_public_key_bytes.to_vec(),
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &committee_snapshot);
 

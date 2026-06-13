@@ -418,6 +418,11 @@ do_stop() {
         done
         if kill -0 "$pid" 2>/dev/null; then
             echo "  $name did not exit in 60s — SIGKILL (restart may need resync)"
+            # $pid is the run-supervised.sh wrapper; SIGKILL cannot be forwarded
+            # to its node child, which would orphan a still-running reth process
+            # holding the MDBX/static_files locks and fail the next restart with
+            # "storage directory in use". Kill the child first, then the wrapper.
+            pkill -KILL -P "$pid" 2>/dev/null || true
             kill -KILL "$pid" 2>/dev/null
         else
             echo "  Stopped $name"
@@ -434,8 +439,11 @@ do_stop() {
         rm -f "$dfile"
     done
 
-    # Clean lock files
-    for lock in "$OUTPUT_DIR"/validator-*/data/db/lock; do
+    # Clean stale lock files (both the MDBX `db/lock` and reth's
+    # `static_files/lock`) so a fast restart does not hit "storage directory in
+    # use" if a node was SIGKILLed without releasing them.
+    for lock in "$OUTPUT_DIR"/validator-*/data/db/lock \
+        "$OUTPUT_DIR"/validator-*/data/static_files/lock; do
         [ -f "$lock" ] && rm -f "$lock"
     done
 

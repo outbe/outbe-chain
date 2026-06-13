@@ -366,6 +366,49 @@ fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) -> B256 {
     alloy_primitives::keccak256(&group_pk_bytes)
 }
 
+/// Resolve the consensus participant set for restart/live-join recovery.
+///
+/// When the node recovers a finalized DKG boundary, the threshold material it
+/// restores (`signing_share`, `polynomial`, `last_dkg_output`) belongs to the
+/// committee the recovered ceremony ran for — recorded as the DKG output's
+/// `players()`. The latest on-chain consensus set may have DRIFTED from that
+/// committee (a join/exit/jail/slash after the recovered boundary activated but
+/// before the next reshare), so the scheme must NOT be reconstructed against the
+/// latest set: committee-dependent data (votes, VRF threshold partials) must be
+/// decoded against the committee it was encoded for.
+///
+/// The recovered output's `players()` is already a sorted, deduplicated
+/// `commonware_utils::ordered::Set`, so participant indices derive from it
+/// canonically regardless of how the set was assembled — only the *membership*
+/// matters, and the members ARE the share holders. In the common no-churn restart
+/// this set is identical to the latest committed set, so recovery is unchanged;
+/// it diverges only across a churn window, which is exactly the bug this closes.
+///
+/// **Drift guard.** The recovered boundary records the committee the ceremony ran
+/// for in `reshare.new_active_set` (built 1:1 from the same `players()` list at
+/// proposal time). A size mismatch between the recovered output's players and
+/// that record means the restored consensus material does not correspond to the
+/// recovered chain boundary (e.g. a stale or partial consensus-archive restore),
+/// so recovery fails fast with an explicit drift error rather than reconstruct
+/// the scheme against the wrong committee.
+fn select_recovery_participants(
+    recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
+    let recorded = boundary.reshare.new_active_set.len();
+    let recovered = recovered_output_players.len();
+    ensure!(
+        recovered > 0 && recovered == recorded,
+        "validator set has drifted from saved DKG: recovered DKG output has {recovered} \
+         player(s) but the recovered boundary (epoch {}, activation height {}) recorded an \
+         active set of {recorded} validator(s) — the restored consensus material does not \
+         match the chain's recovered DKG boundary",
+        boundary.epoch,
+        boundary.planned_activation_height,
+    );
+    Ok(recovered_output_players.clone())
+}
+
 fn recover_latest_boundary_artifact(
     provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
     last_execution_height: u64,
@@ -1262,7 +1305,7 @@ fn epoch_validation_inputs(
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
     let verifier_scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
-        config::NAMESPACE,
+        &config::outbe_app_namespace(),
         participants.clone(),
         vrf_materials.clone(),
     )
@@ -1449,7 +1492,7 @@ where
     )?;
 
     // ── 3. Set up P2P network ───────────────────────────────────────────
-    let p2p_namespace = commonware_utils::union_unique(config::NAMESPACE, b"_P2P");
+    let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
@@ -1944,12 +1987,25 @@ where
         };
 
     // ── 7. Build participant set (updated after each DKG reshare) ───────
-    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
-        .public_keys
-        .clone()
-        .into_iter()
-        .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
+    // when recovering a finalized DKG boundary, reconstruct the scheme
+    // against the committee the recovered threshold material belongs to (the DKG
+    // output's players), NOT the latest on-chain set, which may have drifted
+    // across a churn window. `select_recovery_participants` also fails fast if the
+    // restored material does not match the recovered boundary. On a fresh chain or
+    // when no boundary/output is recovered, fall back to the latest committed set
+    // (the genesis committee on first start).
+    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        match (recovered_boundary.as_ref(), last_dkg_output.as_ref()) {
+            (Some((_, boundary)), Some(output)) => {
+                select_recovery_participants(output.players(), boundary)?
+            }
+            _ => validator_set
+                .public_keys
+                .clone()
+                .into_iter()
+                .try_collect()
+                .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
+        };
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
     // On a fresh chain (no executed blocks yet), if this validator runs a TEE
@@ -2733,6 +2789,25 @@ where
         .child("finalization")
         .spawn(move |ctx| finalization_actor.run(ctx));
 
+    // persistent off-thread finalize-vote verifier. Each per-epoch
+    // OutbeReporter enqueues raw finalize votes here instead of verifying
+    // O(committee) BLS pairings inline on the Simplex voter task; the actor
+    // resolves each vote's committee scheme by epoch through the shared
+    // `certificate_scheme_provider` and admits only verified votes to
+    // `late_sig_store`.
+    let (finalize_verify_actor, finalize_verify_mailbox) =
+        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+            certificate_scheme_provider.clone(),
+            late_sig_store.clone(),
+        );
+    // Best-effort actor: its exit is non-fatal (consensus continues; only late
+    // credits stop), so it is held for the engine's lifetime but not polled in
+    // the fatal-exit select below. The named `_`-binding keeps the task alive
+    // (a bare `_` would drop and abort it immediately).
+    let _finalize_verify_handle = ctx
+        .child("finalize_verify")
+        .spawn(move |_ctx| finalize_verify_actor.run());
+
     let mut executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
         .start(marshal_mailbox.clone(), last_consensus_finalized);
@@ -2816,7 +2891,7 @@ where
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
         let scheme = if signing_share.is_some() {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 signing_key.clone(),
                 vrf_materials.clone(),
@@ -2837,7 +2912,7 @@ where
                 "no threshold share for this epoch — running consensus engine in VERIFIER mode"
             );
             HybridScheme::<MinSig>::verifier_with_vrf_provider(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 vrf_materials.clone(),
             )
@@ -2872,7 +2947,7 @@ where
             reporter_elector,
             current_epoch,
             finalized_parent_cert_store.clone(),
-            late_sig_store.clone(),
+            finalize_verify_mailbox.clone(),
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter
@@ -4269,7 +4344,7 @@ where
                                         &mut last_dkg_output,
                                     );
                                 }
-                                // A-12: Capture previous DKG state for reshare.
+                                // Capture previous DKG state for reshare.
                                 let prev_output = last_dkg_output.clone();
                                 let prev_share = signing_share.clone();
                                 let role = classify_local_reshare_role(

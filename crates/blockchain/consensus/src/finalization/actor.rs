@@ -195,6 +195,31 @@ impl FinalizationActor {
                         )));
                     }
                 }
+                // durable certified-notarization persistence, moved off the
+                // Simplex voter task. The reporter built and verified the record
+                // (including the parity-critical committee_set_hash) inline; this
+                // actor performs only the synchronous MDBX commit. A write error
+                // is metered + logged but NOT fatal — the certified-notarization
+                // is a best-effort fallback witness (the proposer prefers the
+                // finalization record and can recover from marshal), so dropping
+                // one must not crash the single durable writer.
+                Message::CertifiedNotarization(record) => {
+                    match self
+                        .deps
+                        .parent_cert_store
+                        .put_certified_notarization(record)
+                    {
+                        Ok(()) => crate::metrics::record_certification_persisted(),
+                        Err(error) => {
+                            crate::metrics::record_certification_dropped("store_error");
+                            tracing::warn!(
+                                target: "outbe::finalization",
+                                %error,
+                                "certified-notarization persist failed (off-thread)"
+                            );
+                        }
+                    }
+                }
             }
         }
         info!(target: "outbe::finalization", "FinalizationActor mailbox closed");
@@ -213,7 +238,11 @@ impl FinalizationActor {
         // Stale-round short-circuit (no marshal lookup needed for
         // historical rounds).
         {
-            let view_snapshot = self.deps.view.read().expect("FinalizationView poisoned");
+            let view_snapshot = self
+                .deps
+                .view
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(last_round) = view_snapshot.last_finalized_round {
                 if round < last_round {
                     crate::metrics::record_finalization_dropped("stale_round");
@@ -273,75 +302,89 @@ impl FinalizationActor {
 
         // Fast path: proposer's own block in the shared cache.
         if let Some(block) = {
-            let mut cache = self.deps.block_cache.lock().expect("block_cache poisoned");
+            let mut cache = self
+                .deps
+                .block_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.remove(&digest)
         } {
             return self.process_finalization(finalized, block).await;
         }
 
-        // Resolve via marshal with bounded retries and a per-attempt
-        // timeout — the same wedge-prevention logic the application
-        // handler used. `retry_with_backoff` lives in `finalization::util`.
+        // Resolve via marshal with bounded retries and a per-attempt timeout.
+        // `retry_with_backoff` lives in `finalization::util`.
         let Some(marshal) = self.deps.marshal_mailbox.clone() else {
             return Err(eyre::eyre!(
                 "marshal mailbox required to resolve finalized block {digest} not in local cache"
             ));
         };
-        let resolve = move || {
-            let marshal = marshal.clone();
-            async move {
-                // 2026.5.0: `subscribe_by_digest` is SYNC and takes the digest
-                // first with an explicit `DigestFallback`. We have a trusted
-                // finalized round for this digest, so request the notarized
-                // proposal for `round` from peers when it is missing locally.
-                // The returned oneshot receiver is still awaited as before.
-                let waiter =
-                    marshal.subscribe_by_digest(digest, DigestFallback::FetchByRound { round });
-                waiter.await.map_err(|_| ())
-            }
-        };
 
-        match retry_with_backoff(
-            clock,
-            resolve,
-            FINALIZE_MAX_RETRIES,
-            FINALIZE_RETRY_DELAY,
-            FINALIZE_RESOLUTION_TIMEOUT,
-        )
-        .await
-        {
-            Ok(block) => self.process_finalization(finalized, block).await,
-            Err(failure) => {
-                let last_finalized_number = self
-                    .deps
-                    .view
-                    .read()
-                    .expect("FinalizationView poisoned")
-                    .last_finalized_number;
-                let total_budget = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
-                    + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
-                tracing::error!(
-                    %digest,
-                    ?round,
-                    view,
-                    attempts = failure.attempts,
-                    last_failure = ?failure.last_kind,
-                    timeout_per_attempt_secs = FINALIZE_RESOLUTION_TIMEOUT.as_secs(),
-                    retry_delay_secs = FINALIZE_RETRY_DELAY.as_secs(),
-                    total_budget_secs = total_budget.as_secs(),
-                    last_finalized_number,
-                    "fatal finalization resolution failure; stopping FinalizationActor"
-                );
-                Err(eyre::eyre!(
-                    "finalized block {digest} at round {:?} (view {}) not resolvable after {} attempts \
-                     (last failure: {:?}, total budget: {:?}, last finalized number: {})",
-                    round,
-                    view,
-                    failure.attempts,
-                    failure.last_kind,
-                    total_budget,
-                    last_finalized_number
-                ))
+        // a finalized block is fetchable from any honest peer, so a full
+        // retry cycle exhausting means an all-peers P2P stall — which is
+        // transient. Keep retrying with a metric/alarm rather than returning the
+        // node-fatal error that downs an otherwise-healthy validator on a
+        // ~1-minute correlated outage. The actor (correctly) cannot advance
+        // finalization past an unresolved block, so it stays parked here
+        // retrying until the block resolves; a sustained
+        // `outbe_finalization_resolution_stalled_total` rate is the operator's
+        // signal that the block is unavailable network-wide or local state has
+        // diverged. Only a missing marshal mailbox (a config error, above)
+        // remains fatal.
+        let cycle_budget = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
+            + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
+        let mut stall_cycles: u64 = 0;
+        loop {
+            let marshal = marshal.clone();
+            let resolve = move || {
+                let marshal = marshal.clone();
+                async move {
+                    // 2026.5.0: `subscribe_by_digest` is SYNC and takes the
+                    // digest first with an explicit `DigestFallback`. We have a
+                    // trusted finalized round for this digest, so request the
+                    // notarized proposal for `round` from peers when it is
+                    // missing locally. The returned oneshot receiver is awaited.
+                    let waiter =
+                        marshal.subscribe_by_digest(digest, DigestFallback::FetchByRound { round });
+                    waiter.await.map_err(|_| ())
+                }
+            };
+
+            match retry_with_backoff(
+                clock,
+                resolve,
+                FINALIZE_MAX_RETRIES,
+                FINALIZE_RETRY_DELAY,
+                FINALIZE_RESOLUTION_TIMEOUT,
+            )
+            .await
+            {
+                Ok(block) => return self.process_finalization(finalized, block).await,
+                Err(failure) => {
+                    stall_cycles += 1;
+                    crate::metrics::record_finalization_resolution_stalled();
+                    let last_finalized_number = self
+                        .deps
+                        .view
+                        .read()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .last_finalized_number;
+                    tracing::warn!(
+                        %digest,
+                        ?round,
+                        view,
+                        attempts = failure.attempts,
+                        last_failure = ?failure.last_kind,
+                        stall_cycles,
+                        cycle_budget_secs = cycle_budget.as_secs(),
+                        last_finalized_number,
+                        "finalized block not resolvable from any peer after a full retry cycle; \
+                         the validator stays UP and keeps retrying. A sustained stall means \
+                         the block is unavailable network-wide or local state has diverged."
+                    );
+                    // Loop and retry the next cycle. The per-attempt timeout
+                    // already spaces attempts, so this is not a tight loop.
+                }
             }
         }
     }
@@ -360,7 +403,11 @@ impl FinalizationActor {
 
         // Replay classification under a write lock so the read-modify-write
         // of the view's finalization fields is atomic.
-        let mut view = self.deps.view.write().expect("FinalizationView poisoned");
+        let mut view = self
+            .deps
+            .view
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         match classify_finalization(
             block_number,
@@ -483,6 +530,9 @@ impl FinalizationActor {
                     committee,
                     vrf_material_version,
                     vrf_group_public_key_bytes,
+                    // Reconstructed from finalized metadata (no full polynomial);
+                    // unused by committee_set_hash_v2.
+                    vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
                 };
                 let committee_set_hash = committee_set_hash_v2(finalized_epoch, &snapshot);
                 (
@@ -637,16 +687,20 @@ impl FinalizationActor {
             }
         }
 
-        // A-11: Evict stale entries from the shared block_cache. Block
+        // Evict stale entries from the shared block_cache. Block
         // entries with number <= finalized number cannot be needed by
         // any future verify path.
         let finalized_num = self
             .deps
             .view
             .read()
-            .expect("FinalizationView poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .last_finalized_number;
-        let mut cache = self.deps.block_cache.lock().expect("block_cache poisoned");
+        let mut cache = self
+            .deps
+            .block_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.retain(|_, cached_block| cached_block.number() > finalized_num);
         crate::metrics::record_block_cache_size(cache.len());
 

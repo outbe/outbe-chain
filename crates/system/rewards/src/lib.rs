@@ -1,6 +1,6 @@
 //! - `schema.rs` — storage schema (the `Rewards` `#[contract]` facade).
 //! - `runtime.rs` — runtime helpers (genesis anchor, fingerprint,
-//!   claim_rewards, day-number conversion).
+//!   day-number conversion).
 //! - `lifecycle.rs` — block-boundary entrypoint (`begin_block`).
 //! - `precompile.rs` — ABI dispatch.
 //! - `api.rs` — public cross-module surface used by the Cycle handler.
@@ -23,9 +23,6 @@ pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
-
-#[cfg(test)]
-mod tests;
 
 // Backward-compat aliases for external callers (deprecate when all
 // `outbe_rewards::contract::*` / `outbe_rewards::logic::*` call sites

@@ -79,6 +79,15 @@ pub struct HybridSignature<V: Variant> {
     pub vrf_material_version: u64,
     /// BLS threshold partial over the seed message (MinSig, 48 bytes for V=MinSig).
     pub bls_seed_partial: V::Signature,
+    /// MinPk identity signature (96 bytes) binding `bls_seed_partial` to the
+    /// signer's identity key over `(round, vrf_material_version, partial)` under
+    /// [`crate::proof::seed_attest_namespace`]. Makes the partial
+    /// non-repudiably attributable so a byzantine/equivocating partial is
+    /// slashable (see [`crate::proof::seed_partial`]). NOT aggregated into the
+    /// certificate and never reaches on-chain certificate bytes; it rides the
+    /// per-vote P2P gossip only and is consulted for attribution, never to
+    /// reject a vote (see `verify_attestation` / `sanitize_seed_partial`).
+    pub seed_partial_identity_sig: bls12381::Signature,
 }
 
 impl<V: Variant> Write for HybridSignature<V> {
@@ -86,6 +95,7 @@ impl<V: Variant> Write for HybridSignature<V> {
         self.bls_individual_vote.write(writer);
         writer.put_u64(self.vrf_material_version);
         self.bls_seed_partial.write(writer);
+        self.seed_partial_identity_sig.write(writer);
     }
 }
 
@@ -102,17 +112,20 @@ impl<V: Variant> Read for HybridSignature<V> {
         }
         let vrf_material_version = reader.get_u64();
         let bls_seed_partial = V::Signature::read(reader)?;
+        let seed_partial_identity_sig = bls12381::Signature::read(reader)?;
 
         Ok(Self {
             bls_individual_vote,
             vrf_material_version,
             bls_seed_partial,
+            seed_partial_identity_sig,
         })
     }
 }
 
 impl<V: Variant> FixedSize for HybridSignature<V> {
-    const SIZE: usize = bls12381::Signature::SIZE + 8 + V::Signature::SIZE;
+    const SIZE: usize =
+        bls12381::Signature::SIZE + 8 + V::Signature::SIZE + bls12381::Signature::SIZE;
 }
 
 // Wire codec for `VrfProof` and `HybridCertificate` lives in `outbe-consensus-proof`.
@@ -129,6 +142,18 @@ struct VrfPartialVerification<'a, V: Variant> {
     seed_message: &'a [u8],
     signature: V::Signature,
 }
+
+/// Sentinel VRF material version used to neutralize a byzantine seed partial.
+///
+/// When attestation verification finds a `bls_seed_partial` that claims the
+/// active material version but does not verify against the committee
+/// polynomial, the carrying attestation's `vrf_material_version` is retagged to
+/// this value. `assemble`'s recovery filter keeps only partials whose version
+/// equals the active version, so a retagged partial is excluded from
+/// `recover_proof` while its (valid) individual vote still counts. Real DKG
+/// material versions are small monotonic `dkg_cycle` counters, so this maximum
+/// value is never a live version and the exclusion is unambiguous.
+const VRF_PARTIAL_REJECTED_VERSION: u64 = u64::MAX;
 
 #[derive(Clone, Debug)]
 struct VrfMaterial<V: Variant> {
@@ -322,6 +347,25 @@ pub struct HybridScheme<V: Variant> {
     role: Role<V>,
 }
 
+/// Build the per-scheme `Namespace` with the committee-bound vote
+/// sub-namespaces: notarize/nullify/finalize bind `participant_set_commitment`
+/// (so an individual vote cannot cross-verify under a different committee), while
+/// seed stays chain-only (already committee-bound by the threshold group key).
+/// Both the signer and verifier constructors use this, so they sign and verify
+/// votes under byte-identical namespaces, and every external verifier
+/// (`proof::verifier`, `proof::late_finalize`, SlashIndicator evidence) derives
+/// the same bytes from the same committee via `crate::proof::constants`.
+fn committee_bound_namespace(
+    base: &[u8],
+    participants: &Set<bls12381::PublicKey>,
+) -> commonware_consensus::simplex::scheme::Namespace {
+    let mut ns = commonware_consensus::simplex::scheme::Namespace::new(base);
+    ns.notarize = crate::proof::constants::notarize_namespace(participants);
+    ns.nullify = crate::proof::constants::nullify_namespace(participants);
+    ns.finalize = crate::proof::constants::finalize_namespace(participants);
+    ns
+}
+
 impl<V: Variant> HybridScheme<V> {
     /// Creates a signer instance.
     ///
@@ -364,7 +408,7 @@ impl<V: Variant> HybridScheme<V> {
         let bls_public_key = individual_key.public_key();
         let index = participants.index(&bls_public_key)?;
 
-        // A-13: Verify share.index matches participant index.
+        // Verify share.index matches participant index.
         // If they diverge, threshold partial signatures will use the wrong
         // evaluation point and threshold::recover will fail.
         let share = vrf_materials.active_share()?;
@@ -388,13 +432,14 @@ impl<V: Variant> HybridScheme<V> {
             return None;
         }
 
+        let scheme_namespace = committee_bound_namespace(namespace, &participants);
         Some(Self {
             role: Role::Signer {
                 participants,
                 individual_key,
                 index,
                 vrf_materials,
-                namespace: Namespace::new(namespace),
+                namespace: scheme_namespace,
             },
         })
     }
@@ -425,11 +470,12 @@ impl<V: Variant> HybridScheme<V> {
             return None;
         }
 
+        let scheme_namespace = committee_bound_namespace(namespace, &participants);
         Some(Self {
             role: Role::Verifier {
                 participants,
                 vrf_materials,
-                namespace: Namespace::new(namespace),
+                namespace: scheme_namespace,
             },
         })
     }
@@ -518,6 +564,174 @@ impl<V: Variant> HybridScheme<V> {
             strategy,
         )
     }
+
+    /// Verify the seed-partial identity attestation rides correctly with the
+    /// attestation: `true` iff `seed_partial_identity_sig` is the MinPk identity
+    /// signature of the participant at `attestation.signer` over
+    /// `(round, vrf_material_version, bls_seed_partial)`.
+    ///
+    /// Deterministic (plain MinPk verify, no batch RNG), so every honest node
+    /// reaches the same verdict — required because this drives slashing
+    /// attribution. A `true` result proves the signer deliberately emitted this
+    /// partial (not a relay forgery); it does NOT assert the partial is valid.
+    pub fn verify_seed_partial_identity_sig<D: Digest>(
+        &self,
+        subject: Subject<'_, D>,
+        attestation: &Attestation<Self>,
+    ) -> bool {
+        let participants = self.participants_ref();
+        let Some(public_key) = participants.key(attestation.signer) else {
+            return false;
+        };
+        let Some(signature) = attestation.signature.get() else {
+            return false;
+        };
+        let round = round_from_subject(&subject);
+        let partial_bytes = signature.bls_seed_partial.encode();
+        crate::proof::verify_seed_partial_attest(
+            public_key,
+            round.epoch().get(),
+            round.view().get(),
+            signature.vrf_material_version,
+            partial_bytes.as_ref(),
+            &signature.seed_partial_identity_sig,
+        )
+    }
+
+    /// Neutralize a byzantine threshold-VRF seed partial without discarding the
+    /// individual vote it rides with.
+    ///
+    /// VRF material is not finality-critical, so a validator with stale or
+    /// invalid VRF material must still have its vote counted. But an unverified
+    /// `bls_seed_partial` folded into [`VrfMaterialProvider::recover_proof`]
+    /// produces a wrong threshold signature: the resulting finalization
+    /// certificate carries a VRF proof that fails the mandatory V2
+    /// `verify_threshold_vrf_proof` at the next height, which is a fatal
+    /// pre-execution gate — a single byzantine partial would permanently halt
+    /// the chain at `N+1`.
+    ///
+    /// This returns the attestation unchanged when the partial either is tagged
+    /// with a non-active version (already excluded from recovery by the version
+    /// filter, and legitimately stale after a reshare) or verifies correctly.
+    /// When the partial claims the active version but does not verify, the
+    /// attestation is retagged to [`VRF_PARTIAL_REJECTED_VERSION`] so
+    /// `assemble` excludes it from recovery; recovery then proceeds over the
+    /// honest partials only and yields the correct, verifiable group signature.
+    fn sanitize_seed_partial<R, D>(
+        &self,
+        rng: &mut R,
+        subject: Subject<'_, D>,
+        attestation: Attestation<Self>,
+        strategy: &impl Strategy,
+    ) -> Attestation<Self>
+    where
+        R: CryptoRngCore,
+        D: Digest,
+    {
+        let Some(signature) = attestation.signature.get().cloned() else {
+            return attestation;
+        };
+        match self.classify_seed_partial(rng, subject, &attestation, strategy) {
+            // Keep as-is: either valid, or legitimately stale material excluded
+            // from recovery by the version filter.
+            SeedPartialVerdict::Valid | SeedPartialVerdict::StaleVersion => attestation,
+            SeedPartialVerdict::AttributableInvalid => {
+                crate::metrics::record_invalid_vrf_partial();
+                // Emit the attributable facts for an external slashing watcher to
+                // pack into a SlashIndicator evidence transaction (see README
+                // "Slashing"). The node reports facts, not packed wire — keeping
+                // the consensus crate independent of the evidence codec. The
+                // identity signature makes "this signer emitted this partial"
+                // non-repudiable and re-verifiable on chain from the committee
+                // snapshot, so the watcher's submission cannot frame an honest
+                // node.
+                let round = round_from_subject(&subject);
+                let signer_pubkey = self
+                    .participants_ref()
+                    .key(attestation.signer)
+                    .map(|pk| hex::encode(pk.encode()))
+                    .unwrap_or_default();
+                tracing::warn!(
+                    target: "outbe::slashing::seed_partial",
+                    offense = "invalid_seed_partial",
+                    signer_index = attestation.signer.get(),
+                    signer_pubkey,
+                    epoch = round.epoch().get(),
+                    view = round.view().get(),
+                    vrf_material_version = signature.vrf_material_version,
+                    partial = hex::encode(signature.bls_seed_partial.encode()),
+                    identity_sig = hex::encode(signature.seed_partial_identity_sig.encode()),
+                    "attributable invalid VRF seed partial — slashable; external watcher should submit evidence"
+                );
+                neutralize_seed_partial(attestation.signer, signature)
+            }
+            SeedPartialVerdict::Unattributable => {
+                crate::metrics::record_forged_seed_partial();
+                neutralize_seed_partial(attestation.signer, signature)
+            }
+        }
+    }
+
+    /// Classify a seed partial for attestation verification / slashing
+    /// attribution. Deterministic with respect to the identity-sig outcome
+    /// (every honest node reaches the same verdict on whether to attribute),
+    /// which is required because the attributable verdict feeds slashing.
+    pub fn classify_seed_partial<R, D>(
+        &self,
+        rng: &mut R,
+        subject: Subject<'_, D>,
+        attestation: &Attestation<Self>,
+        strategy: &impl Strategy,
+    ) -> SeedPartialVerdict
+    where
+        R: CryptoRngCore,
+        D: Digest,
+    {
+        let Some(signature) = attestation.signature.get() else {
+            return SeedPartialVerdict::Valid;
+        };
+        if signature.vrf_material_version != self.active_vrf_material_version() {
+            return SeedPartialVerdict::StaleVersion;
+        }
+        if self.verify_vrf_partial(rng, subject, attestation, strategy) {
+            return SeedPartialVerdict::Valid;
+        }
+        if self.verify_seed_partial_identity_sig(subject, attestation) {
+            SeedPartialVerdict::AttributableInvalid
+        } else {
+            SeedPartialVerdict::Unattributable
+        }
+    }
+}
+
+/// Verdict for a `bls_seed_partial` observed during attestation verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedPartialVerdict {
+    /// Active-version partial that verifies against the committee polynomial.
+    Valid,
+    /// Partial tagged with a non-active material version — legitimately stale
+    /// after a reshare; excluded from recovery, not byzantine.
+    StaleVersion,
+    /// Active-version partial that fails verification, with a valid rider
+    /// identity signature proving the signer authored it — slashable byzantine.
+    AttributableInvalid,
+    /// Active-version partial that fails verification but whose rider identity
+    /// signature does not verify — probable relay forgery; neutralize, do not
+    /// attribute.
+    Unattributable,
+}
+
+/// Retag a partial to [`VRF_PARTIAL_REJECTED_VERSION`] so `assemble` excludes it
+/// from recovery, preserving the (non-finality-critical) individual vote.
+fn neutralize_seed_partial<V: Variant>(
+    signer: Participant,
+    mut signature: HybridSignature<V>,
+) -> Attestation<HybridScheme<V>> {
+    signature.vrf_material_version = VRF_PARTIAL_REJECTED_VERSION;
+    Attestation {
+        signer,
+        signature: commonware_codec::types::lazy::Lazy::from(signature),
+    }
 }
 
 /// Extracts the seed message bytes from a Subject.
@@ -525,6 +739,14 @@ fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Byte
     match subject {
         Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round.encode(),
         Subject::Nullify { round } => round.encode(),
+    }
+}
+
+/// Extracts the consensus round from a Subject (the round the seed partial commits to).
+fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
+    match subject {
+        Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round,
+        Subject::Nullify { round } => *round,
     }
 }
 
@@ -567,10 +789,26 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         let (vrf_material_version, bls_seed_partial) =
             vrf_materials.sign_seed(&namespace.seed, &seed_message)?;
 
+        // MinPk identity attestation binding the partial to this validator's
+        // identity key over (round, version, partial). Makes the partial
+        // non-repudiably attributable for slashing (see proof::seed_partial).
+        let round = round_from_subject(&subject);
+        let seed_partial_identity_sig = {
+            let partial_bytes = bls_seed_partial.encode();
+            let attest_message = crate::proof::seed_partial_attest_message(
+                round.epoch().get(),
+                round.view().get(),
+                vrf_material_version,
+                partial_bytes.as_ref(),
+            );
+            individual_key.sign(&crate::proof::seed_attest_namespace(), &attest_message)
+        };
+
         let signature = HybridSignature {
             bls_individual_vote,
             vrf_material_version,
             bls_seed_partial,
+            seed_partial_identity_sig,
         };
 
         Some(Attestation {
@@ -623,11 +861,15 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         let mut invalid = Vec::new();
 
         for attestation in attestations {
-            if self.verify_attestation(rng, subject, &attestation, strategy) {
-                verified.push(attestation);
-            } else {
+            if !self.verify_attestation(rng, subject, &attestation, strategy) {
                 invalid.push(attestation.signer);
+                continue;
             }
+            // The vote is valid. Sanitize the seed partial so a byzantine
+            // `bls_seed_partial` cannot poison threshold recovery (which would
+            // fail the next height's mandatory V2 VRF verify and halt the
+            // chain) while keeping the non-finality-critical vote.
+            verified.push(self.sanitize_seed_partial(rng, subject, attestation, strategy));
         }
 
         Verification::new(verified, invalid)
@@ -1467,6 +1709,408 @@ mod tests {
             .is_none());
     }
 
+    /// Build `n` signer schemes and a matching verifier from one DKG.
+    fn signers_and_verifier(n: u8) -> (Vec<TestScheme>, TestScheme) {
+        let (_keys, signers, verifier) = signers_keys_and_verifier(n);
+        (signers, verifier)
+    }
+
+    /// Like [`signers_and_verifier`] but also returns the signer private keys
+    /// (from the same single DKG, so they match the schemes). Needed to craft
+    /// attestations with a hand-built identity signature.
+    fn signers_keys_and_verifier(
+        n: u8,
+    ) -> (Vec<bls12381::PrivateKey>, Vec<TestScheme>, TestScheme) {
+        let (keys, participants) = test_participants(n);
+        let dkg = bootstrap_dkg(n as u32).unwrap();
+        let signers = keys
+            .iter()
+            .map(|key| {
+                let pk = bls12381::PublicKey::from(key.clone());
+                let idx = participants.index(&pk).unwrap();
+                HybridScheme::signer(
+                    NAMESPACE,
+                    participants.clone(),
+                    key.clone(),
+                    dkg.polynomial.clone(),
+                    dkg.shares[idx.get() as usize].clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let verifier =
+            HybridScheme::<MinSig>::verifier(NAMESPACE, participants, dkg.polynomial).unwrap();
+        (keys, signers, verifier)
+    }
+
+    /// Overwrite `attestation`'s `bls_seed_partial` with `replacement`'s,
+    /// keeping the active material version and the individual vote intact. This
+    /// is the byzantine partial of the C-02 attack: a well-formed value that
+    /// does not verify at this index. `replacement` must be a partial over a
+    /// *different* seed message (e.g. a different round) so the grafted value is
+    /// distinct from every honest partial — recovery dedups by index but not by
+    /// value, and a value equal to a sibling's would be a no-op at this index.
+    fn corrupt_seed_partial(
+        attestation: &mut Attestation<TestScheme>,
+        replacement: &Attestation<TestScheme>,
+    ) {
+        let other = replacement.signature.get().cloned().unwrap();
+        let mut sig = attestation.signature.get().cloned().unwrap();
+        sig.bls_seed_partial = other.bls_seed_partial;
+        attestation.signature = commonware_codec::types::lazy::Lazy::from(sig);
+    }
+
+    /// A byzantine partial for `scheme`: its own valid partial but over a
+    /// *different* round, so it is well-formed yet fails verification against
+    /// the real round's seed message.
+    fn foreign_round_attestation(scheme: &TestScheme) -> Attestation<TestScheme> {
+        let foreign = sample_proposal(Epoch::new(1), View::new(98), 0xCC);
+        scheme
+            .sign::<Sha256Digest>(Subject::Finalize { proposal: &foreign })
+            .unwrap()
+    }
+
+    /// C-02 regression: a single byzantine seed partial (active version, garbage
+    /// value) on an otherwise-valid vote must NOT poison threshold recovery.
+    /// Attestation verification neutralizes it, recovery runs over the honest
+    /// partials, and the resulting finalization certificate carries a VRF proof
+    /// that VERIFIES — so the next height's mandatory V2 verify passes and the
+    /// chain does not halt. Before the fix the garbage partial was interpolated
+    /// into a bad threshold signature and the proof failed to verify.
+    #[test]
+    fn test_byzantine_seed_partial_excluded_keeps_valid_vrf_proof() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(2));
+        let proposal = sample_proposal(round.epoch(), round.view(), 42);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+
+        let honest: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+
+        // Corrupt a partial that lands in `threshold::recover`'s interpolation
+        // set, with a well-formed-but-wrong value (signer 1's partial over a
+        // foreign round). `recover` truncates to `required` partials by index;
+        // the control assertion below guards that the chosen index actually
+        // poisons recovery, so the regression cannot silently pick a
+        // truncated-out index.
+        let mut corrupted = honest.clone();
+        corrupt_seed_partial(&mut corrupted[1], &foreign_round_attestation(&schemes[1]));
+
+        let mut rng = bls_batch_verification_rng();
+
+        // Control: assembling directly from the corrupted attestations (no
+        // sanitization) yields a certificate whose proof does NOT verify — the
+        // poison the attack relied on.
+        let poisoned = verifier
+            .assemble::<_, N3f1>(corrupted.clone(), &Sequential)
+            .unwrap();
+        assert!(
+            poisoned.vrf_proof.is_some(),
+            "control: recovery still produces a (garbage) proof"
+        );
+        assert!(
+            verifier
+                .verified_vrf_seed_for_round(&mut rng, round, &poisoned, &Sequential)
+                .is_none(),
+            "control: the unsanitized garbage partial poisons the recovered proof"
+        );
+
+        // Production path: the batcher runs votes through `verify_attestations`,
+        // which sanitizes the byzantine partial. The vote is kept, the partial
+        // excluded from recovery.
+        let verification = verifier.verify_attestations::<_, Sha256Digest, _>(
+            &mut rng,
+            subject,
+            corrupted,
+            &Sequential,
+        );
+        assert!(
+            verification.invalid.is_empty(),
+            "the byzantine partial must NOT drop the valid vote"
+        );
+        assert_eq!(verification.verified.len(), 4, "all four votes are kept");
+
+        let certificate = verifier
+            .assemble::<_, N3f1>(verification.verified, &Sequential)
+            .unwrap();
+        assert_eq!(certificate.signers.count(), 4, "all four votes counted");
+        assert!(
+            certificate.vrf_proof.is_some(),
+            "recovery over the honest partials still produces a proof"
+        );
+        assert!(
+            verifier
+                .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
+                .is_some(),
+            "the recovered proof must verify against the group key — no halt at N+1"
+        );
+        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            subject,
+            &certificate,
+            &Sequential
+        ));
+    }
+
+    /// C-02 safety floor: when MORE than `f` partials are byzantine (so fewer
+    /// than `required` honest partials remain), recovery must fall to
+    /// `vrf_proof = None` — the existing deterministic forfeit path — rather
+    /// than embed an unverifiable proof. Finality (the aggregate vote) is
+    /// unaffected. Worst case is forfeit, never a permanent halt.
+    #[test]
+    fn test_excess_byzantine_seed_partials_forfeit_not_poison() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(2));
+        let proposal = sample_proposal(round.epoch(), round.view(), 7);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+
+        let honest: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+
+        // Corrupt two partials → only two honest remain (< required = 3).
+        let mut corrupted = honest.clone();
+        corrupt_seed_partial(&mut corrupted[1], &foreign_round_attestation(&schemes[1]));
+        corrupt_seed_partial(&mut corrupted[2], &foreign_round_attestation(&schemes[2]));
+
+        let mut rng = bls_batch_verification_rng();
+        let verification = verifier.verify_attestations::<_, Sha256Digest, _>(
+            &mut rng,
+            subject,
+            corrupted,
+            &Sequential,
+        );
+        assert!(verification.invalid.is_empty(), "votes are still valid");
+
+        let certificate = verifier
+            .assemble::<_, N3f1>(verification.verified, &Sequential)
+            .unwrap();
+        assert!(
+            certificate.vrf_proof.is_none(),
+            "too few honest partials must forfeit the proof, not embed a garbage one"
+        );
+        // Finality is preserved regardless of VRF.
+        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            subject,
+            &certificate,
+            &Sequential
+        ));
+    }
+
+    /// Honest path through `verify_attestations` is unchanged: every valid
+    /// partial is retained (not retagged), recovery succeeds, and the proof
+    /// verifies.
+    #[test]
+    fn test_valid_seed_partials_survive_sanitization() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(2));
+        let proposal = sample_proposal(round.epoch(), round.view(), 9);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestations: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+
+        let mut rng = bls_batch_verification_rng();
+        let verification = verifier.verify_attestations::<_, Sha256Digest, _>(
+            &mut rng,
+            subject,
+            attestations,
+            &Sequential,
+        );
+        assert_eq!(verification.verified.len(), 4);
+        let certificate = verifier
+            .assemble::<_, N3f1>(verification.verified, &Sequential)
+            .unwrap();
+        assert!(certificate.vrf_proof.is_some());
+        assert!(
+            verifier
+                .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
+                .is_some(),
+            "untouched honest partials recover a verifying proof"
+        );
+    }
+
+    /// Tamper a single field of an attestation's signature, preserving the
+    /// signer index. Used to prove the identity-sig binding.
+    fn tamper_signature(
+        attestation: &Attestation<TestScheme>,
+        mutate: impl FnOnce(&mut HybridSignature<MinSig>),
+    ) -> Attestation<TestScheme> {
+        let mut sig = attestation.signature.get().cloned().unwrap();
+        mutate(&mut sig);
+        Attestation {
+            signer: attestation.signer,
+            signature: commonware_codec::types::lazy::Lazy::from(sig),
+        }
+    }
+
+    #[test]
+    fn test_hybrid_signature_size_includes_identity_sig() {
+        // MinPk vote (96) + version (8) + MinSig partial (48) + MinPk identity (96).
+        assert_eq!(HybridSignature::<MinSig>::SIZE, 96 + 8 + 48 + 96);
+    }
+
+    #[test]
+    fn test_hybrid_signature_codec_roundtrip_preserves_identity_sig() {
+        let (schemes, _verifier) = signers_and_verifier(3);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 5);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestation = schemes[0].sign::<Sha256Digest>(subject).unwrap();
+        let sig = attestation.signature.get().cloned().unwrap();
+        let encoded = sig.encode();
+        assert_eq!(encoded.len(), HybridSignature::<MinSig>::SIZE);
+        let decoded = HybridSignature::<MinSig>::read(&mut encoded.as_ref()).unwrap();
+        assert_eq!(sig, decoded);
+        assert_eq!(
+            sig.seed_partial_identity_sig,
+            decoded.seed_partial_identity_sig
+        );
+    }
+
+    #[test]
+    fn test_seed_partial_identity_sig_binds_round_version_partial() {
+        let (schemes, verifier) = signers_and_verifier(3);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 7);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestation = schemes[0].sign::<Sha256Digest>(subject).unwrap();
+
+        // Happy path: the rider identity sig verifies for the real signer.
+        assert!(verifier.verify_seed_partial_identity_sig(subject, &attestation));
+
+        // Different round (different subject) breaks the binding.
+        let other_proposal = sample_proposal(Epoch::new(1), View::new(3), 7);
+        let other_subject = Subject::Finalize {
+            proposal: &other_proposal,
+        };
+        assert!(!verifier.verify_seed_partial_identity_sig(other_subject, &attestation));
+
+        // Tampered version breaks the binding.
+        let bad_version = tamper_signature(&attestation, |s| s.vrf_material_version ^= 1);
+        assert!(!verifier.verify_seed_partial_identity_sig(subject, &bad_version));
+
+        // Tampered partial breaks the binding (graft signer 1's partial).
+        let other = schemes[1].sign::<Sha256Digest>(subject).unwrap();
+        let other_partial = other.signature.get().unwrap().bls_seed_partial;
+        let bad_partial = tamper_signature(&attestation, |s| s.bls_seed_partial = other_partial);
+        assert!(!verifier.verify_seed_partial_identity_sig(subject, &bad_partial));
+
+        // Re-attributing signer 0's attestation to index 1 fails (wrong key).
+        let misattributed = Attestation {
+            signer: Participant::new(1),
+            signature: attestation.signature.clone(),
+        };
+        assert!(!verifier.verify_seed_partial_identity_sig(subject, &misattributed));
+    }
+
+    #[test]
+    fn test_garbage_identity_sig_does_not_censor_the_vote() {
+        // A relay that strips/corrupts seed_partial_identity_sig must NOT get the
+        // vote rejected — verify_attestation only gates on the MinPk vote.
+        let (schemes, verifier) = signers_and_verifier(3);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 11);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestation = schemes[0].sign::<Sha256Digest>(subject).unwrap();
+        let wrong_sig = bls12381::PrivateKey::from_seed(424242).sign(b"x", b"y");
+        let tampered = tamper_signature(&attestation, |s| s.seed_partial_identity_sig = wrong_sig);
+
+        let mut rng = bls_batch_verification_rng();
+        assert!(
+            verifier.verify_attestation(&mut rng, subject, &tampered, &Sequential),
+            "vote must still verify despite a garbage identity sig"
+        );
+        assert!(
+            !verifier.verify_seed_partial_identity_sig(subject, &tampered),
+            "but the identity sig itself must be rejected (no attribution)"
+        );
+    }
+
+    #[test]
+    fn test_classify_seed_partial_three_way_verdict() {
+        use crate::proof::{seed_attest_namespace, seed_partial_attest_message};
+
+        let (keys, schemes, verifier) = signers_keys_and_verifier(4);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 13);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let mut rng = bls_batch_verification_rng();
+
+        let honest = schemes[0].sign::<Sha256Digest>(subject).unwrap();
+        let honest_sig = honest.signature.get().cloned().unwrap();
+
+        // Valid: an honest active-version partial.
+        assert_eq!(
+            verifier.classify_seed_partial(&mut rng, subject, &honest, &Sequential),
+            SeedPartialVerdict::Valid
+        );
+
+        // StaleVersion: a non-active material version is excluded, not byzantine.
+        let stale = tamper_signature(&honest, |s| s.vrf_material_version = 999);
+        assert_eq!(
+            verifier.classify_seed_partial(&mut rng, subject, &stale, &Sequential),
+            SeedPartialVerdict::StaleVersion
+        );
+
+        // A well-formed-but-wrong partial value (signer 0 over a foreign round).
+        let bad_partial = foreign_round_attestation(&schemes[0])
+            .signature
+            .get()
+            .unwrap()
+            .bls_seed_partial;
+        let attest_msg = seed_partial_attest_message(1, 2, 0, bad_partial.encode().as_ref());
+
+        // AttributableInvalid: bad partial bound by signer 0's own identity sig.
+        let good_identity_sig = keys[0].sign(&seed_attest_namespace(), &attest_msg);
+        let attributable = Attestation {
+            signer: honest.signer,
+            signature: commonware_codec::types::lazy::Lazy::from(HybridSignature::<MinSig> {
+                bls_individual_vote: honest_sig.bls_individual_vote.clone(),
+                vrf_material_version: 0,
+                bls_seed_partial: bad_partial,
+                seed_partial_identity_sig: good_identity_sig,
+            }),
+        };
+        assert_eq!(
+            verifier.classify_seed_partial(&mut rng, subject, &attributable, &Sequential),
+            SeedPartialVerdict::AttributableInvalid
+        );
+
+        // Unattributable: same bad partial, but the identity sig is from the
+        // WRONG key, so it cannot be attributed to signer 0 (relay-forgery case).
+        let wrong_identity_sig =
+            bls12381::PrivateKey::from_seed(999).sign(&seed_attest_namespace(), &attest_msg);
+        let unattributable = Attestation {
+            signer: honest.signer,
+            signature: commonware_codec::types::lazy::Lazy::from(HybridSignature::<MinSig> {
+                bls_individual_vote: honest_sig.bls_individual_vote.clone(),
+                vrf_material_version: 0,
+                bls_seed_partial: bad_partial,
+                seed_partial_identity_sig: wrong_identity_sig,
+            }),
+        };
+        assert_eq!(
+            verifier.classify_seed_partial(&mut rng, subject, &unattributable, &Sequential),
+            SeedPartialVerdict::Unattributable
+        );
+    }
+
     #[test]
     fn test_hybrid_certificate_codec_roundtrip() {
         let (keys, participants) = test_participants(3);
@@ -1839,10 +2483,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // A-13: signer() rejects share.index != participant index
+    // signer() rejects share.index != participant index
     // -----------------------------------------------------------------------
 
-    /// A-13: signer() with mismatched share.index returns None.
+    /// signer() with mismatched share.index returns None.
     #[test]
     fn test_signer_share_index_mismatch_returns_none() {
         let (keys, participants) = test_participants(3);
@@ -1878,7 +2522,7 @@ mod tests {
         );
     }
 
-    /// A-13: signer() with correct share.index succeeds (positive case).
+    /// signer() with correct share.index succeeds (positive case).
     #[test]
     fn test_signer_correct_share_index_succeeds() {
         let (keys, participants) = test_participants(3);

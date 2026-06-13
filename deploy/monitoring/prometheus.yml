@@ -22,7 +22,7 @@ scrape_configs:
     #   outbe_participation_rate              - ratio of signers to total validators
     #   outbe_views_skipped_total             - skipped views (missed proposers)
     #   outbe_epoch_number                    - current consensus epoch
-    #   commonware_p2p_active_peers           - Commonware P2P peer-manager target size
+    #   commonware_p2p_tracked_peer_set_size - Commonware P2P tracked peer-set size (membership, not live connections)
     #   outbe_consensus_reth_tip_hash_match   - consensus tip is available in Reth provider
     #   outbe_dkg_status                      - DKG status (0=idle, 1=in_progress, 2=completed, 3=expired)
     #   outbe_reshares_completed_total        - number of DKG reshares completed

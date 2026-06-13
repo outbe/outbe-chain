@@ -310,7 +310,7 @@ where
             return Ok(());
         }
 
-        // A-28: Self-transfer is a no-op — prevents double-insert overwrite
+        // Self-transfer is a no-op — prevents double-insert overwrite
         // that would create tokens out of nothing.
         if from == to {
             return Ok(());

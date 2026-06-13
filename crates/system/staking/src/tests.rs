@@ -51,7 +51,7 @@ fn seed_balance(storage: StorageHandle, addr: Address, amount: u64) {
 }
 
 /// Registers a validator in ValidatorSet so cross-calls work correctly.
-/// Uses owner registration path to bypass A-45 BLS proof-of-key requirement.
+/// Uses owner registration path to bypass BLS proof-of-key requirement.
 fn register_validator(storage: StorageHandle, validator: Address) {
     let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let mut val_set = ValidatorSet::new(storage.clone());
@@ -63,7 +63,7 @@ fn register_validator(storage: StorageHandle, validator: Address) {
 }
 
 /// Seeds STAKING_ADDRESS with balance (simulating EVM-level msg.value transfer).
-/// A-01: stake() no longer transfers; in production EVM does it.
+/// stake() no longer transfers; in production EVM does it.
 fn seed_staking_balance(storage: StorageHandle, amount: u64) {
     let ctx = storage.clone();
     let current = ctx.balance(STAKING_ADDRESS).unwrap();
@@ -78,11 +78,11 @@ fn seed_staking_balance(storage: StorageHandle, amount: u64) {
 #[test]
 fn test_stake() {
     with_staking(|storage, s| {
-        // A-43: Self-stake only (caller == validator)
+        // Self-stake only (caller == validator)
         let validator = address!("0x1111111111111111111111111111111111111111");
         let amount = U256::from(500u64);
 
-        // A-01: stake() doesn't transfer funds; in production EVM does it.
+        // stake() doesn't transfer funds; in production EVM does it.
         // Seed STAKING_ADDRESS to simulate EVM msg.value transfer.
         seed_staking_balance(storage.clone(), 500);
         s.stake(validator, validator, amount).unwrap();
@@ -95,7 +95,7 @@ fn test_stake() {
 #[test]
 fn test_stake_third_party_rejected() {
     with_staking(|_storage, s| {
-        // A-43: Third-party staking is no longer supported
+        // Third-party staking is no longer supported
         let validator = address!("0x1111111111111111111111111111111111111111");
         let caller = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert!(s.stake(caller, validator, U256::from(500u64)).is_err());
@@ -591,7 +591,7 @@ fn test_unbonding_full_flow() {
         s.config_unbonding_period.write(unbonding_period).unwrap();
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
-        // A-01: stake() no longer transfers; seed STAKING_ADDRESS to simulate EVM msg.value.
+        // stake() no longer transfers; seed STAKING_ADDRESS to simulate EVM msg.value.
         seed_staking_balance(storage.clone(), stake_amount);
         s.stake(validator, validator, U256::from(stake_amount))
             .unwrap();
@@ -942,10 +942,10 @@ fn test_unstake_prepend_linked_list() {
 }
 
 // ===========================================================================
-// A-04: Slash unbonding entries regression tests
+// Slash unbonding entries regression tests
 // ===========================================================================
 
-/// A-04: unstake → slash → claim: unbonding amount must be reduced.
+/// unstake → slash → claim: unbonding amount must be reduced.
 #[test]
 fn test_slash_reduces_unbonding() {
     let base_time: u64 = 10_000;
@@ -1014,7 +1014,7 @@ fn test_slash_reduces_unbonding() {
     });
 }
 
-/// A-04: 100% slash zeroes all unbonding entries.
+/// 100% slash zeroes all unbonding entries.
 #[test]
 fn test_slash_100_zeroes_unbonding() {
     with_staking_timed(0, |storage, s| {
@@ -1040,10 +1040,10 @@ fn test_slash_100_zeroes_unbonding() {
 }
 
 // ===========================================================================
-// A-05: Balance invariant after slash
+// Balance invariant after slash
 // ===========================================================================
 
-/// A-05: After slash, STAKING_ADDRESS balance == remaining stake + remaining unbonding.
+/// After slash, STAKING_ADDRESS balance == remaining stake + remaining unbonding.
 #[test]
 fn test_slash_balance_invariant() {
     with_staking(|storage, s| {
@@ -1072,10 +1072,10 @@ fn test_slash_balance_invariant() {
 }
 
 // ===========================================================================
-// A-43: Self-stake only — unstake/claim rights remain with the staker
+// Self-stake only — unstake/claim rights remain with the staker
 // ===========================================================================
 
-/// A-43: Self-staker can unstake and claim their own funds.
+/// Self-staker can unstake and claim their own funds.
 #[test]
 fn test_self_staker_can_unstake_and_claim() {
     let base_time: u64 = 10_000;

@@ -206,4 +206,12 @@ pub struct ValidatorSet {
     /// Slot 46 — monotonic counter for the slot-45 ring index (incremented once
     /// per distinct finalized block recorded).
     pub finalized_participation_ring_seq: Slot<u64>,
+
+    /// Slot 47 — `keccak256(Encode(full public polynomial))` per committee
+    /// snapshot, keyed by `snapshot_key` (same key as slots 31..40). Written by
+    /// `write_committee_snapshot` and zeroed by `clear_committee_snapshot` so it
+    /// is pruned in lockstep with the snapshot it belongs to. Lets SlashIndicator
+    /// derive any signer's threshold pubkey to verify an invalid-seed-partial
+    /// slash offense. `B256::ZERO` means no full polynomial was available.
+    pub committee_snapshot_vrf_public_polynomial_hash: Mapping<B256, B256>,
 }

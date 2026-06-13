@@ -18,7 +18,7 @@
 //! 4. Advance `max_observed_finalized_day` (monotonic).
 //!
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
@@ -27,6 +27,46 @@ use outbe_primitives::{
 };
 
 use crate::schema::Rewards;
+
+/// number of recent finalized blocks whose per-`fb_hash` guard maps
+/// (`block_metadata_counted`, `metadata_fingerprint_for_block`,
+/// `fee_dust_counted_for_block`, `fee_settled`) stay live. The replay/settle
+/// horizon is the K-block late-finalize window
+/// ([`LATE_FINALIZE_WINDOW_K`](outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K) = 3),
+/// so retaining the last 64 finalized blocks is generous; older guard flags
+/// are pruned by [`prune_block_guards`]. Changing it is a hard fork.
+pub const BLOCK_GUARD_RETAIN: u64 = 64;
+
+/// Record `fb_hash` in the prune ring and clear the four per-`fb_hash` guard
+/// maps of the finalized block evicted `BLOCK_GUARD_RETAIN` records ago.
+///
+/// Without this, `block_metadata_counted`, `metadata_fingerprint_for_block`,
+/// `fee_dust_counted_for_block`, and `fee_settled` grow by one entry per
+/// finalized block forever. The evicted block is `BLOCK_GUARD_RETAIN` ≫ K
+/// blocks old, so it can no longer be re-counted or settled and clearing its
+/// guards cannot weaken replay protection for any block still in the window.
+/// The nested `participation_counted_for_block[fb_hash]` map is freed at
+/// settlement instead (see `late_settlement::settle_window`), where the
+/// credited voter set is known.
+fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
+    let seq = rewards.block_guard_ring_seq.read()?;
+    let idx = seq % BLOCK_GUARD_RETAIN;
+    let evicted = rewards.block_guard_ring.read(&idx)?;
+    if evicted != B256::ZERO && evicted != fb_hash {
+        rewards.block_metadata_counted.write(&evicted, false)?;
+        rewards
+            .metadata_fingerprint_for_block
+            .write(&evicted, B256::ZERO)?;
+        rewards.fee_dust_counted_for_block.write(&evicted, false)?;
+        rewards.fee_settled.write(&evicted, false)?;
+    }
+    rewards.block_guard_ring.write(&idx, fb_hash)?;
+    rewards.block_guard_ring_seq.write(
+        seq.checked_add(1)
+            .ok_or_else(|| PrecompileError::Revert("block_guard_ring_seq overflow".into()))?,
+    )?;
+    Ok(())
+}
 
 /// Per-block fee escrow and participation/cap accumulation.
 ///
@@ -57,6 +97,11 @@ pub fn on_finalized_metadata(
 
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
 
+    // first sight of this finalized block? `block_metadata_counted` is the
+    // durable per-`fb_hash` first-seen signal, so the prune ring advances exactly
+    // once per finalized block even if the hook is re-entered for the same hash.
+    let first_seen = !rewards.block_metadata_counted.read(&fb_hash)?;
+
     // 1. Lazy init of `last_settled_utc_day` on first finalized day observed.
     if rewards.last_settled_utc_day.read()? == 0 {
         rewards
@@ -67,7 +112,7 @@ pub fn on_finalized_metadata(
     // per-day raw fee accumulation still feeds the daily-emission cap,
     // but the fees themselves are now ESCROWED per finalized block (not paid
     // eagerly) and settled at N+K. Idempotent via `block_metadata_counted`.
-    if !rewards.block_metadata_counted.read(&fb_hash)? {
+    if first_seen {
         let prev_raw = rewards.daily_fee_sum_raw.read(&fb_day)?;
         let next_raw = prev_raw
             .checked_add(validator_fee_sum)
@@ -146,6 +191,13 @@ pub fn on_finalized_metadata(
     // orchestration. There is therefore no late-after-settle fatal guard
     // here; `daily_settled` remains owned by Cycle as the day-dispatch
     // completion marker.
+
+    // bound the per-`fb_hash` guard maps. Advances once per finalized
+    // block (gated on `first_seen`) and clears the guards of the block evicted
+    // `BLOCK_GUARD_RETAIN` records ago.
+    if first_seen {
+        prune_block_guards(&rewards, fb_hash)?;
+    }
 
     Ok(())
 }
@@ -767,5 +819,61 @@ mod tests {
                 "replay-augmented state must equal canonical-only state"
             );
         }
+    }
+
+    /// a finalized block evicted from the prune ring has all four of its
+    /// per-`fb_hash` guard maps cleared, while blocks still inside the retention
+    /// window keep theirs.
+    #[test]
+    fn block_guard_ring_evicts_and_clears_old_guards() {
+        fn fb(i: u64) -> B256 {
+            let mut b = [0u8; 32];
+            b[24..].copy_from_slice(&i.to_be_bytes());
+            B256::from(b)
+        }
+
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            let rewards = ctx.storage.contract::<Rewards>();
+
+            // `victim` carries all four live per-fb_hash guards; `survivor` is a
+            // block recorded one step later that must stay live.
+            let victim = fb(1);
+            let survivor = fb(2);
+            for h in [victim, survivor] {
+                rewards.block_metadata_counted.write(&h, true).unwrap();
+                rewards
+                    .metadata_fingerprint_for_block
+                    .write(&h, fb(0xdead))
+                    .unwrap();
+                rewards.fee_dust_counted_for_block.write(&h, true).unwrap();
+                rewards.fee_settled.write(&h, true).unwrap();
+            }
+
+            // Record victim, then survivor, then fill the ring with RETAIN-1 more
+            // fresh blocks so victim (and only victim) reaches the eviction slot.
+            prune_block_guards(&rewards, victim).unwrap();
+            prune_block_guards(&rewards, survivor).unwrap();
+            for i in 0..(BLOCK_GUARD_RETAIN - 1) {
+                prune_block_guards(&rewards, fb(1000 + i)).unwrap();
+            }
+
+            // Victim evicted → every guard reset to its default.
+            assert!(!rewards.block_metadata_counted.read(&victim).unwrap());
+            assert_eq!(
+                rewards
+                    .metadata_fingerprint_for_block
+                    .read(&victim)
+                    .unwrap(),
+                B256::ZERO
+            );
+            assert!(!rewards.fee_dust_counted_for_block.read(&victim).unwrap());
+            assert!(!rewards.fee_settled.read(&victim).unwrap());
+
+            // Survivor is still inside the window → guards intact.
+            assert!(rewards.block_metadata_counted.read(&survivor).unwrap());
+            assert!(rewards.fee_settled.read(&survivor).unwrap());
+        });
     }
 }

@@ -158,10 +158,6 @@ pub trait OutbeApi {
     #[method(name = "getStake")]
     async fn get_stake(&self, address: Address) -> jsonrpsee::core::RpcResult<U256>;
 
-    /// Returns claimable pending emission rewards for an address.
-    #[method(name = "getPendingRewards")]
-    async fn get_pending_rewards(&self, address: Address) -> jsonrpsee::core::RpcResult<U256>;
-
     /// Returns slash counters for a validator.
     #[method(name = "getSlashInfo")]
     async fn get_slash_info(&self, address: Address) -> jsonrpsee::core::RpcResult<SlashInfo>;
@@ -170,8 +166,12 @@ pub trait OutbeApi {
     #[method(name = "consensusStatus")]
     async fn consensus_status(&self) -> jsonrpsee::core::RpcResult<ConsensusStatusInfo>;
 
-    /// Returns the VRF seed from the latest finalized block,
-    /// or from a specific block number if provided.
+    /// Returns the committed VRF seed (block header `mixHash` / prev_randao) for
+    /// the given block number, or for the latest canonical block when omitted
+    /// (which, under Outbe's fast finality, is the latest finalized block).
+    /// Reads the authoritative committed header via the provider, so the answer
+    /// is identical on validators and full nodes. `None` if the block does not
+    /// exist or carries no `mixHash`.
     #[method(name = "getVrfSeed")]
     async fn get_vrf_seed(
         &self,

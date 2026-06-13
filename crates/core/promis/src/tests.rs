@@ -119,7 +119,7 @@ fn test_multiple_users() {
     });
 }
 
-/// A-32: mineCoen must burn synthetic promis AND mint native tokens.
+/// mineCoen must burn synthetic promis AND mint native tokens.
 /// Simulates the precompile dispatch path: mine_coen() + increase_balance().
 #[test]
 fn test_mine_coen_increases_native_balance() {
@@ -133,7 +133,7 @@ fn test_mine_coen_increases_native_balance() {
         let amount = p.mine_coen(alice, U256::from(400)).unwrap();
         assert_eq!(amount, U256::from(400));
 
-        // Precompile dispatch calls increase_balance (A-32 fix)
+        // Precompile dispatch calls increase_balance (fix)
         p.storage.increase_balance(alice, amount).unwrap();
 
         // Verify: synthetic burned
@@ -145,7 +145,7 @@ fn test_mine_coen_increases_native_balance() {
     });
 }
 
-/// A-32: mine_coen with insufficient balance must fail without partial burn.
+/// mine_coen with insufficient balance must fail without partial burn.
 #[test]
 fn test_mine_coen_failure_no_partial_burn() {
     with_promis_mut(|p| {

@@ -7,7 +7,7 @@
 //! reads in production.
 //!
 //! - `missing_direct_parent_proof_does_not_wait_for_future_finalization` —
-//! (the V1 polling waiter is gone; selector returns synchronously).
+//!   (the V1 polling waiter is gone; selector returns synchronously).
 
 use alloy_primitives::B256;
 use outbe_consensus::finalization::{

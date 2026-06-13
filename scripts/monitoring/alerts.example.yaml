@@ -11,8 +11,14 @@
 #        and updated on every bounded insert + finalization eviction).
 #   - process_resident_memory_bytes
 #       Reth's standard per-process RSS gauge.
-#   - commonware_p2p_active_peers
-#       current tracked Commonware consensus peer-set size.
+#   - commonware_p2p_tracked_peer_set_size
+#       current tracked Commonware consensus peer-set size (membership,
+#       NOT live TCP connections — it does not drop on disconnect).
+#   - outbe_current_view / outbe_finalized_view
+#       highest observed Simplex view vs last finalized view. The gap is the
+#       primary consensus-stall signal: views advancing but nothing finalizing.
+#   - outbe_views_nullified_total
+#       count of nullified (view-timed-out / skipped) views.
 #
 # Constants used here mirror the Rust source of truth:
 #   BLOCK_CACHE_MAX_ENTRIES = 1024
@@ -64,21 +70,61 @@ groups:
             problem — wedge or fork spam — that the operator must
             investigate now.
 
-      # Network split early-warning: disconnected validator. The May
+      # Network split early-warning: empty tracked peer set. The May
       # 2026 OOM incident root cause was this condition going unnoticed
-      # for hours.
+      # for hours. NOTE: this metric is tracked-set membership, not live
+      # connectivity — pair with the stall alert below, which keys on the
+      # finalization gap and catches connectivity loss the membership count
+      # cannot.
       - alert: OutbeConsensusPeerSetEmpty
-        expr: commonware_p2p_active_peers == 0
+        expr: commonware_p2p_tracked_peer_set_size == 0
         for: 5m
         labels:
           severity: critical
           subsystem: consensus
         annotations:
-          summary: "validator {{ $labels.instance }} has zero consensus peers for >5m"
+          summary: "validator {{ $labels.instance }} has an empty tracked peer set for >5m"
           description: |
-            commonware_p2p_active_peers == 0 for 5 minutes. The validator has
-            an empty tracked consensus peer set and cannot finalize. Check P2P
-            reachability, known-peers.json, and bootnode pingability.
+            commonware_p2p_tracked_peer_set_size == 0 for 5 minutes. The
+            validator has no tracked consensus peers and cannot finalize. Check
+            P2P reachability, known-peers.json, and bootnode pingability.
+
+      # Primary consensus-stall alarm (M-20): views are advancing but nothing
+      # is finalizing. Unlike the membership/cache proxies above, this keys on
+      # the live finalization gap, so it fires for a connectivity loss, a
+      # leader-timeout storm, or a wedge — even while the tracked peer set looks
+      # healthy.
+      - alert: OutbeConsensusStalled
+        expr: (outbe_current_view - outbe_finalized_view) > 20
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: consensus
+        annotations:
+          summary: "consensus stalled on {{ $labels.instance }}: views advancing, no finalization"
+          description: |
+            outbe_current_view - outbe_finalized_view = {{ $value }} (> 20) for
+            2 minutes. Views are progressing but no view is finalizing — a
+            liveness fault (lost connectivity, a byzantine/offline leader run,
+            or a wedge). Cross-reference rate(outbe_views_nullified_total[5m])
+            and the `outbe::reporter` / `outbe::consensus` log targets.
+
+      # View-timeout storm: leaders are repeatedly failing to deliver proposals
+      # in time, nullifying views. A sustained rate degrades liveness even if
+      # the chain has not fully stalled yet.
+      - alert: OutbeViewNullificationStorm
+        expr: rate(outbe_views_nullified_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "high view-nullification rate on {{ $labels.instance }}"
+          description: |
+            rate(outbe_views_nullified_total[5m]) = {{ $value }} (> 0.2/s) for
+            5 minutes. Leaders are repeatedly timing out before delivering
+            proposals (network turbulence or an offline/byzantine leader run).
+            Finalization continues but with degraded liveness.
 
   - name: outbe-chain.host
     interval: 30s

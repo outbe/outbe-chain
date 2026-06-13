@@ -108,8 +108,8 @@ pub fn lysis(
     let nt = tributes.len();
 
     // 5. Deficit coefficient in fixed-point → clamp to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2]
-    // A-25: Clamp at U256 level before downcast to avoid silent u128 truncation.
-    // A-27: .clamp(MIN, MAX/2) — MIN is the floor guarantee, MAX/2 is the ceiling.
+    // Clamp at U256 level before downcast to avoid silent u128 truncation.
+    //.clamp(MIN, MAX/2) — MIN is the floor guarantee, MAX/2 is the ceiling.
     let deficit_u256 = gratis_allocation * SCALE_1E18 / total_interest;
     let deficit_fp = deficit_u256.min(U256::from(u128::MAX)).to::<u128>();
     let f_fp = deficit_fp.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
@@ -133,7 +133,7 @@ pub fn lysis(
     // 9. Issue NODs for each tribute
     let mut nod_ids = Vec::with_capacity(tributes.len());
     let mut tribute_ids = Vec::with_capacity(tributes.len());
-    // A-39: Track which tribute token_ids were successfully processed.
+    // Track which tribute token_ids were successfully processed.
     let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
 
@@ -190,7 +190,7 @@ pub fn lysis(
     // see `outbe_nod::runtime::NodContract::mine_gratis` for the price check
     // and `outbe_nod::hooks::NodLifecycle` (if present) for eager bulk scan.
 
-    // A-39: Only delete tributes that were successfully processed (NOD issued).
+    // Only delete tributes that were successfully processed (NOD issued).
     // Skipped tributes are preserved for potential reprocessing.
     for token_id in &processed_tribute_ids {
         tribute_contract.burn(*token_id)?;

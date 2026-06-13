@@ -68,6 +68,7 @@ fn committee_set_hash_v2_test_vector_matches_plan_a4() {
         }],
         vrf_material_version: 0,
         vrf_group_public_key_bytes: vec![0x22u8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
 
     let actual = committee_set_hash_v2(0, &snapshot);

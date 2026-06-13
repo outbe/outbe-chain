@@ -182,7 +182,7 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -971,7 +971,7 @@ fn recovery_finalization_fixture(
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -980,9 +980,12 @@ fn recovery_finalization_fixture(
             .unwrap()
         })
         .collect();
-    let verifier =
-        HybridScheme::<MinSig>::verifier(config::NAMESPACE, participants, dkg.polynomial.clone())
-            .unwrap();
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial.clone(),
+    )
+    .unwrap();
 
     let proposal = Proposal::new(
         round,
@@ -1835,7 +1838,7 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 // shifts the indices of every original key by +1. Production code that builds
 // `participants` from a live 4-key set after a 3-key DKG would therefore observe
 // participant indices that no longer match the share.index baked into the
-// saved DKG output (hybrid.rs:472-481, A-13 invariant).
+// saved DKG output (hybrid.rs:472-481, invariant).
 //
 // This is a structural assertion about ordered::Set, not a probabilistic one.
 // =============================================================================
@@ -2478,29 +2481,62 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 — recovery picks historical participants at boundary freeze_height.
+// T4 — recovery picks participants from the recovered DKG output's committee
+//      (the share holders), NOT the latest on-chain set, and fails fast when
+// the restored material does not match the recovered boundary.
 //
-// IGNORED: this test asserts the *desired* recovery behaviour. As a passing
-// regression test it requires production changes in stack.rs:411-427 and
-// validate_recovered_vrf_material (stack.rs:144-158). The recovery-fix PR
-// will unignore this test as its acceptance criterion.
+// `select_recovery_participants` is the pure decision the recovery path now
+// uses at stack.rs §7. The output's `players()` is already a sorted/deduped
+// `commonware_utils::ordered::Set`, so participant indices derive from it
+// canonically — the test asserts membership and the explicit drift error.
 // =============================================================================
-#[ignore = "expected to pass once recovery uses freeze_height instead of latest()"]
+
+/// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
+/// distinct validator addresses — the committee the ceremony ran for.
+fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
+    let mut boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0xC1), 7);
+    boundary.reshare.new_active_set = (0..n).map(|i| Address::repeat_byte(i as u8 + 1)).collect();
+    boundary
+}
+
 #[test]
-fn recovery_uses_historical_freeze_height() {
-    // Subcase 1: latest() = 4 BLS keys, state at freeze_height = 3 keys.
-    //   Assert recovery succeeds and HybridScheme::signer_with_vrf_provider
-    //   constructs against the historical 3-key set.
-    //
-    // Subcase 2: state at freeze_height also has 4 keys (DKG ran for 3 but
-    //   chain state already had 4 by the time the boundary was committed).
-    //   Assert recovery fails fast with an explicit "validator set has
-    //   drifted from saved DKG" error message.
-    //
-    // Implementation will need a stub provider for state-at-height plus a
-    // fabricated DkgBoundaryArtifact carrying freeze_height and a 3-key
-    // polynomial. Pending recovery refactor.
-    panic!("T4 stub: implement once recovery is refactored to use freeze_height");
+fn recovery_uses_recovered_committee_not_latest() {
+    // Recovered DKG output for a 3-validator committee. `players()` is the
+    // sorted set of the three consensus pubkeys — the share holders.
+    let recovered_players: commonware_utils::ordered::Set<bls12381::PublicKey> = (1u64..=3)
+        .map(bls12381::PrivateKey::from_seed)
+        .map(|key| key.public_key())
+        .try_collect()
+        .expect("3-key recovered participant set");
+
+    // Subcase 1: the latest on-chain set has drifted to 4 keys, but the recovered
+    // boundary recorded the 3-validator committee the material belongs to.
+    // Recovery reconstructs against the recovered 3-key committee, ignoring latest.
+    let boundary_ok = test_boundary_with_active_set_len(3);
+    let resolved = super::select_recovery_participants(&recovered_players, &boundary_ok)
+        .expect("matching committee size must reconstruct against the recovered committee");
+    assert_eq!(
+        resolved.len(),
+        3,
+        "must reconstruct against the recovered 3-key committee, not the drifted latest set"
+    );
+    assert_eq!(
+        resolved, recovered_players,
+        "resolved participants must be exactly the recovered DKG output's player set"
+    );
+
+    // Subcase 2: the recovered boundary records a 4-validator active set while the
+    // restored DKG output has only 3 players — the consensus material does not
+    // match the recovered chain boundary. Recovery must fail fast with an explicit
+    // drift error rather than build the scheme against the wrong committee.
+    let boundary_drift = test_boundary_with_active_set_len(4);
+    let err = super::select_recovery_participants(&recovered_players, &boundary_drift)
+        .expect_err("size mismatch between recovered material and boundary must fail fast");
+    assert!(
+        err.to_string()
+            .contains("validator set has drifted from saved DKG"),
+        "operator-facing drift error must surface in the rejection: got {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------

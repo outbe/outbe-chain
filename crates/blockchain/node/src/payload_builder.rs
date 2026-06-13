@@ -3,10 +3,11 @@ use std::sync::Arc;
 use alloy_consensus::Transaction as _;
 use alloy_primitives::U256;
 use alloy_rlp::Encodable as _;
+use either::Either;
 use outbe_evm::{AccountedParentArtifact, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
 use outbe_primitives::{
-    reshare_artifact::decode_outbe_block_artifacts, OutbeBuiltPayload, OutbeHeader,
-    OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
+    consensus::OUTBE_MAX_BLOCK_SIZE, reshare_artifact::decode_outbe_block_artifacts,
+    OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
@@ -17,11 +18,11 @@ use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{
-    execute::{BlockBuilder, BlockExecutor},
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, BlockExecutor},
     ConfigureEvm, Evm, NextBlockEnvAttributes,
 };
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
-use reth_payload_primitives::PayloadBuilderError;
+use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_primitives_traits::AlloyBlockHeader as _;
 use reth_revm::{database::StateProviderDatabase, db::State};
@@ -358,6 +359,21 @@ where
                 continue;
             }
 
+            // Outbe transport cap (always on, independent of the Osaka fork): a
+            // block must fit one consensus P2P message. Skip txs that would push
+            // the block over `OUTBE_MAX_BLOCK_SIZE` so the proposer never builds
+            // a block validators would reject as undisseminable.
+            if estimated_block_size > OUTBE_MAX_BLOCK_SIZE {
+                best_txs.mark_invalid(
+                    &pool_tx,
+                    &InvalidPoolTransactionError::OversizedData {
+                        size: estimated_block_size,
+                        limit: OUTBE_MAX_BLOCK_SIZE,
+                    },
+                );
+                continue;
+            }
+
             let mut blob_tx_sidecar = None;
             let tx_blob_count = tx.blob_count();
             if let Some(tx_blob_count) = tx_blob_count {
@@ -479,10 +495,40 @@ where
             builder.finish(state_provider.as_ref(), None)?
         };
 
+        let BlockBuilderOutcome {
+            execution_result,
+            hashed_state,
+            trie_updates,
+            block,
+        } = outcome;
+
         let requests = chain_spec
             .is_prague_active_at_timestamp(inner.timestamp)
-            .then_some(outcome.execution_result.requests.clone());
-        let sealed_block = Arc::new(outcome.block.into_sealed_block());
+            .then_some(execution_result.requests.clone());
+
+        // capture the full execution result of the block we just built so
+        // the proposer does NOT re-execute and re-root it at finalize time.
+        // `builder` only borrowed `&mut db`, so after `finish` the merged
+        // post-state bundle is back on our local `db` and can be taken here.
+        // Reth's launch loop inserts `executed_block()` into the engine tree, so
+        // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit
+        // (validators already get this via their verify-time `new_payload`).
+        // This is the SAME execution that produced the sealed block below, so the
+        // cached state matches the sealed block hash exactly — no proposer/
+        // validator divergence.
+        let recovered_block = Arc::new(block);
+        let execution_output = Arc::new(BlockExecutionOutput {
+            state: db.take_bundle(),
+            result: execution_result,
+        });
+        let executed_block = BuiltPayloadExecutedBlock::<OutbePrimitives> {
+            recovered_block: recovered_block.clone(),
+            execution_output,
+            hashed_state: Either::Left(Arc::new(hashed_state)),
+            trie_updates: Either::Left(Arc::new(trie_updates)),
+        };
+
+        let sealed_block = Arc::new(recovered_block.sealed_block().clone());
 
         if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
             return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
@@ -491,10 +537,20 @@ where
             }));
         }
 
+        // Outbe transport cap (always on): the sealed block must fit one
+        // consensus P2P message. Final guard in case the per-tx estimate
+        // undershot (e.g. system txs / extra_data added after selection).
+        if sealed_block.rlp_length() > OUTBE_MAX_BLOCK_SIZE {
+            return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
+                rlp_length: sealed_block.rlp_length(),
+                max_rlp_length: OUTBE_MAX_BLOCK_SIZE,
+            }));
+        }
+
         let inner =
             EthBuiltPayload::<OutbePrimitives>::new(sealed_block, total_fees, requests, None)
                 .with_sidecars(blob_sidecars);
-        let payload = OutbeBuiltPayload::new(inner, None);
+        let payload = OutbeBuiltPayload::new(inner, Some(executed_block));
 
         Ok(BuildOutcome::Better {
             payload,

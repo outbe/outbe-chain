@@ -132,7 +132,7 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
         a if a == SLASH_INDICATOR_ADDRESS => (
             "slashindicator",
             outbe_slashindicator::precompile::dispatch,
-            default_base_gas,
+            outbe_slashindicator::precompile::base_gas,
         ),
         a if a == STAKING_ADDRESS => (
             "staking",

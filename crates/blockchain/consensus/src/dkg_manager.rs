@@ -226,7 +226,7 @@ impl Mailbox {
             .map(|output| output.players().clone())
             .unwrap_or_else(|| participants.clone());
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            config::NAMESPACE,
+            &config::outbe_app_namespace(),
             round,
             previous_output,
             Mode::NonZeroCounter,
@@ -670,6 +670,10 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         committee: committee_entries,
         vrf_material_version,
         vrf_group_public_key_bytes: group_pk_bytes_vec.clone(),
+        // Full polynomial commitment hash (not folded into committee_set_hash_v2,
+        // so it does not affect the artifact's committee_set_hash; the executor
+        // re-derives the same value from the boundary `outcome`).
+        vrf_public_polynomial_hash: public_polynomial_hash(output.public()),
     };
     let committee_set_hash = crate::proof::committee_set_hash_v2(epoch.get(), &committee_snapshot);
 
@@ -745,6 +749,38 @@ pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
     alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial))
 }
 
+/// Decode the ODKO-wrapped boundary `outcome` and return
+/// `keccak256(Encode(full public polynomial))` of the carried DKG output.
+///
+/// Returns `B256::ZERO` when the outcome is not a decodable full-output ODKO
+/// record (e.g. a group-key-only bootstrap outcome) — in that case the
+/// committee's "invalid seed partial" slash offense is simply unavailable for
+/// that epoch. Deterministic and panic-free; safe to call in the executor over
+/// the already-consensus-validated boundary `outcome`.
+pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
+    use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
+    // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
+    const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
+    if outcome.len() < HEADER_LEN || &outcome[0..4] != b"ODKO" {
+        return B256::ZERO;
+    }
+    let Ok(len_bytes) = <[u8; 4]>::try_from(&outcome[14..18]) else {
+        return B256::ZERO;
+    };
+    let len = u32::from_be_bytes(len_bytes) as usize;
+    let Some(body) = outcome.get(HEADER_LEN..HEADER_LEN + len) else {
+        return B256::ZERO;
+    };
+    let Some(max) = NonZeroU32::new(crate::bls::MAX_VALIDATORS) else {
+        return B256::ZERO;
+    };
+    let cfg = (max, ModeVersion::v0());
+    match Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg) {
+        Ok(output) => public_polynomial_hash(output.public()),
+        Err(_) => B256::ZERO,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, B256, U256};
@@ -781,7 +817,7 @@ mod tests {
             keys.iter().map(|k| k.public_key()).try_collect().unwrap();
 
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            config::NAMESPACE,
+            &config::outbe_app_namespace(),
             7,
             None,
             Mode::NonZeroCounter,
@@ -878,7 +914,7 @@ mod tests {
         BTreeMap<bls12381::PublicKey, Bytes>,
     ) {
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            config::NAMESPACE,
+            &config::outbe_app_namespace(),
             round,
             previous_output,
             Mode::NonZeroCounter,
@@ -1324,7 +1360,7 @@ mod tests {
             .try_collect()
             .unwrap();
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            config::NAMESPACE,
+            &config::outbe_app_namespace(),
             7,
             None,
             Mode::NonZeroCounter,
@@ -1561,6 +1597,22 @@ mod tests {
         );
         assert_ne!(all_artifact.outcome, subset_artifact.outcome);
         assert_ne!(all_artifact, subset_artifact);
+
+        // Offense-A parity: the executor derives the committee's polynomial hash
+        // from the boundary `outcome` and must get exactly the value the
+        // proposer committed (`public_polynomial_hash(output.public())`).
+        // Otherwise the snapshot the executor writes would diverge and
+        // invalid-seed-partial evidence could never match.
+        assert_eq!(
+            boundary_outcome_polynomial_hash(all_artifact.outcome.as_ref()),
+            public_polynomial_hash(all_output.public()),
+            "executor outcome-derived poly hash must equal the proposer's"
+        );
+        // Distinct polynomials → distinct hashes (no collision).
+        assert_ne!(
+            boundary_outcome_polynomial_hash(all_artifact.outcome.as_ref()),
+            boundary_outcome_polynomial_hash(subset_artifact.outcome.as_ref()),
+        );
     }
 
     #[test]

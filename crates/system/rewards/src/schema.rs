@@ -5,51 +5,47 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Rewards precompile.
 ///
-/// Tracks claimable emission top-up balances, the chain's genesis UTC-day
-/// anchor, and the per-finalized-block + per-day accumulators used by the
-/// idempotent fee-distribution path and day-boundary settle formula.
+/// Tracks the chain's genesis UTC-day anchor and the per-finalized-block +
+/// per-day accumulators used by the idempotent fee-distribution path and
+/// day-boundary settle formula.
 ///
-/// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over
-/// the inclusion-window voter set; emission top-ups land in `pending_rewards`
-/// once per UTC day at settle time and are claimed via `claimRewards`.
+/// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
+/// inclusion-window voter set; daily emission top-ups are delivered to voters as
+/// gems by [`crate::api::add_topup_for_voters`] (validator emission is paid in
+/// gems, not a claimable native balance).
 ///
 /// Storage slots:
-///   0:  pending_rewards                    — mapping(address => uint256)
-///   1:  genesis_utc_day                    — uint32 (yyyymmdd of block 0; 0 = uninit)
-///   2:  participation_counted_for_block    — mapping(B256 => mapping(address => bool))
-///   3:  daily_fee_sum_raw                  — mapping(uint32 => uint256)
-///   4:  daily_fees_paid                    — mapping(uint32 => uint256)
-///   5:  daily_fee_dust                     — mapping(uint32 => uint256)
-///   6:  daily_participation                — mapping(uint32 => mapping(address => uint64))
-///   7:  daily_total_participation          — mapping(uint32 => uint64)
-///   8:  daily_voter_count                  — mapping(uint32 => uint32)
-///   9:  daily_voter_at                     — mapping(uint32 => mapping(uint32 => address))
-///  10:  daily_settled                      — mapping(uint32 => bool)
-///  11:  max_observed_finalized_day         — uint32 (yyyymmdd; 0 = uninit)
-///  12:  last_settled_utc_day               — uint32 (yyyymmdd; 0 = uninit)
-///  13:  block_metadata_counted             — mapping(B256 => bool)
-///  14:  metadata_fingerprint_for_block     — mapping(B256 => B256)
-///  15:  fee_dust_counted_for_block         — mapping(B256 => bool)
-///  16:  daily_topup_settled                — mapping(uint32 => bool)
-///  17:  pending_fees                       — mapping(B256 => uint256)
-///  18:  fee_settled                        — mapping(B256 => bool)
-///  19:  late_voter_k_plus1                 — mapping(B256 => mapping(address => uint8))
-///  20:  late_voter_count                   — mapping(B256 => uint32)
-///  21:  late_voter_at                      — mapping(B256 => mapping(uint32 => address))
-///  22:  pending_fb_hash_at                 — mapping(uint64 => B256)    (number -> fb_hash)
-///  23:  pending_committee_size_at          — mapping(uint64 => uint32)
-///  24:  pending_epoch_at                   — mapping(uint64 => uint64)
-///  25:  pending_committee_set_hash_at      — mapping(uint64 => B256)
-///  26:  pending_view_at                    — mapping(uint64 => uint64)
-///  27:  pending_parent_view_at             — mapping(uint64 => uint64)
+///   0:  genesis_utc_day                    — uint32 (yyyymmdd of block 0; 0 = uninit)
+///   1:  participation_counted_for_block    — mapping(B256 => mapping(address => bool))
+///   2:  daily_fee_sum_raw                  — mapping(uint32 => uint256)
+///   3:  daily_fees_paid                    — mapping(uint32 => uint256)
+///   4:  daily_fee_dust                     — mapping(uint32 => uint256)
+///   5:  daily_participation                — mapping(uint32 => mapping(address => uint64))
+///   6:  daily_total_participation          — mapping(uint32 => uint64)
+///   7:  daily_voter_count                  — mapping(uint32 => uint32)
+///   8:  daily_voter_at                     — mapping(uint32 => mapping(uint32 => address))
+///   9:  daily_settled                      — mapping(uint32 => bool)
+///  10:  max_observed_finalized_day         — uint32 (yyyymmdd; 0 = uninit)
+///  11:  last_settled_utc_day               — uint32 (yyyymmdd; 0 = uninit)
+///  12:  block_metadata_counted             — mapping(B256 => bool)
+///  13:  metadata_fingerprint_for_block     — mapping(B256 => B256)
+///  14:  fee_dust_counted_for_block         — mapping(B256 => bool)
+///  15:  daily_topup_settled                — mapping(uint32 => bool)
+///  16:  pending_fees                       — mapping(B256 => uint256)
+///  17:  fee_settled                        — mapping(B256 => bool)
+///  18:  late_voter_k_plus1                 — mapping(B256 => mapping(address => uint8))
+///  19:  late_voter_count                   — mapping(B256 => uint32)
+///  20:  late_voter_at                      — mapping(B256 => mapping(uint32 => address))
+///  21:  pending_fb_hash_at                 — mapping(uint64 => B256)    (number -> fb_hash)
+///  22:  pending_committee_size_at          — mapping(uint64 => uint32)
+///  23:  pending_epoch_at                   — mapping(uint64 => uint64)
+///  24:  pending_committee_set_hash_at      — mapping(uint64 => B256)
+///  25:  pending_view_at                    — mapping(uint64 => uint64)
+///  26:  pending_parent_view_at             — mapping(uint64 => uint64)
+/// 27: block_guard_ring — mapping(uint64 => B256) (prune ring of fb_hash)
+/// 28: block_guard_ring_seq — uint64 (ring write cursor)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
-    /// Accumulated claimable emission top-up per validator address.
-    /// Per-block fees are NOT credited here — they are escrowed in
-    /// `pending_fees` and settled at `N+K` (vote.md). Only the daily
-    /// emission top-up share lands here, claimable via `claimRewards`.
-    pub pending_rewards: Mapping<Address, U256>,
-
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
     /// exactly once at the first invocation of `RewardsLifecycle::begin_block`,
     /// which is block 0 in any chain shipping this refactor. After
@@ -209,4 +205,21 @@ pub struct Rewards {
     /// Finalized block number -> its canonical `parent_view`
     /// authentication; see `pending_view_at`).
     pub pending_parent_view_at: Mapping<u64, u64>,
+
+    // ── prune ring for the per-finalized-block guard maps ──────────
+    /// Bounds the per-`fb_hash` guard maps (`block_metadata_counted`,
+    /// `metadata_fingerprint_for_block`, `fee_dust_counted_for_block`,
+    /// `fee_settled`) to the last [`BLOCK_GUARD_RETAIN`](crate::finalized_metadata_hook::BLOCK_GUARD_RETAIN)
+    /// finalized blocks. `on_finalized_metadata` records each finalized `fb_hash`
+    /// here and clears the four guards of the block evicted `BLOCK_GUARD_RETAIN`
+    /// records ago. Retention is far larger than the K-block late-finalize
+    /// window, so no guard is dropped while its block can still be replayed
+    /// (re-counted) or settled. The nested `participation_counted_for_block` map
+    /// is freed separately at settlement (`settle_window`), where the credited
+    /// voter set is known. `B256::ZERO` = empty ring slot.
+    pub block_guard_ring: Mapping<u64, B256>,
+
+    /// Monotonic write cursor for `block_guard_ring`; the live slot index is
+    /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
+    pub block_guard_ring_seq: Slot<u64>,
 }

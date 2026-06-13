@@ -601,12 +601,19 @@ fn qualify_survives_lz_messenger_failure() {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
-        assert!(
-            qualified::try_qualify(&s, &mut f, 7, mature, U256::from(EXPECTED_FLOOR) + U256::from(1))
-                .unwrap()
-        );
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            mature,
+            U256::from(EXPECTED_FLOOR) + U256::from(1)
+        )
+        .unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
+            outbe_intexregistry::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
             outbe_intexregistry::IntexState::Qualified
         );
     });
@@ -628,11 +635,20 @@ fn call_survives_lz_messenger_failure() {
         let pair_id = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
-        fill_days(&oracle, today, pair_id, 30, U256::from(EXPECTED_TRIGGER) + U256::from(1));
+        fill_days(
+            &oracle,
+            today,
+            pair_id,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
 
         assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
+            outbe_intexregistry::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
             outbe_intexregistry::IntexState::Called
         );
     });

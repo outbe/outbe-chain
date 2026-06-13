@@ -1549,6 +1549,7 @@ impl OracleContract<'_> {
 
     /// Returns all registered pairs as parallel arrays of
     /// (pair_ids, bases, quotes, is_active).
+    #[allow(clippy::type_complexity)] // parallel-array view getter; the tuple IS the ABI shape
     pub fn get_pairs(&self) -> Result<(Vec<u32>, Vec<String>, Vec<String>, Vec<bool>)> {
         let count = self.pair_count.read()?;
         let mut pair_ids = Vec::with_capacity(count as usize);

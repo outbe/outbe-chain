@@ -76,6 +76,7 @@ tempfile.workspace = true
 commonware-cryptography.workspace = true
 commonware-consensus.workspace = true
 commonware-codec.workspace = true
+commonware-utils.workspace = true
 commonware-math.workspace = true
 rand_core.workspace = true
 
