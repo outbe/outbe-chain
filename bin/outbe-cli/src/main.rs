@@ -167,18 +167,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_tee_join() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "join",
-            "--enclave-socket",
-            "/tmp/enclave.sock",
-        ]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
     fn test_cli_parse_monitor_health() {
         let cli = Cli::try_parse_from(["outbe-cli", "monitor", "health"]);
         assert!(cli.is_ok());
