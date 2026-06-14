@@ -55,6 +55,23 @@ fn fr_to_u256(x: Fr) -> U256 {
     U256::from_be_bytes(out)
 }
 
+/// Reject a `U256` that is not the canonical (`< p`) representative of a BN254
+/// scalar-field element.
+///
+/// The proof's field-element public inputs are transmitted as 32 raw bytes and
+/// handed to the Barretenberg verifier without a canonical-form check; the
+/// backend reduces them modulo the scalar field `p`, so `N`, `N + p`, … all
+/// verify as the same field element. Any of those values that the runtime then
+/// uses as *state* — most importantly the `nullifier_spent` set key — must be
+/// canonicalised first, otherwise `N` and `N + p` are distinct keys for the
+/// same nullifier and a note can be spent more than once.
+pub fn require_canonical_field(x: U256) -> Result<U256> {
+    if fr_to_u256(u256_to_fr(x)) != x {
+        return Err(GratisPoolError::NonCanonicalFieldInput.into());
+    }
+    Ok(x)
+}
+
 /// Variadic Poseidon helper. Constructs a fresh `Poseidon` with `inputs.len()`
 /// arity and returns the hash as a `U256` (so callers can store / compare it
 /// in storage directly).
@@ -242,6 +259,14 @@ impl GratisPoolContract<'_> {
     /// PoC search: linear scan over `ROOT_WINDOW` entries. With `ROOT_WINDOW
     /// = 30` that's 30 SLOADs per verify; reasonable until the window grows.
     pub(crate) fn has_root_in_window(&self, denom_id: u8, root: U256) -> Result<bool> {
+        // `0` is never a legitimate root (an empty tree's root is
+        // `merkle_zeros[MERKLE_DEPTH]`, which is non-zero). Reject it
+        // explicitly so an unwritten ring-buffer slot — which reads back as
+        // `U256::ZERO` before the window fills — can never be matched as a
+        // valid historical root.
+        if root == U256::ZERO {
+            return Ok(false);
+        }
         for slot in 0..ROOT_WINDOW {
             let key = GratisPoolContract::level_key(denom_id, slot);
             if self.roots.read(&key)? == root {

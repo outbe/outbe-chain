@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "prepare-abis": "node scripts/prepare-abis.mjs",
-    "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json'",
+    "write-vk": "tsx src/_writevk.ts",
+    "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json' && npm run write-vk",
     "build": "npm run generate-types && tsc",
     "clean": "rm -rf dist abi src/contracts",
     "info": "tsx src/0-info.ts",
