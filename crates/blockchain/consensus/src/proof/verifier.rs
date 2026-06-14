@@ -38,7 +38,6 @@ use alloy_primitives::{keccak256, B256};
 use bytes::Bytes;
 use commonware_codec::{Decode, DecodeExt, Encode, Read};
 use commonware_consensus::simplex::types::{Finalization, Notarization};
-use commonware_cryptography::{Hasher as _, Sha256};
 use commonware_cryptography::bls12381::{
     self,
     primitives::{
@@ -77,14 +76,6 @@ pub struct VerifiedProof {
     /// Material version of the verified VRF proof. Used by Rewards/Slash V2
     /// settlement to bind to the active VRF material.
     pub vrf_material_version: u64,
-    /// Expected `block.prev_randao` for the child block that carries this
-    /// certificate as its Phase-1 certified-parent accounting: the SHA-256 of
-    /// the recovered threshold-VRF seed, derived identically to the proposer
-    /// side (`finalization::actor` sets `view.prev_randao` to
-    /// `Sha256(verified_vrf_seed_for_round(..))`). The import path binds the
-    /// header's `prev_randao` to this so a proposer cannot inject arbitrary,
-    /// unverified randomness into the EVM `PREVRANDAO` opcode (finding 542a30).
-    pub expected_prev_randao: B256,
 }
 
 // `V2VerifyError` lives in [`crate::error`]. The enum
@@ -237,20 +228,10 @@ pub fn verify_v2_proof_low_level(
 
     let vrf_proof_hash = crate::proof::canonical_vrf_proof_hash_v2(proof);
 
-    // 542a30: derive the child block's expected `prev_randao` from the verified
-    // threshold-VRF seed, identically to the proposer side
-    // (`finalization::actor` sets `view.prev_randao =
-    // Sha256(threshold_signature.encode())`). The import path binds the header's
-    // `prev_randao` to this value so a proposer cannot inject arbitrary,
-    // unverified randomness into the EVM `PREVRANDAO` opcode.
-    let seed_bytes = proof.threshold_signature.encode().to_vec();
-    let expected_prev_randao = B256::from_slice(Sha256::hash(&seed_bytes).as_ref());
-
     Ok(VerifiedProof {
         signer_bitmap,
         vrf_proof_hash,
         vrf_material_version: proof.material_version,
-        expected_prev_randao,
     })
 }
 
@@ -320,20 +301,10 @@ fn verify_v2_certificate_low_level(
 
     let vrf_proof_hash = crate::proof::canonical_vrf_proof_hash_v2(proof);
 
-    // 542a30: derive the child block's expected `prev_randao` from the verified
-    // threshold-VRF seed, identically to the proposer side
-    // (`finalization::actor` sets `view.prev_randao =
-    // Sha256(threshold_signature.encode())`). The import path binds the header's
-    // `prev_randao` to this value so a proposer cannot inject arbitrary,
-    // unverified randomness into the EVM `PREVRANDAO` opcode.
-    let seed_bytes = proof.threshold_signature.encode().to_vec();
-    let expected_prev_randao = B256::from_slice(Sha256::hash(&seed_bytes).as_ref());
-
     Ok(VerifiedProof {
         signer_bitmap,
         vrf_proof_hash,
         vrf_material_version: proof.material_version,
-        expected_prev_randao,
     })
 }
 

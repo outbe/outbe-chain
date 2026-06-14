@@ -1689,29 +1689,6 @@ where
             ))
         })?;
 
-        // 542a30: bind the header's `prev_randao` to the verified threshold-VRF
-        // seed of the parent finalization certificate (carried as this block's
-        // Phase-1 metadata). `prev_randao` is part of the block hash, so all
-        // nodes execute the SAME value deterministically — but nothing
-        // previously constrained it to be the real VRF seed, letting a proposer
-        // inject arbitrary, proposer-chosen randomness into the EVM `PREVRANDAO`
-        // opcode. `verified.expected_prev_randao` is derived identically to the
-        // proposer side (`view.prev_randao = Sha256(threshold_signature)`).
-        let header_prev_randao = self.inner.evm.block().prevrandao().unwrap_or(B256::ZERO);
-        if header_prev_randao != verified.expected_prev_randao {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                        "Phase 1 pre-exec: block {block_number} header.prev_randao \
-                         {header_prev_randao} does not match the VRF seed {} derived from \
-                         the parent finalization certificate",
-                        verified.expected_prev_randao
-                    )
-                    .into(),
-                ),
-            ));
-        }
-
         // cache the canonical VRF proof hash so
         // `apply_phase1_commit_in_preexec` (and the main-loop body[0]
         // path) can populate the V3 Rewards fingerprint without
