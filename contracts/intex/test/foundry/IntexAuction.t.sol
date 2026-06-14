@@ -150,7 +150,7 @@ contract AuctionTest is Test {
         _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
-        uint32 revealedBidsCount = auction.auctionRunningCounts(seriesId).revealedBidsCount;
+        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
         assertEq(revealedBidsCount, 2);
         assertEq(bids.length, 2);
 
@@ -706,7 +706,7 @@ contract AuctionTest is Test {
         assertFalse(auction.revealedBidsByBidder(seriesId, iba1));
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
         assertEq(bids.length, 0);
-        uint32 revealedBidsCount = auction.auctionRunningCounts(seriesId).revealedBidsCount;
+        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
         assertEq(revealedBidsCount, 0);
     }
 }

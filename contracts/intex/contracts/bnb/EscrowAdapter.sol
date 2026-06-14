@@ -153,19 +153,25 @@ contract EscrowAdapter is
         return _s().lockTag;
     }
 
-    /// @notice Bid lock record for a bidder within a series.
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder address.
-    /// @return The stored lock record.
-    function bidLocks(uint32 seriesId, address bidder) external view returns (BidLock memory) {
-        return _s().bidLocks[seriesId][bidder];
+    /// @notice Bid lock record for a bidder within a series. Flattened to match the original
+    ///         public-mapping getter ABI.
+    function bidLocks(uint32 seriesId, address bidder)
+        external
+        view
+        returns (uint64 lockedAmount, uint32 lockedAt, LockStatus status, uint64 failedRefund, bool splitRecorded)
+    {
+        BidLock storage l = _s().bidLocks[seriesId][bidder];
+        return (l.lockedAmount, l.lockedAt, l.status, l.failedRefund, l.splitRecorded);
     }
 
-    /// @notice Per-series escrow state.
-    /// @param seriesId Series identifier.
-    /// @return The stored escrow state.
-    function auctionEscrowState(uint32 seriesId) external view returns (AuctionEscrowState memory) {
-        return _s().auctionEscrowState[seriesId];
+    /// @notice Per-series escrow state. Flattened to match the original public-mapping getter ABI.
+    function auctionEscrowState(uint32 seriesId)
+        external
+        view
+        returns (uint64 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
+    {
+        AuctionEscrowState storage e = _s().auctionEscrowState[seriesId];
+        return (e.totalLocked, e.lockCount, e.finalizedAt, e.finalized);
     }
 
     // --- Admin ---

@@ -116,11 +116,33 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return _s().collectionDescription;
     }
 
-    /// @notice Series-level data, stored per token id.
-    /// @param tokenId Issued or Settled token id.
-    /// @return The stored series record (zeroed when the token id is unknown).
-    function seriesData(uint256 tokenId) external view returns (IIntexNFT1155.SeriesData memory) {
-        return _s().seriesData[tokenId];
+    /// @notice Series-level data, stored per token id. Flattened to match the original
+    ///         public-mapping getter ABI.
+    function seriesData(uint256 tokenId)
+        external
+        view
+        returns (
+            uint32 issuedAt,
+            uint32 calledAt,
+            uint32 intexCallPeriod,
+            uint32 totalSupply,
+            uint32 issuedIntexCount,
+            uint32 mintedCount,
+            IIntexNFT1155.IntexStatus status,
+            IIntexNFT1155.IntexState state
+        )
+    {
+        IIntexNFT1155.SeriesData storage d = _s().seriesData[tokenId];
+        return (
+            d.issuedAt,
+            d.calledAt,
+            d.intexCallPeriod,
+            d.totalSupply,
+            d.issuedIntexCount,
+            d.mintedCount,
+            d.status,
+            d.state
+        );
     }
 
     /// @notice Amount won at auction per address per token id (recorded at mint, never changes).

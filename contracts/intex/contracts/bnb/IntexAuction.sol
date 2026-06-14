@@ -91,18 +91,31 @@ contract IntexAuction is
         return _s().escrowContract;
     }
 
-    /// @notice Auction parameters and state, indexed by series id.
-    /// @param seriesId Auction series id.
-    /// @return The stored auction record (zeroed when the series is unknown).
-    function auctions(uint32 seriesId) external view returns (IIntexAuction.AuctionData memory) {
-        return _s().auctions[seriesId];
+    /// @notice Auction parameters and state, indexed by series id. Flattened to match the
+    ///         original public-mapping getter ABI (nested structs returned as tuples).
+    function auctions(uint32 seriesId)
+        external
+        view
+        returns (
+            IIntexAuction.WorldwideDayState worldwideDayState,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params,
+            IIntexAuction.AuctionResult memory result
+        )
+    {
+        IIntexAuction.AuctionData storage a = _s().auctions[seriesId];
+        return (a.worldwideDayState, a.schedule, a.params, a.result);
     }
 
-    /// @notice Live bid counters tracked while the auction runs.
-    /// @param seriesId Auction series id.
-    /// @return The running counters.
-    function auctionRunningCounts(uint32 seriesId) external view returns (IIntexAuction.AuctionRunningCounts memory) {
-        return _s().auctionRunningCounts[seriesId];
+    /// @notice Live bid counters tracked while the auction runs. Flattened to match the
+    ///         original public-mapping getter ABI.
+    function auctionRunningCounts(uint32 seriesId)
+        external
+        view
+        returns (uint32 committedBidsCount, uint32 revealedBidsCount)
+    {
+        IIntexAuction.AuctionRunningCounts storage c = _s().auctionRunningCounts[seriesId];
+        return (c.committedBidsCount, c.revealedBidsCount);
     }
 
     /// @notice Committed bid hash for a bidder.
@@ -121,16 +134,15 @@ contract IntexAuction is
         return _s().revealedBidsByBidder[seriesId][bidder];
     }
 
-    /// @notice Revealed bid at an index within a series.
-    /// @param seriesId Auction series id.
-    /// @param index Position in the reveal order.
-    /// @return The stored bid record.
+    /// @notice Revealed bid at an index within a series. Flattened to match the original
+    ///         public-mapping getter ABI.
     function revealedBids(uint32 seriesId, uint256 index)
         external
         view
-        returns (IIntexAuction.SubmittedBidData memory)
+        returns (address bidderAddress, uint64 intexBidPrice, uint32 timestamp, uint16 intexQuantity)
     {
-        return _s().revealedBids[seriesId][index];
+        IIntexAuction.SubmittedBidData storage b = _s().revealedBids[seriesId][index];
+        return (b.bidderAddress, b.intexBidPrice, b.timestamp, b.intexQuantity);
     }
 
     // --- Admin ---
