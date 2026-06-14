@@ -1,4 +1,5 @@
 use crate::algorithm::{calc_fraction_distribution_fp, LYSIS_LIMIT_MAX, LYSIS_LIMIT_MIN};
+use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_oracle::{contract::OracleContract, scurve};
@@ -104,8 +105,8 @@ pub fn lysis(
         remaining -= gratis_load;
 
         // floor_price = max(tribute_price, entry_price) * (1 + floor_rate 8%)
-        let floor_basis = tribute.tribute_price_minor.max(entry_price_minor);
-        let floor_price_minor = floor_basis * U256::from(108u64) / U256::from(100u64);
+        let floor_price_minor =
+            calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
 
         // fidelity is capped to u32::MAX on write (see
         // `outbe_fidelity::FidelityContract::set_fidelity_index`), so the
