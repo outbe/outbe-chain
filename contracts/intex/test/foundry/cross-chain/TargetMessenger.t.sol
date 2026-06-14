@@ -67,7 +67,7 @@ contract TargetMessengerTest is TestHelperOz5 {
         outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         // Deploy batch adapter on BNB
-        batchAdapter = new ONFT1155AdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
+        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
 
         // Wire adapters (set peers)
         address[] memory oapps = new address[](2);

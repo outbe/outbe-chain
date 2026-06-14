@@ -7,6 +7,8 @@ import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
 import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
+import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 
 /// @dev Deploys implementation + ERC1967 proxy pairs for the UUPS contracts under test.
 ///      Returned handles point at the proxy, mirroring how the contracts run in production.
@@ -42,5 +44,24 @@ library DeployProxy {
         TargetMessenger impl = new TargetMessenger(lzEndpoint, outbeEid);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetMessenger.initialize, (delegate)));
         return TargetMessenger(payable(address(proxy)));
+    }
+
+    function onftAdapter(address tokenAddr, address lzEndpoint, address delegate, uint32 outbeEid)
+        internal
+        returns (ONFT1155Adapter)
+    {
+        ONFT1155Adapter impl = new ONFT1155Adapter(tokenAddr, lzEndpoint, outbeEid);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155Adapter.initialize, (delegate)));
+        return ONFT1155Adapter(payable(address(proxy)));
+    }
+
+    function onftAdapterBatch(address tokenAddr, address lzEndpoint, address delegate)
+        internal
+        returns (ONFT1155AdapterBatch)
+    {
+        ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(tokenAddr, lzEndpoint);
+        ERC1967Proxy proxy =
+            new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate)));
+        return ONFT1155AdapterBatch(payable(address(proxy)));
     }
 }

@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {
@@ -45,8 +46,8 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
 
         srcToken = DeployProxy.intexNFT1155(admin, admin);
         dstToken = DeployProxy.intexNFT1155(admin, admin);
-        srcBatch = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
-        dstBatch = new ONFT1155AdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
+        srcBatch = DeployProxy.onftAdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
+        dstBatch = DeployProxy.onftAdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
 
         address[] memory oapps = new address[](2);
         oapps[0] = address(srcBatch);
@@ -93,24 +94,26 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
     // ---------------------------------------------------------------
 
     /// @notice `token` is immutable; a zero address permanently bricks every credit/debit path.
+    /// @dev Property of the implementation constructor.
     function test_Constructor_RevertsZeroToken() public {
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.ZeroAddress.selector, "token"));
-        new ONFT1155AdapterBatch(address(0), address(endpoints[SRC_EID]), admin);
+        new ONFT1155AdapterBatch(address(0), address(endpoints[SRC_EID]));
     }
 
-    /// @notice The OApp base only reverts opaquely on a zero `_lzEndpoint` (the `setDelegate` call
-    ///         hits empty code). The guard surfaces the typed `ZeroAddress("lzEndpoint")` instead.
+    /// @notice A zero `_lzEndpoint` is caught by the constructor guard, surfacing the typed
+    ///         `ZeroAddress("lzEndpoint")` instead of the opaque OApp base revert.
     function test_Constructor_RevertsZeroLzEndpoint() public {
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.ZeroAddress.selector, "lzEndpoint"));
-        new ONFT1155AdapterBatch(address(srcToken), address(0), admin);
+        new ONFT1155AdapterBatch(address(srcToken), address(0));
     }
 
-    /// @notice `_delegate` (also the owner) is rejected by the OZ `Ownable` base constructor, which
-    ///         linearizes ahead of `OAppCore`. Documents that the framework — not an added guard —
-    ///         closes the zero-delegate brick path.
+    /// @notice `_delegate` (also the owner) is rejected by `__Ownable_init` during proxy
+    ///         initialization. Documents that the framework — not an added guard — closes the
+    ///         zero-delegate brick path.
     function test_Constructor_RevertsZeroDelegate_ViaFramework() public {
+        ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]));
         vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
-        new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), address(0));
+        new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155AdapterBatch.initialize, (address(0))));
     }
 
     // ---------------------------------------------------------------

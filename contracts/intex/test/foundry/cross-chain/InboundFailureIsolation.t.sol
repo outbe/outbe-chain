@@ -36,8 +36,8 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
-        onftBatchOutbe = new ONFT1155AdapterBatch(address(intex), address(endpoints[OUTBE_EID]), admin);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[OUTBE_EID]), admin);
 
         address[] memory batches = new address[](2);
         batches[0] = address(onftBatchBnb);

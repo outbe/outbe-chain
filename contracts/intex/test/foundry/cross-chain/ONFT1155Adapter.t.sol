@@ -48,18 +48,8 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[aEid]), address(this), bEid)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[bEid]), address(this), aEid)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this), bEid);
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this), aEid);
 
         // Grant RELAYER_ROLE to adapters
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
@@ -92,8 +82,9 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
     /// @notice `token` is immutable, so a zero address would permanently brick the
     ///         adapter (every `debit`/`credit` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
+        // Property of the implementation constructor — the token immutable is set there.
         vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "token"));
-        new ONFT1155Adapter(address(0), address(endpoints[aEid]), address(this), bEid);
+        new ONFT1155Adapter(address(0), address(endpoints[aEid]), bEid);
     }
 
     function test_send() public {

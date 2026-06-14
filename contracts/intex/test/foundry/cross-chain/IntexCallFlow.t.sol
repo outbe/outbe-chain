@@ -76,24 +76,14 @@ contract IntexCallFlowTest is TestHelperOz5 {
 
         bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
-        batchAdapterBnb = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(intexBnb), address(endpoints[bnbEid]), admin)
-                ))
-        );
+        batchAdapterBnb = DeployProxy.onftAdapterBatch(address(intexBnb), address(endpoints[bnbEid]), admin);
 
         // ---- Deploy Outbe contracts ----
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
-        batchAdapterOutbe = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(intexOutbe), address(endpoints[outbeEid]), admin)
-                ))
-        );
+        batchAdapterOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[outbeEid]), admin);
 
         // ---- Wire LZ peers ----
         address[] memory bridgeOapps = new address[](2);

@@ -63,8 +63,8 @@ contract DynamicLzGasTest is TestHelperOz5 {
 
         srcToken = DeployProxy.intexNFT1155(admin, admin);
         dstToken = DeployProxy.intexNFT1155(admin, admin);
-        srcBatch = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
-        dstBatch = new ONFT1155AdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
+        srcBatch = DeployProxy.onftAdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
+        dstBatch = DeployProxy.onftAdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
 
         address[] memory oapps = new address[](2);
         oapps[0] = address(srcBatch);

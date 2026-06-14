@@ -44,18 +44,8 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[A_EID]), address(this), B_EID)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[B_EID]), address(this), A_EID)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[A_EID]), address(this), B_EID);
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[B_EID]), address(this), A_EID);
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));

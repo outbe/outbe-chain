@@ -58,22 +58,12 @@ contract InboundValidationTest is TestHelperOz5 {
 
         bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
         outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        onftBnb = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID)
-            )
-        );
-        onftOutbe = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID)
-            )
-        );
-        onftBatchOutbe = new ONFT1155AdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         // Wire bridge peers
         address[] memory bridge = new address[](2);

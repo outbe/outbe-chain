@@ -45,7 +45,7 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
 
         bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
         outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);
