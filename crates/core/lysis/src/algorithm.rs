@@ -315,6 +315,7 @@ fn i256_to_u128_clamped(value: I256) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 
     /// Compute floor(base^exp) for u128, saturating on overflow.
     fn pow_u128(base: u128, exp: u32) -> Option<u128> {
@@ -364,13 +365,10 @@ mod tests {
 
     #[test]
     fn test_single_group_returns_f() {
-        const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
-        const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
-
         let y_fp = vec![SCALE]; // 100%
         let p = vec![10];
-        let f_fp = LYSIS_LIMIT_MIN;
-        let fmax_fp = LYSIS_LIMIT_MAX;
+        let f_fp = F_FP_DEFAULT;
+        let fmax_fp = F_MAX_FP;
 
         let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, fmax_fp).unwrap();
         assert_eq!(result.len(), 1);
@@ -379,13 +377,10 @@ mod tests {
 
     #[test]
     fn test_two_groups_sum_reasonable() {
-        const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
-        const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
-
         let y_fp = vec![SCALE / 2, SCALE / 2]; // 50/50
         let p = vec![5, 5];
-        let f_fp = LYSIS_LIMIT_MIN;
-        let fmax_fp = LYSIS_LIMIT_MAX;
+        let f_fp = F_FP_DEFAULT;
+        let fmax_fp = F_MAX_FP;
 
         let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, fmax_fp).unwrap();
         assert_eq!(result.len(), 2);

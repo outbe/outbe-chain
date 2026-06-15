@@ -1,4 +1,5 @@
 use crate::algorithm::*;
+use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_nod::NodContract;
@@ -6,9 +7,6 @@ use outbe_oracle::contract::OracleContract;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData};
-
-const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
-const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
 
 fn gas_audit_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
@@ -143,8 +141,7 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
 
 #[test]
 fn test_empty_population() {
-    let result =
-        calc_fraction_distribution_fp(&[], &[], 10, 0, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&[], &[], 10, 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result, vec![0]);
 }
 
@@ -152,18 +149,16 @@ fn test_empty_population() {
 fn test_single_fi_returns_target_fraction() {
     let y_fp = vec![SCALE]; // 100%
     let p = vec![5];
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0], LYSIS_LIMIT_MIN, "single FI should return f");
+    assert_eq!(result[0], F_FP_DEFAULT, "single FI should return f");
 }
 
 #[test]
 fn test_two_fi_groups() {
     let y_fp = vec![SCALE * 6 / 10, SCALE * 4 / 10]; // 60/40
     let p = vec![1, 2];
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 2, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
 
@@ -174,10 +169,7 @@ fn test_two_fi_groups() {
 
     // Bounded by 2*fmax (reasonable bound for fixed-point)
     for (i, &frac) in result.iter().enumerate() {
-        assert!(
-            frac <= LYSIS_LIMIT_MAX * 2,
-            "fraction[{i}] too large: {frac}"
-        );
+        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] too large: {frac}");
     }
 }
 
@@ -186,13 +178,12 @@ fn test_three_fi_groups() {
     let y_fp = vec![SCALE * 50 / 100, SCALE * 30 / 100, SCALE * 20 / 100];
     let p = vec![50, 30, 20];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 3, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
 
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] > bound: {frac}");
     }
 }
 
@@ -202,14 +193,12 @@ fn test_many_fi_groups() {
     let y_fp: Vec<u128> = vec![SCALE / n as u128; n];
     let p: Vec<u64> = (1..=n as u64).collect();
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 100, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), n);
 
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] too large");
+        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] too large");
     }
 }
 
@@ -217,41 +206,35 @@ fn test_many_fi_groups() {
 #[test]
 fn test_deficit_caps_floor_at_min() {
     let deficit = u128::MAX; // abundant gratis
-    let f_fp = deficit.min(LYSIS_LIMIT_MIN);
-    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
-    assert_eq!(
-        f_fp, LYSIS_LIMIT_MIN,
-        "abundant gratis caps the floor at 8%"
-    );
-    assert_eq!(fmax_fp, LYSIS_LIMIT_MAX, "fmax = min(MAX, 2*8%) = 16%");
+    let f_fp = deficit.min(F_FP_DEFAULT);
+    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
+    assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
+    assert_eq!(fmax_fp, F_MAX_FP, "fmax = min(MAX, 2*8%) = 16%");
 }
 
 /// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
 fn test_deficit_derivation_scarce_and_abundant() {
     // Scarce: deficit below the 8% floor → f = deficit (adapts down).
-    let scarce = LYSIS_LIMIT_MIN / 2; // 4%
-    let f_fp = scarce.min(LYSIS_LIMIT_MIN);
-    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
+    let scarce = F_FP_DEFAULT / 2; // 4%
+    let f_fp = scarce.min(F_FP_DEFAULT);
+    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
     assert_eq!(f_fp, scarce, "scarce gratis must lower the floor below 8%");
     assert_eq!(fmax_fp, scarce * 2, "fmax tracks 2*f when below the cap");
 
     // Abundant: deficit at/above 8% → f capped at 8%, fmax at 16%.
-    let abundant = LYSIS_LIMIT_MAX; // 16% deficit
-    let f_fp = abundant.min(LYSIS_LIMIT_MIN);
-    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
-    assert_eq!(
-        f_fp, LYSIS_LIMIT_MIN,
-        "abundant gratis caps the floor at 8%"
-    );
-    assert_eq!(fmax_fp, LYSIS_LIMIT_MAX, "fmax caps at 16%");
+    let abundant = F_MAX_FP; // 16% deficit
+    let f_fp = abundant.min(F_FP_DEFAULT);
+    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
+    assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
+    assert_eq!(fmax_fp, F_MAX_FP, "fmax caps at 16%");
 }
 
 #[test]
 fn test_default_constants() {
     // Verify constants match expected values within integer precision
-    assert_eq!(LYSIS_LIMIT_MIN, 80_000_000_000_000_000); // 0.08 * 10^18
-    assert_eq!(LYSIS_LIMIT_MAX, 160_000_000_000_000_000); // 0.16 * 10^18
+    assert_eq!(F_FP_DEFAULT, 80_000_000_000_000_000); // 0.08 * 10^18
+    assert_eq!(F_MAX_FP, 160_000_000_000_000_000); // 0.16 * 10^18
 }
 
 #[test]
@@ -259,12 +242,11 @@ fn test_with_zero_population_entries() {
     let y_fp = vec![SCALE / 2, 0, SCALE / 2];
     let p = vec![10, 0, 5];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 15, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] > bound: {frac}");
     }
 }
 
@@ -274,8 +256,7 @@ fn test_skewed_distribution() {
     let p = vec![900, 100];
 
     let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     assert!(result[0] > 0);
@@ -290,8 +271,7 @@ fn test_large_nominal_distribution() {
     let p = vec![600, 400];
 
     let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     for (i, &frac) in result.iter().enumerate() {
@@ -299,7 +279,7 @@ fn test_large_nominal_distribution() {
             frac > 0,
             "fraction[{i}] must be positive for large nominals"
         );
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] must be bounded");
+        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] must be bounded");
     }
 }
 
@@ -331,8 +311,8 @@ fn test_normalized_f1_respects_budget_skewed_population() {
     // target. After normalization the post-condition must hold.
     let y_fp = vec![SCALE / 4, SCALE / 4, SCALE / 4, SCALE / 4];
     let p = vec![100u64, 1, 1, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 103, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 4);
     assert_weighted_within_target(&result, &y_fp, f_fp);
@@ -343,8 +323,8 @@ fn test_normalized_f1_respects_budget_many_groups() {
     let n = 10usize;
     let y_fp: Vec<u128> = (0..n).map(|_| SCALE / n as u128).collect();
     let p: Vec<u64> = (1..=n as u64).collect();
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), n);
     assert_weighted_within_target(&result, &y_fp, f_fp);
@@ -356,8 +336,8 @@ fn test_single_group_returns_f_without_normalization() {
     // returned as-is. Weighted total = f_fp * SCALE / SCALE = f_fp == target.
     let y_fp = vec![SCALE];
     let p = vec![10];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, LYSIS_LIMIT_MAX).unwrap();
+    let f_fp = F_FP_DEFAULT;
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, F_MAX_FP).unwrap();
     assert_eq!(result, vec![f_fp]);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -368,8 +348,8 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     // groups should remain ~constant.
     let y_fp = vec![SCALE / 2, SCALE / 2];
     let p = vec![50u64, 5];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 55, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert_weighted_within_target(&result, &y_fp, f_fp);
@@ -397,8 +377,8 @@ fn test_small_fi_group_survives_i256_precision() {
         1_000_000,         // tiny group ≈ 0.0001% — used to collapse to 0
     ];
     let p = vec![1000u64, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1001, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert!(
@@ -416,13 +396,13 @@ fn test_small_fi_group_survives_i256_precision() {
 fn test_negative_beta_branch_produces_bounded_distribution() {
     let y_fp = vec![SCALE / 100, SCALE * 99 / 100]; // 1% / 99% split
     let p = vec![1u64, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     for &f in &result {
         assert!(
-            f <= LYSIS_LIMIT_MAX * 2,
+            f <= F_MAX_FP * 2,
             "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound"
         );
     }
