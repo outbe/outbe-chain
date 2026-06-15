@@ -51,7 +51,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the
     ///      cumulative `totalSupply` minted via `mint`/`mintBatch`.
     /// @dev Identity fields (promisLoadMinor, costAmountMinor, floorPriceMinor, etc.) live in
-    ///      IntexRegistry; this struct holds only balance/lifecycle state.
+    ///      Intex; this struct holds only balance/lifecycle state.
     struct SeriesData {
         /// @notice Timestamp when the series was created (UNIX seconds).
         uint32 issuedAt;

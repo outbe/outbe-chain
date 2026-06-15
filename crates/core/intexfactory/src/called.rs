@@ -15,7 +15,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
 use crate::constants::{ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
@@ -104,7 +104,7 @@ pub(crate) fn try_call(
     today: WorldwideDay,
     now_ts: u64,
 ) -> Result<bool> {
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }
@@ -137,7 +137,7 @@ pub(crate) fn try_call(
     // u32 timestamp; bounded until 2106 (matches issued_at).
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
-    outbe_intexregistry::api::mark_called(storage, series_id, called_at)?;
+    outbe_intex::api::mark_called(storage, series_id, called_at)?;
     factory.remove_qualified(series_id, trigger)?;
 
     // Notify the target chain of the Called transition via LayerZero; best-effort.

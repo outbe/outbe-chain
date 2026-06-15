@@ -1,4 +1,4 @@
-//! Read-only view precompile for the IntexRegistry module.
+//! Read-only view precompile for the Intex module.
 //!
 //! Writes stay Rust-to-Rust (IntexFactory); this surface only exposes reads so
 //! off-chain consumers can observe the canonical series identity + lifecycle.
@@ -9,11 +9,11 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::{IntexRegistryContract, SeriesRecord};
+use crate::schema::{IntexContract, SeriesRecord};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IIntexRegistry.sol"
+    "../../../contracts/precompiles/src/IIntex.sol"
 );
 
 pub fn dispatch(
@@ -23,29 +23,23 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    dispatch_call(
-        data,
-        IIntexRegistry::IIntexRegistryCalls::abi_decode,
-        |call| {
-            let registry = IntexRegistryContract::new(storage.clone());
-            use IIntexRegistry::IIntexRegistryCalls::*;
-            match call {
-                seriesData(c) => view(c, |c| {
-                    let record = registry.load_series(c.seriesId)?;
-                    Ok(to_abi_data(&record))
-                }),
-                seriesExists(c) => view(c, |c| registry.series_exists(c.seriesId)),
-                totalSeries(_) => {
-                    metadata::<IIntexRegistry::totalSeriesCall>(|| registry.read_total_series())
-                }
-                seriesAt(c) => view(c, |c| registry.read_series_id_at(c.index)),
-            }
-        },
-    )
+    dispatch_call(data, IIntex::IIntexCalls::abi_decode, |call| {
+        let registry = IntexContract::new(storage.clone());
+        use IIntex::IIntexCalls::*;
+        match call {
+            seriesData(c) => view(c, |c| {
+                let record = registry.load_series(c.seriesId)?;
+                Ok(to_abi_data(&record))
+            }),
+            seriesExists(c) => view(c, |c| registry.series_exists(c.seriesId)),
+            totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
+            seriesAt(c) => view(c, |c| registry.read_series_id_at(c.index)),
+        }
+    })
 }
 
-fn to_abi_data(r: &SeriesRecord) -> IIntexRegistry::SeriesData {
-    IIntexRegistry::SeriesData {
+fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {
+    IIntex::SeriesData {
         seriesId: r.series_id,
         promisLoadMinor: r.promis_load_minor,
         costAmountMinor: r.cost_amount_minor,

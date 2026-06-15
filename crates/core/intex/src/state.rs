@@ -1,15 +1,15 @@
-//! Storage CRUD and dense enumeration helpers for the IntexRegistry module.
+//! Storage CRUD and dense enumeration helpers for the Intex module.
 //!
-//! All functions take a short-lived `&IntexRegistryContract` (or `&mut` for
-//! writes) constructed via `IntexRegistryContract::new(storage)`. They only
+//! All functions take a short-lived `&IntexContract` (or `&mut` for
+//! writes) constructed via `IntexContract::new(storage)`. They only
 //! touch local storage; orchestration and validation live in `api.rs`.
 
 use outbe_primitives::error::Result;
 
-use crate::errors::IntexRegistryError;
-use crate::schema::{IntexRegistryContract, SeriesRecord};
+use crate::errors::IntexError;
+use crate::schema::{IntexContract, SeriesRecord};
 
-impl IntexRegistryContract<'_> {
+impl IntexContract<'_> {
     // ---------------------------------------------------------------------
     // Series CRUD
     // ---------------------------------------------------------------------
@@ -25,7 +25,7 @@ impl IntexRegistryContract<'_> {
     pub(crate) fn load_series(&self, series_id: u32) -> Result<SeriesRecord> {
         self.series
             .get(series_id)?
-            .ok_or_else(|| IntexRegistryError::SeriesNotFound.into())
+            .ok_or_else(|| IntexError::SeriesNotFound.into())
     }
 
     /// Create a new series record and append it to the global enumeration.

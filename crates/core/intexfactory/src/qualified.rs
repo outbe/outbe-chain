@@ -12,7 +12,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
 use crate::constants::{
     MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO,
@@ -87,7 +87,7 @@ pub(crate) fn try_qualify(
     now: u64,
     rate: U256,
 ) -> Result<bool> {
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(false);
     }
@@ -99,7 +99,7 @@ pub(crate) fn try_qualify(
     if rate <= floor {
         return Ok(false);
     }
-    outbe_intexregistry::api::mark_qualified(storage, series_id)?;
+    outbe_intex::api::mark_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
     factory.insert_qualified(series_id, series.coen_price_call_trigger)?;
 

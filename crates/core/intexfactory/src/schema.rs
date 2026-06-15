@@ -1,5 +1,5 @@
 //! Storage schema for IntexFactory: settlement bookkeeping and the
-//! unqualified-series bin index. Canonical series state lives in IntexRegistry.
+//! unqualified-series bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};

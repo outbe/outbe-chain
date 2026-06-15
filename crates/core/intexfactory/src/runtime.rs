@@ -7,7 +7,7 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
 use crate::constants::{
     COEN_CALL_TRIGGER_DEN, COEN_CALL_TRIGGER_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM,
@@ -23,7 +23,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in IntexRegistry and enroll it in the floor-bin
+/// Capture series identity in Intex and enroll it in the floor-bin
 /// index. The outbound LayerZero send is added with messenger wiring.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     // u32 timestamp; bounded until 2106.
@@ -35,21 +35,21 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let floor_price_minor = derived_floor(params.coen_price)?;
     let coen_price_call_trigger = derived_call_trigger(floor_price_minor)?;
 
-    let record = outbe_intexregistry::CreateSeriesParams {
+    let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         issued_intex_count: params.issued_intex_count,
         promis_load_minor: params.promis_load_minor,
         cost_amount_minor: params.cost_amount_minor,
         floor_price_minor,
         intex_call_period: params.intex_call_period,
-        call_trigger: outbe_intexregistry::IntexCallTrigger {
+        call_trigger: outbe_intex::IntexCallTrigger {
             window_days: params.call_window_days,
             threshold_days: params.call_threshold_days,
             coen_price_call_trigger,
         },
         issued_at,
     };
-    outbe_intexregistry::api::create_series(storage, record)?;
+    outbe_intex::api::create_series(storage, record)?;
 
     // Register the series on the local IntexNFT1155 so holders can be tracked
     // on the Outbe side (required for the call-bridge credit path).
@@ -161,7 +161,7 @@ pub fn set_authorized_settler(
     factory.write_authorized_settler(holder, series_id, settler)
 }
 
-/// Settle: `settler` is the caller. Gating reads IntexRegistry; value movement
+/// Settle: `settler` is the caller. Gating reads Intex; value movement
 /// (token / vault / NFT) goes via storage.call.
 pub fn settle(
     storage: &StorageHandle<'_>,
@@ -177,7 +177,7 @@ pub fn settle(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
 
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     let state = series.lifecycle_state()?;
     // Settle is allowed in Qualified (voluntary) and Called (forced).
     if state != IntexState::Qualified && state != IntexState::Called {
@@ -338,7 +338,7 @@ pub fn mine_promis(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
 
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     let settled = nft_balance_of(storage, holder, settled_token_id(series_id))?;
     if settled < amount {
         return Err(IntexFactoryError::InsufficientSettled.into());

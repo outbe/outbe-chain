@@ -29,15 +29,15 @@ pub const NOD_FACTORY_ADDRESS: Address = address!("0x000000000000000000000000000
 /// Gem NFT precompile address. ERC-721 non-transferable registry.
 pub const GEM_ADDRESS: Address = address!("0x0000000000000000000000000000000000001013");
 
-/// IntexRegistry address. Canonical, cross-chain Intex series ledger
+/// Intex address. Canonical, cross-chain Intex series ledger
 /// (identity + lifecycle). Writes are Rust-to-Rust only (IntexFactory); the
 /// precompile at this address dispatches read-only series views for off-chain
 /// observability.
-pub const INTEX_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
+pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
 /// Issued→Qualified→Called lifecycle, and two-step settlement; series state is
-/// written to [`INTEX_REGISTRY_ADDRESS`].
+/// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
 /// Gem factory precompile address (orchestrator: `mint_gem` via cross-module

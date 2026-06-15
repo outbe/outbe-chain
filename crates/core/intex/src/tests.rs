@@ -4,7 +4,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api;
-use crate::precompile::{dispatch, IIntexRegistry};
+use crate::precompile::{dispatch, IIntex};
 use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState};
 
 const CHAIN_ID: u64 = 1;
@@ -219,9 +219,9 @@ fn precompile_series_data_round_trip() {
         api::create_series(&s, sample_params(7)).unwrap();
         api::mark_qualified(&s, 7).unwrap();
 
-        let call = IIntexRegistry::seriesDataCall { seriesId: 7 }.abi_encode();
+        let call = IIntex::seriesDataCall { seriesId: 7 }.abi_encode();
         let out = dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let data = IIntexRegistry::seriesDataCall::abi_decode_returns(&out).unwrap();
+        let data = IIntex::seriesDataCall::abi_decode_returns(&out).unwrap();
 
         assert_eq!(data.seriesId, 7);
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
@@ -240,7 +240,7 @@ fn precompile_series_data_round_trip() {
 #[test]
 fn precompile_series_data_missing_reverts() {
     with_registry(|s| {
-        let call = IIntexRegistry::seriesDataCall { seriesId: 99 }.abi_encode();
+        let call = IIntex::seriesDataCall { seriesId: 99 }.abi_encode();
         assert!(dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).is_err());
     });
 }
@@ -250,13 +250,13 @@ fn precompile_series_exists() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
 
-        let yes = IIntexRegistry::seriesExistsCall { seriesId: 7 }.abi_encode();
+        let yes = IIntex::seriesExistsCall { seriesId: 7 }.abi_encode();
         let out = dispatch(s.clone(), &yes, Address::ZERO, U256::ZERO).unwrap();
-        assert!(IIntexRegistry::seriesExistsCall::abi_decode_returns(&out).unwrap());
+        assert!(IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
 
-        let no = IIntexRegistry::seriesExistsCall { seriesId: 8 }.abi_encode();
+        let no = IIntex::seriesExistsCall { seriesId: 8 }.abi_encode();
         let out = dispatch(s.clone(), &no, Address::ZERO, U256::ZERO).unwrap();
-        assert!(!IIntexRegistry::seriesExistsCall::abi_decode_returns(&out).unwrap());
+        assert!(!IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
     });
 }
 
@@ -266,26 +266,23 @@ fn precompile_total_and_at() {
         api::create_series(&s, sample_params(11)).unwrap();
         api::create_series(&s, sample_params(22)).unwrap();
 
-        let total = IIntexRegistry::totalSeriesCall {}.abi_encode();
+        let total = IIntex::totalSeriesCall {}.abi_encode();
         let out = dispatch(s.clone(), &total, Address::ZERO, U256::ZERO).unwrap();
         assert_eq!(
-            IIntexRegistry::totalSeriesCall::abi_decode_returns(&out).unwrap(),
+            IIntex::totalSeriesCall::abi_decode_returns(&out).unwrap(),
             2
         );
 
-        let at1 = IIntexRegistry::seriesAtCall { index: 1 }.abi_encode();
+        let at1 = IIntex::seriesAtCall { index: 1 }.abi_encode();
         let out = dispatch(s.clone(), &at1, Address::ZERO, U256::ZERO).unwrap();
-        assert_eq!(
-            IIntexRegistry::seriesAtCall::abi_decode_returns(&out).unwrap(),
-            22
-        );
+        assert_eq!(IIntex::seriesAtCall::abi_decode_returns(&out).unwrap(), 22);
     });
 }
 
 #[test]
 fn precompile_rejects_value() {
     with_registry(|s| {
-        let call = IIntexRegistry::totalSeriesCall {}.abi_encode();
+        let call = IIntex::totalSeriesCall {}.abi_encode();
         assert!(dispatch(s.clone(), &call, Address::ZERO, U256::from(1)).is_err());
     });
 }

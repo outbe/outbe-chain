@@ -1,7 +1,7 @@
 //! Cross-module API for IntexFactory.
 //!
 //! `issue` is the clearing engine's (Desis) issuance hand-off — a Rust-to-Rust
-//! call, not a precompile selector, mirroring IntexRegistry's write API. The
+//! call, not a precompile selector, mirroring Intex's write API. The
 //! user-facing surface (settle / minePromis / setAuthorizedSettler) lives in
 //! the precompile.
 

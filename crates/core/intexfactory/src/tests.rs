@@ -65,8 +65,8 @@ fn issue_creates_series_in_registry() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
 
-        // The series is captured in IntexRegistry with the issuance identity.
-        let r = outbe_intexregistry::api::read_series(&s, 7).unwrap();
+        // The series is captured in Intex with the issuance identity.
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
         assert_eq!(r.series_id, 7);
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.cost_amount_minor, 2_000);
@@ -76,7 +76,7 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.intex_call_period, CALL_PERIOD);
         assert_eq!(
             r.call_trigger(),
-            outbe_intexregistry::IntexCallTrigger {
+            outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
                 coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
@@ -85,7 +85,7 @@ fn issue_creates_series_in_registry() {
         // Born Issued; issued_at is the block timestamp.
         assert_eq!(
             r.lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Issued
+            outbe_intex::IntexState::Issued
         );
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
@@ -106,9 +106,9 @@ fn issue_enrolls_series_in_dense_enumeration() {
     with_factory(|s| {
         runtime::issue(&s, sample(11)).unwrap();
         runtime::issue(&s, sample(22)).unwrap();
-        assert_eq!(outbe_intexregistry::api::total_series(&s).unwrap(), 2);
-        assert_eq!(outbe_intexregistry::api::series_id_at(&s, 0).unwrap(), 11);
-        assert_eq!(outbe_intexregistry::api::series_id_at(&s, 1).unwrap(), 22);
+        assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
+        assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), 11);
+        assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), 22);
     });
 }
 
@@ -175,7 +175,7 @@ fn settle_rejects_expired_deadline() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_PERIOD < now
-        outbe_intexregistry::api::mark_called(&s, 7, ISSUED_AT).unwrap();
+        outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
         let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
@@ -337,11 +337,11 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         // Mature + rate > floor -> qualifies, latched, removed from bin.
         assert!(qualified::try_qualify(&s, &mut f, 7, mature, floor + U256::from(1)).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
@@ -491,11 +491,11 @@ fn try_call_marks_called_when_threshold_met() {
 
         assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::IntexState::Called
         );
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 0);
@@ -525,11 +525,11 @@ fn try_call_skips_when_below_threshold() {
 
         assert!(!called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -552,11 +552,11 @@ fn try_call_excludes_pre_issuance_days() {
 
         assert!(!called::try_call(&s, &mut f, &oracle, 8, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 8)
+            outbe_intex::api::read_series(&s, 8)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -568,16 +568,16 @@ fn try_call_excludes_pre_issuance_days() {
 /// Seed a series directly in the registry + bin index, bypassing issue()
 /// so tests can omit the OriginMessenger stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
-    outbe_intexregistry::api::create_series(
+    outbe_intex::api::create_series(
         s,
-        outbe_intexregistry::CreateSeriesParams {
+        outbe_intex::CreateSeriesParams {
             series_id: id,
             issued_intex_count: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             cost_amount_minor: 2_000,
             floor_price_minor: U256::from(EXPECTED_FLOOR),
             intex_call_period: CALL_PERIOD,
-            call_trigger: outbe_intexregistry::IntexCallTrigger {
+            call_trigger: outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
                 coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
@@ -610,11 +610,11 @@ fn qualify_survives_lz_messenger_failure() {
         )
         .unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -627,7 +627,7 @@ fn call_survives_lz_messenger_failure() {
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
-        outbe_intexregistry::api::mark_qualified(&s, 7).unwrap();
+        outbe_intex::api::mark_qualified(&s, 7).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         f.insert_qualified(7, U256::from(EXPECTED_TRIGGER)).unwrap();
 
@@ -645,11 +645,11 @@ fn call_survives_lz_messenger_failure() {
 
         assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::IntexState::Called
         );
     });
 }
@@ -681,10 +681,10 @@ fn scan_and_qualify_promotes_matured_series() {
         );
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
 
-        let r = outbe_intexregistry::api::read_series(&s, 7).unwrap();
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
         assert_eq!(
             r.lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
         let f = IntexFactoryContract::new(s.clone());
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
@@ -709,11 +709,11 @@ fn scan_and_call_force_calls_breached_series() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::IntexState::Called
         );
     });
 }

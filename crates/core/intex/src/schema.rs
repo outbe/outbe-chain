@@ -1,6 +1,6 @@
-//! Storage schema for the IntexRegistry runtime module.
+//! Storage schema for the Intex runtime module.
 //!
-//! IntexRegistry is the canonical, cross-chain Intex series ledger: it owns the
+//! Intex is the canonical, cross-chain Intex series ledger: it owns the
 //! per-series identity parameters captured once at issuance and the lifecycle
 //! status updated as the series progresses. It mirrors the identity + lifecycle
 //! half of the Origin `IntexNFT1155.SeriesData` struct; the supply/balance half
@@ -11,9 +11,9 @@
 
 use alloy_primitives::U256;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::INTEX_REGISTRY_ADDRESS;
+use outbe_primitives::addresses::INTEX_ADDRESS;
 
-use crate::errors::IntexRegistryError;
+use crate::errors::IntexError;
 
 /// Series lifecycle state. Mirrors `IIntexNFT1155.IntexState`.
 ///
@@ -30,12 +30,12 @@ pub enum IntexState {
 
 impl IntexState {
     /// Decode a stored `u8` into the typed state, rejecting unknown values.
-    pub fn from_u8(value: u8) -> Result<Self, IntexRegistryError> {
+    pub fn from_u8(value: u8) -> Result<Self, IntexError> {
         match value {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
-            other => Err(IntexRegistryError::InvalidStateValue(other)),
+            other => Err(IntexError::InvalidStateValue(other)),
         }
     }
 }
@@ -131,7 +131,7 @@ pub struct SeriesRecord {
 
 impl SeriesRecord {
     /// Typed lifecycle state.
-    pub fn lifecycle_state(&self) -> Result<IntexState, IntexRegistryError> {
+    pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
         IntexState::from_u8(self.state)
     }
 
@@ -145,14 +145,14 @@ impl SeriesRecord {
     }
 }
 
-/// EVM storage layout for the IntexRegistry module.
+/// EVM storage layout for the Intex module.
 ///
 /// - `series` holds one identity + lifecycle record per `seriesId`.
 /// - `total_series` / `series_id_at_index` provide dense, no-`Vec` enumeration
 ///   in the same shape as the credis/nod owner index.
 #[storage_schema]
-#[contract(addr = INTEX_REGISTRY_ADDRESS)]
-pub struct IntexRegistryContract {
+#[contract(addr = INTEX_ADDRESS)]
+pub struct IntexContract {
     /// Per-series identity + lifecycle record keyed by `series_id`.
     #[attribute(order = 0)]
     pub series: outbe_primitives::storage::dsl::Map<u32, SeriesRecord>,

@@ -32,7 +32,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IIntexRegistry.SeriesData",
+        "internalType": "struct IIntex.SeriesData",
         "components": [
           {
             "name": "seriesId",
