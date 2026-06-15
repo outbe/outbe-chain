@@ -1,9 +1,9 @@
 use alloy_primitives::{address, Address};
 
 /// OriginMessenger on Outbe (outbound LayerZero sends).
-/// CREATE2 via Arachnid, salt 0x4f726967696e4d657373656e6765720000000000000000000000000000000000 ("OriginMessenger").
+/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginMessenger:v1.0.0".
 pub const ORIGIN_MESSENGER_ADDRESS: Address =
-    address!("0xE679410bD1fFB32238581Aa165749ca0f68Af38d");
+    address!("0xc9AdCCa96217c4329265b722c11a7186c2D85263");
 
 /// Reference-currency ISO for settlement (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
