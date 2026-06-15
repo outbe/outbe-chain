@@ -27,7 +27,7 @@ remappings = [
 via_ir = true
 
 # Silence warnings from third-party submodules under lib/ (e.g. lib/kernel).
-ignored_warnings_from = ["lib"]
+ignored_warnings_from = ["dependencies"]
 
 # Testing configuration
 gas_reports = ["*"]
