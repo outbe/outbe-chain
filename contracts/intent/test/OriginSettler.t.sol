@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import {Test} from "forge-std/Test.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 import {BaseTest} from "./BaseTest.sol";
@@ -18,16 +17,16 @@ event Settled(bytes32 orderId, address receiver);
 event Refunded(bytes32 orderId, address receiver);
 
 contract OriginSettlerForTest is OriginSettler {
-    uint32 private immutable _fixedLocalDomain;
+    uint32 private immutable _FIXED_LOCAL_DOMAIN;
     ITheCompact private _compactAddr;
 
     constructor(uint32 fixedDomain, address compactMock) {
-        _fixedLocalDomain = fixedDomain;
+        _FIXED_LOCAL_DOMAIN = fixedDomain;
         _compactAddr = ITheCompact(compactMock);
     }
 
     function _localDomain() internal view override returns (uint32) {
-        return _fixedLocalDomain;
+        return _FIXED_LOCAL_DOMAIN;
     }
 
     function _compact() internal view override returns (ITheCompact) {

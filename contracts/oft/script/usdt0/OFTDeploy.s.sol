@@ -60,7 +60,6 @@ contract OFTDeploy is Script {
 
     function _getOftCreationCode(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (bytes memory)
     {
         address owner = vm.envAddress("DEPLOYER_ADDRESS");
@@ -71,7 +70,6 @@ contract OFTDeploy is Script {
 
     function _predictOutbe(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (address predicted, bytes32 salt, bytes memory creationCode)
     {
         salt = _getOftCreate2Salt();
@@ -113,7 +111,7 @@ contract OFTDeploy is Script {
     }
 
     /// @notice Predict the CREATE2 address for USDT0OFT using env metadata.
-    function predictOutbe() external view returns (address oftToken) {
+    function predictOutbe() external returns (address oftToken) {
         string memory oftName = vm.envOr("OFT_NAME", string("USDT0"));
         string memory oftSymbol = vm.envOr("OFT_SYMBOL", string("USDT0"));
         uint8 oftDecimals = _getOftDecimals();
@@ -150,7 +148,6 @@ contract OFTDeploy is Script {
 
     function _predictOutbeAndLog(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (address oftToken)
     {
         bytes32 salt;

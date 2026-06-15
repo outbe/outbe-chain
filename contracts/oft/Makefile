@@ -2,13 +2,13 @@
 all: help
 
 ## Solidity
+.PHONY: install
+install: ## Install dependencies using soldeer
+	forge soldeer install
+
 .PHONY: build
 build: ## Build Solidity contracts using forge
 	forge build
-
-.PHONY: install
-install: ## Restore soldeer dependencies
-	forge soldeer install
 
 .PHONY: test
 test: ## Test Solidity contracts using forge
@@ -27,8 +27,11 @@ clean: ## Clean up forge artifacts
 	forge clean
 
 .PHONY: clean-all
-clean-all: clean ## Clean all build artifacts and caches
-	rm -rf ./out ./cache
+clean-all: clean  ## Clean all build artifacts, and caches
+	forge soldeer clean
+	rm -rf ./out
+	rm -rf ./build
+	rm -rf ./cache
 
 GREEN  := $(shell tput -Txterm setaf 2)
 YELLOW := $(shell tput -Txterm setaf 3)

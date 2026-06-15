@@ -41,7 +41,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
         if (destinationOrderStatus[_orderId] != CLAIMED) revert InvalidOrderStatus();
 
         destinationOrderStatus[_orderId] = FILLED;
-        filledOrders[_orderId] = FilledOrder(_originData, _fillerData);
+        filledOrders[_orderId] = FilledOrder({originData: _originData, fillerData: _fillerData});
 
         _fillOrder(_orderId, _originData, _fillerData);
 

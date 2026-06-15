@@ -8,18 +8,18 @@ import {OFTCore} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/OFTCore.sol";
 /// @title ConfigurableOFT
 /// @notice LayerZero OFT with constructor-configured ERC20 metadata and local decimals.
 abstract contract ConfigurableOFT is OFTCore, ERC20 {
-    uint8 private immutable _localDecimals;
+    uint8 private immutable _LOCAL_DECIMALS;
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_, address lzEndpoint, address owner_)
         ERC20(name_, symbol_)
         OFTCore(decimals_, lzEndpoint, owner_)
         Ownable(owner_)
     {
-        _localDecimals = decimals_;
+        _LOCAL_DECIMALS = decimals_;
     }
 
     function decimals() public view override returns (uint8) {
-        return _localDecimals;
+        return _LOCAL_DECIMALS;
     }
 
     function token() public view returns (address) {
