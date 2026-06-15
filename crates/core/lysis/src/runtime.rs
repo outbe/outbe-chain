@@ -165,7 +165,7 @@ pub fn lysis(
 /// `nominal_amounts` and `tribute_fis` are index-aligned: entry `i` is the
 /// nominal interest and fidelity index of the same tribute. `total_interest` is
 /// the sum of all `nominal_amounts` (precomputed by the caller).
-fn compute_fi_fraction_map(
+pub(crate) fn compute_fi_fraction_map(
     nominal_amounts: &[U256],
     tribute_fis: &[u64],
     total_interest: U256,

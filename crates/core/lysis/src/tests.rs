@@ -540,6 +540,97 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
     });
 }
 
+/// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
+/// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
+/// integer truncation in the deficit derivation — the assertions can use
+/// strict equality rather than tolerance bands.
+fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u64>, U256) {
+    let nominal_amounts: Vec<U256> = (1u64..=15)
+        .map(|i| U256::in_units(10u64 * i))
+        .collect();
+    let tribute_fis = vec![1u64; 15];
+    let total_interest: U256 = nominal_amounts
+        .iter()
+        .copied()
+        .fold(U256::ZERO, |acc, v| acc + v);
+    // Sanity: 10 * (1+2+...+15) = 1200 COEN.
+    debug_assert_eq!(total_interest, U256::in_units(1200u64));
+    (nominal_amounts, tribute_fis, total_interest)
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 5% deficit — well below the historical 8% floor.
+    let gratis_allocation = total_interest * U256::from(5u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1, "all FI=1 must collapse to one map entry");
+    let expected = SCALE * 5 / 100; // 0.05 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "scarce-gratis fraction must equal the 5% deficit coefficient"
+    );
+    println!("deficit fraction map: {:?}", map);
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 30% deficit — well above the historical 8%/16% range; the new logic
+    // must not silently cap the fraction at 16%.
+    let gratis_allocation = total_interest * U256::from(30u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1);
+    let expected = SCALE * 30 / 100; // 0.30 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "abundant-gratis fraction must track the 30% deficit, not pin at 16%"
+    );
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 32% — matches the canonical metadosis symbolic rate (D1 in
+    // metadosis-lysis-discrepancies.md). The fraction must reach 0.32, exactly.
+    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1);
+    let expected = SCALE * 32 / 100; // 0.32 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "32% gratis allocation must produce a 32% fraction"
+    );
+}
+
+
 /// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
 /// floor must adapt DOWN so the whole — small — allocation is loaded onto the
 /// tribute. Under the previous degenerate `clamp(MIN, MAX/2)` the floor was pinned
