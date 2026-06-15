@@ -91,9 +91,9 @@ const auctionInteractiveAction = async (args: AuctionInteractiveTaskArgs, hre: u
     commitEnd: toOptional(args.commitEnd),
     revealEnd: toOptional(args.revealEnd),
     issuanceEnd: toOptional(args.issuanceEnd),
-    intexSize: toOptional(args.intexSize),
-    intexStrikePrice: toOptional(args.intexStrikePrice),
-    coenPriceFloor: toOptional(args.coenPriceFloor),
+    promisLoadMinor: toOptional(args.promisLoadMinor),
+    costAmountMinor: toOptional(args.costAmountMinor),
+    floorPriceMinor: toOptional(args.floorPriceMinor),
     minIntexBidQuantity: toOptional(args.minIntexBidQuantity),
   });
   console.log("Auction started");
@@ -198,9 +198,9 @@ const auctionInteractive = task("auction-interactive", "Interactive auction flow
   .addOption({ name: "commitEnd", description: "Commit stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "revealEnd", description: "Reveal stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "issuanceEnd", description: "Issuance stage end timestamp (UNIX)", defaultValue: "" })
-  .addOption({ name: "intexSize", description: "Intex size", defaultValue: "1000000" })
-  .addOption({ name: "intexStrikePrice", description: "Intex strike price", defaultValue: "1000000000" })
-  .addOption({ name: "coenPriceFloor", description: "COEN price floor", defaultValue: "" })
+  .addOption({ name: "promisLoadMinor", description: "Promis load", defaultValue: "1000000" })
+  .addOption({ name: "costAmountMinor", description: "Cost amount", defaultValue: "1000000000" })
+  .addOption({ name: "floorPriceMinor", description: "Floor price", defaultValue: "" })
   .addOption({ name: "minIntexBidQuantity", description: "Minimum bid quantity", defaultValue: "12" })
   .addOption({ name: "isGreenDay", description: "Is green day (true/false)", defaultValue: "true" })
   .addOption({ name: "wallets", description: "Path to wallets JSON", defaultValue: DEFAULT_WALLETS_PATH })

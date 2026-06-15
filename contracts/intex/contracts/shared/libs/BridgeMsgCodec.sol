@@ -198,15 +198,15 @@ library BridgeMsgCodec {
     /// @notice Encodes AUCTION_STAGE_START message.
     /// @dev encodePacked layout (60 bytes):
     ///      [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [intexSize(16)][minIntexBidPrice(8)][intexStrikePrice(8)][coenPriceFloor(8)][minIntexBidQuantity(2)]
+    ///      [promisLoadMinor(16)][minIntexBidPrice(8)][costAmountMinor(8)][floorPriceMinor(8)][minIntexBidQuantity(2)]
     /// @param _seriesId The auction series identifier.
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
-    /// @param _intexSize The intex size for the series.
+    /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidPrice The minimum acceptable intex bid price.
-    /// @param _intexStrikePrice The intex strike price.
-    /// @param _coenPriceFloor The COEN price floor.
+    /// @param _costAmountMinor The cost amount (minor units).
+    /// @param _floorPriceMinor The floor price (minor units).
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
@@ -214,10 +214,10 @@ library BridgeMsgCodec {
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
-        uint128 _intexSize,
+        uint128 _promisLoadMinor,
         uint64 _minIntexBidPrice,
-        uint64 _intexStrikePrice,
-        uint64 _coenPriceFloor,
+        uint64 _costAmountMinor,
+        uint64 _floorPriceMinor,
         uint16 _minIntexBidQuantity
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
@@ -227,10 +227,10 @@ library BridgeMsgCodec {
             _commitEnd,
             _revealEnd,
             _issuanceEnd,
-            _intexSize,
+            _promisLoadMinor,
             _minIntexBidPrice,
-            _intexStrikePrice,
-            _coenPriceFloor,
+            _costAmountMinor,
+            _floorPriceMinor,
             _minIntexBidQuantity
         );
     }
@@ -279,9 +279,9 @@ library BridgeMsgCodec {
     struct IssuanceInstructionsPayload {
         uint32 seriesId;
         uint32 issuedIntexCount;
-        uint128 intexSize;
-        uint64 intexStrikePrice;
-        uint64 coenPriceFloor;
+        uint128 promisLoadMinor;
+        uint64 costAmountMinor;
+        uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.
         uint32 intexCallPeriod;
         uint16 settlementTokenAlias;
@@ -430,7 +430,7 @@ library BridgeMsgCodec {
     /// @notice Decodes AUCTION_STAGE_START message.
     /// @dev encodePacked layout (60 bytes):
     ///      [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [intexSize(16)][minIntexBidPrice(8)][intexStrikePrice(8)][coenPriceFloor(8)][minIntexBidQuantity(2)]
+    ///      [promisLoadMinor(16)][minIntexBidPrice(8)][costAmountMinor(8)][floorPriceMinor(8)][minIntexBidQuantity(2)]
     ///      Reverts `InvalidPayloadLength` unless the payload is exactly 60 bytes, then
     ///      `UnsupportedBodyVersion` on a stale version byte.
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
@@ -438,10 +438,10 @@ library BridgeMsgCodec {
     /// @return commitEnd The commit-stage end timestamp.
     /// @return revealEnd The reveal-stage end timestamp.
     /// @return issuanceEnd The issuance-stage end timestamp.
-    /// @return intexSize The intex size for the series.
+    /// @return promisLoadMinor The Promis load (minor units) for the series.
     /// @return minIntexBidPrice The minimum acceptable intex bid price.
-    /// @return intexStrikePrice The intex strike price.
-    /// @return coenPriceFloor The COEN price floor.
+    /// @return costAmountMinor The cost amount (minor units).
+    /// @return floorPriceMinor The floor price (minor units).
     /// @return minIntexBidQuantity The minimum acceptable intex bid quantity.
     function decodeAuctionStageStart(bytes calldata _msg)
         internal
@@ -451,10 +451,10 @@ library BridgeMsgCodec {
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
-            uint128 intexSize,
+            uint128 promisLoadMinor,
             uint64 minIntexBidPrice,
-            uint64 intexStrikePrice,
-            uint64 coenPriceFloor,
+            uint64 costAmountMinor,
+            uint64 floorPriceMinor,
             uint16 minIntexBidQuantity
         )
     {
@@ -464,10 +464,10 @@ library BridgeMsgCodec {
         commitEnd = uint32(bytes4(_msg[6:10]));
         revealEnd = uint32(bytes4(_msg[10:14]));
         issuanceEnd = uint32(bytes4(_msg[14:18]));
-        intexSize = uint128(bytes16(_msg[18:34]));
+        promisLoadMinor = uint128(bytes16(_msg[18:34]));
         minIntexBidPrice = uint64(bytes8(_msg[34:42]));
-        intexStrikePrice = uint64(bytes8(_msg[42:50]));
-        coenPriceFloor = uint64(bytes8(_msg[50:58]));
+        costAmountMinor = uint64(bytes8(_msg[42:50]));
+        floorPriceMinor = uint64(bytes8(_msg[50:58]));
         minIntexBidQuantity = uint16(bytes2(_msg[58:60]));
     }
 

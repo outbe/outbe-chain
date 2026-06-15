@@ -13,9 +13,9 @@ describe("IntexSettlement", async function () {
   const SERIES_ID = 20250101;
   const ISSUED_INTEX_COUNT = 10_000;
   const TOKEN_ID = BigInt(SERIES_ID);
-  const INTEX_SIZE = 1000n;
+  const PROMIS_LOAD_MINOR = 1000n;
   const STRIKE_PRICE = 100n * 10n ** 6n;
-  const COEN_PRICE_FLOOR = 40n * 10n ** 6n;
+  const FLOOR_PRICE_MINOR = 40n * 10n ** 6n;
   const SETTLEMENT_TOKEN_ALIAS = 840;
   const CALL_TRIGGER = {
     windowDays: 0,
@@ -194,7 +194,7 @@ describe("IntexSettlement", async function () {
     seriesId: number,
     amount: bigint,
   ): Promise<bigint> {
-    const promisAmount = amount * INTEX_SIZE;
+    const promisAmount = amount * PROMIS_LOAD_MINOR;
     const seq = await settlement.read.mineSeq([seriesId, who]);
     const seed = keccak256(
       encodePacked(
@@ -230,7 +230,7 @@ describe("IntexSettlement", async function () {
       });
 
       assert.equal(await intex.read.balanceOf([holder.account.address, sTok]), 0n);
-      assert.equal(await promis.read.balanceOf([holder.account.address]), 7n * INTEX_SIZE);
+      assert.equal(await promis.read.balanceOf([holder.account.address]), 7n * PROMIS_LOAD_MINOR);
     });
 
     it("Reverts when caller does not have enough Settled", async function () {
@@ -300,7 +300,7 @@ describe("IntexSettlement", async function () {
   });
 
   // `previewSettle` was dropped in the VaultProvider migration — see contract NatSpec and
-  // docs/adr/0003-vault-provider-integration.md (frontends compute `intexStrikePrice * balance`
+  // docs/adr/0003-vault-provider-integration.md (frontends compute `costAmountMinor * balance`
   // directly and query the active VaultV2 for share rate themselves).
 
   describe("Reverts", async function () {

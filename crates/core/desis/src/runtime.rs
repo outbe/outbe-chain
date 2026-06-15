@@ -34,7 +34,7 @@ pub fn start_auction(
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
     }
-    if config.intex_size == 0 || config.intex_strike_price == 0 {
+    if config.promis_load_minor == 0 || config.cost_amount_minor == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
@@ -86,10 +86,10 @@ pub fn start_auction(
         commitEnd: commit_end,
         revealEnd: noon,
         issuanceEnd: issuance_end,
-        intexSize: config.intex_size,
+        promisLoadMinor: config.promis_load_minor,
         minIntexBidPrice: config.min_intex_bid_price,
-        intexStrikePrice: config.intex_strike_price,
-        coenPriceFloor: coen_floor_u64,
+        costAmountMinor: config.cost_amount_minor,
+        floorPriceMinor: coen_floor_u64,
         minIntexBidQuantity: min_bid_qty,
     };
     let quote_ret = storage.staticcall(
@@ -180,7 +180,7 @@ pub fn reveal_auction(
 }
 
 /// Signal `Revealing` → clearing: store supply; returns the Promis rounding
-/// remainder (supply_promis % intex_size) to be returned to PromisLimit.
+/// remainder (supply_promis % promis_load_minor) to be returned to PromisLimit.
 pub fn begin_clearing(
     storage: StorageHandle<'_>,
     series_id: u32,
@@ -191,17 +191,17 @@ pub fn begin_clearing(
     require_stage(&contract, series_id, AuctionStage::Revealing)?;
 
     let config = contract.read_auction_config(series_id)?;
-    if config.intex_size == 0 {
+    if config.promis_load_minor == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
-    let supply_intex = supply_promis / config.intex_size;
+    let supply_intex = supply_promis / config.promis_load_minor;
     if supply_intex == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
     let supply_intex32 =
         u32::try_from(supply_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
-    let rounding_remainder = supply_promis % config.intex_size;
+    let rounding_remainder = supply_promis % config.promis_load_minor;
 
     contract
         .pending_supply_intex
@@ -350,7 +350,8 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
     // Return unused Promis to PromisLimit.
     let remaining_supply = supply - result.issued_intex_count;
     if remaining_supply > 0 {
-        let unused_promis = U256::from(remaining_supply as u128) * U256::from(config.intex_size);
+        let unused_promis =
+            U256::from(remaining_supply as u128) * U256::from(config.promis_load_minor);
         contract.emit(IDesis::UnusedSupplyReported {
             seriesId: series_id,
             unusedPromis: unused_promis,
@@ -362,8 +363,8 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
     let params = outbe_intexfactory::schema::IssuanceParams {
         series_id,
         issued_intex_count: result.issued_intex_count,
-        intex_size: config.intex_size,
-        intex_strike_price: config.intex_strike_price,
+        promis_load_minor: config.promis_load_minor,
+        cost_amount_minor: config.cost_amount_minor,
         coen_price: config.coen_price,
         intex_call_period: DEFAULT_INTEX_CALL_PERIOD,
         call_window_days: DEFAULT_CALL_WINDOW_DAYS,

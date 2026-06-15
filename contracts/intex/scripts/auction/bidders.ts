@@ -53,10 +53,10 @@ export interface ViemClient {
 
 /** Auction params mirroring the on-chain AuctionParams struct */
 export interface AuctionParams {
-  intexSize: bigint;
+  promisLoadMinor: bigint;
   minIntexBidPrice: bigint;
-  intexStrikePrice: bigint;
-  coenPriceFloor: bigint;
+  costAmountMinor: bigint;
+  floorPriceMinor: bigint;
   minIntexBidQuantity: number;
 }
 

@@ -39,10 +39,10 @@ export interface AuctionSchedule {
 
 /** Auction input parameters, mirrors the on-chain AuctionParams struct */
 export interface AuctionParams {
-  intexSize: bigint;
+  promisLoadMinor: bigint;
   minIntexBidPrice: bigint;
-  intexStrikePrice: bigint;
-  coenPriceFloor: bigint;
+  costAmountMinor: bigint;
+  floorPriceMinor: bigint;
   minIntexBidQuantity: number;
 }
 
@@ -163,9 +163,9 @@ export type AuctionFlowArgs = CommonArgs & {
   commitEnd?: BigIntInput;
   revealEnd?: BigIntInput;
   issuanceEnd?: BigIntInput;
-  intexSize?: BigIntInput;
-  intexStrikePrice?: BigIntInput;
-  coenPriceFloor?: BigIntInput;
+  promisLoadMinor?: BigIntInput;
+  costAmountMinor?: BigIntInput;
+  floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
   isGreenDay?: string | boolean;
   skipStart?: boolean;
@@ -185,9 +185,9 @@ export type AuctionStartArgs = CommonArgs & {
   commitEnd?: BigIntInput;
   revealEnd?: BigIntInput;
   issuanceEnd?: BigIntInput;
-  intexSize?: BigIntInput;
-  intexStrikePrice?: BigIntInput;
-  coenPriceFloor?: BigIntInput;
+  promisLoadMinor?: BigIntInput;
+  costAmountMinor?: BigIntInput;
+  floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
 };
 
@@ -211,9 +211,9 @@ export type AuctionExecuteArgs = CommonArgs & {
 // =============================================================================
 
 const DEFAULT_FLOOR = 1080n;
-const DEFAULT_INTEX_SIZE = 1_000_000n;
-const DEFAULT_INTEX_STRIKE_PRICE = 80_000_000n;
-const DEFAULT_COEN_PRICE_FLOOR = 1080n;
+const DEFAULT_PROMIS_LOAD_MINOR = 1_000_000n;
+const DEFAULT_COST_AMOUNT_MINOR = 80_000_000n;
+const DEFAULT_FLOOR_PRICE_MINOR = 1080n;
 const DEFAULT_MIN_INTEX_BID_QUANTITY = 1;
 
 // Schedule offsets (seconds) used when explicit stage-end timestamps are not provided.
@@ -285,10 +285,10 @@ async function startAuction(
     seriesId: seriesIdNum,
     schedule: opts.schedule,
     params: {
-      intexSize: opts.params.intexSize.toString(),
+      promisLoadMinor: opts.params.promisLoadMinor.toString(),
       minIntexBidPrice: opts.params.minIntexBidPrice.toString(),
-      intexStrikePrice: opts.params.intexStrikePrice.toString(),
-      coenPriceFloor: opts.params.coenPriceFloor.toString(),
+      costAmountMinor: opts.params.costAmountMinor.toString(),
+      floorPriceMinor: opts.params.floorPriceMinor.toString(),
       minIntexBidQuantity: opts.params.minIntexBidQuantity,
     },
   });
@@ -559,16 +559,16 @@ export async function approveEscrowTokens(
 /** Build the AuctionParams struct from CLI args, applying defaults. */
 function resolveParams(args: {
   floor?: BigIntInput;
-  intexSize?: BigIntInput;
-  intexStrikePrice?: BigIntInput;
-  coenPriceFloor?: BigIntInput;
+  promisLoadMinor?: BigIntInput;
+  costAmountMinor?: BigIntInput;
+  floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
 }): AuctionParams {
   return {
-    intexSize: toOptionalBigInt(args.intexSize) ?? DEFAULT_INTEX_SIZE,
+    promisLoadMinor: toOptionalBigInt(args.promisLoadMinor) ?? DEFAULT_PROMIS_LOAD_MINOR,
     minIntexBidPrice: parseFloor(args.floor),
-    intexStrikePrice: toOptionalBigInt(args.intexStrikePrice) ?? DEFAULT_INTEX_STRIKE_PRICE,
-    coenPriceFloor: toOptionalBigInt(args.coenPriceFloor) ?? DEFAULT_COEN_PRICE_FLOOR,
+    costAmountMinor: toOptionalBigInt(args.costAmountMinor) ?? DEFAULT_COST_AMOUNT_MINOR,
+    floorPriceMinor: toOptionalBigInt(args.floorPriceMinor) ?? DEFAULT_FLOOR_PRICE_MINOR,
     minIntexBidQuantity:
       toOptionalNumber(args.minIntexBidQuantity) ?? DEFAULT_MIN_INTEX_BID_QUANTITY,
   };

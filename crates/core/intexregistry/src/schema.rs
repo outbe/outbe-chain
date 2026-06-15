@@ -55,7 +55,7 @@ pub struct IntexCallTrigger {
 /// Identity parameters captured once at series creation. Mirrors the
 /// non-supply, non-lifecycle inputs of `IntexNFT1155.createSeries`.
 ///
-/// `intex_size` is kept as `u128` here to mirror the Origin `uint128` ABI
+/// `promis_load_minor` is kept as `u128` here to mirror the Origin `uint128` ABI
 /// exactly; storage holds it as `U256` (the storage DSL has no `u128` slot
 /// codec), and the `u128 -> U256` widening is always lossless.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,11 +65,11 @@ pub struct CreateSeriesParams {
     /// the live mint counter lives on the ERC-1155 ledger.
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
-    pub intex_size: u128,
+    pub promis_load_minor: u128,
     /// Intex strike price (payment-token decimals).
-    pub intex_strike_price: u64,
+    pub cost_amount_minor: u64,
     /// COEN price floor (1e18, oracle scale).
-    pub coen_price_floor: U256,
+    pub floor_price_minor: U256,
     /// Duration in seconds between `called_at` and the settlement deadline.
     pub intex_call_period: u32,
     /// Forced-call trigger parameters.
@@ -92,13 +92,13 @@ pub struct SeriesRecord {
     // --- identity (immutable after creation) ---
     /// Promis tokens per Intex unit; bounded by source `uint128`.
     #[attribute(order = 0)]
-    pub intex_size: U256,
+    pub promis_load_minor: U256,
 
     #[attribute(order = 1)]
-    pub intex_strike_price: u64,
+    pub cost_amount_minor: u64,
 
     #[attribute(order = 2)]
-    pub coen_price_floor: U256,
+    pub floor_price_minor: U256,
 
     #[attribute(order = 3)]
     pub issued_intex_count: u32,

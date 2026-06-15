@@ -38,13 +38,13 @@ impl AuctionStage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
     /// Promis tokens per Intex unit (18 decimals); bounded by uint128.
-    pub intex_size: u128,
+    pub promis_load_minor: u128,
     /// Minimum acceptable bid price (payment-token decimals). 0 → no floor.
     pub min_intex_bid_price: u64,
     /// Strike price (payment-token decimals).
-    pub intex_strike_price: u64,
+    pub cost_amount_minor: u64,
     /// Live COEN/USD oracle price (1e18) captured at auction start; carried to
-    /// IntexFactory.issue to derive coen_price_floor and coen_price_call_trigger.
+    /// IntexFactory.issue to derive floor_price_minor and coen_price_call_trigger.
     pub coen_price: U256,
 }
 
@@ -80,7 +80,7 @@ pub struct ClearingResult {
 #[contract(addr = DESIS_ADDRESS)]
 pub struct DesisContract {
     // --- Auction config (per series) ---
-    /// series_id -> intex_size.
+    /// series_id -> promis_load_minor.
     #[attribute(order = 0)]
     pub config_intex_size: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]

@@ -47,9 +47,9 @@ pub fn dispatch(
 fn to_abi_data(r: &SeriesRecord) -> IIntexRegistry::SeriesData {
     IIntexRegistry::SeriesData {
         seriesId: r.series_id,
-        intexSize: r.intex_size,
-        intexStrikePrice: r.intex_strike_price,
-        coenPriceFloor: r.coen_price_floor,
+        promisLoadMinor: r.promis_load_minor,
+        costAmountMinor: r.cost_amount_minor,
+        floorPriceMinor: r.floor_price_minor,
         issuedIntexCount: r.issued_intex_count,
         callWindowDays: r.call_window_days,
         callThresholdDays: r.call_threshold_days,

@@ -20,23 +20,23 @@ impl DesisContract<'_> {
     // --- AuctionConfig ---
 
     pub(crate) fn read_auction_config(&self, series_id: u32) -> Result<AuctionConfig> {
-        let intex_size = self.config_intex_size.read(&series_id)?;
+        let promis_load_minor = self.config_intex_size.read(&series_id)?;
         Ok(AuctionConfig {
-            intex_size: u128::try_from(intex_size)
+            promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidSeriesId(series_id))?,
             min_intex_bid_price: self.config_min_bid_price.read(&series_id)?,
-            intex_strike_price: self.config_strike_price.read(&series_id)?,
+            cost_amount_minor: self.config_strike_price.read(&series_id)?,
             coen_price: self.config_coen_price.read(&series_id)?,
         })
     }
 
     pub(crate) fn write_auction_config(&self, series_id: u32, cfg: &AuctionConfig) -> Result<()> {
         self.config_intex_size
-            .write(&series_id, U256::from(cfg.intex_size))?;
+            .write(&series_id, U256::from(cfg.promis_load_minor))?;
         self.config_min_bid_price
             .write(&series_id, cfg.min_intex_bid_price)?;
         self.config_strike_price
-            .write(&series_id, cfg.intex_strike_price)?;
+            .write(&series_id, cfg.cost_amount_minor)?;
         self.config_coen_price.write(&series_id, cfg.coen_price)
     }
 

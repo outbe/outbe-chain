@@ -77,9 +77,9 @@ const INTEX_READ_DATA_ABI = [
     outputs: [
       {
         components: [
-          { name: "intexSize", type: "uint128" },
-          { name: "intexStrikePrice", type: "uint64" },
-          { name: "coenPriceFloor", type: "uint64" },
+          { name: "promisLoadMinor", type: "uint128" },
+          { name: "costAmountMinor", type: "uint64" },
+          { name: "floorPriceMinor", type: "uint64" },
           { name: "issuedAt", type: "uint32" },
           { name: "calledAt", type: "uint32" },
           { name: "intexCallPeriod", type: "uint32" },
@@ -174,13 +174,13 @@ export async function minePromis(client: MineClient, args: MineArgs): Promise<He
     args: [client.walletClient.account.address],
   });
 
-  const seriesData = await client.publicClient.readContract<{ intexSize: bigint }>({
+  const seriesData = await client.publicClient.readContract<{ promisLoadMinor: bigint }>({
     address: args.intexAddress,
     abi: INTEX_READ_DATA_ABI,
     functionName: "readData",
     args: [args.seriesId],
   });
-  const promisAmount = args.amount * seriesData.intexSize;
+  const promisAmount = args.amount * seriesData.promisLoadMinor;
   const seq = await client.publicClient.readContract<number>({
     address: args.settlementAddress,
     abi: SETTLEMENT_ABI,

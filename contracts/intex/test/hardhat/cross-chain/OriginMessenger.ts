@@ -27,9 +27,9 @@ describe("OriginMessenger", async function () {
   const SERIES_ID = 20250115; // yyyymmdd format; doubles as the IntexNFT1155 token id
   const TOKEN_ID = BigInt(SERIES_ID);
   const AMOUNT = 100n;
-  const INTEX_SIZE = 1000n;
-  const INTEX_STRIKE_PRICE = 100n * 10n ** 6n;
-  const COEN_PRICE_FLOOR = 40n * 10n ** 6n;
+  const PROMIS_LOAD_MINOR = 1000n;
+  const COST_AMOUNT_MINOR = 100n * 10n ** 6n;
+  const FLOOR_PRICE_MINOR = 40n * 10n ** 6n;
   const MIN_BID_PRICE = 50n * 10n ** 6n;
   const SETTLEMENT_TOKEN_ALIAS = 840; // ISO 4217 USD
   const MIN_BID_QUANTITY = 1;
@@ -65,10 +65,10 @@ describe("OriginMessenger", async function () {
         SERIES_ID,
         { commitEnd: schedule.commitEnd, revealEnd: schedule.revealEnd, issuanceEnd: schedule.issuanceEnd },
         {
-          intexSize: INTEX_SIZE,
+          promisLoadMinor: PROMIS_LOAD_MINOR,
           minIntexBidPrice: MIN_BID_PRICE,
-          intexStrikePrice: INTEX_STRIKE_PRICE,
-          coenPriceFloor: COEN_PRICE_FLOOR,
+          costAmountMinor: COST_AMOUNT_MINOR,
+          floorPriceMinor: FLOOR_PRICE_MINOR,
           minIntexBidQuantity: MIN_BID_QUANTITY,
         },
       ],
@@ -164,10 +164,10 @@ describe("OriginMessenger", async function () {
         SERIES_ID,
         { commitEnd: schedule.commitEnd, revealEnd: schedule.revealEnd, issuanceEnd: schedule.issuanceEnd },
         {
-          intexSize: INTEX_SIZE,
+          promisLoadMinor: PROMIS_LOAD_MINOR,
           minIntexBidPrice: MIN_BID_PRICE,
-          intexStrikePrice: INTEX_STRIKE_PRICE,
-          coenPriceFloor: COEN_PRICE_FLOOR,
+          costAmountMinor: COST_AMOUNT_MINOR,
+          floorPriceMinor: FLOOR_PRICE_MINOR,
           minIntexBidQuantity: MIN_BID_QUANTITY,
         },
       ],
@@ -224,10 +224,10 @@ describe("OriginMessenger", async function () {
         SERIES_ID,
         { commitEnd: schedule.commitEnd, revealEnd: schedule.revealEnd, issuanceEnd: schedule.issuanceEnd },
         {
-          intexSize: INTEX_SIZE,
+          promisLoadMinor: PROMIS_LOAD_MINOR,
           minIntexBidPrice: MIN_BID_PRICE,
-          intexStrikePrice: INTEX_STRIKE_PRICE,
-          coenPriceFloor: COEN_PRICE_FLOOR,
+          costAmountMinor: COST_AMOUNT_MINOR,
+          floorPriceMinor: FLOOR_PRICE_MINOR,
           minIntexBidQuantity: MIN_BID_QUANTITY,
         },
       ],
@@ -255,10 +255,10 @@ describe("OriginMessenger", async function () {
         SERIES_ID,
         { commitEnd: schedule.commitEnd, revealEnd: schedule.revealEnd, issuanceEnd: schedule.issuanceEnd },
         {
-          intexSize: INTEX_SIZE,
+          promisLoadMinor: PROMIS_LOAD_MINOR,
           minIntexBidPrice: MIN_BID_PRICE,
-          intexStrikePrice: INTEX_STRIKE_PRICE,
-          coenPriceFloor: COEN_PRICE_FLOOR,
+          costAmountMinor: COST_AMOUNT_MINOR,
+          floorPriceMinor: FLOOR_PRICE_MINOR,
           minIntexBidQuantity: MIN_BID_QUANTITY,
         },
       ],

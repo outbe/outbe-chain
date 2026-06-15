@@ -20,9 +20,9 @@ describe("ONFT1155Adapter", async function () {
   const TOKEN_ID = BigInt(SERIES_ID);
   const AMOUNT = 100n;
 
-  const INTEX_SIZE = 100n * 10n ** 18n;
-  const INTEX_STRIKE_PRICE = 1000n * 10n ** 6n;
-  const COEN_PRICE_FLOOR = 500n * 10n ** 6n;
+  const PROMIS_LOAD_MINOR = 100n * 10n ** 18n;
+  const COST_AMOUNT_MINOR = 1000n * 10n ** 6n;
+  const FLOOR_PRICE_MINOR = 500n * 10n ** 6n;
   const SETTLEMENT_TOKEN_ALIAS = 840;
   const CALL_TRIGGER = {
     windowDays: 0,

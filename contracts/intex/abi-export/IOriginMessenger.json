@@ -547,7 +547,7 @@
             },
             {
               "internalType": "uint128",
-              "name": "intexSize",
+              "name": "promisLoadMinor",
               "type": "uint128"
             },
             {
@@ -557,12 +557,12 @@
             },
             {
               "internalType": "uint64",
-              "name": "intexStrikePrice",
+              "name": "costAmountMinor",
               "type": "uint64"
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceFloor",
+              "name": "floorPriceMinor",
               "type": "uint64"
             },
             {
@@ -625,17 +625,17 @@
             },
             {
               "internalType": "uint128",
-              "name": "intexSize",
+              "name": "promisLoadMinor",
               "type": "uint128"
             },
             {
               "internalType": "uint64",
-              "name": "intexStrikePrice",
+              "name": "costAmountMinor",
               "type": "uint64"
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceFloor",
+              "name": "floorPriceMinor",
               "type": "uint64"
             },
             {
@@ -1121,7 +1121,7 @@
             },
             {
               "internalType": "uint128",
-              "name": "intexSize",
+              "name": "promisLoadMinor",
               "type": "uint128"
             },
             {
@@ -1131,12 +1131,12 @@
             },
             {
               "internalType": "uint64",
-              "name": "intexStrikePrice",
+              "name": "costAmountMinor",
               "type": "uint64"
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceFloor",
+              "name": "floorPriceMinor",
               "type": "uint64"
             },
             {
@@ -1233,17 +1233,17 @@
             },
             {
               "internalType": "uint128",
-              "name": "intexSize",
+              "name": "promisLoadMinor",
               "type": "uint128"
             },
             {
               "internalType": "uint64",
-              "name": "intexStrikePrice",
+              "name": "costAmountMinor",
               "type": "uint64"
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceFloor",
+              "name": "floorPriceMinor",
               "type": "uint64"
             },
             {

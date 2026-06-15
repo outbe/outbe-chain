@@ -28,9 +28,9 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
     let record = SeriesRecord {
         series_id: params.series_id,
         // u128 -> U256 widening is always lossless (see schema docs).
-        intex_size: U256::from(params.intex_size),
-        intex_strike_price: params.intex_strike_price,
-        coen_price_floor: params.coen_price_floor,
+        promis_load_minor: U256::from(params.promis_load_minor),
+        cost_amount_minor: params.cost_amount_minor,
+        floor_price_minor: params.floor_price_minor,
         issued_intex_count: params.issued_intex_count,
         call_window_days: params.call_trigger.window_days,
         call_threshold_days: params.call_trigger.threshold_days,

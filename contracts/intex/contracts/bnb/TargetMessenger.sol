@@ -256,10 +256,10 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
-            uint128 intexSize,
+            uint128 promisLoadMinor,
             uint64 minIntexBidPrice,
-            uint64 intexStrikePrice,
-            uint64 coenPriceFloor,
+            uint64 costAmountMinor,
+            uint64 floorPriceMinor,
             uint16 minIntexBidQuantity
         ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
 
@@ -267,10 +267,10 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
             seriesId,
             IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd}),
             IIntexAuction.AuctionParams({
-                intexSize: intexSize,
+                promisLoadMinor: promisLoadMinor,
                 minIntexBidPrice: minIntexBidPrice,
-                intexStrikePrice: intexStrikePrice,
-                coenPriceFloor: coenPriceFloor,
+                costAmountMinor: costAmountMinor,
+                floorPriceMinor: floorPriceMinor,
                 minIntexBidQuantity: minIntexBidQuantity
             })
         );

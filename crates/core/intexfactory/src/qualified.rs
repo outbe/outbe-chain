@@ -95,7 +95,7 @@ pub(crate) fn try_qualify(
     if now <= mature_at {
         return Ok(false);
     }
-    let floor = series.coen_price_floor;
+    let floor = series.floor_price_minor;
     if rate <= floor {
         return Ok(false);
     }

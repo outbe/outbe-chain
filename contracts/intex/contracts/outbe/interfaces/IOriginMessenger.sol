@@ -98,13 +98,13 @@ interface IOriginMessenger {
         /// @notice End of the issuance stage (UNIX seconds).
         uint32 issuanceEnd;
         /// @notice Promis tokens per Intex unit (18 decimals).
-        uint128 intexSize;
+        uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid price per Intex unit.
         uint64 minIntexBidPrice;
-        /// @notice Intex strike price (payment-token decimals).
-        uint64 intexStrikePrice;
-        /// @notice COEN price floor (payment-token decimals).
-        uint64 coenPriceFloor;
+        /// @notice Cost amount (payment-token minor units).
+        uint64 costAmountMinor;
+        /// @notice Floor price (payment-token minor units).
+        uint64 floorPriceMinor;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
     }
@@ -116,9 +116,9 @@ interface IOriginMessenger {
     struct IssuanceInstructionsParams {
         uint32 seriesId;
         uint32 issuedIntexCount;
-        uint128 intexSize;
-        uint64 intexStrikePrice;
-        uint64 coenPriceFloor;
+        uint128 promisLoadMinor;
+        uint64 costAmountMinor;
+        uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
         uint32 intexCallPeriod;
         uint16 settlementTokenAlias;

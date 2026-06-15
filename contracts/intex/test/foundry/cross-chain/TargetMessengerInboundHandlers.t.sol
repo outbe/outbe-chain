@@ -32,9 +32,9 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
     uint32 internal constant SERIES_ID = 20250101;
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
-    uint128 internal constant INTEX_SIZE = 1000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
     uint64 internal constant STRIKE_PRICE = 100e6;
-    uint64 internal constant COEN_PRICE_FLOOR = 40e6;
+    uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant SETTLEMENT_TOKEN_ALIAS = 840;
 
     TargetMessenger internal bnbMessenger;
@@ -144,9 +144,9 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: SERIES_ID,
             issuedIntexCount: ISSUED_INTEX_COUNT,
-            intexSize: INTEX_SIZE,
-            intexStrikePrice: STRIKE_PRICE,
-            coenPriceFloor: COEN_PRICE_FLOOR,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            costAmountMinor: STRIKE_PRICE,
+            floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
             settlementTokenAlias: SETTLEMENT_TOKEN_ALIAS,
             callWindowDays: 30,
@@ -209,10 +209,10 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             issuanceEnd: uint32(block.timestamp + 3 days)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            intexSize: INTEX_SIZE,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidPrice: 60e6,
-            intexStrikePrice: STRIKE_PRICE,
-            coenPriceFloor: COEN_PRICE_FLOOR,
+            costAmountMinor: STRIKE_PRICE,
+            floorPriceMinor: FLOOR_PRICE_MINOR,
             minIntexBidQuantity: 1
         });
         vm.prank(address(bnbMessenger));

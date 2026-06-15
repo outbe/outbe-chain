@@ -24,7 +24,7 @@ describe("IntexNFT1155", async function () {
   const TOKEN_ID_3 = BigInt(SERIES_ID_3);
 
   // createSeries parameters reused across tests.
-  const INTEX_SIZE = 100n * 10n ** 18n;
+  const PROMIS_LOAD_MINOR = 100n * 10n ** 18n;
   const STRIKE_PRICE = 1500000n; // 1.50 with 6 decimals
   const PRICE_FLOOR = 1000000n; // 1.00 with 6 decimals
   const SETTLEMENT_TOKEN_ALIAS = 840; // USD
@@ -40,14 +40,14 @@ describe("IntexNFT1155", async function () {
 
   /**
    * createSeries args in the new ABI order:
-   * (seriesId, issuedIntexCount, intexSize, intexStrikePrice, coenPriceFloor,
+   * (seriesId, issuedIntexCount, promisLoadMinor, costAmountMinor, floorPriceMinor,
    *  intexCallPeriod, settlementTokenAlias, trigger)
    */
   function seriesArgs(
     seriesId: number,
     overrides: {
       issuedIntexCount?: number;
-      intexSize?: bigint;
+      promisLoadMinor?: bigint;
       strikePrice?: bigint;
       priceFloor?: bigint;
       callPeriod?: bigint;
@@ -58,7 +58,7 @@ describe("IntexNFT1155", async function () {
     return [
       seriesId,
       overrides.issuedIntexCount ?? ISSUED_INTEX_COUNT,
-      overrides.intexSize ?? INTEX_SIZE,
+      overrides.promisLoadMinor ?? PROMIS_LOAD_MINOR,
       overrides.strikePrice ?? STRIKE_PRICE,
       overrides.priceFloor ?? PRICE_FLOOR,
       overrides.callPeriod ?? 0n,
@@ -84,9 +84,9 @@ describe("IntexNFT1155", async function () {
       const data = await nft.read.readData([SERIES_ID_1]);
       assert.equal(data.state, 0); // Issued
       assert.equal(data.status, 0); // Issued
-      assert.equal(data.intexSize, INTEX_SIZE);
-      assert.equal(data.intexStrikePrice, STRIKE_PRICE);
-      assert.equal(data.coenPriceFloor, PRICE_FLOOR);
+      assert.equal(data.promisLoadMinor, PROMIS_LOAD_MINOR);
+      assert.equal(data.costAmountMinor, STRIKE_PRICE);
+      assert.equal(data.floorPriceMinor, PRICE_FLOOR);
       assert.equal(data.settlementTokenAlias, SETTLEMENT_TOKEN_ALIAS);
       assert(data.issuedAt > 0);
       assert.equal(data.calledAt, 0);
@@ -456,8 +456,8 @@ describe("IntexNFT1155", async function () {
 
       const data = await nft.read.readData([SERIES_ID_1]);
       assert.equal(data.state, 0); // Issued
-      assert.equal(data.intexSize, INTEX_SIZE);
-      assert.equal(data.intexStrikePrice, STRIKE_PRICE);
+      assert.equal(data.promisLoadMinor, PROMIS_LOAD_MINOR);
+      assert.equal(data.costAmountMinor, STRIKE_PRICE);
     });
 
     it("Should revert when reading non-existent token data", async function () {
@@ -514,7 +514,7 @@ describe("IntexNFT1155", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_2], { account: bridger.account.address });
 
@@ -1005,7 +1005,7 @@ describe("IntexNFT1155", async function () {
       assert.equal(await nft.read.totalSeries(), 1n);
 
       // Create second series
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
       assert.equal(await nft.read.totalSeries(), 2n);
 
       // Get all series
@@ -1019,8 +1019,8 @@ describe("IntexNFT1155", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_3, { intexSize: 300n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_3, { promisLoadMinor: 300n * 10n ** 18n }), { account: bridger.account.address });
 
       // Get first page
       const [page1, total1] = await nft.read.getSeriesPaginated([0n, 2n]);
@@ -1046,7 +1046,7 @@ describe("IntexNFT1155", async function () {
 
       // Create two series
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
 
       // Initially user has no tokens
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 0n);
@@ -1072,7 +1072,7 @@ describe("IntexNFT1155", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
 
       // Initially zero
       assert.equal(await nft.read.totalBalance([user1.account.address]), 0n);
@@ -1160,7 +1160,7 @@ describe("IntexNFT1155", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
 
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 25n, SERIES_ID_2], { account: bridger.account.address });
@@ -1200,8 +1200,8 @@ describe("IntexNFT1155", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { intexSize: 200n * 10n ** 18n }), { account: bridger.account.address });
-      await nft.write.createSeries(seriesArgs(SERIES_ID_3, { intexSize: 300n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_2, { promisLoadMinor: 200n * 10n ** 18n }), { account: bridger.account.address });
+      await nft.write.createSeries(seriesArgs(SERIES_ID_3, { promisLoadMinor: 300n * 10n ** 18n }), { account: bridger.account.address });
 
       // Mint all 3 to user1
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
@@ -1329,7 +1329,7 @@ describe("IntexNFT1155", async function () {
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), 0n);
       assert.equal(await nft.read.balanceOf([user2.account.address, TOKEN_ID_1]), 0n);
       assert.equal(await nft.read.totalSupply([TOKEN_ID_1]), 0n);
-      assert.equal(data.intexStrikePrice, STRIKE_PRICE);
+      assert.equal(data.costAmountMinor, STRIKE_PRICE);
     });
 
     it("Should revert expire before deadline", async function () {

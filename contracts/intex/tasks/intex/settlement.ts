@@ -2,7 +2,7 @@
 // Phase 1 — System Bridge: markCalled → bridge all Intex holders from BSC to Outbe.
 // Phase 2 — Settle on Outbe: approve stablecoins → settle() → burn Issued → mint Settled.
 // Phase 3 — Mine Promis on Outbe: holder calls IntexSettlement.minePromis(seriesId, amount)
-//           to atomically burn their Settled balance and receive amount*intexSize Promis.
+//           to atomically burn their Settled balance and receive amount*promisLoadMinor Promis.
 //
 // Pre-requisite: auction flow completed, Intex issued on BSC.
 //
@@ -353,8 +353,8 @@ const settlePreviewAction = async (args: SettlementSettleTaskArgs, hre: unknown)
 
   console.log("\n=== Settlement Preview ===");
   console.log(`  Series state:        ${preview.state}`);
-  console.log(`  Intex strike price:  ${preview.intexStrikePrice}`);
-  console.log(`  Intex size:          ${preview.intexSize}`);
+  console.log(`  Cost amount:         ${preview.costAmountMinor}`);
+  console.log(`  Promis load:         ${preview.promisLoadMinor}`);
   console.log(
     `  Call deadline:       ${preview.callDeadline ? preview.callDeadline.toISOString() : "n/a (not Called)"}`,
   );
@@ -574,7 +574,7 @@ function addMineOptions(t: ReturnType<typeof task>) {
 const settlementMine = addMineOptions(
   task(
     "settlement-mine",
-    "Phase 3: mine Promis through IntexSettlement.minePromis — burns Settled Intex and mints amount*intexSize Promis to the caller atomically.",
+    "Phase 3: mine Promis through IntexSettlement.minePromis — burns Settled Intex and mints amount*promisLoadMinor Promis to the caller atomically.",
   ),
 ).setAction(lazy(mineAction));
 

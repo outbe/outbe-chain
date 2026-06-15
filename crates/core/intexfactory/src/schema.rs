@@ -10,8 +10,8 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 pub struct IssuanceParams {
     pub series_id: u32,
     pub issued_intex_count: u32,
-    pub intex_size: u128,
-    pub intex_strike_price: u64,
+    pub promis_load_minor: u128,
+    pub cost_amount_minor: u64,
     /// COEN clearing price (1e18, oracle scale). Floor and call trigger are
     /// derived from it at issuance.
     pub coen_price: U256,
@@ -40,7 +40,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 2)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Unqualified-series bin index (by coen_price_floor) for begin_block qualify.
+    // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
     #[attribute(order = 3)]
     pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 4)]

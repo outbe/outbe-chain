@@ -231,7 +231,7 @@ const clearingAction = async (args: ClearingArgs) => {
   const desis = contractAt(outbe, "Desis", requireAddress(aO, "desis", outbeNet) as Address);
   const config = buildAuctionConfig({ seriesId });
   const issuance = buildIssuanceConfig();
-  const supplyPromis = BigInt(supplyIntex) * config.intexSize;
+  const supplyPromis = BigInt(supplyIntex) * config.promisLoadMinor;
   const report = loadOrInitReport(args.seriesId, reportTitle(args.seriesId));
 
   await runStep(
@@ -415,7 +415,7 @@ const revealBid = commonOpts(task("demo:auction:reveal-bid", "Auction demo phase
 const clearing = commonOpts(
   task("demo:auction:clearing", "Auction demo phase 5/7: signal clearing + persist supply/issuance"),
 )
-  .addOption(opt("supply", "Issued supply in Intex units (Desis multiplies by intexSize for Promis)", "100"))
+  .addOption(opt("supply", "Issued supply in Intex units (Desis multiplies by promisLoadMinor for Promis)", "100"))
   .addOption(opt("bidPrice", "Bid price reference (used by relay-phase reveal payload)", "60000000"))
   .setAction(lazy(clearingAction));
 const relay = commonOpts(task("demo:auction:relay", "Auction demo phase 6/7: wait for the auto-relayed bids batch (TargetMessenger fires it inside the clearing handler; OriginMessenger then auto-fires clearAuction)"))

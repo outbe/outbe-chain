@@ -40,17 +40,17 @@
             "internalType": "uint32"
           },
           {
-            "name": "intexSize",
+            "name": "promisLoadMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "intexStrikePrice",
+            "name": "costAmountMinor",
             "type": "uint64",
             "internalType": "uint64"
           },
           {
-            "name": "coenPriceFloor",
+            "name": "floorPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },

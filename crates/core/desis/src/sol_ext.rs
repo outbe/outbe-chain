@@ -16,10 +16,10 @@ sol! {
             uint32 commitEnd;
             uint32 revealEnd;
             uint32 issuanceEnd;
-            uint128 intexSize;
+            uint128 promisLoadMinor;
             uint64 minIntexBidPrice;
-            uint64 intexStrikePrice;
-            uint64 coenPriceFloor;
+            uint64 costAmountMinor;
+            uint64 floorPriceMinor;
             uint16 minIntexBidQuantity;
         }
 

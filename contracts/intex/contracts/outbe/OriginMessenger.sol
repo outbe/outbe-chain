@@ -111,10 +111,10 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
-            p.intexSize,
+            p.promisLoadMinor,
             p.minIntexBidPrice,
-            p.intexStrikePrice,
-            p.coenPriceFloor,
+            p.costAmountMinor,
+            p.floorPriceMinor,
             p.minIntexBidQuantity
         );
     }
@@ -192,9 +192,9 @@ contract OriginMessenger is IOriginMessenger, OApp, OAppOptionsType3, AccessCont
         return BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: p.seriesId,
             issuedIntexCount: p.issuedIntexCount,
-            intexSize: p.intexSize,
-            intexStrikePrice: p.intexStrikePrice,
-            coenPriceFloor: p.coenPriceFloor,
+            promisLoadMinor: p.promisLoadMinor,
+            costAmountMinor: p.costAmountMinor,
+            floorPriceMinor: p.floorPriceMinor,
             intexCallPeriod: p.intexCallPeriod,
             settlementTokenAlias: p.settlementTokenAlias,
             callWindowDays: p.callWindowDays,
