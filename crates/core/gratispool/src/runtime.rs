@@ -32,7 +32,7 @@ use crate::constants::{
 use crate::errors::GratisPoolError;
 use crate::precompile::emit_commitment_inserted;
 use crate::schema::GratisPoolContract;
-use crate::state::{receiver_binding};
+use crate::state::receiver_binding;
 use crate::verifier;
 use crate::zkp_utils::u256_to_fr;
 
