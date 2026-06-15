@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Randomized mints into a fixed series; the cap and parity invariants must always hold.
@@ -35,7 +36,7 @@ contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
     uint32 internal constant CAP = 10_000;
 
     function setUp() public {
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
         intex.createSeries(SERIES_ID, CAP, 0);
 
         bidders.push(address(0xB1));

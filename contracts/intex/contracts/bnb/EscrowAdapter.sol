@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
@@ -17,11 +18,19 @@ import {IVaultProvider} from "../vendor/outbe-vault/interfaces/IVaultProvider.so
  * @title EscrowAdapter
  * @author Outbe
  * @notice Adapter contract for managing auction bid escrow via The Compact protocol.
- * @dev Integrates with The Compact for fund locking and handles auction finalization.
- *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest).
+ * @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
+ *      Integrates with The Compact for fund locking and handles auction finalization.
+ *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest);
+ *      both roles bind to the proxy address.
  *      All escrow state is keyed by `seriesId` (uint32).
  */
-contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAllocator {
+contract EscrowAdapter is
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable,
+    IEscrowAdapter,
+    IAllocator
+{
     using SafeERC20 for IERC20;
 
     // Roles
@@ -43,37 +52,126 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     ///         split before the bidder can rescue their full principal via `claimRefund`.
     uint32 public constant POST_FINALIZE_REFUND_DELAY = 7 days;
 
-    // External contract dependencies
-    /// @notice IntexAuction contract address.
-    address public intexAuctionContract;
-    /// @notice The Compact contract address.
-    ITheCompact public compact;
-    /// @notice Outbe-vault router; winner principal at finalization is deposited via
-    ///         `vaultProvider.depositLiquidity(...)`. Shares accrue on the provider, not here.
-    IVaultProvider public vaultProvider;
-    /// @notice Active payment token used for bid escrow.
-    IERC20 public paymentToken;
+    /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
+    struct EscrowAdapterStorage {
+        /// @dev IntexAuction contract address.
+        address intexAuctionContract;
+        /// @dev The Compact contract address.
+        ITheCompact compact;
+        /// @dev Outbe-vault router; winner principal at finalization is deposited via
+        ///      `vaultProvider.depositLiquidity(...)`. Shares accrue on the provider, not here.
+        IVaultProvider vaultProvider;
+        /// @dev Active payment token used for bid escrow.
+        IERC20 paymentToken;
+        /// @dev The Compact resource lock ID for our deposits.
+        uint256 lockId;
+        /// @dev Allocator ID from __registerAllocator.
+        uint96 allocatorId;
+        /// @dev Lock tag (allocatorId + scope + reset period) for deposits.
+        bytes12 lockTag;
+        /// @dev Bid locks: seriesId => bidder => BidLock.
+        mapping(uint32 seriesId => mapping(address bidder => BidLock)) bidLocks;
+        /// @dev Per-series escrow state.
+        mapping(uint32 seriesId => AuctionEscrowState) auctionEscrowState;
+    }
 
-    // The Compact config
-    /// @notice The Compact resource lock ID for our deposits.
-    uint256 public lockId;
-    /// @notice Allocator ID from __registerAllocator.
-    uint96 public allocatorId;
-    /// @notice Lock tag (allocatorId + scope + reset period) for deposits.
-    bytes12 public lockTag;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
 
-    // Storage mappings (keyed by seriesId)
-    /// @notice Bid locks: seriesId => bidder => BidLock.
-    mapping(uint32 => mapping(address => BidLock)) public bidLocks;
-    /// @notice Per-series escrow state.
-    mapping(uint32 => AuctionEscrowState) public auctionEscrowState;
+    function _s() private pure returns (EscrowAdapterStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
 
-    constructor(address defaultAdmin, address bridger) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy with its role holders.
+    /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
+    /// @param bridger Receiver of `RELAYER_ROLE`.
+    function initialize(address defaultAdmin, address bridger) external initializer {
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
         if (bridger == address(0)) revert ZeroAddress("bridger");
 
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(RELAYER_ROLE, bridger);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // --- Storage getters ---
+    /// @notice IntexAuction contract address.
+    /// @return The wired auction contract.
+    function intexAuctionContract() external view returns (address) {
+        return _s().intexAuctionContract;
+    }
+
+    /// @notice The Compact contract address.
+    /// @return The wired Compact instance.
+    function compact() external view returns (ITheCompact) {
+        return _s().compact;
+    }
+
+    /// @notice Outbe-vault router receiving winner principal at finalization.
+    /// @return The wired vault provider.
+    function vaultProvider() external view returns (IVaultProvider) {
+        return _s().vaultProvider;
+    }
+
+    /// @notice Active payment token used for bid escrow.
+    /// @return The wired payment token.
+    function paymentToken() external view returns (IERC20) {
+        return _s().paymentToken;
+    }
+
+    /// @notice The Compact resource lock ID for our deposits.
+    /// @return The lock id (zero before the first deposit).
+    function lockId() external view returns (uint256) {
+        return _s().lockId;
+    }
+
+    /// @notice Allocator ID from `__registerAllocator`.
+    /// @return The registered allocator id (zero before wiring).
+    function allocatorId() external view returns (uint96) {
+        return _s().allocatorId;
+    }
+
+    /// @notice Lock tag (allocatorId + scope + reset period) for deposits.
+    /// @return The lock tag derived at allocator registration.
+    function lockTag() external view returns (bytes12) {
+        return _s().lockTag;
+    }
+
+    /// @notice Bid lock record for a bidder within a series. Flattened to match the original
+    ///         public-mapping getter ABI.
+    function bidLocks(uint32 seriesId, address bidder)
+        external
+        view
+        returns (uint64 lockedAmount, uint32 lockedAt, LockStatus status, uint64 failedRefund, bool splitRecorded)
+    {
+        BidLock storage l = _s().bidLocks[seriesId][bidder];
+        return (l.lockedAmount, l.lockedAt, l.status, l.failedRefund, l.splitRecorded);
+    }
+
+    /// @notice Per-series escrow state. Flattened to match the original public-mapping getter ABI.
+    function auctionEscrowState(uint32 seriesId)
+        external
+        view
+        returns (uint64 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
+    {
+        AuctionEscrowState storage e = _s().auctionEscrowState[seriesId];
+        return (e.totalLocked, e.lockCount, e.finalizedAt, e.finalized);
     }
 
     // --- Admin ---
@@ -91,43 +189,45 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         if (_vaultProvider == address(0)) revert ZeroAddress("vaultProvider");
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
 
+        EscrowAdapterStorage storage $ = _s();
+
         // Block rotating the active payment token (or Compact) while locks are still in flight:
         // existing locks reference the prior `paymentToken` and `lockId` via the global
         // state, so swapping these out would route refunds/claims through the wrong asset.
-        bool rotatingPaymentToken = address(paymentToken) != address(0) && _paymentToken != address(paymentToken);
-        bool rotatingCompact = address(compact) != address(0) && _compact != address(compact);
+        bool rotatingPaymentToken = address($.paymentToken) != address(0) && _paymentToken != address($.paymentToken);
+        bool rotatingCompact = address($.compact) != address(0) && _compact != address($.compact);
         if (rotatingPaymentToken || rotatingCompact) {
             // aderyn-fp-next-line(reentrancy-state-change)
-            uint256 outstanding = lockId == 0 ? 0 : IERC6909(address(compact)).balanceOf(address(this), lockId);
+            uint256 outstanding = $.lockId == 0 ? 0 : IERC6909(address($.compact)).balanceOf(address(this), $.lockId);
             if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
         }
 
         // Revoke role from the previous auction if rewiring.
-        if (intexAuctionContract != address(0)) {
-            _revokeRole(AUCTION_ROLE, intexAuctionContract);
+        if ($.intexAuctionContract != address(0)) {
+            _revokeRole(AUCTION_ROLE, $.intexAuctionContract);
         }
 
         // Capture the pre-rotation dependencies so `Wired` is log-reconstructible (old+new).
-        address intexAuctionOld = intexAuctionContract;
-        address compactOld = address(compact);
-        address vaultProviderOld = address(vaultProvider);
-        address paymentTokenOld = address(paymentToken);
+        address intexAuctionOld = $.intexAuctionContract;
+        address compactOld = address($.compact);
+        address vaultProviderOld = address($.vaultProvider);
+        address paymentTokenOld = address($.paymentToken);
 
-        intexAuctionContract = _intexAuction;
-        compact = ITheCompact(_compact);
-        vaultProvider = IVaultProvider(_vaultProvider);
-        paymentToken = IERC20(_paymentToken);
+        $.intexAuctionContract = _intexAuction;
+        $.compact = ITheCompact(_compact);
+        $.vaultProvider = IVaultProvider(_vaultProvider);
+        $.paymentToken = IERC20(_paymentToken);
 
         _grantRole(AUCTION_ROLE, _intexAuction);
-        paymentToken.forceApprove(_compact, 0);
-        paymentToken.forceApprove(_compact, type(uint256).max);
+        $.paymentToken.forceApprove(_compact, 0);
+        $.paymentToken.forceApprove(_compact, type(uint256).max);
 
         // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return.
         // Admin-only; a re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
-        if (allocatorId == 0) {
+        if ($.allocatorId == 0) {
             // aderyn-fp-next-line(reentrancy-state-change)
-            allocatorId = compact.__registerAllocator(address(this), "");
-            lockTag = _buildLockTag(allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
+            $.allocatorId = $.compact.__registerAllocator(address(this), "");
+            $.lockTag = _buildLockTag($.allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
         }
 
         emit Wired(
@@ -150,7 +250,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         override
         returns (bytes4)
     {
-        if (id != lockId) revert UnexpectedLockId(id);
+        if (id != _s().lockId) revert UnexpectedLockId(id);
         return IAllocator.attest.selector;
     }
 
@@ -200,15 +300,16 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         onlyRole(RELAYER_ROLE)
         nonReentrant
     {
-        if (auctionEscrowState[seriesId].finalized) {
+        EscrowAdapterStorage storage $ = _s();
+        if ($.auctionEscrowState[seriesId].finalized) {
             revert AlreadyFinalized();
         }
         if (instructions.length == 0) revert ZeroValue("instructions");
 
         // Effects: mark finalized + record the timestamp before any external interaction. The
         // timestamp anchors the post-finalize `claimRefund` window (POST_FINALIZE_REFUND_DELAY).
-        auctionEscrowState[seriesId].finalized = true;
-        auctionEscrowState[seriesId].finalizedAt = uint32(block.timestamp);
+        $.auctionEscrowState[seriesId].finalized = true;
+        $.auctionEscrowState[seriesId].finalizedAt = uint32(block.timestamp);
 
         uint64 totalRefunded = 0;
         uint64 totalPaid = 0;
@@ -229,7 +330,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
                 // call's writes roll back), but only if it is economically valid. A later
                 // claimRefund then pays exactly this, never the full principal. A mismatched split
                 // records nothing, so claimRefund stays blocked until the relayer retries.
-                BidLock storage failed = bidLocks[seriesId][inst.bidder];
+                BidLock storage failed = $.bidLocks[seriesId][inst.bidder];
                 if (
                     failed.status == LockStatus.Locked
                         && uint256(inst.refundedAmount) + inst.paidAmount == failed.lockedAmount
@@ -265,7 +366,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         onlyRole(RELAYER_ROLE)
         nonReentrant
     {
-        if (!auctionEscrowState[seriesId].finalized) {
+        if (!_s().auctionEscrowState[seriesId].finalized) {
             revert NotFinalizedYet(seriesId);
         }
         _processFinalizationInstruction(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
@@ -276,10 +377,11 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     function claimRefund(uint32 seriesId, address bidder) external override nonReentrant {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
-        BidLock storage lock = bidLocks[seriesId][bidder];
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[seriesId][bidder];
         if (lock.status != LockStatus.Locked) revert LockNotActive();
 
-        AuctionEscrowState storage state = auctionEscrowState[seriesId];
+        AuctionEscrowState storage state = $.auctionEscrowState[seriesId];
         uint64 lockedAmount = lock.lockedAmount;
 
         if (state.finalized) {
@@ -301,7 +403,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
             state.totalLocked -= refundAmount;
             if (refundAmount > 0) {
                 _withdrawFromCompact(refundAmount);
-                paymentToken.safeTransfer(bidder, refundAmount);
+                $.paymentToken.safeTransfer(bidder, refundAmount);
                 emit FundsRefunded(bytes32(0), seriesId, bidder, refundAmount);
             }
 
@@ -328,14 +430,14 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
             state.totalLocked -= lockedAmount;
 
             _withdrawFromCompact(lockedAmount);
-            paymentToken.safeTransfer(bidder, lockedAmount);
+            $.paymentToken.safeTransfer(bidder, lockedAmount);
             emit FundsRefunded(bytes32(0), seriesId, bidder, lockedAmount);
         }
     }
 
     /// @inheritdoc IEscrowAdapter
     function settleVaultOwed(uint32 seriesId, address bidder) external override nonReentrant {
-        BidLock storage lock = bidLocks[seriesId][bidder];
+        BidLock storage lock = _s().bidLocks[seriesId][bidder];
         if (lock.status != LockStatus.RefundClaimed) revert NoPendingVaultOwed(seriesId, bidder);
         _settleVaultOwed(seriesId, bidder);
     }
@@ -355,24 +457,25 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     ///      Amount (`lockedAmount - failedRefund`) and destination (`vaultProvider`) are fixed by
     ///      stored state, so the operation is safe to expose permissionlessly.
     function _settleVaultOwed(uint32 seriesId, address bidder) internal {
-        BidLock storage lock = bidLocks[seriesId][bidder];
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[seriesId][bidder];
         uint64 vaultOwed = lock.lockedAmount - lock.failedRefund;
 
         // Effects
         lock.status = LockStatus.Finalized;
-        auctionEscrowState[seriesId].totalLocked -= vaultOwed;
+        $.auctionEscrowState[seriesId].totalLocked -= vaultOwed;
 
         // Interactions
         _withdrawFromCompact(vaultOwed);
-        paymentToken.forceApprove(address(vaultProvider), vaultOwed);
-        vaultProvider.depositLiquidity(address(paymentToken), vaultOwed);
+        $.paymentToken.forceApprove(address($.vaultProvider), vaultOwed);
+        $.vaultProvider.depositLiquidity(address($.paymentToken), vaultOwed);
         emit VaultOwedSettled(seriesId, bidder, vaultOwed);
     }
 
     // --- Views ---
     /// @inheritdoc IEscrowAdapter
     function getBidLock(uint32 seriesId, address bidder) external view override returns (BidLock memory) {
-        return bidLocks[seriesId][bidder];
+        return _s().bidLocks[seriesId][bidder];
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -382,7 +485,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         override
         returns (bool hasLocks, bool isFinalized, uint64 totalLocked)
     {
-        AuctionEscrowState memory state = auctionEscrowState[seriesId];
+        AuctionEscrowState memory state = _s().auctionEscrowState[seriesId];
         return (state.lockCount > 0, state.finalized, state.totalLocked);
     }
 
@@ -399,7 +502,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         if (seriesId == 0) revert ZeroValue("seriesId");
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
-        if (bidLocks[seriesId][bidder].status != LockStatus.None) {
+        if (_s().bidLocks[seriesId][bidder].status != LockStatus.None) {
             revert BidAlreadyLocked();
         }
     }
@@ -414,25 +517,26 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     ///      forwarded through the `AUCTION_ROLE`-gated `lockFunds` entry point. Safety relies
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
     function _executeLock(uint32 seriesId, address bidder, uint64 amount) internal {
+        EscrowAdapterStorage storage $ = _s();
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
         // writing. Per-call bidLocks / auctionEscrowState writes follow for locality and could
         // move above; nonReentrant on every outer entrypoint covers the deviation regardless.
         // slither-disable-next-line arbitrary-send-erc20
-        paymentToken.safeTransferFrom(bidder, address(this), amount);
+        $.paymentToken.safeTransferFrom(bidder, address(this), amount);
 
         // Deposit to The Compact (we receive ERC6909 tokens).
-        uint256 returnedLockId = compact.depositERC20(address(paymentToken), lockTag, amount, address(this));
+        uint256 returnedLockId = $.compact.depositERC20(address($.paymentToken), $.lockTag, amount, address(this));
 
         // Enable forced withdrawal on first deposit (one-time setup). The returned
         // `withdrawableAt` is informational; finalization invokes forcedWithdrawal directly.
-        if (lockId == 0) {
-            lockId = returnedLockId;
+        if ($.lockId == 0) {
+            $.lockId = returnedLockId;
             // slither-disable-next-line unused-return
-            compact.enableForcedWithdrawal(returnedLockId);
+            $.compact.enableForcedWithdrawal(returnedLockId);
         }
 
         // Store lock data.
-        bidLocks[seriesId][bidder] = BidLock({
+        $.bidLocks[seriesId][bidder] = BidLock({
             lockedAmount: amount,
             lockedAt: uint32(block.timestamp),
             status: LockStatus.Locked,
@@ -441,8 +545,8 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
         });
 
         // Update series escrow stats.
-        ++auctionEscrowState[seriesId].lockCount;
-        auctionEscrowState[seriesId].totalLocked += amount;
+        ++$.auctionEscrowState[seriesId].lockCount;
+        $.auctionEscrowState[seriesId].totalLocked += amount;
 
         emit FundsLocked(seriesId, bidder, amount);
     }
@@ -464,7 +568,8 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     ) internal {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
-        BidLock storage lock = bidLocks[seriesId][bidder];
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[seriesId][bidder];
         if (lock.status != LockStatus.Locked) revert LockNotActive();
 
         // Validate the refund + payout split matches the locked amount.
@@ -476,20 +581,20 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
 
         // CEI ok: state writes below precede every external call in this function.
         lock.status = LockStatus.Finalized;
-        auctionEscrowState[seriesId].totalLocked -= lockedAmount;
+        $.auctionEscrowState[seriesId].totalLocked -= lockedAmount;
 
         // Interactions
         _withdrawFromCompact(lockedAmount);
 
         if (refundedAmount > 0) {
-            paymentToken.safeTransfer(bidder, refundedAmount);
+            $.paymentToken.safeTransfer(bidder, refundedAmount);
             emit FundsRefunded(guid, seriesId, bidder, refundedAmount);
         }
 
         if (paidAmount > 0) {
             // Route through outbe-vault provider; shares accrue on the provider, not here.
-            paymentToken.forceApprove(address(vaultProvider), paidAmount);
-            vaultProvider.depositLiquidity(address(paymentToken), paidAmount);
+            $.paymentToken.forceApprove(address($.vaultProvider), paidAmount);
+            $.vaultProvider.depositLiquidity(address($.paymentToken), paidAmount);
             emit FundsClaimed(guid, seriesId, bidder, paidAmount);
         }
     }
@@ -499,9 +604,10 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     ///      period has not elapsed (The Compact returns false).
     /// @param amount Amount to withdraw.
     function _withdrawFromCompact(uint64 amount) internal {
-        if (lockId == 0) revert NoDeposits();
+        EscrowAdapterStorage storage $ = _s();
+        if ($.lockId == 0) revert NoDeposits();
         // The Compact itself checks the reset period - if not ready, returns false.
-        bool success = compact.forcedWithdrawal(lockId, address(this), amount);
+        bool success = $.compact.forcedWithdrawal($.lockId, address(this), amount);
         if (!success) revert ForcedWithdrawalFailed();
     }
 
@@ -515,6 +621,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     function _buildLockTag(uint96 _allocatorId, Scope scope, ResetPeriod resetPeriod) internal pure returns (bytes12) {
         uint256 packed =
             (uint256(uint8(scope)) << 255) | (uint256(uint8(resetPeriod)) << 252) | (uint256(_allocatorId) << 160);
+        // forge-lint: disable-next-line(unsafe-typecast) -- intentional truncation to the tag's top 12 bytes
         return bytes12(uint96(packed >> 160));
     }
 
@@ -522,7 +629,7 @@ contract EscrowAdapter is AccessControl, ReentrancyGuard, IEscrowAdapter, IAlloc
     /// @dev Returns true for `IAllocator` and any interface advertised by `AccessControl`.
     /// @param interfaceId Interface ID to check.
     /// @return True if the interface is supported.
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControl) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return interfaceId == type(IAllocator).interfaceId || super.supportsInterface(interfaceId);
     }
 }

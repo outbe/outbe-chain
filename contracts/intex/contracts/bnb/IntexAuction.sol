@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
@@ -11,11 +12,18 @@ import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 /// @title IntexAuction
 /// @author Outbe
 /// @notice Commit-reveal auction keyed by `seriesId` (uint32, yyyymmdd).
-/// @dev The schedule is computed on the Outbe side and passed into `auctionStart`.
+/// @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
+///      The schedule is computed on the Outbe side and passed into `auctionStart`.
 ///      Reveal signatures are EIP-712 typed data under the `IntexAuction` v1 domain,
-///      binding both `chainId` and `verifyingContract` and so preventing cross-chain
-///      and cross-instance replay.
-contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
+///      binding both `chainId` and `verifyingContract` (the proxy) and so preventing
+///      cross-chain and cross-instance replay.
+contract IntexAuction is
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    EIP712Upgradeable,
+    UUPSUpgradeable,
+    IIntexAuction
+{
     // Roles
     /// @notice Role identifier for bridge operations (stage ops driven by the relayer).
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
@@ -24,25 +32,117 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     bytes32 private constant REVEAL_BID_TYPEHASH =
         keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)");
 
-    // External contract dependencies
-    /// @notice Escrow contract for bid processing.
-    IEscrowAdapter public escrowContract;
+    /// @custom:storage-location erc7201:outbe.intex.IntexAuction
+    struct IntexAuctionStorage {
+        /// @dev Escrow contract for bid processing.
+        IEscrowAdapter escrowContract;
+        /// @dev Auction parameters and state, indexed by series id.
+        mapping(uint32 seriesId => IIntexAuction.AuctionData) auctions;
+        /// @dev Live bid counters tracked while the auction runs.
+        mapping(uint32 seriesId => IIntexAuction.AuctionRunningCounts) auctionRunningCounts;
+        /// @dev Committed bid hashes: seriesId => bidder => commitHash.
+        mapping(uint32 seriesId => mapping(address bidder => bytes32 commitHash)) committedBidsByHash;
+        /// @dev Bid revealed status: seriesId => bidder => revealed.
+        mapping(uint32 seriesId => mapping(address bidder => bool revealed)) revealedBidsByBidder;
+        /// @dev Revealed bids per series.
+        mapping(uint32 seriesId => IIntexAuction.SubmittedBidData[]) revealedBids;
+    }
 
-    // Storage mappings (all keyed by seriesId)
-    /// @notice Auction parameters and state, indexed by series id.
-    mapping(uint32 => IIntexAuction.AuctionData) public auctions;
-    /// @notice Live bid counters tracked while the auction runs.
-    mapping(uint32 => IIntexAuction.AuctionRunningCounts) public auctionRunningCounts;
-    /// @notice Committed bid hashes: seriesId => bidder => commitHash.
-    mapping(uint32 => mapping(address => bytes32)) public committedBidsByHash;
-    /// @notice Bid revealed status: seriesId => bidder => revealed.
-    mapping(uint32 => mapping(address => bool)) public revealedBidsByBidder;
-    /// @notice Revealed bids per series.
-    mapping(uint32 => IIntexAuction.SubmittedBidData[]) public revealedBids;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuction")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x0db73aff7344f42850665630fc90d6dc1080fdcdb5bb8f56a3fd235fc49b1c00;
 
-    constructor(address defaultAdmin, address bridger) EIP712("IntexAuction", "1") {
+    function _s() private pure returns (IntexAuctionStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy with its role holders and the EIP-712 domain.
+    /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
+    /// @param bridger Receiver of `RELAYER_ROLE`.
+    function initialize(address defaultAdmin, address bridger) external initializer {
+        if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
+        if (bridger == address(0)) revert ZeroAddress("bridger");
+
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __EIP712_init("IntexAuction", "1");
+        __UUPSUpgradeable_init();
+
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(RELAYER_ROLE, bridger);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // --- Storage getters ---
+    /// @notice Escrow contract for bid processing.
+    /// @return The wired escrow adapter.
+    function escrowContract() external view returns (IEscrowAdapter) {
+        return _s().escrowContract;
+    }
+
+    /// @notice Auction parameters and state, indexed by series id. Flattened to match the
+    ///         original public-mapping getter ABI (nested structs returned as tuples).
+    function auctions(uint32 seriesId)
+        external
+        view
+        returns (
+            IIntexAuction.WorldwideDayState worldwideDayState,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params,
+            IIntexAuction.AuctionResult memory result
+        )
+    {
+        IIntexAuction.AuctionData storage a = _s().auctions[seriesId];
+        return (a.worldwideDayState, a.schedule, a.params, a.result);
+    }
+
+    /// @notice Live bid counters tracked while the auction runs. Flattened to match the
+    ///         original public-mapping getter ABI.
+    function auctionRunningCounts(uint32 seriesId)
+        external
+        view
+        returns (uint32 committedBidsCount, uint32 revealedBidsCount)
+    {
+        IIntexAuction.AuctionRunningCounts storage c = _s().auctionRunningCounts[seriesId];
+        return (c.committedBidsCount, c.revealedBidsCount);
+    }
+
+    /// @notice Committed bid hash for a bidder.
+    /// @param seriesId Auction series id.
+    /// @param bidder Bidder address.
+    /// @return The stored commit hash (zero when absent).
+    function committedBidsByHash(uint32 seriesId, address bidder) external view returns (bytes32) {
+        return _s().committedBidsByHash[seriesId][bidder];
+    }
+
+    /// @notice Whether a bidder has revealed for a series.
+    /// @param seriesId Auction series id.
+    /// @param bidder Bidder address.
+    /// @return True when the bid was revealed.
+    function revealedBidsByBidder(uint32 seriesId, address bidder) external view returns (bool) {
+        return _s().revealedBidsByBidder[seriesId][bidder];
+    }
+
+    /// @notice Revealed bid at an index within a series. Flattened to match the original
+    ///         public-mapping getter ABI.
+    function revealedBids(uint32 seriesId, uint256 index)
+        external
+        view
+        returns (address bidderAddress, uint64 intexBidPrice, uint32 timestamp, uint16 intexQuantity)
+    {
+        IIntexAuction.SubmittedBidData storage b = _s().revealedBids[seriesId][index];
+        return (b.bidderAddress, b.intexBidPrice, b.timestamp, b.intexQuantity);
     }
 
     // --- Admin ---
@@ -50,8 +150,9 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     function wire(address _escrow) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_escrow == address(0)) revert ZeroAddress("escrowContract");
 
-        address previousEscrow = address(escrowContract);
-        escrowContract = IEscrowAdapter(_escrow);
+        IntexAuctionStorage storage $ = _s();
+        address previousEscrow = address($.escrowContract);
+        $.escrowContract = IEscrowAdapter(_escrow);
 
         emit EscrowWired(previousEscrow, _escrow);
     }
@@ -63,8 +164,9 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         IIntexAuction.AuctionSchedule calldata schedule,
         IIntexAuction.AuctionParams calldata params
     ) external override onlyRole(RELAYER_ROLE) {
+        IntexAuctionStorage storage $ = _s();
         // `commitEnd == 0` is the canonical existence sentinel for an auction entry.
-        if (auctions[seriesId].schedule.commitEnd != 0) revert AuctionAlreadyExists();
+        if ($.auctions[seriesId].schedule.commitEnd != 0) revert AuctionAlreadyExists();
 
         // Schedule timestamps must be strictly increasing and the commit stage must end in the future.
         if (
@@ -74,7 +176,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
             revert InvalidSchedule();
         }
 
-        auctions[seriesId] = IIntexAuction.AuctionData({
+        $.auctions[seriesId] = IIntexAuction.AuctionData({
             worldwideDayState: IIntexAuction.WorldwideDayState.Unknown,
             schedule: schedule,
             params: params,
@@ -88,7 +190,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
 
     /// @inheritdoc IIntexAuction
     function startRevealingBidsStage(uint32 seriesId, bool isGreenDay) external override onlyRole(RELAYER_ROLE) {
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IIntexAuction.AuctionData storage a = _s().auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
@@ -116,7 +218,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
 
     /// @inheritdoc IIntexAuction
     function startClearingStage(uint32 seriesId) external override onlyRole(RELAYER_ROLE) {
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IIntexAuction.AuctionData storage a = _s().auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         bool alreadyIssuance = currentStage == IIntexAuction.AuctionStage.Issuance;
@@ -139,7 +241,8 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         uint64 auctionIntexClearingPrice,
         uint32 wonBidsCount
     ) external override onlyRole(RELAYER_ROLE) nonReentrant {
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         if (currentStage != IIntexAuction.AuctionStage.Issuance) {
@@ -151,7 +254,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
         // against on-chain counters — winners cannot exceed revealed bids, and the clearing price
         // cannot fall below the configured minimum. It is not a full re-computation.
-        uint32 revealed = auctionRunningCounts[seriesId].revealedBidsCount;
+        uint32 revealed = $.auctionRunningCounts[seriesId].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
         if (auctionIntexClearingPrice < a.params.minIntexBidPrice) {
             revert ClearingPriceBelowMin(auctionIntexClearingPrice, a.params.minIntexBidPrice);
@@ -172,7 +275,8 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     function commitBid(uint32 seriesId, bytes32 commitHash) external override {
         if (commitHash == bytes32(0)) revert InvalidCommitHash();
 
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
@@ -184,17 +288,18 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         if (uint32(block.timestamp) >= a.schedule.commitEnd) {
             revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
-        if (committedBidsByHash[seriesId][msg.sender] != bytes32(0)) revert BidAlreadyCommitted();
+        if ($.committedBidsByHash[seriesId][msg.sender] != bytes32(0)) revert BidAlreadyCommitted();
 
-        committedBidsByHash[seriesId][msg.sender] = commitHash;
-        auctionRunningCounts[seriesId].committedBidsCount += 1;
+        $.committedBidsByHash[seriesId][msg.sender] = commitHash;
+        $.auctionRunningCounts[seriesId].committedBidsCount += 1;
 
         emit BidCommitted(seriesId, msg.sender, commitHash);
     }
 
     /// @inheritdoc IIntexAuction
     function cancelCommit(uint32 seriesId) external override {
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
@@ -206,10 +311,10 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         if (uint32(block.timestamp) >= a.schedule.commitEnd) {
             revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
-        if (committedBidsByHash[seriesId][msg.sender] == bytes32(0)) revert BidNotFound();
+        if ($.committedBidsByHash[seriesId][msg.sender] == bytes32(0)) revert BidNotFound();
 
-        delete committedBidsByHash[seriesId][msg.sender];
-        auctionRunningCounts[seriesId].committedBidsCount -= 1;
+        delete $.committedBidsByHash[seriesId][msg.sender];
+        $.auctionRunningCounts[seriesId].committedBidsCount -= 1;
 
         emit CommitCancelled(seriesId, msg.sender);
     }
@@ -222,16 +327,17 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     {
         if (chainId != block.chainid) revert WrongChain(block.chainid, chainId);
 
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(seriesId);
         if (currentStage != IIntexAuction.AuctionStage.RevealingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.RevealingBids, currentStage);
         }
 
-        bytes32 committedHash = committedBidsByHash[seriesId][msg.sender];
+        bytes32 committedHash = $.committedBidsByHash[seriesId][msg.sender];
         if (committedHash == bytes32(0)) revert BidNotFound();
-        if (revealedBidsByBidder[seriesId][msg.sender]) revert BidAlreadyRevealed();
+        if ($.revealedBidsByBidder[seriesId][msg.sender]) revert BidAlreadyRevealed();
         if (quantity == 0 || bidPrice == 0) revert ZeroValue("quantity/bidPrice");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidPrice < a.params.minIntexBidPrice) revert BidBelowMinIntexBidPrice();
@@ -246,9 +352,9 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
 
         // Effects: record the reveal before the external lockFunds call (CEI).
         // If lockFunds reverts the whole tx is rolled back, so atomicity is preserved.
-        revealedBidsByBidder[seriesId][msg.sender] = true;
+        $.revealedBidsByBidder[seriesId][msg.sender] = true;
 
-        revealedBids[seriesId].push(
+        $.revealedBids[seriesId].push(
             IIntexAuction.SubmittedBidData({
                 bidderAddress: msg.sender,
                 intexBidPrice: bidPrice,
@@ -257,13 +363,14 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
             })
         );
 
-        auctionRunningCounts[seriesId].revealedBidsCount += 1;
+        $.auctionRunningCounts[seriesId].revealedBidsCount += 1;
 
         emit BidRevealed(seriesId, msg.sender, quantity, bidPrice);
 
         // Interactions
         // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
-        escrowContract.lockFunds(seriesId, msg.sender, uint64(lockAmount));
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint64).max check above
+        $.escrowContract.lockFunds(seriesId, msg.sender, uint64(lockAmount));
     }
 
     /// @notice Verify the EIP-712 reveal signature and its binding to the prior commit.
@@ -295,7 +402,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         override
         returns (IIntexAuction.AuctionData memory auctionData)
     {
-        IIntexAuction.AuctionData memory a = auctions[seriesId];
+        IIntexAuction.AuctionData memory a = _s().auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         return a;
     }
@@ -307,9 +414,10 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
         override
         returns (IIntexAuction.AuctionData memory auctionData, IIntexAuction.SubmittedBidData[] memory bidsData)
     {
-        IIntexAuction.AuctionData memory a = auctions[seriesId];
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData memory a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
-        return (a, revealedBids[seriesId]);
+        return (a, $.revealedBids[seriesId]);
     }
 
     /// @inheritdoc IIntexAuction
@@ -325,7 +433,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     /// @param seriesId Auction series id.
     /// @return Current auction stage.
     function _getAuctionStage(uint32 seriesId) internal view returns (IIntexAuction.AuctionStage) {
-        IIntexAuction.AuctionData storage a = auctions[seriesId];
+        IIntexAuction.AuctionData storage a = _s().auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
         if (a.worldwideDayState == IIntexAuction.WorldwideDayState.Red) {
@@ -355,7 +463,7 @@ contract IntexAuction is AccessControl, ReentrancyGuard, EIP712, IIntexAuction {
     /// @dev Delegates to `AccessControl.supportsInterface` (ERC-165).
     /// @param id The interface ID to check.
     /// @return True if the interface is supported, false otherwise.
-    function supportsInterface(bytes4 id) public view override(AccessControl) returns (bool) {
+    function supportsInterface(bytes4 id) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(id);
     }
 }

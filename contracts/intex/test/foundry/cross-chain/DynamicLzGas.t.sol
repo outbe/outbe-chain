@@ -10,6 +10,7 @@ import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.s
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @dev Test-only harness exposing the internal `LzGasEstimator` for unit assertions.
 contract GasEstimatorHarness {
@@ -60,10 +61,10 @@ contract DynamicLzGasTest is TestHelperOz5 {
 
         harness = new GasEstimatorHarness();
 
-        srcToken = new IntexNFT1155(admin, admin);
-        dstToken = new IntexNFT1155(admin, admin);
-        srcBatch = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
-        dstBatch = new ONFT1155AdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
+        srcToken = DeployProxy.intexNFT1155(admin, admin);
+        dstToken = DeployProxy.intexNFT1155(admin, admin);
+        srcBatch = DeployProxy.onftAdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
+        dstBatch = DeployProxy.onftAdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
 
         address[] memory oapps = new address[](2);
         oapps[0] = address(srcBatch);

@@ -1,7 +1,6 @@
 # Intex Contracts
 
-[![CI](https://github.com/Outbe/outbe-intex/actions/workflows/ci.yml/badge.svg)](https://github.com/Outbe/outbe-intex/actions/workflows/ci.yml)
-[![Tests Coverage](https://github.com/Outbe/outbe-intex/actions/workflows/coverage.yml/badge.svg)](https://github.com/Outbe/outbe-intex/actions/workflows/coverage.yml)
+[![CI](https://github.com/outbe/outbe-chain/actions/workflows/ci-intex.yml/badge.svg)](https://github.com/outbe/outbe-chain/actions/workflows/ci-intex.yml)
 
 ## Overview
 
@@ -108,14 +107,26 @@ Rationale, alternatives, deployment-order requirements, and known limitations (e
 
 ## Deployment
 
-Production deploys use the **Contracts Deployment** workflow (see [CD](#cd-continuous-deployment)). For local or one-off runs with Ignition:
+Every implementation contract is a UUPS proxy. The implementation holds only logic and chain-fixed immutables (LayerZero endpoint, endpoint ids, bridged token); all state lives in the proxy under ERC-7201 namespaced storage, and upgrades go through `upgradeToAndCall` without moving the proxy address.
+
+Proxies are deployed through a CREATE3 factory ([`contracts/factory/Create3Factory.sol`](contracts/factory/Create3Factory.sol)), so a proxy address depends only on `(factory, deployer, salt)` and not on the implementation init code. Addresses therefore stay fixed across implementation iterations and full network wipes, and are identical across chains — including the LayerZero contracts, whose per-chain endpoint immutable would shift a CREATE2 address but not a CREATE3 one (this is why CREATE3 is used over plain CREATE2). The factory is deployed once per chain through the canonical CREATE2 deployer (`0x4e59…956C`) at a pinned salt, so it lands at the same address everywhere.
+
+Deploy with the Foundry scripts in [`deploy/`](deploy/):
 
 ```bash
-yarn hardhat ignition deploy <module> --network bscTestnet --parameters params.json
-yarn hardhat ignition verify <deployment-id> --network bscTestnet
+forge script deploy/DeployBsc.s.sol --rpc-url <bsc-rpc> --broadcast
+forge script deploy/DeployOutbe.s.sol --rpc-url <outbe-rpc> --broadcast
 ```
 
-Use `--reset` to override an existing deployment. Parameters are resolved by `scripts/cd/resolve-parameters.ts`.
+Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). The deployer is the admin (`DEFAULT_ADMIN_ROLE`), owner / LZ delegate, and initial bridger (`RELAYER_ROLE`), so no separate admin/delegate/bridger addresses are passed. Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
+
+### Upgrade safety
+
+- `yarn validate:upgrades` runs the OpenZeppelin upgrades-core storage-layout validator over the implementations (build info + layout emitted per `foundry.toml`).
+- `forge test --match-path "test/foundry/upgrade/*"` runs the upgrade rehearsal: deploy v1, populate state, `upgradeToAndCall` to a v1.1 stub, and assert all state survives.
+- For the LayerZero contracts (`TargetMessenger`, `OriginMessenger`, `ONFT1155AdapterBatch`) the upgrade authority (`DEFAULT_ADMIN_ROLE`) and the OApp config authority (`owner`, gating `setPeer` / `setDelegate` / `setEnforcedOptions`) are independent tracks, set to the same address at init. Keep them unified — do not rotate one without the other.
+
+> The production deployment workflow still uses the previous Hardhat mechanism; its migration to these Foundry scripts is tracked separately.
 
 ## Other Tasks
 
@@ -128,8 +139,9 @@ Beyond the demo runbooks, the repo registers several task families. Run `yarn ha
 
 ## CI & Coverage
 
-- **CI** ([`.github/workflows/intex-ci.yml`](../../.github/workflows/intex-ci.yml)): Solhint lint, Forge format check, compile, Foundry tests, Hardhat tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
+- **CI** ([`.github/workflows/ci-intex.yml`](../../.github/workflows/ci-intex.yml)): Solhint lint, Forge format check, compile, Foundry tests, Hardhat tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
 - **Coverage**: local scripts are still available via `yarn coverage:foundry` / `yarn coverage:hardhat`; the separate manual coverage workflow from `outbe-intex` has not been migrated into `outbe-chain` yet.
+- **Dependency patch** (`.yarn/patches/@layerzerolabs-oapp-evm-*.patch`): `@layerzerolabs/oapp-evm-upgradeable` imports `@layerzerolabs/oapp-evm/contracts/*` transitively, but `oapp-evm`'s `package.json` `exports` omits `./contracts/*`, which Hardhat 3 rejects. The patch adds that export so `yarn compile` can resolve the upgradeable OApp bases. Forge is unaffected (it resolves via remappings).
 
 ## Static Analysis
 

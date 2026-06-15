@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
@@ -38,7 +39,7 @@ contract AuctionSignatureTest is Test {
         iba1 = vm.addr(iba1Pk);
         iba2 = vm.addr(iba2Pk);
 
-        auction = new IntexAuction(admin, bridger);
+        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
 
         vm.startPrank(admin);
@@ -190,7 +191,7 @@ contract AuctionSignatureTest is Test {
         uint32 seriesId = 20260105;
 
         // Deploy a second IntexAuction on the same chain.
-        IntexAuction other = new IntexAuction(admin, bridger);
+        IntexAuction other = DeployProxy.intexAuction(admin, bridger);
         MockAuctionEscrow otherEscrow = new MockAuctionEscrow();
         vm.startPrank(admin);
         other.grantRole(other.RELAYER_ROLE(), bridger);

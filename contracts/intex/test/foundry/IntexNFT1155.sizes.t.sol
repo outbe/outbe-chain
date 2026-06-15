@@ -18,8 +18,8 @@ contract IntexNFT1155SizeTest is Test {
     uint256 internal constant EIP170_LIMIT = 24_576;
 
     function test_IntexNFT1155_RuntimeSize_WithinEIP170() public {
-        // Non-zero constructor args; the linked IntexMetadata library is resolved by forge.
-        IntexNFT1155 nft = new IntexNFT1155(address(0xA11CE), address(0xB1D6E));
+        // The implementation carries all runtime code; the ERC1967 proxy in front is tiny.
+        IntexNFT1155 nft = new IntexNFT1155();
         uint256 size = address(nft).code.length;
         assertLe(size, EIP170_LIMIT, "IntexNFT1155 runtime bytecode exceeds the EIP-170 limit");
     }
