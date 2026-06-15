@@ -58,6 +58,13 @@
   },
   {
     "type": "function",
+    "name": "unjailValidator",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "unstake",
     "inputs": [
       {

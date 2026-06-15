@@ -45,6 +45,13 @@
   },
   {
     "type": "function",
+    "name": "confirmValidatorReady",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "deactivateValidator",
     "inputs": [
       {
@@ -507,6 +514,25 @@
   },
   {
     "type": "event",
+    "name": "ValidatorJailed",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "atHeight",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ValidatorRegistered",
     "inputs": [
       {
@@ -517,6 +543,25 @@
       },
       {
         "name": "index",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ValidatorUnjailed",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "atHeight",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
