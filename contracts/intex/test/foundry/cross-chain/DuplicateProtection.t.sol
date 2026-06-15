@@ -15,6 +15,7 @@ import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCode
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @dev Fallback-only stub used as `auction` for nonce-advancement tests so the TM dispatch
@@ -56,35 +57,17 @@ contract DuplicateProtectionTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         desis = address(new MockDesis());
-        auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
-        intexOutbe = new IntexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
-        onftBatchOutbe = new ONFT1155AdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
-        onftBnb = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID)
-            )
-        );
-        onftOutbe = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID)
-            )
-        );
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);
@@ -104,7 +87,7 @@ contract DuplicateProtectionTest is TestHelperOz5 {
         bnbMessenger.wire(address(auction), address(intex), admin, address(onftBatchBnb));
         outbeMessenger.wire(desis, makeAddr("factory"));
 
-        // Seed the receiving NFT contracts with a series + RELAYER role so ONFT credits succeed
+        // Seed the receiving NFT contracts with a series + RELAYER role so ONFT crosschainMints succeed
         // and so TM's `_handleMarkCalled` reaches `intex.markCalled` without an auth revert.
         intex.createSeries(SERIES_ID, 10_000, 0);
         intex.markQualified(SERIES_ID);

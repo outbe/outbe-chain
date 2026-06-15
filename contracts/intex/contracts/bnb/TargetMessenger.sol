@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {OApp, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OAppOptionsType3} from "@layerzerolabs/oapp-evm/oapp/libs/OAppOptionsType3.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {
+    OAppUpgradeable,
+    Origin,
+    MessagingFee,
+    MessagingReceipt
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/OAppUpgradeable.sol";
+import {
+    OAppOptionsType3Upgradeable
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
@@ -18,9 +25,18 @@ import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.
 /// @title TargetMessenger
 /// @author Outbe
 /// @notice LayerZero bridge adapter for BNB Chain.
-/// @dev Sends messages to Outbe, receives messages from Outbe. All auction/series
+/// @dev UUPS upgradeable: deployed behind an ERC1967 proxy; the LayerZero endpoint stays an
+///      implementation immutable, so every upgrade must pass the same endpoint to the constructor.
+///      Sends messages to Outbe, receives messages from Outbe. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
-contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessControl, ReentrancyGuard {
+contract TargetMessenger is
+    ITargetMessenger,
+    OAppUpgradeable,
+    OAppOptionsType3Upgradeable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
     /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
@@ -35,23 +51,6 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @notice LayerZero endpoint id of the Outbe chain that is the counterparty for every send.
     uint32 public immutable OUTBE_EID;
 
-    /// @notice Auction contract that originates outbound bids and receives inbound stage transitions.
-    IIntexAuction public auction;
-    /// @notice IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
-    IIntexNFT1155 public intex;
-    /// @notice EscrowAdapter contract that refund instructions are forwarded to for finalization.
-    IEscrowAdapter public escrowAdapter;
-    /// @notice ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
-    IONFT1155AdapterBatch public onftBatchAdapter;
-
-    /// @notice Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
-    /// @dev Backs the `nextNonce` override that switches this OApp into LayerZero's ORDERED-delivery
-    ///      mode: the endpoint queries `nextNonce(srcEid, sender)` before delivery and refuses to
-    ///      route any packet whose `_origin.nonce` does not equal `inboundNonce + 1`. That rejects
-    ///      duplicate deliveries (same nonce twice) and out-of-order deliveries (nonce gap), both
-    ///      of which would otherwise re-trigger downstream auction-stage transitions out of sequence.
-    mapping(uint32 srcEid => mapping(bytes32 sender => uint64)) public inboundNonce;
-
     /// @notice Deferred BIDS_BATCH relay enqueued because the outbound `_lzSend` from inside
     ///         `_lzReceive` reverted (typically: pre-funded native balance too low for the LZ fee).
     /// @dev Pattern A `_handleAuctionStageClearing` runs the inbound stage transition,
@@ -63,16 +62,6 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         bool exists;
         bool done;
     }
-
-    /// @notice Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingBidsRelay) public pendingBidsRelays;
-    /// @notice Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-    uint256 public nextPendingBidsRelayIdx;
-
-    /// @dev Monotonic per-series counter stamped on every BIDS_BATCH send/flush. The Outbe receiver
-    ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
-    ///      relay cannot double-count demand.
-    mapping(uint32 seriesId => uint32) internal bidsRelayGeneration;
 
     /// @notice Deferred holders bridge enqueued because the inbound `_handleMarkCalled` could not
     ///         forward all holders+amounts via `onftBatchAdapter.systemMultiSend`.
@@ -86,17 +75,131 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         bool done;
     }
 
-    /// @notice Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingHoldersRelay) public pendingHoldersRelays;
-    /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-    uint256 public nextPendingHoldersRelayIdx;
+    /// @custom:storage-location erc7201:outbe.intex.TargetMessenger
+    struct TargetMessengerStorage {
+        /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
+        IIntexAuction auction;
+        /// @dev IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
+        IIntexNFT1155 intex;
+        /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
+        IEscrowAdapter escrowAdapter;
+        /// @dev ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
+        IONFT1155AdapterBatch onftBatchAdapter;
+        /// @dev Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
+        ///      Backs the `nextNonce` override that switches this OApp into ORDERED-delivery mode.
+        mapping(uint32 srcEid => mapping(bytes32 sender => uint64 nonce)) inboundNonce;
+        /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
+        /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
+        uint256 nextPendingBidsRelayIdx;
+        /// @dev Monotonic per-series counter stamped on every BIDS_BATCH send/flush. The Outbe receiver
+        ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
+        ///      relay cannot double-count demand.
+        mapping(uint32 seriesId => uint32 generation) bidsRelayGeneration;
+        /// @dev Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
+        /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
+        uint256 nextPendingHoldersRelayIdx;
+    }
 
-    constructor(address _lzEndpoint, address _delegate, uint32 _outbeEid)
-        OApp(_lzEndpoint, _delegate)
-        Ownable(_delegate)
-    {
-        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xd3ea7ae85c719490ab42a52fee1d0107cffc5c368e656979e152d5c5183d9400;
+
+    function _s() private pure returns (TargetMessengerStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _lzEndpoint, uint32 _outbeEid) OAppUpgradeable(_lzEndpoint) {
         OUTBE_EID = _outbeEid;
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy: LayerZero delegate, contract owner, and admin role holder.
+    /// @param _delegate Owner, endpoint delegate, and receiver of `DEFAULT_ADMIN_ROLE`.
+    function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
+
+        __Ownable_init(_delegate);
+        __OApp_init(_delegate);
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // --- Storage getters ---
+    /// @notice Auction contract that originates outbound bids and receives inbound stage transitions.
+    /// @return The wired auction contract.
+    function auction() external view returns (IIntexAuction) {
+        return _s().auction;
+    }
+
+    /// @notice IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
+    /// @return The wired NFT contract.
+    function intex() external view returns (IIntexNFT1155) {
+        return _s().intex;
+    }
+
+    /// @notice EscrowAdapter contract that refund instructions are forwarded to for finalization.
+    /// @return The wired escrow adapter.
+    function escrowAdapter() external view returns (IEscrowAdapter) {
+        return _s().escrowAdapter;
+    }
+
+    /// @notice ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
+    /// @return The wired batch adapter.
+    function onftBatchAdapter() external view returns (IONFT1155AdapterBatch) {
+        return _s().onftBatchAdapter;
+    }
+
+    /// @notice Last inbound LayerZero nonce successfully processed for a `(srcEid, sender)` pair.
+    /// @param srcEid LayerZero source endpoint id of the channel.
+    /// @param sender Bytes32-encoded peer address on the source chain.
+    /// @return The last processed inbound nonce.
+    function inboundNonce(uint32 srcEid, bytes32 sender) external view returns (uint64) {
+        return _s().inboundNonce[srcEid][sender];
+    }
+
+    /// @notice Parked BIDS_BATCH relay by enqueue index.
+    /// @param idx Enqueue index.
+    /// @return seriesId Series whose bids relay was deferred.
+    /// @return exists True when the index holds a parked relay.
+    /// @return done True when the relay was already flushed.
+    function pendingBidsRelays(uint256 idx) external view returns (uint32 seriesId, bool exists, bool done) {
+        PendingBidsRelay storage p = _s().pendingBidsRelays[idx];
+        return (p.seriesId, p.exists, p.done);
+    }
+
+    /// @notice Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
+    /// @return The next enqueue index.
+    function nextPendingBidsRelayIdx() external view returns (uint256) {
+        return _s().nextPendingBidsRelayIdx;
+    }
+
+    /// @notice Parked holders bridge by enqueue index (scalar fields; arrays stay internal).
+    /// @param idx Enqueue index.
+    /// @return tokenId Token id whose holders bridge was deferred.
+    /// @return exists True when the index holds a parked bridge.
+    /// @return done True when the bridge was already flushed.
+    function pendingHoldersRelays(uint256 idx) external view returns (uint256 tokenId, bool exists, bool done) {
+        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
+        return (p.tokenId, p.exists, p.done);
+    }
+
+    /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
+    /// @return The next enqueue index.
+    function nextPendingHoldersRelayIdx() external view returns (uint256) {
+        return _s().nextPendingHoldersRelayIdx;
     }
 
     // --- Admin ---
@@ -110,12 +213,13 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
         if (_onftBatchAdapter == address(0)) revert ZeroAddress("onftBatchAdapter");
 
-        if (address(auction) != address(0)) _revokeRole(AUCTION_ROLE, address(auction));
+        TargetMessengerStorage storage $ = _s();
+        if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
 
-        auction = IIntexAuction(_auction);
-        intex = IIntexNFT1155(_intex);
-        escrowAdapter = IEscrowAdapter(_escrowAdapter);
-        onftBatchAdapter = IONFT1155AdapterBatch(_onftBatchAdapter);
+        $.auction = IIntexAuction(_auction);
+        $.intex = IIntexNFT1155(_intex);
+        $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
+        $.onftBatchAdapter = IONFT1155AdapterBatch(_onftBatchAdapter);
 
         _grantRole(AUCTION_ROLE, _auction);
     }
@@ -128,7 +232,8 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         returns (MessagingFee memory fee)
     {
         // Mirror `sendBidsBatch`'s message + dynamic gas sizing so the quoted fee matches the send.
-        (bytes memory message, bytes memory options) = _buildBidsBatch(params, bidsRelayGeneration[params.seriesId]);
+        (bytes memory message, bytes memory options) =
+            _buildBidsBatch(params, _s().bidsRelayGeneration[params.seriesId]);
         return _quote(OUTBE_EID, message, options, payInLzToken);
     }
 
@@ -152,7 +257,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         // One generation per send so a re-send replaces rather than double-counts on the receiver.
         // Gas option scales with bid count; the contract owns liveness sizing so the caller's
         // `params.extraOptions` is superseded for the gas dimension.
-        uint32 gen = ++bidsRelayGeneration[params.seriesId];
+        uint32 gen = ++_s().bidsRelayGeneration[params.seriesId];
         (bytes memory message, bytes memory options) = _buildBidsBatch(params, gen);
 
         receipt = _lzSend(OUTBE_EID, message, options, fee, params.refundAddress);
@@ -204,7 +309,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         // Record this packet's nonce so `nextNonce` advances by exactly one. Endpoint already
         // verified `_origin.nonce == inboundNonce + 1` before calling us; bumping here keeps the
         // invariant for the next delivery on this `(srcEid, sender)` channel.
-        inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
+        _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
 
         // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or any
         // downstream transition must not escape `_lzReceive` and wedge the ORDERED lane.
@@ -263,17 +368,16 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
             uint16 minIntexBidQuantity
         ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
 
-        auction.auctionStart(
-            seriesId,
-            IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd}),
-            IIntexAuction.AuctionParams({
-                promisLoadMinor: promisLoadMinor,
-                minIntexBidPrice: minIntexBidPrice,
-                costAmountMinor: costAmountMinor,
-                floorPriceMinor: floorPriceMinor,
-                minIntexBidQuantity: minIntexBidQuantity
-            })
-        );
+        IIntexAuction.AuctionSchedule memory schedule =
+            IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd});
+        IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            promisLoadMinor: promisLoadMinor,
+            minIntexBidPrice: minIntexBidPrice,
+            costAmountMinor: costAmountMinor,
+            floorPriceMinor: floorPriceMinor,
+            minIntexBidQuantity: minIntexBidQuantity
+        });
+        _s().auction.auctionStart(seriesId, schedule, params);
 
         emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }
@@ -284,7 +388,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _message Encoded reveal stage payload
     function _handleAuctionStageReveal(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
         (uint32 seriesId, bool isGreenDay) = BridgeMsgCodec.decodeAuctionStageReveal(_message);
-        auction.startRevealingBidsStage(seriesId, isGreenDay);
+        _s().auction.startRevealingBidsStage(seriesId, isGreenDay);
 
         emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
@@ -297,15 +401,16 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded clearing stage payload
     function _handleAuctionStageClearing(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _s();
         uint32 seriesId = BridgeMsgCodec.decodeAuctionStageClearing(_message);
-        auction.startClearingStage(seriesId);
+        $.auction.startClearingStage(seriesId);
 
         try this.relayBidsToOutbe(seriesId) {
         // ok — bids forwarded
         }
         catch (bytes memory reason) {
-            uint256 idx = nextPendingBidsRelayIdx++;
-            pendingBidsRelays[idx] = PendingBidsRelay({seriesId: seriesId, exists: true, done: false});
+            uint256 idx = $.nextPendingBidsRelayIdx++;
+            $.pendingBidsRelays[idx] = PendingBidsRelay({seriesId: seriesId, exists: true, done: false});
             emit BidsRelayDeferred(idx, seriesId, reason);
         }
 
@@ -324,7 +429,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @notice Permissionless retry of a previously deferred bids relay.
     /// @param idx Index of the parked relay to flush.
     function flushPendingBidsRelay(uint256 idx) external nonReentrant {
-        PendingBidsRelay storage p = pendingBidsRelays[idx];
+        PendingBidsRelay storage p = _s().pendingBidsRelays[idx];
         if (!p.exists) revert NoSuchPendingBidsRelay(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
@@ -345,14 +450,15 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     ///      `flushPendingBidsRelay` re-sends the full set without duplicating any chunk.
     /// @param seriesId Series identifier
     function _doSendBidsToOutbe(uint32 seriesId) internal {
+        TargetMessengerStorage storage $ = _s();
         // First tuple component (AuctionData) is unused here; tuple destructure intentionally drops it.
         // slither-disable-next-line unused-return
-        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
+        (, IIntexAuction.SubmittedBidData[] memory bids) = $.auction.getAuctionDetails(seriesId);
         uint256 bidsCount = bids.length;
         uint32 srcEid = endpoint.eid();
         // One generation per flush; every chunk of this flush carries it so the receiver can replace
         // a prior (partial or complete) relay rather than appending to it.
-        uint32 gen = ++bidsRelayGeneration[seriesId];
+        uint32 gen = ++$.bidsRelayGeneration[seriesId];
 
         if (bidsCount == 0) {
             _sendOneBidsBatch(
@@ -423,7 +529,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
         (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingPrice, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(_message);
 
-        auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount);
+        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount);
 
         emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionIntexClearingPrice);
     }
@@ -433,10 +539,11 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded issuance payload (series params + recipients + quantities)
     function _handleIssuanceInstructions(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _s();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        intex.createSeries(payload.seriesId, payload.issuedIntexCount, payload.intexCallPeriod);
-        intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
+        $.intex.createSeries(payload.seriesId, payload.issuedIntexCount, payload.intexCallPeriod);
+        $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
 
         emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
     }
@@ -458,7 +565,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
             });
         }
 
-        escrowAdapter.finalizeAuction(seriesId, _guid, instructions);
+        _s().escrowAdapter.finalizeAuction(seriesId, _guid, instructions);
 
         emit RefundInstructionsReceived(_guid, _srcEid, seriesId, bidders.length);
     }
@@ -470,20 +577,21 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded mark-called payload (seriesId only)
     function _handleMarkCalled(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _s();
         uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
-        intex.markCalled(seriesId);
+        $.intex.markCalled(seriesId);
 
-        uint256 tokenId = intex.issuedTokenId(seriesId);
-        (address[] memory holders, uint256[] memory amounts) = intex.getSeriesHoldersWithBalances(tokenId);
+        uint256 tokenId = $.intex.issuedTokenId(seriesId);
+        (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
 
         if (holders.length > 0) {
             try this.bridgeSeriesHoldersExt(tokenId, holders, amounts) {
             // ok — holders forwarded
             }
             catch (bytes memory reason) {
-                uint256 idx = nextPendingHoldersRelayIdx++;
-                pendingHoldersRelays[idx] = PendingHoldersRelay({
+                uint256 idx = $.nextPendingHoldersRelayIdx++;
+                $.pendingHoldersRelays[idx] = PendingHoldersRelay({
                     tokenId: tokenId, holders: holders, amounts: amounts, exists: true, done: false
                 });
                 emit HoldersRelayDeferred(idx, tokenId, holders.length, reason);
@@ -502,7 +610,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     function _handleMarkQualified(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
         uint32 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
 
-        intex.markQualified(seriesId);
+        _s().intex.markQualified(seriesId);
 
         emit MarkQualifiedReceived(_guid, _srcEid, seriesId);
     }
@@ -519,7 +627,7 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @notice Permissionless retry of a previously deferred holders bridge.
     /// @param idx Index of the parked relay to flush.
     function flushPendingHoldersRelay(uint256 idx) external nonReentrant {
-        PendingHoldersRelay storage p = pendingHoldersRelays[idx];
+        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
         if (!p.exists) revert NoSuchPendingHoldersRelay(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
@@ -533,13 +641,14 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param holders Source chain holder addresses
     /// @param amounts Corresponding balances for each holder
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
+        TargetMessengerStorage storage $ = _s();
         bytes memory empty = "";
         MessagingFee memory fee =
-            onftBatchAdapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_EID, empty, false);
+            $.onftBatchAdapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_EID, empty, false);
         // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the LayerZero
         // MessagingReceipt return value is informational and intentionally discarded.
         // slither-disable-next-line arbitrary-send-eth,unused-return
-        onftBatchAdapter.systemMultiSend{value: fee.nativeFee}(tokenId, holders, amounts, OUTBE_EID, empty, fee);
+        $.onftBatchAdapter.systemMultiSend{value: fee.nativeFee}(tokenId, holders, amounts, OUTBE_EID, empty, fee);
     }
 
     // --- Internal helpers ---
@@ -599,13 +708,13 @@ contract TargetMessenger is ITargetMessenger, OApp, OAppOptionsType3, AccessCont
     /// @param _sender Source sender (bytes32-encoded address) of the channel.
     /// @return The next inbound nonce the endpoint must deliver for this channel.
     function nextNonce(uint32 _srcEid, bytes32 _sender) public view override returns (uint64) {
-        return inboundNonce[_srcEid][_sender] + 1;
+        return _s().inboundNonce[_srcEid][_sender] + 1;
     }
 
     /// @notice Check whether the contract supports a given interface (ERC-165).
     /// @param interfaceId Interface ID to check
     /// @return True if the interface is supported
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControl) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 }

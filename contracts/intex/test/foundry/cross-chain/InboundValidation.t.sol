@@ -18,6 +18,7 @@ import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155Adapt
 
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundValidationTest
@@ -52,35 +53,17 @@ contract InboundValidationTest is TestHelperOz5 {
 
         desis = address(new MockDesis());
         intexFactory = makeAddr("factory");
-        auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
-        IntexNFT1155 intexOutbe = new IntexNFT1155(admin, admin);
-        onftBnb = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID)
-            )
-        );
-        onftOutbe = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID)
-            )
-        );
-        onftBatchOutbe = new ONFT1155AdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
+        IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         // Wire bridge peers
         address[] memory bridge = new address[](2);
@@ -354,20 +337,20 @@ contract InboundValidationTest is TestHelperOz5 {
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginMessenger fresh = new OriginMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        OriginMessenger fresh = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);
@@ -414,7 +397,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_ONFTBatch_StaleV1Version_RevertsUnsupportedBodyVersion() public {
-        // A pre-migration V1 packet must fail closed rather than misdecode into a wrong credit.
+        // A pre-migration V1 packet must fail closed rather than misdecode into a wrong crosschainMint.
         bytes memory packet = _batchV2(address(0xCAFE), 1, 100);
         packet[0] = bytes1(uint8(1)); // downgrade the version byte to stale V1
         vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.UnsupportedBodyVersion.selector, uint8(1)));
@@ -470,7 +453,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_ONFTBatch_MalformedTo_RevertsMalformedAddress() public {
-        // A `to` with non-zero high bits is rejected before any credit (empty item arrays).
+        // A `to` with non-zero high bits is rejected before any crosschainMint (empty item arrays).
         bytes32 badTo = bytes32(uint256(1) << 200);
         bytes memory packet = abi.encodePacked(
             ONFT1155BatchMsgCodec.BODY_VERSION_V2,
@@ -501,7 +484,7 @@ contract InboundValidationTest is TestHelperOz5 {
 
     function test_ONFTBatch_ZeroTo_RevertsInvalidReceiver() public {
         // SEND branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
-        // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the credit.
+        // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the crosschainMint.
         bytes memory packet = abi.encodePacked(
             ONFT1155BatchMsgCodec.BODY_VERSION_V2,
             ONFT1155BatchMsgCodec.SEND,
@@ -517,7 +500,7 @@ contract InboundValidationTest is TestHelperOz5 {
 
     function test_ONFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
         // SEND_MULTI cap parity to the SEND OverCap test — decodeMulti rejects oversize arrays
-        // before the per-item loop touches any recipient or credit.
+        // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);
         uint256[] memory tokenIds = new uint256[](over);

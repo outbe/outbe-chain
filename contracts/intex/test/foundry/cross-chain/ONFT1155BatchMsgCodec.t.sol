@@ -154,7 +154,7 @@ contract ONFT1155BatchMsgCodecTest is Test {
     function test_DecodeBatch_MultiPayloadBody_RevertsMalformedBody() public {
         // Route a SEND_MULTI-shaped body through the SEND decoder. `abi.decode` is permissive, so
         // without the canonical-form check it would misread the MultiPayload into a garbage
-        // BatchPayload (e.g. `to == bytes32(0x60)`) and credit a wrong address.
+        // BatchPayload (e.g. `to == bytes32(0x60)`) and crosschainMint a wrong address.
         bytes memory multiBody = abi.encode(_multiOfSize(1));
         bytes memory packet =
             abi.encodePacked(ONFT1155BatchMsgCodec.BODY_VERSION_V2, ONFT1155BatchMsgCodec.SEND, multiBody);
@@ -165,7 +165,7 @@ contract ONFT1155BatchMsgCodecTest is Test {
     function test_DecodeMulti_BatchPayloadBody_FailsClosed() public {
         // The reverse direction: a `BatchPayload` body routed as `SEND_MULTI`. `abi.decode` itself
         // reverts on the out-of-bounds offset (a `MultiPayload` needs a third array), so it fails
-        // closed before the canonical check — the key property is no misdecode-and-credit.
+        // closed before the canonical check — the key property is no misdecode-and-crosschainMint.
         bytes memory batchBody = abi.encode(_batchOfSize(1));
         bytes memory packet =
             abi.encodePacked(ONFT1155BatchMsgCodec.BODY_VERSION_V2, ONFT1155BatchMsgCodec.SEND_MULTI, batchBody);

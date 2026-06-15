@@ -1,21 +1,28 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {OApp, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OAppOptionsType3} from "@layerzerolabs/oapp-evm/oapp/libs/OAppOptionsType3.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {
+    OAppUpgradeable,
+    Origin,
+    MessagingFee,
+    MessagingReceipt
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/OAppUpgradeable.sol";
+import {
+    OAppOptionsType3Upgradeable
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {IONFT1155AdapterBatch, BatchSendParam, MultiRecipientSendParam} from "./interfaces/IONFT1155AdapterBatch.sol";
 import {LzGasEstimator} from "./libs/LzGasEstimator.sol";
 import {ONFT1155BatchMsgCodec} from "./libs/ONFT1155BatchMsgCodec.sol";
 
-/// @dev Constructor-only guard. `_lzEndpoint` is consumed by the `OApp` base constructor before
-///      the derived body runs, so a zero value can only be caught from the inheritance argument
-///      list — there it surfaces a typed `ZeroAddress` instead of the opaque "call to non-contract"
-///      revert the base would otherwise throw when `endpoint.setDelegate` hits empty code.
+/// @dev Constructor-only guard. `_lzEndpoint` is consumed by the `OAppUpgradeable` base constructor
+///      before the derived body runs, so a zero value can only be caught from the inheritance
+///      argument list — there it surfaces a typed `ZeroAddress` instead of the opaque revert the
+///      base would otherwise throw.
 function _requireNonZeroAddress(address value, string memory field) pure returns (address) {
     if (value == address(0)) revert IONFT1155AdapterBatch.ZeroAddress(field);
     return value;
@@ -25,7 +32,9 @@ function _requireNonZeroAddress(address value, string memory field) pure returns
  * @title ONFT1155AdapterBatch
  * @author Outbe
  * @notice LayerZero OApp adapter for batch cross-chain ERC1155 transfers.
- * @dev Supports two batch modes:
+ * @dev UUPS upgradeable: deployed behind an ERC1967 proxy; the LayerZero endpoint and bridged
+ *      token stay implementation immutables, so every upgrade passes the same constructor args.
+ *      Supports two batch modes:
  *      1. Single recipient, multiple tokens (BatchSendParam)
  *      2. Multiple recipients, each with their own tokens (MultiRecipientSendParam)
  *
@@ -34,7 +43,14 @@ function _requireNonZeroAddress(address value, string memory field) pure returns
  * - Atomic transfer - all tokens transfer together or none do
  * - ~76% cheaper than separate transactions for 5 token types
  */
-contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, AccessControl, ReentrancyGuard {
+contract ONFT1155AdapterBatch is
+    IONFT1155AdapterBatch,
+    OAppUpgradeable,
+    OAppOptionsType3Upgradeable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
     /// @notice Wire `msgType` tag for a single-recipient batch transfer (mirrors the codec constant).
     uint16 public constant SEND = ONFT1155BatchMsgCodec.SEND;
     /// @notice Wire `msgType` tag for a multi-recipient transfer (mirrors the codec constant).
@@ -57,7 +73,7 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     ///      overhead. The `LzGasEstimator` 20% buffer absorbs the remainder.
     uint128 internal constant CROSSCHAIN_MINT_BASE_GAS = 120_000;
 
-    /// @notice Marginal destination gas per crosschain-minted item: one self-call `crosschainMintOne` (call
+    /// @notice Marginal destination gas per crosschainMinted item: one self-call `crosschainMintOne` (call
     ///         overhead) + `token.crosschainMint` (ERC-1155 mint + enumerable holder-set bookkeeping +
     ///         supply-cap check).
     uint128 internal constant CROSSCHAIN_MINT_PER_ITEM_GAS = 180_000;
@@ -65,12 +81,8 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     /// @notice Granted to TargetMessenger; gates the relay-funded `systemMultiSend` holder migration.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
-    /// @notice Set of inbound `(srcEid, guid)` packets already minted.
-    /// @dev Batch transfers are independent — using ORDERED `nextNonce` here would stall every
-    ///      pending recipient if any one batch is delayed. Idempotency via guid is the right
-    ///      shape: `_lzReceive` asserts + sets this flag first, so a redelivered packet reverts
-    ///      `AlreadyProcessed` before any `token.crosschainMint` runs.
-    mapping(uint32 srcEid => mapping(bytes32 guid => bool)) internal processed;
+    /// @notice The bridgeable ERC-1155 token this adapter crosschainBurns on send and crosschainMints on receive.
+    IERC1155Bridgeable public immutable token;
 
     /// @notice Snapshot of one item in a batch whose `token.crosschainMint` reverted.
     /// @dev `exists` distinguishes "never failed" from "failed and already retried"; on a
@@ -83,39 +95,80 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         bool exists;
     }
 
-    /// @notice Per-guid map of items in the originating batch whose `token.crosschainMint` reverted.
-    /// @dev Critical funds-lock recovery (R-04 in the contract review): without this, a single
-    ///      bad recipient in a batch would revert the entire `_lzReceive`, burn sender tokens on
-    ///      source, and stall the LZ channel forever. The per-item self-call shim isolates each
-    ///      crosschainMint; on revert the snapshot is parked here and `retryCrosschainMint` re-attempts after the
-    ///      upstream issue is fixed.
-    mapping(bytes32 guid => mapping(uint256 idx => FailedCrosschainMint)) public failedCrosschainMints;
+    /// @custom:storage-location erc7201:outbe.intex.ONFT1155AdapterBatch
+    struct ONFT1155AdapterBatchStorage {
+        /// @dev Set of inbound `(srcEid, guid)` packets already crosschainMinted. Batch transfers are
+        ///      independent — GUID idempotency (not ORDERED nonce) keeps one delayed batch from
+        ///      stalling every other recipient.
+        mapping(uint32 srcEid => mapping(bytes32 guid => bool)) processed;
+        /// @dev Per-guid map of items in the originating batch whose `token.crosschainMint` reverted.
+        mapping(bytes32 guid => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
+        /// @dev Set only while `systemMultiSend` performs its `_lzSend`, so `_payNative` knows to
+        ///      draw the fee from the pre-funded balance. The user-facing `batchSend`/`multiSend`
+        ///      leave it false and are always caller-funded — they can never spend the system float.
+        bool relayFunded;
+    }
 
-    /// @notice The bridgeable ERC-1155 token this adapter burns on send and mints on receive.
-    IERC1155Bridgeable public immutable token;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.ONFT1155AdapterBatch")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x6727c2bc99fd63b213294d83fd1690033f4cd7fa6aa4e7cd0cbe5775c7ffda00;
 
-    /// @dev Set only while `systemMultiSend` performs its `_lzSend`, so `_payNative` knows to draw
-    ///      the fee from the pre-funded balance. The user-facing `batchSend`/`multiSend` leave it
-    ///      false and are always caller-funded — they can never spend the system float.
-    bool private _relayFunded;
+    function _s() private pure returns (ONFT1155AdapterBatchStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
 
-    constructor(address _token, address _lzEndpoint, address _delegate)
-        OApp(_requireNonZeroAddress(_lzEndpoint, "lzEndpoint"), _delegate)
-        Ownable(_delegate)
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _token, address _lzEndpoint)
+        OAppUpgradeable(_requireNonZeroAddress(_lzEndpoint, "lzEndpoint"))
     {
-        // `token` is immutable: a zero address would permanently brick this adapter. `_delegate` is
-        // already enforced by the Ownable base constructor (reverts `OwnableInvalidOwner(address(0))`
-        // on zero; Ownable linearizes ahead of OAppCore); `_lzEndpoint` is guarded above in the
-        // inheritance argument list.
+        // `token` is immutable: a zero address would permanently brick this adapter.
         if (_token == address(0)) revert ZeroAddress("token");
-        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
         token = IERC1155Bridgeable(_token);
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy: LayerZero delegate, contract owner, and admin role holder.
+    /// @param _delegate Owner, endpoint delegate, and receiver of `DEFAULT_ADMIN_ROLE`.
+    function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
+        __Ownable_init(_delegate);
+        __OApp_init(_delegate);
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // --- Storage getters ---
+    /// @notice Failed crosschainMint snapshot for item `idx` of the batch keyed by `guid`.
+    /// @param guid Inbound packet GUID.
+    /// @param idx Position of the item in that batch.
+    /// @return to Recipient address that failed to crosschainMint.
+    /// @return tokenId Token ID that failed to crosschainMint.
+    /// @return amount Amount that failed to crosschainMint.
+    /// @return reason Raw revert data from the failed crosschainMint.
+    /// @return exists True when a parked failed-crosschainMint entry is present.
+    function failedCrosschainMints(bytes32 guid, uint256 idx)
+        external
+        view
+        returns (address to, uint256 tokenId, uint256 amount, bytes memory reason, bool exists)
+    {
+        FailedCrosschainMint storage f = _s().failedCrosschainMints[guid][idx];
+        return (f.to, f.tokenId, f.amount, f.reason, f.exists);
     }
 
     /// @notice ERC-165 support check; reports `IONFT1155AdapterBatch` in addition to inherited interfaces.
     /// @param interfaceId Interface ID to check
     /// @return True if the interface is supported
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControl) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return interfaceId == type(IONFT1155AdapterBatch).interfaceId || super.supportsInterface(interfaceId);
     }
 
@@ -176,7 +229,7 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
             })
         );
 
-        // Destination mints `tokenIds.length` items in a loop; size the gas option to that count
+        // Destination crosschainMints `tokenIds.length` items in a loop; size the gas option to that count
         // so a large batch does not OOM the inbound `_lzReceive`. The contract owns liveness sizing
         // here — a single dynamic `lzReceiveOption` is the complete options blob (no compose / DVN
         // extras are needed for a plain crosschainMint batch), so we skip `combineOptions`.
@@ -289,9 +342,10 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
 
         // Relay-funded: pay the fee from the pre-funded balance (this runs from TargetMessenger's
         // `_lzReceive` where msg.value is 0). Reset immediately after the send.
-        _relayFunded = true;
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        $.relayFunded = true;
         msgReceipt = _lzSend(dstEid, message, options, fee, address(this));
-        _relayFunded = false;
+        $.relayFunded = false;
 
         emit SystemMultiSent(msgReceipt.guid, dstEid, tokenId, len);
     }
@@ -328,13 +382,13 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     }
 
     /// @notice Pay the LayerZero native fee, drawing from the pre-funded balance on the relay path.
-    /// @dev When `_relayFunded` (set by `systemMultiSend`, which runs from TargetMessenger's
+    /// @dev When `relayFunded` (set by `systemMultiSend`, which runs from TargetMessenger's
     ///      `_lzReceive` with `msg.value == 0`) the fee is drawn from `address(this).balance`.
     ///      Otherwise the caller funds it via `msg.value` and any excess is refunded to `msg.sender`.
     /// @param _nativeFee Required native fee amount
     /// @return nativeFee Actual fee paid
     function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (_relayFunded) {
+        if (_s().relayFunded) {
             // Relay path (systemMultiSend): pay from the pre-funded balance, msg.value is 0.
             if (address(this).balance < _nativeFee) revert NotEnoughNative(address(this).balance);
             return _nativeFee;
@@ -393,8 +447,9 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         // Validation order: idempotency → minimum header → version → msgType allowed-set → the
         // per-handler `abi.decode` (which reverts on a structurally-bad body and is then
         // length-/size-validated by the codec).
-        if (processed[_origin.srcEid][_guid]) revert AlreadyProcessed(_origin.srcEid, _guid);
-        processed[_origin.srcEid][_guid] = true;
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        if ($.processed[_origin.srcEid][_guid]) revert AlreadyProcessed(_origin.srcEid, _guid);
+        $.processed[_origin.srcEid][_guid] = true;
 
         if (_message.length < ONFT1155BatchMsgCodec.HEADER_LEN) {
             revert ONFT1155BatchMsgCodec.InvalidPayloadLength(_message.length, ONFT1155BatchMsgCodec.HEADER_LEN);
@@ -412,7 +467,7 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         }
     }
 
-    /// @notice Decode and mint a single-recipient batch transfer.
+    /// @notice Decode and crosschainMint a single-recipient batch transfer.
     /// @dev `decodeBatch` validates version + array-length match + `MAX_BATCH_SIZE`; the adapter
     ///      then owns the address semantics: high-bit `MalformedAddress` and the explicit
     ///      `bytes32(0)` reject (reusing `InvalidReceiver`, mirroring the outbound zero-`to` guard).
@@ -433,7 +488,7 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         emit ONFTBatchReceived(_guid, _origin.srcEid, toAddress, p.tokenIds, p.amounts);
     }
 
-    /// @notice Decode and mint a multi-recipient transfer.
+    /// @notice Decode and crosschainMint a multi-recipient transfer.
     /// @dev `decodeMulti` validates version + array-length match + `MAX_BATCH_SIZE`; the per-item
     ///      loop owns the address semantics: high-bit `MalformedAddress` and the explicit
     ///      `bytes32(0)` reject (`InvalidReceiver`), so a malformed entry cannot slip past as
@@ -469,7 +524,7 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
         // ok — crosschainMint landed
         }
         catch (bytes memory reason) {
-            failedCrosschainMints[guid][idx] =
+            _s().failedCrosschainMints[guid][idx] =
                 FailedCrosschainMint({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
             emit CrosschainMintFailed(srcEid, guid, idx, to, tokenId, amount, reason);
         }
@@ -494,11 +549,11 @@ contract ONFT1155AdapterBatch is IONFT1155AdapterBatch, OApp, OAppOptionsType3, 
     /// @param guid Inbound packet GUID where the crosschainMint originally failed.
     /// @param idx Position of the failed item in that batch.
     function retryCrosschainMint(bytes32 guid, uint256 idx) external nonReentrant {
-        FailedCrosschainMint memory f = failedCrosschainMints[guid][idx];
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(guid, idx);
-        delete failedCrosschainMints[guid][idx];
+        delete $.failedCrosschainMints[guid][idx];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(guid, idx);
     }
 }
-

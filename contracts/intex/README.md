@@ -1,7 +1,6 @@
 # Intex Contracts
 
-[![CI](https://github.com/Outbe/outbe-intex/actions/workflows/ci.yml/badge.svg)](https://github.com/Outbe/outbe-intex/actions/workflows/ci.yml)
-[![Tests Coverage](https://github.com/Outbe/outbe-intex/actions/workflows/coverage.yml/badge.svg)](https://github.com/Outbe/outbe-intex/actions/workflows/coverage.yml)
+[![CI](https://github.com/outbe/outbe-chain/actions/workflows/ci-intex.yml/badge.svg)](https://github.com/outbe/outbe-chain/actions/workflows/ci-intex.yml)
 
 ## Overview
 
@@ -43,7 +42,7 @@ yarn hardhat demo:auction:all --series-id 20260526 --outbe-network outbeTestnetN
 | `--bnb-network` | `bscTestnet` | BNB chain |
 | `--quantity` | `5` | bid quantity |
 | `--bid-price` | `60000000` | bid price per Intex (minor units) |
-| `--supply` | `100` | issued supply (Intex units) — passed at the `clearing` phase, multiplied by `intexSize` for Desis |
+| `--supply` | `100` | issued supply (Intex units) — passed at the `clearing` phase, multiplied by `promisLoadMinor` for Desis |
 
 > **Prefund OriginMessenger before each series.** After the final bid batch lands on Outbe, OriginMessenger calls `Desis.clearAuction` itself in relay mode (msg.value = 0). The three resulting LZ sends (AUCTION_RESULT + ISSUANCE_INSTRUCTIONS + REFUND_INSTRUCTIONS) draw from the messenger's own native float — top it up before kicking off a run (~0.05 native on testnets is plenty per series). `cast send <ORIGIN_MESSENGER> --value 0.05ether` or any plain transfer to its address works (`receive()` accepts native).
 
@@ -70,7 +69,7 @@ Run after a series is `Issued` (see [Settlement / Intex Lifecycle](#settlement--
 - `demo:settlement:mark-qualified` — `Issued → Qualified`, signalled to BNB.
 - `demo:settlement:mark-called` — `Qualified → Called`, signalled to BNB.
 - `demo:settlement:settle` — authorize a settler and run `IntexSettlement.settle`; adds `--holder`, `--amount`, `--settler`.
-- `settlement-mine` — Phase 3: holder calls `IntexSettlement.minePromis(seriesId, amount)`, which atomically burns `amount` Settled Intex and mints `amount * intexSize` Promis to the caller.
+- `settlement-mine` — Phase 3: holder calls `IntexSettlement.minePromis(seriesId, amount)`, which atomically burns `amount` Settled Intex and mints `amount * promisLoadMinor` Promis to the caller.
 
 ### Harness self-test
 
@@ -88,10 +87,10 @@ Runner keys are read from `.env`, one per chain: `OUTBE_PRIVATE_KEY` / `OUTBE_RP
 
 A series moves through `Issued → Qualified → Called → Settled`. See [docs/nft/lifecycle.md](docs/nft/lifecycle.md) for the full state diagram and rationale.
 
-- **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer credit/debit and voluntary settle are rejected.
+- **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer crosschainMint/crosschainBurn and voluntary settle are rejected.
 - **Qualified** — `markQualified` flips the series once qualification conditions are met. Holders can bridge to Outbe and voluntarily `settle`.
 - **Called** — `markCalled` (cross-chain) sweeps holder balances to Outbe and arms a `callPeriod` deadline within which holders must settle.
-- **Settled** — `IntexSettlement.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). `Promis.minePromis` later burns Settled Intex to credit Promis.
+- **Settled** — `IntexSettlement.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). `Promis.minePromis` later burns Settled Intex to crosschainMint Promis.
 
 `expireSeries` is an action, not a state: it burns remaining Issued tokens and emits `SeriesExpired`; Settled tokens are unaffected.
 
@@ -108,14 +107,26 @@ Rationale, alternatives, deployment-order requirements, and known limitations (e
 
 ## Deployment
 
-Production deploys use the **Contracts Deployment** workflow (see [CD](#cd-continuous-deployment)). For local or one-off runs with Ignition:
+Every implementation contract is a UUPS proxy. The implementation holds only logic and chain-fixed immutables (LayerZero endpoint, endpoint ids, bridged token); all state lives in the proxy under ERC-7201 namespaced storage, and upgrades go through `upgradeToAndCall` without moving the proxy address.
+
+Proxies are deployed through a CREATE3 factory ([`contracts/factory/Create3Factory.sol`](contracts/factory/Create3Factory.sol)), so a proxy address depends only on `(factory, deployer, salt)` and not on the implementation init code. Addresses therefore stay fixed across implementation iterations and full network wipes, and are identical across chains — including the LayerZero contracts, whose per-chain endpoint immutable would shift a CREATE2 address but not a CREATE3 one (this is why CREATE3 is used over plain CREATE2). The factory is deployed once per chain through the canonical CREATE2 deployer (`0x4e59…956C`) at a pinned salt, so it lands at the same address everywhere.
+
+Deploy with the Foundry scripts in [`deploy/`](deploy/):
 
 ```bash
-yarn hardhat ignition deploy <module> --network bscTestnet --parameters params.json
-yarn hardhat ignition verify <deployment-id> --network bscTestnet
+forge script deploy/DeployBsc.s.sol --rpc-url <bsc-rpc> --broadcast
+forge script deploy/DeployOutbe.s.sol --rpc-url <outbe-rpc> --broadcast
 ```
 
-Use `--reset` to override an existing deployment. Parameters are resolved by `scripts/cd/resolve-parameters.ts`.
+Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). The deployer is the admin (`DEFAULT_ADMIN_ROLE`), owner / LZ delegate, and initial bridger (`RELAYER_ROLE`), so no separate admin/delegate/bridger addresses are passed. Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
+
+### Upgrade safety
+
+- `yarn validate:upgrades` runs the OpenZeppelin upgrades-core storage-layout validator over the implementations (build info + layout emitted per `foundry.toml`).
+- `forge test --match-path "test/foundry/upgrade/*"` runs the upgrade rehearsal: deploy v1, populate state, `upgradeToAndCall` to a v1.1 stub, and assert all state survives.
+- For the LayerZero contracts (`TargetMessenger`, `OriginMessenger`, `ONFT1155AdapterBatch`) the upgrade authority (`DEFAULT_ADMIN_ROLE`) and the OApp config authority (`owner`, gating `setPeer` / `setDelegate` / `setEnforcedOptions`) are independent tracks, set to the same address at init. Keep them unified — do not rotate one without the other.
+
+> The production deployment workflow still uses the previous Hardhat mechanism; its migration to these Foundry scripts is tracked separately.
 
 ## Other Tasks
 
@@ -128,8 +139,9 @@ Beyond the demo runbooks, the repo registers several task families. Run `yarn ha
 
 ## CI & Coverage
 
-- **CI** ([`.github/workflows/intex-ci.yml`](../../.github/workflows/intex-ci.yml)): Solhint lint, Forge format check, compile, Foundry tests, Hardhat tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
+- **CI** ([`.github/workflows/ci-intex.yml`](../../.github/workflows/ci-intex.yml)): Solhint lint, Forge format check, compile, Foundry tests, Hardhat tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
 - **Coverage**: local scripts are still available via `yarn coverage:foundry` / `yarn coverage:hardhat`; the separate manual coverage workflow from `outbe-intex` has not been migrated into `outbe-chain` yet.
+- **Dependency patch** (`.yarn/patches/@layerzerolabs-oapp-evm-*.patch`): `@layerzerolabs/oapp-evm-upgradeable` imports `@layerzerolabs/oapp-evm/contracts/*` transitively, but `oapp-evm`'s `package.json` `exports` omits `./contracts/*`, which Hardhat 3 rejects. The patch adds that export so `yarn compile` can resolve the upgradeable OApp bases. Forge is unaffected (it resolves via remappings).
 
 ## Static Analysis
 

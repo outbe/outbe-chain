@@ -40,7 +40,7 @@
         "seriesId": 12022026,
         "clearingTimestamp": 1739361600,
         "bidFloorPrice": "80000000",
-        "intexSize": "1000000",
+        "promisLoadMinor": "1000000",
         "settlementAmount": "1000000000",
         "bidMinimumQuantity": 4
       }
@@ -135,7 +135,7 @@
       "receiver": "IntexNFT1155",
       "data": {
         "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
-        "intexSize": "1000000",
+        "promisLoadMinor": "1000000",
         "settlementAmount": "1000000000",
         "clearingPrice": "82000000",
         "bidFloorPrice": "80000000",
@@ -218,7 +218,7 @@
       "msgType": "SEND_MULTI (LayerZero ONFT)",
       "sender": "ONFT1155AdapterBatch (BSC)",
       "receiver": "ONFT1155Adapter (Outbe)",
-      "description": "System bridge debits tokens from all holders on BSC and credits (mints) equivalent amounts on Outbe. After this, all Intex tokens exist on Outbe only.",
+      "description": "System bridge crosschainBurns tokens from all holders on BSC and crosschainMints (mints) equivalent amounts on Outbe. After this, all Intex tokens exist on Outbe only.",
       "data": {
         "tokenId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
         "holders": ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"],

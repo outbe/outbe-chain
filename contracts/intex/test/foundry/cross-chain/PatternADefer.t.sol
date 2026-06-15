@@ -21,6 +21,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
 // Re-import inside contract context not needed; lib usage via `OptionsBuilder for bytes` declared below.
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
@@ -138,26 +139,12 @@ contract PatternADeferTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(3, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
-        intexOutbe = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        onftBnb = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID)
-            )
-        );
-        onftOutbe = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID)
-            )
-        );
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         address[] memory onfts = new address[](2);
         onfts[0] = address(onftBnb);
@@ -405,12 +392,7 @@ contract PatternADeferTest is TestHelperOz5 {
 
     function test_ONFT_ComposeDeferredOnDuplicateSendCompose() public {
         // Wire a third srcEid so the same guid can be delivered from a second peer.
-        ONFT1155Adapter onftThird = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(intexOutbe), address(endpoints[THIRD_EID]), admin, BNB_EID)
-            )
-        );
+        ONFT1155Adapter onftThird = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[THIRD_EID]), admin);
         address[] memory triple = new address[](2);
         triple[0] = address(onftBnb);
         triple[1] = address(onftThird);
@@ -420,7 +402,7 @@ contract PatternADeferTest is TestHelperOz5 {
         bytes32 guid = bytes32(uint256(0xE001));
         bytes memory packet = _onftComposedPacket(recipient, TOKEN_ID, 1, hex"deadbeef");
 
-        // First delivery: credit + sendCompose succeed.
+        // First delivery: crosschainMint + sendCompose succeed.
         _deliverToOnft(OUTBE_EID, address(onftOutbe), guid, packet);
 
         // Second delivery (different srcEid bypasses processed[srcEid][guid]; same (to, guid)

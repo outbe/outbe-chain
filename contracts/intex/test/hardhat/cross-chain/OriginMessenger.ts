@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { deployIntexNFT1155 } from "../_helpers.js";
+import { deployIntexNFT1155, deployIntexAuction } from "../_helpers.js";
 
 describe("OriginMessenger", async function () {
   const { viem, networkHelpers } = await network.connect();
@@ -54,7 +54,7 @@ describe("OriginMessenger", async function () {
   // --- IntexAuction contract tests (what BNB receives from Outbe) ---
 
   it("Should process auction result via executeAuctionClearing (AUCTION_RESULT handler)", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -153,7 +153,7 @@ describe("OriginMessenger", async function () {
   // --- Access Control tests ---
 
   it("Should only allow RELAYER_ROLE to call executeAuctionClearing", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -213,7 +213,7 @@ describe("OriginMessenger", async function () {
   });
 
   it("Should only allow RELAYER_ROLE to call startRevealingBidsStage", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -244,7 +244,7 @@ describe("OriginMessenger", async function () {
   });
 
   it("Should only allow RELAYER_ROLE to call startClearingStage", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);

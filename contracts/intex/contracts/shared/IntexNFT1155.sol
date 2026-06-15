@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ERC1155Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
@@ -12,6 +13,7 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  * @author Outbe
  * @notice ERC1155 representation of Intex - a conditional right to obtain promis.
  *
+ * @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
  * @dev Series lifecycle: Issued -> Qualified -> Called.
@@ -20,9 +22,9 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  * @dev Each series has two token ids: issued = `uint256(seriesId)`,
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
-contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
+contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
     /// @notice Bridge relayer role; gates series lifecycle, mint/mintBatch, expireSeries, and
-    ///         bridge crosschainBurn/crosschainMint. Granted to the bridger at construction.
+    ///         bridge crosschainBurn/crosschainMint. Granted to the bridger at initialization.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
@@ -46,46 +48,109 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     ///      issued token-id space.
     bytes constant _SETTLED_DOMAIN = bytes("SETTLED");
 
-    /// @notice Collection-level description string.
-    string public collectionDescription;
+    /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
+    struct IntexNFT1155Storage {
+        /// @dev Collection-level description string.
+        string collectionDescription;
+        /// @dev Series-level data, stored per token id. One entry for the Issued token id
+        ///      (full series fields) and one for the Settled token id (`status` + `totalSupply`).
+        mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
+        /// @dev Amount won at auction per address per token id (recorded at mint, never changes).
+        mapping(uint256 tokenId => mapping(address account => uint16 count)) auctionWonCount;
+        /// @dev Array of all token IDs (series) that have been created.
+        uint256[] allSeries;
+        /// @dev Per-owner array of owned token IDs (series with balance > 0).
+        mapping(address owner => uint256[]) ownedSeries;
+        /// @dev Index of token ID in ownedSeries[owner] array (for efficient removal).
+        mapping(address owner => mapping(uint256 tokenId => uint256 index)) ownedSeriesIndex;
+        /// @dev Whether owner has a specific token ID in their ownedSeries.
+        mapping(address owner => mapping(uint256 tokenId => bool owns)) ownsToken;
+        /// @dev Total balance across all series for each owner.
+        mapping(address owner => uint256 balance) totalBalance;
+        /// @dev Per-series array of holder addresses (addresses with balance > 0).
+        mapping(uint256 tokenId => address[]) seriesHolders;
+        /// @dev Index of holder in seriesHolders[tokenId] array (for efficient swap-and-pop removal).
+        mapping(uint256 tokenId => mapping(address holder => uint256 index)) seriesHolderIndex;
+        /// @dev Whether address is in seriesHolders[tokenId].
+        mapping(uint256 tokenId => mapping(address holder => bool isHolder)) isSeriesHolder;
+    }
 
-    /// @notice Series-level data, stored per token id. One entry for the Issued token id
-    ///         (full series fields) and one for the Settled token id (`status` + `totalSupply`).
-    mapping(uint256 => IIntexNFT1155.SeriesData) public seriesData;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xe941cbaf65abb9f7003c3006add9c5d12ba7e339abdf88d4afd5defeb8932900;
 
-    /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
-    mapping(uint256 tokenId => mapping(address account => uint16 count)) public auctionWonCount;
+    function _s() private pure returns (IntexNFT1155Storage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
 
-    // --- Enumerable storage ---
-    /// @dev Array of all token IDs (series) that have been created.
-    uint256[] private _allSeries;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
-    /// @dev Per-owner array of owned token IDs (series with balance > 0).
-    mapping(address => uint256[]) private _ownedSeries;
+    /// @notice Initializes the proxy with its role holders.
+    /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
+    /// @param bridger Receiver of `RELAYER_ROLE`.
+    function initialize(address defaultAdmin, address bridger) external initializer {
+        if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin", defaultAdmin);
+        if (bridger == address(0)) revert ZeroAddress("bridger", bridger);
 
-    /// @dev Index of token ID in _ownedSeries[owner] array (for efficient removal).
-    /// @dev Maps owner => tokenId => index in _ownedSeries[owner].
-    mapping(address => mapping(uint256 => uint256)) private _ownedSeriesIndex;
+        __ERC1155_init("");
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
 
-    /// @dev Whether owner has a specific token ID in their _ownedSeries.
-    /// @dev Used to avoid duplicates and check membership.
-    mapping(address => mapping(uint256 => bool)) private _ownsToken;
-
-    /// @dev Total balance across all series for each owner.
-    mapping(address => uint256) private _totalBalance;
-
-    /// @dev Per-series array of holder addresses (addresses with balance > 0).
-    mapping(uint256 => address[]) private _seriesHolders;
-
-    /// @dev Index of holder in _seriesHolders[tokenId] array (for efficient swap-and-pop removal).
-    mapping(uint256 => mapping(address => uint256)) private _seriesHolderIndex;
-
-    /// @dev Whether address is in _seriesHolders[tokenId].
-    mapping(uint256 => mapping(address => bool)) private _isSeriesHolder;
-
-    constructor(address defaultAdmin, address bridger) ERC1155("") {
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(RELAYER_ROLE, bridger);
+    }
+
+    /// @dev Upgrades are gated by the admin role.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /// @notice Collection-level description string.
+    /// @return The description set via `setCollectionMetadata`.
+    function collectionDescription() external view returns (string memory) {
+        return _s().collectionDescription;
+    }
+
+    /// @notice Series-level data, stored per token id. Flattened to match the original
+    ///         public-mapping getter ABI.
+    function seriesData(uint256 tokenId)
+        external
+        view
+        returns (
+            uint32 issuedAt,
+            uint32 calledAt,
+            uint32 intexCallPeriod,
+            uint32 totalSupply,
+            uint32 issuedIntexCount,
+            uint32 mintedCount,
+            IIntexNFT1155.IntexStatus status,
+            IIntexNFT1155.IntexState state
+        )
+    {
+        IIntexNFT1155.SeriesData storage d = _s().seriesData[tokenId];
+        return (
+            d.issuedAt,
+            d.calledAt,
+            d.intexCallPeriod,
+            d.totalSupply,
+            d.issuedIntexCount,
+            d.mintedCount,
+            d.status,
+            d.state
+        );
+    }
+
+    /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
+    /// @param tokenId Issued token id.
+    /// @param account Auction winner address.
+    /// @return The recorded won amount.
+    function auctionWonCount(uint256 tokenId, address account) external view returns (uint16) {
+        return _s().auctionWonCount[tokenId][account];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -93,9 +158,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         external
         onlyRole(RELAYER_ROLE)
     {
+        IntexNFT1155Storage storage $ = _s();
         uint256 iTok = uint256(seriesId);
 
-        if (seriesData[iTok].issuedAt != 0) {
+        if ($.seriesData[iTok].issuedAt != 0) {
             revert TokenAlreadyExists(iTok);
         }
 
@@ -107,7 +173,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         uint32 effectiveCallPeriod = intexCallPeriod == 0 ? uint32(21 days) : intexCallPeriod;
         if (effectiveCallPeriod > MAX_INTEX_CALL_PERIOD) revert InvalidCallPeriod(intexCallPeriod);
 
-        seriesData[iTok] = IIntexNFT1155.SeriesData({
+        $.seriesData[iTok] = IIntexNFT1155.SeriesData({
             issuedAt: uint32(block.timestamp),
             calledAt: 0,
             intexCallPeriod: effectiveCallPeriod,
@@ -120,12 +186,12 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
         // Register the Settled token id so reverse lookups and status checks work for either class.
         uint256 sTok = _settledTokenId(seriesId);
-        seriesData[sTok].status = IIntexNFT1155.IntexStatus.Settled;
+        $.seriesData[sTok].status = IIntexNFT1155.IntexStatus.Settled;
 
-        // Series remain in _allSeries permanently even after supply reaches 0 —
+        // Series remain in allSeries permanently even after supply reaches 0 —
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
-        _allSeries.push(iTok);
+        $.allSeries.push(iTok);
 
         emit MetadataUpdate(iTok);
     }
@@ -136,8 +202,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             revert ZeroAddress("to", to);
         }
 
+        IntexNFT1155Storage storage $ = _s();
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
@@ -166,9 +233,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         data.mintedCount = uint32(newMinted);
         _mint(to, tokenId, quantity, "");
 
-        if (auctionWonCount[tokenId][to] == 0) {
+        if ($.auctionWonCount[tokenId][to] == 0) {
             // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-            auctionWonCount[tokenId][to] = uint16(quantity);
+            $.auctionWonCount[tokenId][to] = uint16(quantity);
         }
 
         emit IntexIssued(msg.sender, tokenId, to, quantity);
@@ -186,8 +253,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             revert EmptyArray();
         }
 
+        IntexNFT1155Storage storage $ = _s();
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
 
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
@@ -228,9 +296,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             }
             _mint(recipients[i], tokenId, quantities[i], "");
 
-            if (auctionWonCount[tokenId][recipients[i]] == 0) {
+            if ($.auctionWonCount[tokenId][recipients[i]] == 0) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-                auctionWonCount[tokenId][recipients[i]] = uint16(quantities[i]);
+                $.auctionWonCount[tokenId][recipients[i]] = uint16(quantities[i]);
             }
 
             emit IntexIssued(msg.sender, tokenId, recipients[i], quantities[i]);
@@ -240,7 +308,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     /// @inheritdoc IIntexNFT1155
     function markQualified(uint32 seriesId) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
@@ -260,7 +328,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     /// @inheritdoc IIntexNFT1155
     function markCalled(uint32 seriesId) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
@@ -285,7 +353,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     /// @inheritdoc IIntexNFT1155
     function updateCallPeriod(uint32 seriesId, uint32 newIntexCallPeriod) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
@@ -310,8 +378,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     function expireSeries(uint32 seriesId, uint256 limit) external onlyRole(RELAYER_ROLE) {
         if (limit == 0) revert ZeroLimit();
 
+        IntexNFT1155Storage storage $ = _s();
         uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
 
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
@@ -334,14 +403,14 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         // `_update → _removeSeriesHolder` swap-and-pop flow shrinks the array as each
         // burn drops a balance to zero, so the next call naturally picks up where this
         // one left off without an explicit cursor.
-        uint256 remaining = _seriesHolders[tokenId].length;
+        uint256 remaining = $.seriesHolders[tokenId].length;
         uint256 toProcess = limit < remaining ? limit : remaining;
         uint256 burned = 0;
         for (uint256 i = 0; i < toProcess; i++) {
             // Each `_burn` triggers `_removeSeriesHolder`, swapping the tail into slot 0.
-            // Reading `_seriesHolders[tokenId][0]` on every iteration is therefore the
+            // Reading `seriesHolders[tokenId][0]` on every iteration is therefore the
             // correct way to advance through the shrinking page.
-            address holder = _seriesHolders[tokenId][0];
+            address holder = $.seriesHolders[tokenId][0];
             uint256 bal = balanceOf(holder, tokenId);
             if (bal > 0) {
                 _burn(holder, tokenId, bal);
@@ -358,7 +427,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         // Final page <=> the holder array drained to empty on this call. Mid-page progress
         // is surfaced via SeriesExpiredProgress so off-chain indexers can track sweeps
         // without polling the holders array. State stays Called.
-        if (_seriesHolders[tokenId].length == 0) {
+        if ($.seriesHolders[tokenId].length == 0) {
             emit SeriesExpired(tokenId, msg.sender);
         } else {
             emit SeriesExpiredProgress(seriesId, toProcess);
@@ -374,7 +443,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`
     ///        (the system bridge that migrates balances during the call window).
     function crosschainBurn(address from, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
             revert BridgeOnSettledForbidden(tokenId);
         }
@@ -411,7 +480,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     ///      `Called` is reserved for `SYSTEM_RELAYER_ROLE`.
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
-        IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
             revert BridgeOnSettledForbidden(tokenId);
         }
@@ -434,10 +503,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             }
         }
 
-        // A crosschain-minted balance can be a holder's full transferable balance (<= totalSupply, uint32).
+        // A crosschainMinted balance can be a holder's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
-        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. crosschainMint
+        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. CrosschainMint
         // intentionally does NOT bump `mintedCount` — cross-chain returns of already-issued
         // tokens are legitimate and must not consume primary-mint capacity. The live-supply
         // invariant suffices because cumulative primary issuance is bounded at mint/mintBatch.
@@ -465,8 +534,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         if (to == address(0)) revert ZeroAddress("to", to);
         if (amount == 0) revert ZeroAmount();
 
+        IntexNFT1155Storage storage $ = _s();
         uint256 iTok = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = seriesData[iTok];
+        IIntexNFT1155.SeriesData storage data = $.seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
         if (data.state != IIntexNFT1155.IntexState.Qualified && data.state != IIntexNFT1155.IntexState.Called) {
@@ -491,7 +561,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         _burn(from, iTok, amount);
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount mirrors the issued amount burned above
-        seriesData[sTok].totalSupply += uint32(amount);
+        $.seriesData[sTok].totalSupply += uint32(amount);
         _mint(to, sTok, amount, "");
 
         emit IntexSettled(seriesId, to, amount);
@@ -504,8 +574,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         if (holder == address(0)) revert ZeroAddress("holder", holder);
         if (amount == 0) revert ZeroAmount();
 
+        IntexNFT1155Storage storage $ = _s();
         uint256 iTok = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage iData = seriesData[iTok];
+        IIntexNFT1155.SeriesData storage iData = $.seriesData[iTok];
         // Series must exist; we look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
 
@@ -522,7 +593,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         // CEI ok: write before _burn for symmetry with mint; _burn fires no acceptance callback
         // (to == address(0)), so no read-only-reentrancy surface here.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= settled balance <= totalSupply (uint32); _burn reverts otherwise
-        seriesData[sTok].totalSupply -= uint32(amount);
+        $.seriesData[sTok].totalSupply -= uint32(amount);
         _burn(holder, sTok, amount);
 
         emit IntexCompleted(seriesId, holder, amount);
@@ -534,7 +605,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         if (bytes(description).length > MAX_COLLECTION_DESCRIPTION_BYTES) {
             revert CollectionDescriptionTooLong();
         }
-        collectionDescription = description;
+        _s().collectionDescription = description;
         emit CollectionMetadataUpdated(description);
     }
 
@@ -560,18 +631,19 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
     /// @inheritdoc IIntexNFT1155
     function statusOf(uint256 tokenId) external view returns (IIntexNFT1155.IntexStatus) {
-        return seriesData[tokenId].status;
+        return _s().seriesData[tokenId].status;
     }
 
     /// @inheritdoc IIntexNFT1155
     function readData(uint32 seriesId) external view returns (IIntexNFT1155.SeriesData memory) {
+        IntexNFT1155Storage storage $ = _s();
         uint256 tokenId = uint256(seriesId);
         // `issuedAt == 0` is the canonical existence sentinel for seriesData entries.
         // slither-disable-next-line incorrect-equality
-        if (seriesData[tokenId].issuedAt == 0) {
+        if ($.seriesData[tokenId].issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
-        return seriesData[tokenId];
+        return $.seriesData[tokenId];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -603,7 +675,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         uint256 iTok = uint256(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
 
-        address[] storage allHolders = _seriesHolders[iTok];
+        address[] storage allHolders = _s().seriesHolders[iTok];
         total = allHolders.length;
         if (offset >= total) {
             return (new address[](0), new uint256[](0), new uint256[](0), total);
@@ -630,16 +702,16 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
     /// @inheritdoc IIntexNFT1155
     function totalSupply(uint256 tokenId) external view returns (uint256) {
-        return seriesData[tokenId].totalSupply;
+        return _s().seriesData[tokenId].totalSupply;
     }
 
     /// @inheritdoc IIntexNFT1155
     function getAuctionWonCount(uint32 seriesId, address account) external view returns (uint16) {
-        return auctionWonCount[uint256(seriesId)][account];
+        return _s().auctionWonCount[uint256(seriesId)][account];
     }
 
     /// @inheritdoc IIntexNFT1155
-    function uri(uint256 tokenId) public view override(ERC1155, IIntexNFT1155) returns (string memory) {
+    function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
         return super.uri(tokenId);
     }
 
@@ -658,9 +730,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     /// @param ids Array of token IDs.
     /// @param values Array of amounts.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
+        IntexNFT1155Storage storage $ = _s();
         if (from != address(0) && to != address(0)) {
             for (uint256 i = 0; i < ids.length; i++) {
-                if (seriesData[ids[i]].status == IIntexNFT1155.IntexStatus.Settled) {
+                if ($.seriesData[ids[i]].status == IIntexNFT1155.IntexStatus.Settled) {
                     revert SoulboundSettled(ids[i]);
                 }
             }
@@ -675,11 +748,11 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             if (values[i] == 0) continue;
             if (from != address(0)) {
                 fromHadTokens[i] = balanceOf(from, ids[i]) > 0;
-                _totalBalance[from] -= values[i];
+                $.totalBalance[from] -= values[i];
             }
             if (to != address(0)) {
                 toHadTokens[i] = balanceOf(to, ids[i]) > 0;
-                _totalBalance[to] += values[i];
+                $.totalBalance[to] += values[i];
             }
         }
 
@@ -700,69 +773,69 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         }
     }
 
-    /// @notice Add a token ID to an owner's owned-series enumeration.
-    /// @dev Add a token ID to owner's owned series list (idempotent).
+    /// @dev Add `tokenId` to `owner`'s owned-series enumeration (idempotent).
     /// @param owner Owner address.
     /// @param tokenId Token ID to add.
     function _addOwnedSeries(address owner, uint256 tokenId) internal {
-        if (!_ownsToken[owner][tokenId]) {
-            _ownedSeriesIndex[owner][tokenId] = _ownedSeries[owner].length;
-            _ownedSeries[owner].push(tokenId);
-            _ownsToken[owner][tokenId] = true;
+        IntexNFT1155Storage storage $ = _s();
+        if (!$.ownsToken[owner][tokenId]) {
+            $.ownedSeriesIndex[owner][tokenId] = $.ownedSeries[owner].length;
+            $.ownedSeries[owner].push(tokenId);
+            $.ownsToken[owner][tokenId] = true;
         }
     }
 
-    /// @notice Remove a token ID from an owner's owned-series enumeration.
-    /// @dev Remove a token ID from owner's owned series list (swap-and-pop, idempotent).
+    /// @dev Remove `tokenId` from `owner`'s owned-series enumeration (swap-and-pop, idempotent).
     /// @param owner Owner address.
     /// @param tokenId Token ID to remove.
     function _removeOwnedSeries(address owner, uint256 tokenId) internal {
-        if (_ownsToken[owner][tokenId]) {
-            uint256 lastIndex = _ownedSeries[owner].length - 1;
-            uint256 tokenIndex = _ownedSeriesIndex[owner][tokenId];
+        IntexNFT1155Storage storage $ = _s();
+        if ($.ownsToken[owner][tokenId]) {
+            uint256 lastIndex = $.ownedSeries[owner].length - 1;
+            uint256 tokenIndex = $.ownedSeriesIndex[owner][tokenId];
 
             if (tokenIndex != lastIndex) {
-                uint256 lastTokenId = _ownedSeries[owner][lastIndex];
-                _ownedSeries[owner][tokenIndex] = lastTokenId;
-                _ownedSeriesIndex[owner][lastTokenId] = tokenIndex;
+                uint256 lastTokenId = $.ownedSeries[owner][lastIndex];
+                $.ownedSeries[owner][tokenIndex] = lastTokenId;
+                $.ownedSeriesIndex[owner][lastTokenId] = tokenIndex;
             }
 
-            _ownedSeries[owner].pop();
-            delete _ownedSeriesIndex[owner][tokenId];
-            _ownsToken[owner][tokenId] = false;
+            $.ownedSeries[owner].pop();
+            delete $.ownedSeriesIndex[owner][tokenId];
+            $.ownsToken[owner][tokenId] = false;
         }
     }
 
-    /// @notice Add a holder to a series' holder enumeration.
-    /// @dev Add a holder to a series' holder list (idempotent).
+    /// @dev Add `holder` to series `tokenId`'s holder enumeration (idempotent).
     /// @param tokenId Token ID (series).
     /// @param holder Holder address to add.
     function _addSeriesHolder(uint256 tokenId, address holder) internal {
-        if (!_isSeriesHolder[tokenId][holder]) {
-            _seriesHolderIndex[tokenId][holder] = _seriesHolders[tokenId].length;
-            _seriesHolders[tokenId].push(holder);
-            _isSeriesHolder[tokenId][holder] = true;
+        IntexNFT1155Storage storage $ = _s();
+        if (!$.isSeriesHolder[tokenId][holder]) {
+            $.seriesHolderIndex[tokenId][holder] = $.seriesHolders[tokenId].length;
+            $.seriesHolders[tokenId].push(holder);
+            $.isSeriesHolder[tokenId][holder] = true;
         }
     }
 
-    /// @notice Remove a holder from a series' holder enumeration.
-    /// @dev Remove a holder from a series' holder list (swap-and-pop, idempotent).
+    /// @dev Remove `holder` from series `tokenId`'s holder enumeration (swap-and-pop, idempotent).
     /// @param tokenId Token ID (series).
     /// @param holder Holder address to remove.
     function _removeSeriesHolder(uint256 tokenId, address holder) internal {
-        if (_isSeriesHolder[tokenId][holder]) {
-            uint256 lastIndex = _seriesHolders[tokenId].length - 1;
-            uint256 holderIndex = _seriesHolderIndex[tokenId][holder];
+        IntexNFT1155Storage storage $ = _s();
+        if ($.isSeriesHolder[tokenId][holder]) {
+            uint256 lastIndex = $.seriesHolders[tokenId].length - 1;
+            uint256 holderIndex = $.seriesHolderIndex[tokenId][holder];
 
             if (holderIndex != lastIndex) {
-                address lastHolder = _seriesHolders[tokenId][lastIndex];
-                _seriesHolders[tokenId][holderIndex] = lastHolder;
-                _seriesHolderIndex[tokenId][lastHolder] = holderIndex;
+                address lastHolder = $.seriesHolders[tokenId][lastIndex];
+                $.seriesHolders[tokenId][holderIndex] = lastHolder;
+                $.seriesHolderIndex[tokenId][lastHolder] = holderIndex;
             }
 
-            _seriesHolders[tokenId].pop();
-            delete _seriesHolderIndex[tokenId][holder];
-            _isSeriesHolder[tokenId][holder] = false;
+            $.seriesHolders[tokenId].pop();
+            delete $.seriesHolderIndex[tokenId][holder];
+            $.isSeriesHolder[tokenId][holder] = false;
         }
     }
 
@@ -770,7 +843,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
     /// @inheritdoc IIntexNFT1155
     function getAllSeries() external view returns (uint256[] memory) {
-        return _allSeries;
+        return _s().allSeries;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -779,7 +852,8 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         view
         returns (uint256[] memory series, uint256 total)
     {
-        total = _allSeries.length;
+        uint256[] storage allSeries = _s().allSeries;
+        total = allSeries.length;
         if (offset >= total) return (new uint256[](0), total);
 
         uint256 end = offset + limit;
@@ -787,18 +861,18 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
         series = new uint256[](end - offset);
         for (uint256 i = offset; i < end; i++) {
-            series[i - offset] = _allSeries[i];
+            series[i - offset] = allSeries[i];
         }
     }
 
     /// @inheritdoc IIntexNFT1155
     function totalSeries() external view returns (uint256) {
-        return _allSeries.length;
+        return _s().allSeries.length;
     }
 
     /// @inheritdoc IIntexNFT1155
     function getOwnedSeries(address owner) external view returns (uint256[] memory) {
-        return _ownedSeries[owner];
+        return _s().ownedSeries[owner];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -807,7 +881,8 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         view
         returns (uint256[] memory series, uint256 total)
     {
-        total = _ownedSeries[owner].length;
+        uint256[] storage owned = _s().ownedSeries[owner];
+        total = owned.length;
         if (offset >= total) return (new uint256[](0), total);
 
         uint256 end = offset + limit;
@@ -815,18 +890,18 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
         series = new uint256[](end - offset);
         for (uint256 i = offset; i < end; i++) {
-            series[i - offset] = _ownedSeries[owner][i];
+            series[i - offset] = owned[i];
         }
     }
 
     /// @inheritdoc IIntexNFT1155
     function ownedSeriesCount(address owner) external view returns (uint256) {
-        return _ownedSeries[owner].length;
+        return _s().ownedSeries[owner].length;
     }
 
     /// @inheritdoc IIntexNFT1155
     function totalBalance(address owner) external view returns (uint256) {
-        return _totalBalance[owner];
+        return _s().totalBalance[owner];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -835,7 +910,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         view
         returns (uint256[] memory ownedTokenIds, uint256[] memory balances)
     {
-        ownedTokenIds = _ownedSeries[owner];
+        ownedTokenIds = _s().ownedSeries[owner];
         balances = new uint256[](ownedTokenIds.length);
 
         for (uint256 i = 0; i < ownedTokenIds.length; i++) {
@@ -849,7 +924,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
     /// @inheritdoc IIntexNFT1155
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory) {
-        return _seriesHolders[tokenId];
+        return _s().seriesHolders[tokenId];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -858,7 +933,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         view
         returns (address[] memory holders, uint256[] memory balances)
     {
-        holders = _seriesHolders[tokenId];
+        holders = _s().seriesHolders[tokenId];
         balances = new uint256[](holders.length);
 
         for (uint256 i = 0; i < holders.length; i++) {
@@ -868,7 +943,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
 
     /// @inheritdoc IIntexNFT1155
     function seriesHolderCount(uint256 tokenId) external view returns (uint256) {
-        return _seriesHolders[tokenId].length;
+        return _s().seriesHolders[tokenId].length;
     }
 
     /// @notice ERC-165 interface detection.
@@ -879,7 +954,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     function supportsInterface(bytes4 interfaceId)
         public
         view
-        override(IERC165, ERC1155, AccessControl)
+        override(IERC165, ERC1155Upgradeable, AccessControlUpgradeable)
         returns (bool)
     {
         return interfaceId == type(IIntexNFT1155).interfaceId || interfaceId == type(IERC1155Bridgeable).interfaceId

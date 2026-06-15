@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
@@ -11,8 +12,8 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
-/// @dev ERC20 that skims a fee on every move: the sender is debited the full amount but the
-///      recipient is credited amount minus fee. Breaks the "exactly `amount` lands" assumption.
+/// @dev ERC20 that skims a fee on every move: the sender is crosschainBurned the full amount but the
+///      recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands" assumption.
 contract FeeOnTransferToken is IERC20 {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -101,7 +102,7 @@ contract EscrowAdapterHardeningTest is Test {
     uint32 internal constant SERIES = 1;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -151,7 +152,7 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_FeeOnTransferToken_LockFunds_FailsClosed() public {
-        EscrowAdapter feeEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter feeEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact feeCompact = new MockTheCompact();
         FeeOnTransferToken feeToken = new FeeOnTransferToken(100);
         MockVaultProvider feeProvider = new MockVaultProvider();
@@ -173,7 +174,7 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_HostileReentrantVault_FinalizeBlocksReentry_ConservationHolds() public {
-        EscrowAdapter hEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter hEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact hCompact = new MockTheCompact();
         MockERC20 hToken = new MockERC20("USD Coin", "USDC", 6);
         HostileReentrantVaultProvider hostile = new HostileReentrantVaultProvider();

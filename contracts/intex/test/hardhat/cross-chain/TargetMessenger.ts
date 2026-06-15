@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { deployIntexNFT1155 } from "../_helpers.js";
+import { deployIntexNFT1155, deployIntexAuction } from "../_helpers.js";
 
 describe("TargetMessenger", async function () {
   const { viem, networkHelpers } = await network.connect();
@@ -59,7 +59,7 @@ describe("TargetMessenger", async function () {
   // --- IntexAuction contract tests (what TargetMessenger._handleAuctionStage* calls) ---
 
   it("Should start auction via auctionStart (AUCTION_STAGE_START handler)", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -83,7 +83,7 @@ describe("TargetMessenger", async function () {
   });
 
   it("Should start reveal stage via startRevealingBidsStage (AUCTION_STAGE_REVEAL handler)", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -107,7 +107,7 @@ describe("TargetMessenger", async function () {
   });
 
   it("Should start clearing stage via startClearingStage (AUCTION_STAGE_CLEARING handler)", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);
@@ -179,7 +179,7 @@ describe("TargetMessenger", async function () {
   // --- Access Control tests ---
 
   it("Should only allow RELAYER_ROLE to call auctionStart", async function () {
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridge.account.address,
     ]);

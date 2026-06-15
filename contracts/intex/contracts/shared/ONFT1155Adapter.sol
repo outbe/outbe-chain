@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {OApp, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OAppOptionsType3} from "@layerzerolabs/oapp-evm/oapp/libs/OAppOptionsType3.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {
+    OAppUpgradeable,
+    Origin,
+    MessagingFee,
+    MessagingReceipt
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/OAppUpgradeable.sol";
+import {
+    OAppOptionsType3Upgradeable
+} from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 import {ONFTComposeMsgCodec} from "@layerzerolabs/onft-evm/libs/ONFTComposeMsgCodec.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
@@ -15,9 +22,17 @@ import {ONFT1155MsgCodec} from "./libs/ONFT1155MsgCodec.sol";
  * @title ONFT1155Adapter
  * @author Outbe
  * @notice LayerZero OApp adapter for cross-chain ERC1155 transfers.
- * @dev Token must implement IERC1155Bridgeable and grant access to this adapter.
+ * @dev UUPS upgradeable: deployed behind an ERC1967 proxy; the LayerZero endpoint, bridged token,
+ *      and peer EID stay implementation immutables, so every upgrade passes the same constructor
+ *      args. Token must implement IERC1155Bridgeable and grant access to this adapter.
  */
-contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, ReentrancyGuard {
+contract ONFT1155Adapter is
+    IONFT1155Adapter,
+    OAppUpgradeable,
+    OAppOptionsType3Upgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
     using ONFT1155MsgCodec for bytes;
 
     /// @notice LZ message-type tag for a plain transfer (no compose). Selects enforced options.
@@ -25,19 +40,8 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     /// @notice LZ message-type tag for a transfer carrying a compose payload. Selects enforced options.
     uint16 public constant SEND_AND_COMPOSE = 2;
 
-    /// @notice The ERC1155 token this adapter burns on send and mints on receive.
+    /// @notice The ERC1155 token this adapter crosschainBurns on send and crosschainMints on receive.
     IERC1155Bridgeable public immutable token;
-    /// @notice LayerZero endpoint ID of the Outbe chain.
-    uint32 public immutable OUTBE_EID;
-
-    /// @notice Set of inbound `(srcEid, guid)` packets already minted.
-    /// @dev ONFT transfers are independent: the auction-stage ORDERED guarantee used by
-    ///      `TargetMessenger` / `OriginMessenger` is overkill here (one stuck transfer would
-    ///      stall every other transfer on the same `(srcEid, sender)` channel). Instead, this
-    ///      mapping pins each delivered packet by GUID, and the first action of `_lzReceive`
-    ///      asserts then sets the flag so a redelivered packet reverts `AlreadyProcessed` before
-    ///      any `token.crosschainMint` runs.
-    mapping(uint32 srcEid => mapping(bytes32 guid => bool)) internal processed;
 
     /// @notice Snapshot of an inbound compose forward whose `endpoint.sendCompose` reverted.
     /// @dev `done` distinguishes "still pending" from "already flushed"; on flush the slot is
@@ -49,39 +53,6 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         bool exists;
         bool done;
     }
-
-    /// @notice Inbound compose forwards parked because the original `endpoint.sendCompose` reverted.
-    /// @dev `token.crosschainMint` has already landed by the time we attempt the compose forward, so a
-    ///      revert there would otherwise force the whole `_lzReceive` to revert and burn the
-    ///      already-minted tokens. Pattern A from defer the send, recover via
-    ///      `flushPendingCompose` once the composer side is fixed.
-    mapping(uint256 idx => PendingCompose) public pendingComposes;
-    /// @notice Monotonic counter that assigns the next `pendingComposes` slot index.
-    uint256 public nextPendingComposeIdx;
-
-    /// @notice Inbound packet with this `(srcEid, guid)` has already been processed.
-    error AlreadyProcessed(uint32 srcEid, bytes32 guid);
-
-    /// @notice `deliverCompose` was invoked by an external caller; only `address(this)` is allowed.
-    error NotSelf();
-
-    /// @notice `flushPendingCompose` called for an index that was never enqueued.
-    error NoSuchPendingCompose(uint256 idx);
-
-    /// @notice `flushPendingCompose` called twice for the same index — the slot was already flushed.
-    error AlreadyFlushed(uint256 idx);
-
-    /// @notice Emitted when `endpoint.sendCompose` reverts inside `_lzReceive` and the compose
-    ///         forward is parked for later recovery via `flushPendingCompose`.
-    /// @param idx Index of the parked `pendingComposes` slot.
-    /// @param guid Inbound packet GUID the compose belongs to.
-    /// @param to Recipient of the deferred compose forward.
-    /// @param reason Raw revert data returned by the failed `endpoint.sendCompose`.
-    event ComposeDeferred(uint256 indexed idx, bytes32 indexed guid, address indexed to, bytes reason);
-
-    /// @notice Emitted when `flushPendingCompose` successfully forwards a previously deferred compose.
-    /// @param idx Index of the flushed `pendingComposes` slot.
-    event ComposeFlushed(uint256 indexed idx);
 
     /// @notice Snapshot of an inbound transfer whose `token.crosschainMint` reverted.
     /// @dev `composeMsgData` is the already-encoded compose payload (empty if the transfer carried
@@ -96,15 +67,56 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         bool exists;
     }
 
-    /// @notice Inbound transfers whose `token.crosschainMint` reverted, keyed by packet GUID.
-    /// @dev Without this an inbound crosschainMint revert (e.g. a destination series past its settlement
-    ///      deadline) would unwind the whole `_lzReceive` after the sender already burned, stranding
-    ///      the tokens. The self-call shim isolates the crosschainMint; on revert the snapshot is parked here
-    ///      and `retryCrosschainMint` re-attempts once the upstream cause is cleared.
-    mapping(bytes32 guid => FailedCrosschainMint) public failedCrosschainMints;
+    /// @custom:storage-location erc7201:outbe.intex.ONFT1155Adapter
+    struct ONFT1155AdapterStorage {
+        /// @dev Set of inbound `(srcEid, guid)` packets already crosschainMinted. ONFT transfers are
+        ///      independent: GUID idempotency (not ORDERED nonce) keeps one stuck transfer from
+        ///      stalling every other transfer on the same channel.
+        mapping(uint32 srcEid => mapping(bytes32 guid => bool)) processed;
+        /// @dev Inbound compose forwards parked because the original `endpoint.sendCompose` reverted.
+        mapping(uint256 idx => PendingCompose) pendingComposes;
+        /// @dev Monotonic counter that assigns the next `pendingComposes` slot index.
+        uint256 nextPendingComposeIdx;
+        /// @dev Inbound transfers whose `token.crosschainMint` reverted, keyed by packet GUID.
+        mapping(bytes32 guid => FailedCrosschainMint) failedCrosschainMints;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.ONFT1155Adapter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xf7ba3c8714f9cd40d66e510e06f778c613706e48a100857a0ad130fc96ece900;
+
+    function _s() private pure returns (ONFT1155AdapterStorage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @notice Inbound packet with this `(srcEid, guid)` has already been processed.
+    error AlreadyProcessed(uint32 srcEid, bytes32 guid);
+
+    /// @notice `deliverCompose` was invoked by an external caller; only `address(this)` is allowed.
+    error NotSelf();
+
+    /// @notice `flushPendingCompose` called for an index that was never enqueued.
+    error NoSuchPendingCompose(uint256 idx);
+
+    /// @notice `flushPendingCompose` called twice for the same index — the slot was already flushed.
+    error AlreadyFlushed(uint256 idx);
 
     /// @notice No failed-crosschainMint entry exists for `guid`.
     error NoSuchFailedCrosschainMint(bytes32 guid);
+
+    /// @notice Emitted when `endpoint.sendCompose` reverts inside `_lzReceive` and the compose
+    ///         forward is parked for later recovery via `flushPendingCompose`.
+    /// @param idx Index of the parked `pendingComposes` slot.
+    /// @param guid Inbound packet GUID the compose belongs to.
+    /// @param to Recipient of the deferred compose forward.
+    /// @param reason Raw revert data returned by the failed `endpoint.sendCompose`.
+    event ComposeDeferred(uint256 indexed idx, bytes32 indexed guid, address indexed to, bytes reason);
+
+    /// @notice Emitted when `flushPendingCompose` successfully forwards a previously deferred compose.
+    /// @param idx Index of the flushed `pendingComposes` slot.
+    event ComposeFlushed(uint256 indexed idx);
 
     /// @notice Emitted when an inbound transfer's `token.crosschainMint` reverts and is parked for retry.
     /// @param srcEid Source endpoint ID the packet arrived from.
@@ -117,21 +129,78 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         uint32 indexed srcEid, bytes32 indexed guid, address indexed to, uint256 tokenId, uint256 amount, bytes reason
     );
 
-    /// @notice Emitted when `retryCrosschainMint` successfully mints a previously failed transfer.
+    /// @notice Emitted when `retryCrosschainMint` successfully crosschainMints a previously failed transfer.
     /// @param guid Inbound packet GUID whose parked crosschainMint was retried.
     event CrosschainMintRetried(bytes32 indexed guid);
 
-    constructor(address _token, address _lzEndpoint, address _delegate, uint32 _outbeEid)
-        OApp(_lzEndpoint, _delegate)
-        Ownable(_delegate)
-    {
-        // `token` is immutable: a zero address would permanently brick this adapter. `_lzEndpoint`
-        // and `_delegate` are already enforced by the OApp/Ownable base constructors: a zero
-        // delegate/owner reverts `OwnableInvalidOwner(address(0))` (Ownable linearizes ahead of
-        // OAppCore), so only `_token` is unchecked.
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _token, address _lzEndpoint) OAppUpgradeable(_lzEndpoint) {
+        // `token` is immutable: a zero address would permanently brick this adapter.
         if (_token == address(0)) revert ZeroAddress("token");
         token = IERC1155Bridgeable(_token);
-        OUTBE_EID = _outbeEid;
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy: LayerZero delegate and contract owner.
+    /// @param _delegate Owner and endpoint delegate.
+    function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
+        __Ownable_init(_delegate);
+        __OApp_init(_delegate);
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+    }
+
+    /// @dev Upgrades are gated by the owner.
+    /// @param newImplementation Address of the implementation the proxy switches to.
+    // solhint-disable-next-line no-empty-blocks
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // --- Storage getters ---
+    /// @notice Inbound compose forward parked at `idx` because `endpoint.sendCompose` reverted.
+    /// @param idx Parked slot index.
+    /// @return to Recipient of the deferred compose forward.
+    /// @return guid Inbound packet GUID the compose belongs to.
+    /// @return composeMsgData Already-encoded compose payload.
+    /// @return exists True when the index holds a parked compose.
+    /// @return done True when the compose was already flushed.
+    function pendingComposes(uint256 idx)
+        external
+        view
+        returns (address to, bytes32 guid, bytes memory composeMsgData, bool exists, bool done)
+    {
+        PendingCompose storage p = _s().pendingComposes[idx];
+        return (p.to, p.guid, p.composeMsgData, p.exists, p.done);
+    }
+
+    /// @notice Monotonic counter that assigns the next `pendingComposes` slot index.
+    /// @return The next compose slot index.
+    function nextPendingComposeIdx() external view returns (uint256) {
+        return _s().nextPendingComposeIdx;
+    }
+
+    /// @notice Inbound transfer whose `token.crosschainMint` reverted, keyed by packet GUID.
+    /// @param guid Inbound packet GUID.
+    /// @return to Intended crosschainMint recipient.
+    /// @return tokenId Token ID that failed to crosschainMint.
+    /// @return amount Amount that failed to crosschainMint.
+    /// @return composeMsgData Already-encoded compose payload (empty if none).
+    /// @return reason Raw revert data from the failed crosschainMint.
+    /// @return exists True when a parked failed-crosschainMint entry is present.
+    function failedCrosschainMints(bytes32 guid)
+        external
+        view
+        returns (
+            address to,
+            uint256 tokenId,
+            uint256 amount,
+            bytes memory composeMsgData,
+            bytes memory reason,
+            bool exists
+        )
+    {
+        FailedCrosschainMint storage f = _s().failedCrosschainMints[guid];
+        return (f.to, f.tokenId, f.amount, f.composeMsgData, f.reason, f.exists);
     }
 
     // --- Send ---
@@ -178,7 +247,7 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     }
 
     // --- Receive ---
-    /// @notice LayerZero receive handler: mints tokens on the destination chain and forwards any
+    /// @notice LayerZero receive handler: crosschainMints tokens on the destination chain and forwards any
     ///         compose message, with redelivery guarded by the `processed` set.
     /// @dev Validation order: minimum length (covers bodyVersion + sendTo + tokenId + amount)
     ///      → version assertion (inside codec helpers) → address-bit check on `sendTo`. A
@@ -199,8 +268,9 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         override
         nonReentrant
     {
-        if (processed[_origin.srcEid][_guid]) revert AlreadyProcessed(_origin.srcEid, _guid);
-        processed[_origin.srcEid][_guid] = true;
+        ONFT1155AdapterStorage storage $ = _s();
+        if ($.processed[_origin.srcEid][_guid]) revert AlreadyProcessed(_origin.srcEid, _guid);
+        $.processed[_origin.srcEid][_guid] = true;
 
         ONFT1155MsgCodec.assertMinLength(_message);
         bytes32 sendToRaw = _message.sendTo();
@@ -222,7 +292,7 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
             }
             emit ONFTReceived(_guid, _origin.srcEid, toAddress, tokenId_, amount_);
         } catch (bytes memory reason) {
-            failedCrosschainMints[_guid] = FailedCrosschainMint({
+            $.failedCrosschainMints[_guid] = FailedCrosschainMint({
                 to: toAddress,
                 tokenId: tokenId_,
                 amount: amount_,
@@ -237,7 +307,7 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     /// @notice Self-call shim around `token.crosschainMint`. Only callable by this contract itself, so the
     ///         revert lands in the catch-block of `_lzReceive` and the crosschainMint can be isolated.
     /// @dev Reverts `NotSelf` for any caller other than `address(this)`.
-    /// @param to crosschainMint recipient.
+    /// @param to CrosschainMint recipient.
     /// @param tokenId Token ID to crosschainMint.
     /// @param amount Amount to crosschainMint.
     function crosschainMintOne(address to, uint256 tokenId, uint256 amount) external {
@@ -245,14 +315,15 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         token.crosschainMint(to, tokenId, amount);
     }
 
-    /// @notice Permissionless retry of a transfer whose inbound crosschainMint failed. Re-mints the
+    /// @notice Permissionless retry of a transfer whose inbound crosschainMint failed. Re-crosschainMints the
     ///         tokens and, if the transfer carried a compose, forwards it. The entry is cleared on
     ///         success so a re-retry reverts `NoSuchFailedCrosschainMint`.
     /// @param guid Inbound packet GUID where the crosschainMint originally failed.
     function retryCrosschainMint(bytes32 guid) external nonReentrant {
-        FailedCrosschainMint memory f = failedCrosschainMints[guid];
+        ONFT1155AdapterStorage storage $ = _s();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid];
         if (!f.exists) revert NoSuchFailedCrosschainMint(guid);
-        delete failedCrosschainMints[guid];
+        delete $.failedCrosschainMints[guid];
 
         token.crosschainMint(f.to, f.tokenId, f.amount);
         if (f.composeMsgData.length != 0) {
@@ -270,8 +341,9 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         // ok — compose forwarded
         }
         catch (bytes memory reason) {
-            uint256 idx = nextPendingComposeIdx++;
-            pendingComposes[idx] =
+            ONFT1155AdapterStorage storage $ = _s();
+            uint256 idx = $.nextPendingComposeIdx++;
+            $.pendingComposes[idx] =
                 PendingCompose({to: to, guid: guid, composeMsgData: composeMsgData, exists: true, done: false});
             emit ComposeDeferred(idx, guid, to, reason);
         }
@@ -293,7 +365,7 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     ///         on success so a re-flush reverts `AlreadyFlushed`.
     /// @param idx Index of the deferred compose to flush.
     function flushPendingCompose(uint256 idx) external nonReentrant {
-        PendingCompose storage p = pendingComposes[idx];
+        PendingCompose storage p = _s().pendingComposes[idx];
         if (!p.exists) revert NoSuchPendingCompose(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
@@ -312,4 +384,3 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         emit NativeSwept(to, amount);
     }
 }
-

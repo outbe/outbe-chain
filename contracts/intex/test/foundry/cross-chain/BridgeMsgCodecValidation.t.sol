@@ -232,7 +232,7 @@ contract BridgeMsgCodecValidationTest is Test {
     /// @notice The send-side Executor `maxMessageSize` configured for these pathways
     ///         (`scripts/shared/layerzero.ts` → `LZ_INFRA.maxMessageSize`). A send whose
     ///         encoded message exceeds this reverts on the source chain. This is the *byte*
-    ///         ceiling only; destination gas (the per-item credit loop) is a separate and,
+    ///         ceiling only; destination gas (the per-item crosschainMint loop) is a separate and,
     ///         for the heavy paths, tighter limit — not measured here.
     uint256 internal constant LZ_MAX_MESSAGE_BYTES = 10_000;
 

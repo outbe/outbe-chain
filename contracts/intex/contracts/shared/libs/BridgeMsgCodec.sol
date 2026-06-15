@@ -59,7 +59,7 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 480;
 
-    /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the credit/storage loop the
+    /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
     ///         the ordered lane; larger bid sets are chunked into multiple batches by the sender.
     /// @dev Unified with the outbound `MAX_PAYLOAD_ARRAY_LEN` so inbound and outbound
@@ -423,7 +423,7 @@ library BridgeMsgCodec {
                 bidderAddresses.length, intexQuantities.length, intexBidPrices.length, timestamps.length
             );
         }
-        // Cap the batch so the receiver's credit/storage loop cannot exceed the inbound gas limit.
+        // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas limit.
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
