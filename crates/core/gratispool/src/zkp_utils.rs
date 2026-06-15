@@ -49,7 +49,7 @@ pub(crate) fn poseidon(inputs: &[Fr]) -> outbe_primitives::error::Result<U256> {
 
 #[cfg(test)]
 mod tests {
-    use super::{address_to_fr, fr_to_u256, poseidon, u256_to_fr, u64_to_fr};
+    use super::{address_to_fr, fr_to_u256, u256_to_fr, u64_to_fr};
     use alloy_primitives::{address, U256};
     use ark_bn254::Fr;
     use ark_ff::{BigInteger, PrimeField};

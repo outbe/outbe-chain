@@ -8,7 +8,6 @@
 
 use alloy_primitives::{Address, U256};
 use ark_bn254::Fr;
-use ark_ff::{BigInt, BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
 
 use outbe_primitives::error::Result;
