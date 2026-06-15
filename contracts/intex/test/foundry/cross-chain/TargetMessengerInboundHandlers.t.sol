@@ -9,6 +9,7 @@ import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
@@ -57,22 +58,14 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatch = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
-        escrow = new EscrowAdapter(admin, admin);
+        escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);

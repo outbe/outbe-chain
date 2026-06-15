@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
@@ -37,7 +38,7 @@ contract AuctionTest is Test {
         iba2 = vm.addr(iba2PrivateKey);
         outsider = vm.addr(outsiderPrivateKey);
 
-        auction = new IntexAuction(admin, bridger);
+        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
 
         vm.startPrank(admin);
@@ -580,7 +581,7 @@ contract AuctionTest is Test {
     }
 
     function test_Wire_Validation() public {
-        IntexAuction newAuction = new IntexAuction(admin, bridger);
+        IntexAuction newAuction = DeployProxy.intexAuction(admin, bridger);
         vm.startPrank(admin);
         newAuction.grantRole(newAuction.RELAYER_ROLE(), bridger);
 

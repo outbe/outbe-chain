@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { deployIntexAuction } from "./_helpers.js";
 
 describe("IntexAuction", async function () {
   const { viem, networkHelpers } = await network.connect();
@@ -64,7 +65,7 @@ describe("IntexAuction", async function () {
     const escrowAdapter = await viem.deployContract("MockEscrowAdapter");
 
     // Deploy IntexAuction contract
-    const auction = await viem.deployContract("IntexAuction", [
+    const auction = await deployIntexAuction(viem, [
       deployer.account.address,
       bridger.account.address,
     ]);

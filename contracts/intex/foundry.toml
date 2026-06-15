@@ -6,11 +6,15 @@ cbor_metadata = false
 src = 'contracts'
 out = 'out'
 test = 'test/foundry'
+script = 'deploy'
 cache_path = 'cache/foundry'
 verbosity = 3
 optimizer = true
-optimizer_runs = 10000
+optimizer_runs = 200
 via_ir = true
+# Build info + storage layout for the upgrades-core layout validator.
+build_info = true
+extra_output = ['storageLayout']
 libs = [
     'node_modules/@layerzerolabs/toolbox-foundry/lib',
     'node_modules',
@@ -25,6 +29,8 @@ remappings = [
     'forge-std/=node_modules/@layerzerolabs/toolbox-foundry/lib/forge-std/',
     # LayerZero packages - for contracts (import without /contracts/ prefix)
     '@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/contracts/',
+    '@layerzerolabs/oapp-evm-upgradeable/=node_modules/@layerzerolabs/oapp-evm-upgradeable/contracts/',
+    'node_modules/@layerzerolabs/oapp-evm-upgradeable/:@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/',
     '@layerzerolabs/onft-evm/=node_modules/@layerzerolabs/onft-evm/contracts/',
     # LayerZero packages - for test-devtools (import WITH /contracts/ prefix, map to root)
     '@layerzerolabs/lz-evm-protocol-v2/=node_modules/@layerzerolabs/lz-evm-protocol-v2/',

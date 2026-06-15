@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
@@ -36,7 +37,7 @@ contract EscrowAdapterInvariantsTest is Test {
     uint64 constant LOCK_C = 75 * 10 ** 6;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -143,11 +144,13 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(seriesId, bidders);
     }
 
-    /// @dev Storage slot of `auctionEscrowState` mapping in `EscrowAdapter`. See
-    /// `forge inspect contracts/bnb/EscrowAdapter.sol:EscrowAdapter storage-layout`.
-    /// AccessControl `_roles` occupies slot 0; OZ 5 ReentrancyGuard uses ERC-7201 namespaced
-    /// storage and consumes no contract-relative slots.
+    /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201
+    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 7: five address/uint
+    /// slots, the packed allocatorId+lockTag slot, then the bidLocks mapping precede it.
     function _auctionEscrowStateSlot() internal pure returns (uint256) {
-        return 8;
+        uint256 base = uint256(
+            keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
+        );
+        return base + 7;
     }
 }

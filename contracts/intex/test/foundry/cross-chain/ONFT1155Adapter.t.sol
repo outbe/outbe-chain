@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {IONFT1155Adapter, SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
@@ -44,21 +45,11 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         // Deploy IntexNFT1155 tokens on both chains
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[aEid]), address(this), bEid)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[bEid]), address(this), aEid)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this));
 
         // Grant RELAYER_ROLE to adapters
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
@@ -91,8 +82,9 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
     /// @notice `token` is immutable, so a zero address would permanently brick the
     ///         adapter (every `debit`/`credit` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
+        // Property of the implementation constructor — the token immutable is set there.
         vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "token"));
-        new ONFT1155Adapter(address(0), address(endpoints[aEid]), address(this), bEid);
+        new ONFT1155Adapter(address(0), address(endpoints[aEid]));
     }
 
     function test_send() public {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
@@ -21,7 +22,7 @@ contract IntexAuctionScheduleSnapTest is Test {
     uint32 constant ISSUANCE_OFFSET = 300;
 
     function setUp() public {
-        auction = new IntexAuction(admin, bridger);
+        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);

@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {Test} from "forge-std/Test.sol";
@@ -65,7 +66,7 @@ contract IntexNFT1155Test is Test {
     uint32 constant ISSUED_INTEX_COUNT = 10_000;
 
     function setUp() public {
-        nft = new IntexNFT1155(admin, bridger);
+        nft = DeployProxy.intexNFT1155(admin, bridger);
         // Most existing bridge tests exercise both Qualified (user-driven) and Called (system)
         // bridge paths; granting SYSTEM_RELAYER_ROLE to `bridger` keeps role-orthogonal tests
         // focused on state and balance semantics. Role-specific gating is covered separately.
