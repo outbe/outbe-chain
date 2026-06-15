@@ -66,7 +66,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         ///         would push `mintedCount` past this value.
         uint32 issuedIntexCount;
         /// @notice Monotonic count of Issued tokens ever minted via `mint`/`mintBatch`. Never
-        ///         decremented — burns (`debit`, `settle`, `expireSeries`) leave this field
+        ///         decremented — burns (`crosschainBurn`, `settle`, `expireSeries`) leave this field
         ///         untouched so a burn-then-remint cycle cannot reopen cap room.
         uint32 mintedCount;
         /// @notice Token classification (Issued or Settled).
@@ -166,17 +166,17 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroIssuedIntexCount();
     /// @notice A settlement or burn amount was zero.
     error ZeroAmount();
-    /// @notice A mint or credit quantity exceeds the range its packed storage field can hold.
+    /// @notice A mint or crosschainMint quantity exceeds the range its packed storage field can hold.
     error QuantityTooLarge(uint256 quantity);
     /// @notice Settle attempted in a series state that does not allow it.
     error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
-    /// @notice Bridge debit/credit attempted on a Settled token.
+    /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
-    /// @notice Bridge debit/credit attempted while the series state disallows it.
+    /// @notice Bridge crosschainBurn/crosschainMint attempted while the series state disallows it.
     error BridgeStateForbidden(uint256 tokenId, uint8 state);
-    /// @notice Bridge debit/credit attempted on a `Called` series after the settlement
+    /// @notice Bridge crosschainBurn/crosschainMint attempted on a `Called` series after the settlement
     ///         deadline (`calledAt + intexCallPeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice Settle attempted on a `Called` series after the settlement deadline

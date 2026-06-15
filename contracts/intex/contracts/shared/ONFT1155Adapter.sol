@@ -25,18 +25,18 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     /// @notice LZ message-type tag for a transfer carrying a compose payload. Selects enforced options.
     uint16 public constant SEND_AND_COMPOSE = 2;
 
-    /// @notice The ERC1155 token this adapter debits on send and credits on receive.
+    /// @notice The ERC1155 token this adapter burns on send and mints on receive.
     IERC1155Bridgeable public immutable token;
     /// @notice LayerZero endpoint ID of the Outbe chain.
     uint32 public immutable OUTBE_EID;
 
-    /// @notice Set of inbound `(srcEid, guid)` packets already credited.
+    /// @notice Set of inbound `(srcEid, guid)` packets already minted.
     /// @dev ONFT transfers are independent: the auction-stage ORDERED guarantee used by
     ///      `TargetMessenger` / `OriginMessenger` is overkill here (one stuck transfer would
     ///      stall every other transfer on the same `(srcEid, sender)` channel). Instead, this
     ///      mapping pins each delivered packet by GUID, and the first action of `_lzReceive`
     ///      asserts then sets the flag so a redelivered packet reverts `AlreadyProcessed` before
-    ///      any `token.credit` runs.
+    ///      any `token.crosschainMint` runs.
     mapping(uint32 srcEid => mapping(bytes32 guid => bool)) internal processed;
 
     /// @notice Snapshot of an inbound compose forward whose `endpoint.sendCompose` reverted.
@@ -51,9 +51,9 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     }
 
     /// @notice Inbound compose forwards parked because the original `endpoint.sendCompose` reverted.
-    /// @dev `token.credit` has already landed by the time we attempt the compose forward, so a
+    /// @dev `token.crosschainMint` has already landed by the time we attempt the compose forward, so a
     ///      revert there would otherwise force the whole `_lzReceive` to revert and burn the
-    ///      already-credited tokens. Pattern A from defer the send, recover via
+    ///      already-minted tokens. Pattern A from defer the send, recover via
     ///      `flushPendingCompose` once the composer side is fixed.
     mapping(uint256 idx => PendingCompose) public pendingComposes;
     /// @notice Monotonic counter that assigns the next `pendingComposes` slot index.
@@ -83,11 +83,11 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     /// @param idx Index of the flushed `pendingComposes` slot.
     event ComposeFlushed(uint256 indexed idx);
 
-    /// @notice Snapshot of an inbound transfer whose `token.credit` reverted.
+    /// @notice Snapshot of an inbound transfer whose `token.crosschainMint` reverted.
     /// @dev `composeMsgData` is the already-encoded compose payload (empty if the transfer carried
     ///      no compose), forwarded after a successful retry. `exists` flips to false on retry so a
-    ///      re-retry reverts `NoSuchFailedCredit`.
-    struct FailedCredit {
+    ///      re-retry reverts `NoSuchFailedCrosschainMint`.
+    struct FailedCrosschainMint {
         address to;
         uint256 tokenId;
         uint256 amount;
@@ -96,30 +96,30 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         bool exists;
     }
 
-    /// @notice Inbound transfers whose `token.credit` reverted, keyed by packet GUID.
-    /// @dev Without this an inbound credit revert (e.g. a destination series past its settlement
+    /// @notice Inbound transfers whose `token.crosschainMint` reverted, keyed by packet GUID.
+    /// @dev Without this an inbound crosschainMint revert (e.g. a destination series past its settlement
     ///      deadline) would unwind the whole `_lzReceive` after the sender already burned, stranding
-    ///      the tokens. The self-call shim isolates the credit; on revert the snapshot is parked here
-    ///      and `retryCredit` re-attempts once the upstream cause is cleared.
-    mapping(bytes32 guid => FailedCredit) public failedCredits;
+    ///      the tokens. The self-call shim isolates the crosschainMint; on revert the snapshot is parked here
+    ///      and `retryCrosschainMint` re-attempts once the upstream cause is cleared.
+    mapping(bytes32 guid => FailedCrosschainMint) public failedCrosschainMints;
 
-    /// @notice No failed-credit entry exists for `guid`.
-    error NoSuchFailedCredit(bytes32 guid);
+    /// @notice No failed-crosschainMint entry exists for `guid`.
+    error NoSuchFailedCrosschainMint(bytes32 guid);
 
-    /// @notice Emitted when an inbound transfer's `token.credit` reverts and is parked for retry.
+    /// @notice Emitted when an inbound transfer's `token.crosschainMint` reverts and is parked for retry.
     /// @param srcEid Source endpoint ID the packet arrived from.
-    /// @param guid Inbound packet GUID keying the parked `failedCredits` entry.
-    /// @param to Intended credit recipient.
-    /// @param tokenId Token ID that failed to credit.
-    /// @param amount Amount that failed to credit.
-    /// @param reason Raw revert data returned by the failed `token.credit`.
-    event CreditFailed(
+    /// @param guid Inbound packet GUID keying the parked `failedCrosschainMints` entry.
+    /// @param to Intended crosschainMint recipient.
+    /// @param tokenId Token ID that failed to crosschainMint.
+    /// @param amount Amount that failed to crosschainMint.
+    /// @param reason Raw revert data returned by the failed `token.crosschainMint`.
+    event CrosschainMintFailed(
         uint32 indexed srcEid, bytes32 indexed guid, address indexed to, uint256 tokenId, uint256 amount, bytes reason
     );
 
-    /// @notice Emitted when `retryCredit` successfully credits a previously failed transfer.
-    /// @param guid Inbound packet GUID whose parked credit was retried.
-    event CreditRetried(bytes32 indexed guid);
+    /// @notice Emitted when `retryCrosschainMint` successfully mints a previously failed transfer.
+    /// @param guid Inbound packet GUID whose parked crosschainMint was retried.
+    event CrosschainMintRetried(bytes32 indexed guid);
 
     constructor(address _token, address _lzEndpoint, address _delegate, uint32 _outbeEid)
         OApp(_lzEndpoint, _delegate)
@@ -147,7 +147,7 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
         payable
         returns (MessagingReceipt memory msgReceipt)
     {
-        token.debit(msg.sender, _sendParam.tokenId, _sendParam.amount);
+        token.crosschainBurn(msg.sender, _sendParam.tokenId, _sendParam.amount);
 
         (bytes memory message, bytes memory options) = _buildMsgAndOptions(_sendParam);
 
@@ -178,11 +178,11 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
     }
 
     // --- Receive ---
-    /// @notice LayerZero receive handler: credits tokens on the destination chain and forwards any
+    /// @notice LayerZero receive handler: mints tokens on the destination chain and forwards any
     ///         compose message, with redelivery guarded by the `processed` set.
     /// @dev Validation order: minimum length (covers bodyVersion + sendTo + tokenId + amount)
     ///      → version assertion (inside codec helpers) → address-bit check on `sendTo`. A
-    ///      malformed packet reverts with a typed error before any `token.credit` runs. The
+    ///      malformed packet reverts with a typed error before any `token.crosschainMint` runs. The
     ///      trailing `_executor` and `_extraData` parameters are unused and left unnamed.
     /// @param _origin Source chain origin data (srcEid, sender, nonce)
     /// @param _guid Unique message identifier
@@ -213,16 +213,16 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
             ? ONFTComposeMsgCodec.encode(_origin.nonce, _origin.srcEid, _message.composeMsg())
             : bytes("");
 
-        // Isolate the credit: a revert (e.g. a destination series past its settlement deadline)
+        // Isolate the crosschainMint: a revert (e.g. a destination series past its settlement deadline)
         // parks the transfer for retry instead of unwinding the packet and stranding burned tokens.
         // The compose forward only runs once the tokens actually landed.
-        try this.creditOne(toAddress, tokenId_, amount_) {
+        try this.crosschainMintOne(toAddress, tokenId_, amount_) {
             if (composeMsgData.length != 0) {
                 _tryDeliverCompose(toAddress, _guid, composeMsgData);
             }
             emit ONFTReceived(_guid, _origin.srcEid, toAddress, tokenId_, amount_);
         } catch (bytes memory reason) {
-            failedCredits[_guid] = FailedCredit({
+            failedCrosschainMints[_guid] = FailedCrosschainMint({
                 to: toAddress,
                 tokenId: tokenId_,
                 amount: amount_,
@@ -230,39 +230,39 @@ contract ONFT1155Adapter is IONFT1155Adapter, OApp, OAppOptionsType3, Reentrancy
                 reason: reason,
                 exists: true
             });
-            emit CreditFailed(_origin.srcEid, _guid, toAddress, tokenId_, amount_, reason);
+            emit CrosschainMintFailed(_origin.srcEid, _guid, toAddress, tokenId_, amount_, reason);
         }
     }
 
-    /// @notice Self-call shim around `token.credit`. Only callable by this contract itself, so the
-    ///         revert lands in the catch-block of `_lzReceive` and the credit can be isolated.
+    /// @notice Self-call shim around `token.crosschainMint`. Only callable by this contract itself, so the
+    ///         revert lands in the catch-block of `_lzReceive` and the crosschainMint can be isolated.
     /// @dev Reverts `NotSelf` for any caller other than `address(this)`.
-    /// @param to Credit recipient.
-    /// @param tokenId Token ID to credit.
-    /// @param amount Amount to credit.
-    function creditOne(address to, uint256 tokenId, uint256 amount) external {
+    /// @param to crosschainMint recipient.
+    /// @param tokenId Token ID to crosschainMint.
+    /// @param amount Amount to crosschainMint.
+    function crosschainMintOne(address to, uint256 tokenId, uint256 amount) external {
         if (msg.sender != address(this)) revert NotSelf();
-        token.credit(to, tokenId, amount);
+        token.crosschainMint(to, tokenId, amount);
     }
 
-    /// @notice Permissionless retry of a transfer whose inbound credit failed. Re-credits the
+    /// @notice Permissionless retry of a transfer whose inbound crosschainMint failed. Re-mints the
     ///         tokens and, if the transfer carried a compose, forwards it. The entry is cleared on
-    ///         success so a re-retry reverts `NoSuchFailedCredit`.
-    /// @param guid Inbound packet GUID where the credit originally failed.
-    function retryCredit(bytes32 guid) external nonReentrant {
-        FailedCredit memory f = failedCredits[guid];
-        if (!f.exists) revert NoSuchFailedCredit(guid);
-        delete failedCredits[guid];
+    ///         success so a re-retry reverts `NoSuchFailedCrosschainMint`.
+    /// @param guid Inbound packet GUID where the crosschainMint originally failed.
+    function retryCrosschainMint(bytes32 guid) external nonReentrant {
+        FailedCrosschainMint memory f = failedCrosschainMints[guid];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(guid);
+        delete failedCrosschainMints[guid];
 
-        token.credit(f.to, f.tokenId, f.amount);
+        token.crosschainMint(f.to, f.tokenId, f.amount);
         if (f.composeMsgData.length != 0) {
             _tryDeliverCompose(f.to, guid, f.composeMsgData);
         }
-        emit CreditRetried(guid);
+        emit CrosschainMintRetried(guid);
     }
 
     /// @dev Self-call wrapper around `endpoint.sendCompose` that isolates a composer-side revert
-    ///      from the inbound packet. `token.credit` already landed by this point — letting the
+    ///      from the inbound packet. `token.crosschainMint` already landed by this point — letting the
     ///      compose forward fail loudly would unwind that effect too. Pattern A: park the request
     ///      and let anyone retry via `flushPendingCompose(idx)`.
     function _tryDeliverCompose(address to, bytes32 guid, bytes memory composeMsgData) internal {

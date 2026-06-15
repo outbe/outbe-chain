@@ -14,7 +14,7 @@ interface IERC1155Bridgeable {
      * @param tokenId Token ID to burn
      * @param amount Amount to burn
      */
-    function debit(address from, uint256 tokenId, uint256 amount) external;
+    function crosschainBurn(address from, uint256 tokenId, uint256 amount) external;
 
     /**
      * @notice Mints tokens to an address. Called by adapter on destination chain.
@@ -22,6 +22,6 @@ interface IERC1155Bridgeable {
      * @param tokenId Token ID to mint
      * @param amount Amount to mint
      */
-    function credit(address to, uint256 tokenId, uint256 amount) external;
+    function crosschainMint(address to, uint256 tokenId, uint256 amount) external;
 }
 

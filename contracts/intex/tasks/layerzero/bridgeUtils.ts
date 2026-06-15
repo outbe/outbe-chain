@@ -231,7 +231,7 @@ const grantBridgeRole = task(
 
 // ============================================================================
 // Grant SYSTEM_RELAYER_ROLE
-// IntexNFT1155 gates `debit`/`credit` in the `Called` state behind this role.
+// IntexNFT1155 gates `crosschainBurn`/`crosschainMint` in the `Called` state behind this role.
 // Used to whitelist the system batch adapter (ONFT1155AdapterBatch) which moves
 // holder balances cross-chain after `markCalled`.
 // ============================================================================

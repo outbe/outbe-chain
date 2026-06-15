@@ -87,15 +87,15 @@ interface IONFT1155AdapterBatch {
     /// @param amount Amount in wei swept
     event NativeSwept(address indexed to, uint256 amount);
 
-    /// @notice Emitted when one item in an inbound batch reverts `token.credit`.
+    /// @notice Emitted when one item in an inbound batch reverts `token.crosschainMint`.
     /// @param srcEid LayerZero source endpoint id (`_origin.srcEid`)
     /// @param guid Inbound LayerZero packet GUID
     /// @param idx Position of the failed item in the original batch
     /// @param to Recipient address
     /// @param tokenId ERC-1155 token id
-    /// @param amount Amount that failed to credit
-    /// @param reason Raw revert bytes from `token.credit`
-    event CreditFailed(
+    /// @param amount Amount that failed to crosschainMint
+    /// @param reason Raw revert bytes from `token.crosschainMint`
+    event CrosschainMintFailed(
         uint32 indexed srcEid,
         bytes32 indexed guid,
         uint256 idx,
@@ -105,10 +105,10 @@ interface IONFT1155AdapterBatch {
         bytes reason
     );
 
-    /// @notice Emitted when `retryCredit` successfully credits a previously failed item.
-    /// @param guid Inbound LayerZero packet GUID where the credit originally failed
+    /// @notice Emitted when `retryCrosschainMint` successfully mints a previously failed item.
+    /// @param guid Inbound LayerZero packet GUID where the crosschainMint originally failed
     /// @param idx Position of the retried item in the original batch
-    event CreditRetried(bytes32 indexed guid, uint256 indexed idx);
+    event CrosschainMintRetried(bytes32 indexed guid, uint256 indexed idx);
 
     // --- Errors ---
     /// @notice Receiver address is zero.
@@ -137,18 +137,18 @@ interface IONFT1155AdapterBatch {
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `ONFT1155BatchMsgCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
-    /// @notice Inbound packet with this `(srcEid, guid)` has already been credited.
+    /// @notice Inbound packet with this `(srcEid, guid)` has already been minted.
     /// @param srcEid LayerZero source endpoint id of the redelivered packet.
     /// @param guid Inbound LayerZero packet GUID that was already processed.
     error AlreadyProcessed(uint32 srcEid, bytes32 guid);
-    /// @notice `creditOne` was invoked by an external caller; only `address(this)` is allowed.
-    /// @dev `creditOne` is a self-call shim used by `_lzReceive` to isolate per-item `token.credit`
+    /// @notice `crosschainMintOne` was invoked by an external caller; only `address(this)` is allowed.
+    /// @dev `crosschainMintOne` is a self-call shim used by `_lzReceive` to isolate per-item `token.crosschainMint`
     ///      reverts. Exposing it externally would let anyone mint tokens for arbitrary recipients.
     error NotSelf();
-    /// @notice No failed-credit entry exists for `(guid, idx)`.
+    /// @notice No failed-crosschainMint entry exists for `(guid, idx)`.
     /// @param guid Inbound LayerZero packet GUID being retried.
-    /// @param idx Position in the original batch with no parked failed-credit slot.
-    error NoSuchFailedCredit(bytes32 guid, uint256 idx);
+    /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
+    error NoSuchFailedCrosschainMint(bytes32 guid, uint256 idx);
 
     /// @notice Sweep residual pre-funded native tokens back to an admin recipient.
     /// @param to Recipient address (must be non-zero)
@@ -213,7 +213,7 @@ interface IONFT1155AdapterBatch {
         bool payInLzToken
     ) external view returns (MessagingFee memory fee);
 
-    /// @notice Debits tokens from all holders and sends a single SEND_MULTI LZ message.
+    /// @notice Burns tokens from all holders and sends a single SEND_MULTI LZ message.
     /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetMessenger).
     /// @param tokenId Token ID (series) to bridge
     /// @param holders Holder addresses on source chain

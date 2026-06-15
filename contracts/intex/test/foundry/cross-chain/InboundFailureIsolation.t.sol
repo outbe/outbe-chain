@@ -11,9 +11,9 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `ONFT1155AdapterBatch`: a per-item
-///         `token.credit` revert no longer reverts the whole batch — the failure is recorded as
-///         a `FailedCredit` snapshot, `CreditFailed` is emitted, and `retryCredit` re-attempts
-///         the credit after the upstream issue is fixed. This is the Critical funds-lock fix
+///         `token.crosschainMint` revert no longer reverts the whole batch — the failure is recorded as
+///         a `FailedCrosschainMint` snapshot, `CrosschainMintFailed` is emitted, and `retryCrosschainMint` re-attempts
+///         the crosschainMint after the upstream issue is fixed. This is the Critical funds-lock fix
 ///         from the contract review (R-04).
 contract InboundFailureIsolationTest is TestHelperOz5 {
     uint32 internal constant BNB_EID = 1;
@@ -43,10 +43,10 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         batches[1] = address(onftBatchOutbe);
         this.wireOApps(batches);
 
-        // Two series: one Issued (credit succeeds), one not (credit reverts on state check).
+        // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(SERIES_GOOD, 10_000, 0);
         intex.markQualified(SERIES_GOOD);
-        // SERIES_BAD intentionally not created — `intex.credit` will revert on lookup.
+        // SERIES_BAD intentionally not created — `intex.crosschainMint` will revert on lookup.
 
         intex.grantRole(intex.RELAYER_ROLE(), address(onftBatchBnb));
     }
@@ -113,48 +113,48 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
 
         _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
 
-        // Good item credited.
-        assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be credited");
+        // Good item minted.
+        assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
-        // Bad item recorded in failedCredits, NOT credited.
-        (address to, uint256 tokenId, uint256 amount,, bool exists) = onftBatchBnb.failedCredits(guid, 1);
+        // Bad item recorded in failedCrosschainMints, NOT minted.
+        (address to, uint256 tokenId, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(guid, 1);
         assertEq(to, recipient, "failed entry.to");
         assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail — no entry for idx=0.
-        (,,,, bool existsZero) = onftBatchBnb.failedCredits(guid, 0);
+        (,,,, bool existsZero) = onftBatchBnb.failedCrosschainMints(guid, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
-    function test_BatchReceive_RetryCreditSucceedsAfterUpstreamFix() public {
+    function test_BatchReceive_RetryCrosschainMintSucceedsAfterUpstreamFix() public {
         address recipient = address(0xCAFE);
         bytes32 guid = bytes32(uint256(0xAACC));
 
         _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
 
         // Initially the bad item is parked.
-        (,,,, bool existsBefore) = onftBatchBnb.failedCredits(guid, 1);
+        (,,,, bool existsBefore) = onftBatchBnb.failedCrosschainMints(guid, 1);
         assertTrue(existsBefore, "bad item parked");
 
-        // Fix upstream: create SERIES_BAD now so credit can succeed.
+        // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
         intex.createSeries(SERIES_BAD, 10_000, 0);
         intex.markQualified(SERIES_BAD);
 
         // Anyone can retry — no auth gate.
         vm.prank(address(0xDEAD));
-        onftBatchBnb.retryCredit(guid, 1);
+        onftBatchBnb.retryCrosschainMint(guid, 1);
 
-        // Now credited.
-        assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be credited");
+        // Now minted.
+        assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,,, bool existsAfter) = onftBatchBnb.failedCredits(guid, 1);
+        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(guid, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
-    function test_BatchReceive_RetryCreditTwiceRevertsNoSuchFailedCredit() public {
+    function test_BatchReceive_RetryCrosschainMintTwiceRevertsNoSuchFailedCrosschainMint() public {
         address recipient = address(0xCAFE);
         bytes32 guid = bytes32(uint256(0xAADD));
 
@@ -163,17 +163,17 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         // Fix upstream + retry once.
         intex.createSeries(SERIES_BAD, 10_000, 0);
         intex.markQualified(SERIES_BAD);
-        onftBatchBnb.retryCredit(guid, 1);
+        onftBatchBnb.retryCrosschainMint(guid, 1);
 
         // Second retry must revert — slot has been deleted.
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCredit.selector, guid, 1));
-        onftBatchBnb.retryCredit(guid, 1);
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 1));
+        onftBatchBnb.retryCrosschainMint(guid, 1);
     }
 
-    function test_BatchReceive_RetryCreditUnknownIdxRevertsNoSuchFailedCredit() public {
+    function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
         bytes32 guid = bytes32(uint256(0xAAEE));
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCredit.selector, guid, 0));
-        onftBatchBnb.retryCredit(guid, 0);
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 0));
+        onftBatchBnb.retryCrosschainMint(guid, 0);
     }
 
     // ---------------------------------------------------------------
@@ -187,26 +187,26 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
 
         _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _multiPacket(goodRecipient, badRecipient));
 
-        // Good recipient credited.
-        assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient credited");
+        // Good recipient minted.
+        assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount,, bool exists) = onftBatchBnb.failedCredits(guid, 1);
+        (address to,, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(guid, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);
 
         // Bad recipient did NOT receive tokens.
-        assertEq(intex.balanceOf(badRecipient, TOKEN_BAD), 0, "bad recipient must NOT be credited");
+        assertEq(intex.balanceOf(badRecipient, TOKEN_BAD), 0, "bad recipient must NOT be minted");
     }
 
     // ---------------------------------------------------------------
     // Self-call shim guard
     // ---------------------------------------------------------------
 
-    function test_CreditOne_ExternalCallerRevertsNotSelf() public {
+    function test_CrosschainMintOne_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(IONFT1155AdapterBatch.NotSelf.selector);
-        onftBatchBnb.creditOne(address(0xCAFE), TOKEN_GOOD, 1);
+        onftBatchBnb.crosschainMintOne(address(0xCAFE), TOKEN_GOOD, 1);
     }
 
     // ---------------------------------------------------------------
@@ -231,7 +231,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         );
         _deliver(OUTBE_EID, address(onftBatchOutbe), 2, bytes32(uint256(0xCC02)), packet);
 
-        // First batch credited 50 + Second batch credited 100 = 150 of TOKEN_GOOD.
-        assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 150, "second batch credit landed");
+        // First batch minted 50 + Second batch minted 100 = 150 of TOKEN_GOOD.
+        assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 150, "second batch crosschainMint landed");
     }
 }

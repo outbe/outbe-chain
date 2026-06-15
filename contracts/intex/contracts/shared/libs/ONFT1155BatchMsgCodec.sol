@@ -12,12 +12,12 @@ pragma solidity 0.8.30;
  *      slicing — to single-pass `abi.encode`/`abi.decode` over named structs. The body version is
  *      bumped `V1 -> V2` so any stale V1 packet fails closed via {UnsupportedBodyVersion} instead
  *      of misdecoding. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
- *      the zero-recipient reject stay with the adapter (it owns the credit semantics).
+ *      the zero-recipient reject stay with the adapter (it owns the crosschainMint semantics).
  */
 library ONFT1155BatchMsgCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
     /// @dev V2 marks the `abi.encodePacked` -> `abi.encode` wire change. A V1 packet now
-    ///      fails closed on {UnsupportedBodyVersion} rather than misdecoding into a wrong credit.
+    ///      fails closed on {UnsupportedBodyVersion} rather than misdecoding into a wrong crosschainMint.
     uint8 internal constant BODY_VERSION_V2 = 2;
 
     /// @notice `msgType` for a single-recipient, multi-token batch (`BatchPayload`).
@@ -27,7 +27,7 @@ library ONFT1155BatchMsgCodec {
     uint8 internal constant SEND_MULTI = 2;
 
     /// @notice System-wide cross-chain array cap (unified with `MAX_PAYLOAD_ARRAY_LEN`).
-    /// @dev Enforced on the inbound decoded array length here and on the outbound debit loop in the
+    /// @dev Enforced on the inbound decoded array length here and on the outbound crosschainBurn loop in the
     ///      adapter, so an over-size batch fails fast on the source chain before paying an LZ fee.
     uint256 internal constant MAX_BATCH_SIZE = 64;
 
@@ -74,7 +74,7 @@ library ONFT1155BatchMsgCodec {
     ///         is permissive — it will misread a wrong-schema body (e.g. a `MultiPayload` encoding
     ///         routed as `SEND`) into a garbage payload, and it ignores trailing bytes. Re-encoding
     ///         the decoded value and requiring an exact match closes both, so a mismatched or
-    ///         padded packet fails closed instead of crediting a wrong recipient.
+    ///         padded packet fails closed instead of crosschain-minting to a wrong recipient.
     error MalformedBody();
 
     /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` — no growing buffer.
@@ -94,7 +94,7 @@ library ONFT1155BatchMsgCodec {
     /// @notice Decode + validate a `SEND` body. Reverts {UnsupportedBodyVersion} on a non-V2
     ///         header, {MalformedBody} on a non-canonical/wrong-schema body, {ArrayLengthMismatch}
     ///         on unequal tokenId/amount arrays, and {BatchTooLarge} past the cap. Address
-    ///         well-formedness is the adapter's check (it casts + credits).
+    ///         well-formedness is the adapter's check (it casts + crosschain-mints).
     /// @param _message The full inbound wire body (including the 2-byte header).
     /// @return payload The decoded, length- and size-validated `BatchPayload`.
     function decodeBatch(bytes calldata _message) internal pure returns (BatchPayload memory payload) {

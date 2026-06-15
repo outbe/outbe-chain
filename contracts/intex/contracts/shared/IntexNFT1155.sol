@@ -22,15 +22,15 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  */
 contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     /// @notice Bridge relayer role; gates series lifecycle, mint/mintBatch, expireSeries, and
-    ///         bridge debit/credit. Granted to the bridger at construction.
+    ///         bridge crosschainBurn/crosschainMint. Granted to the bridger at construction.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
     /// @notice System relayer role; allowed to drive the system bridge during the `Called` window.
-    /// @dev Holders of this role can `debit` even while the series is `Called`. Regular `RELAYER_ROLE`
-    ///      can only `debit` while the series is `Qualified`.
+    /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
+    ///      can only `crosschainBurn` while the series is `Qualified`.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
     /// @notice Upper bound on a series call period. Exposed so integrators can read the bound and
@@ -147,7 +147,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
 
         // Cap is enforced against the monotonic `mintedCount`, not live `totalSupply`. A burn
-        // (debit/settle/expireSeries) reduces totalSupply but leaves mintedCount untouched, so
+        // (crosschainBurn/settle/expireSeries) reduces totalSupply but leaves mintedCount untouched, so
         // a burn-then-remint cycle cannot reopen cap room (R-01). The intermediate is widened
         // to uint256 so a series with `issuedIntexCount` near `type(uint32).max` surfaces the
         // typed `SupplyCapExceeded` revert rather than a raw arithmetic panic on overflow.
@@ -367,13 +367,13 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge debit gating:
+    /// @dev Bridge crosschainBurn gating:
     ///      - Settled token ids are soulbound — always reverts.
     ///      - Series state `Issued` (initial): bridge is disallowed.
     ///      - Series state `Qualified`: bridge allowed for `RELAYER_ROLE`.
     ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`
     ///        (the system bridge that migrates balances during the call window).
-    function debit(address from, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
+    function crosschainBurn(address from, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
             revert BridgeOnSettledForbidden(tokenId);
@@ -391,7 +391,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             }
             // Bridge moves are confined to the call window: once `calledAt + intexCallPeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise
-            // a system relayer could keep moving (and `credit` could re-inflate) post-lifecycle.
+            // a system relayer could keep moving (and `crosschainMint` could re-inflate) post-lifecycle.
             uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
@@ -407,9 +407,9 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge credit mirrors `debit`. Same state gates apply: `Issued` is always rejected,
+    /// @dev Bridge crosschainMint mirrors `crosschainBurn`. Same state gates apply: `Issued` is always rejected,
     ///      `Called` is reserved for `SYSTEM_RELAYER_ROLE`.
-    function credit(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
+    function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
@@ -425,8 +425,8 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(state));
             }
-            // Mirror of `debit`: no bridge-in past the settlement deadline. Without this a
-            // `credit` after `expireSeries` drained the series could re-inflate `totalSupply`
+            // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline. Without this a
+            // `crosschainMint` after `expireSeries` drained the series could re-inflate `totalSupply`
             // (capped by `issuedIntexCount`, but still a post-lifecycle mutation).
             uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
@@ -434,10 +434,10 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
             }
         }
 
-        // A credited balance can be a holder's full transferable balance (<= totalSupply, uint32).
+        // A crosschain-minted balance can be a holder's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
-        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. Credit
+        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. crosschainMint
         // intentionally does NOT bump `mintedCount` — cross-chain returns of already-issued
         // tokens are legitimate and must not consume primary-mint capacity. The live-supply
         // invariant suffices because cumulative primary issuance is bounded at mint/mintBatch.
@@ -474,7 +474,7 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
         }
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // No new Settled tokens past the call window (mirrors the debit/credit freeze).
+            // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
             uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert SettleAfterDeadline(iTok, derivedDeadline);
@@ -647,12 +647,12 @@ contract IntexNFT1155 is ERC1155, AccessControl, IIntexNFT1155 {
     ///         owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
-    ///        bridge debit/credit on Issued, expireSeries, mint/mintBatch).
+    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint/mintBatch).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
     ///          * Issued token ids are transferable in every series state
     ///            (Issued, Qualified, Called). Bridge gating is separate and lives in
-    ///            `debit` / `credit`.
+    ///            `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).
     /// @param ids Array of token IDs.

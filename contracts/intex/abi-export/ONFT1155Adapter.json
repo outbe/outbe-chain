@@ -152,7 +152,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "NoSuchFailedCredit",
+      "name": "NoSuchFailedCrosschainMint",
       "type": "error"
     },
     {
@@ -353,7 +353,7 @@
           "type": "bytes"
         }
       ],
-      "name": "CreditFailed",
+      "name": "CrosschainMintFailed",
       "type": "event"
     },
     {
@@ -366,7 +366,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "CreditRetried",
+      "name": "CrosschainMintRetried",
       "type": "event"
     },
     {
@@ -652,7 +652,7 @@
           "type": "uint256"
         }
       ],
-      "name": "creditOne",
+      "name": "crosschainMintOne",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -725,7 +725,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "failedCredits",
+      "name": "failedCrosschainMints",
       "outputs": [
         {
           "internalType": "address",
@@ -1079,7 +1079,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "retryCredit",
+      "name": "retryCrosschainMint",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"

@@ -332,7 +332,7 @@ describe("IntexNFT1155", async function () {
       );
     });
 
-    it("Should allow bridge to debit tokens in Qualified state", async function () {
+    it("Should allow bridge to crosschainBurn tokens in Qualified state", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       const quantity = 10n;
@@ -341,12 +341,12 @@ describe("IntexNFT1155", async function () {
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, quantity, SERIES_ID_1], { account: bridger.account.address });
       await nft.write.markQualified([SERIES_ID_1], { account: bridger.account.address });
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, burnAmount], { account: bridger.account.address });
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, burnAmount], { account: bridger.account.address });
 
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), quantity - burnAmount);
     });
 
-    it("Should reject bridge debit in Issued state and require SYSTEM_RELAYER_ROLE in Called state", async function () {
+    it("Should reject bridge crosschainBurn in Issued state and require SYSTEM_RELAYER_ROLE in Called state", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       const quantity = 10n;
@@ -354,22 +354,22 @@ describe("IntexNFT1155", async function () {
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, quantity, SERIES_ID_1], { account: bridger.account.address });
 
-      // Debit in Issued: rejected.
+      // CrosschainBurn in Issued: rejected.
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
         nft,
         "BridgeStateForbidden",
       );
 
       // Qualified: allowed.
       await nft.write.markQualified([SERIES_ID_1], { account: bridger.account.address });
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 3n], { account: bridger.account.address });
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 3n], { account: bridger.account.address });
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), 7n);
 
       // Called for plain RELAYER: rejected. SYSTEM_RELAYER_ROLE allows it.
       await nft.write.markCalled([SERIES_ID_1], { account: bridger.account.address });
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
         nft,
         "BridgeStateForbidden",
       );
@@ -377,11 +377,11 @@ describe("IntexNFT1155", async function () {
       await nft.write.grantRole([await nft.read.SYSTEM_RELAYER_ROLE(), bridger.account.address], {
         account: deployer.account.address,
       });
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 2n], { account: bridger.account.address });
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 2n], { account: bridger.account.address });
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), 5n);
     });
 
-    it("Should reject bridge debit on a Called series after the settlement deadline", async function () {
+    it("Should reject bridge crosschainBurn on a Called series after the settlement deadline", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1, { callPeriod: 86400n }), { account: bridger.account.address });
@@ -398,13 +398,13 @@ describe("IntexNFT1155", async function () {
 
       // Past the deadline even the system relayer is frozen out.
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 1n], { account: bridger.account.address }),
         nft,
         "BridgeAfterDeadline",
       );
     });
 
-    it("Should reject bridge credit on a Called series after the settlement deadline", async function () {
+    it("Should reject bridge crosschainMint on a Called series after the settlement deadline", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1, { callPeriod: 86400n }), { account: bridger.account.address });
@@ -418,32 +418,32 @@ describe("IntexNFT1155", async function () {
       await testClient.setNextBlockTimestamp({ timestamp: derivedDeadline + 1n });
       await testClient.mine({ blocks: 1 });
 
-      // Mirror of debit: no bridge-in past the window — credit cannot re-inflate supply.
+      // Mirror of crosschainBurn: no bridge-in past the window — crosschainMint cannot re-inflate supply.
       await viem.assertions.revertWithCustomError(
-        nft.write.credit([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
+        nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
         nft,
         "BridgeAfterDeadline",
       );
     });
 
-    it("Should prevent non-bridge from debiting tokens", async function () {
+    it("Should prevent non-bridge from crosschainBurning tokens", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
 
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: user1.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: user1.account.address }),
         nft,
         "AccessControlUnauthorizedAccount",
       );
     });
 
-    it("Should revert when debiting non-existent token", async function () {
+    it("Should revert when crosschainBurning non-existent token", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address }),
         nft,
         "NonexistentToken",
       );
@@ -772,31 +772,31 @@ describe("IntexNFT1155", async function () {
     });
   });
 
-  describe("Debit/Credit", async function () {
-    it("Should allow bridge to debit tokens in Qualified state", async function () {
+  describe("CrosschainBurn/CrosschainMint", async function () {
+    it("Should allow bridge to crosschainBurn tokens in Qualified state", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       const quantity = 10n;
-      const debitAmount = 5n;
+      const burnAmount = 5n;
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, quantity, SERIES_ID_1], { account: bridger.account.address });
       await nft.write.markQualified([SERIES_ID_1], { account: bridger.account.address });
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, debitAmount], { account: bridger.account.address });
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, burnAmount], { account: bridger.account.address });
 
-      assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), quantity - debitAmount);
+      assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), quantity - burnAmount);
     });
 
-    it("Should allow debit in Called state for SYSTEM_RELAYER_ROLE", async function () {
+    it("Should allow crosschainBurn in Called state for SYSTEM_RELAYER_ROLE", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
       await nft.write.markCalled([SERIES_ID_1], { account: bridger.account.address });
 
-      // Plain RELAYER cannot debit while Called.
+      // Plain RELAYER cannot crosschainBurn while Called.
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address }),
         nft,
         "BridgeStateForbidden",
       );
@@ -804,44 +804,44 @@ describe("IntexNFT1155", async function () {
       await nft.write.grantRole([await nft.read.SYSTEM_RELAYER_ROLE(), bridger.account.address], {
         account: deployer.account.address,
       });
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
 
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), 5n);
     });
 
-    it("Should prevent non-bridge from debiting", async function () {
+    it("Should prevent non-bridge from crosschainBurning", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.mint([user1.account.address, 10n, SERIES_ID_1], { account: bridger.account.address });
 
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: user1.account.address }),
+        nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: user1.account.address }),
         nft,
         "AccessControlUnauthorizedAccount",
       );
     });
 
-    it("Should allow bridge to credit tokens in Qualified state", async function () {
+    it("Should allow bridge to crosschainMint tokens in Qualified state", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
-      const creditAmount = 10n;
+      const mintAmount = 10n;
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.markQualified([SERIES_ID_1], { account: bridger.account.address });
-      await nft.write.credit([user1.account.address, TOKEN_ID_1, creditAmount], { account: bridger.account.address });
+      await nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, mintAmount], { account: bridger.account.address });
 
-      assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), creditAmount);
+      assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), mintAmount);
     });
 
-    it("Should allow credit in Called state for SYSTEM_RELAYER_ROLE", async function () {
+    it("Should allow crosschainMint in Called state for SYSTEM_RELAYER_ROLE", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.markCalled([SERIES_ID_1], { account: bridger.account.address });
 
       await viem.assertions.revertWithCustomError(
-        nft.write.credit([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
+        nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
         nft,
         "BridgeStateForbidden",
       );
@@ -849,41 +849,41 @@ describe("IntexNFT1155", async function () {
       await nft.write.grantRole([await nft.read.SYSTEM_RELAYER_ROLE(), bridger.account.address], {
         account: deployer.account.address,
       });
-      await nft.write.credit([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address });
+      await nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address });
 
       assert.equal(await nft.read.balanceOf([user1.account.address, TOKEN_ID_1]), 10n);
     });
 
-    it("Should prevent non-bridge from crediting", async function () {
+    it("Should prevent non-bridge from crosschainMinting", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
 
       await viem.assertions.revertWithCustomError(
-        nft.write.credit([user1.account.address, TOKEN_ID_1, 10n], { account: user1.account.address }),
+        nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 10n], { account: user1.account.address }),
         nft,
         "AccessControlUnauthorizedAccount",
       );
     });
 
-    it("Should revert credit for non-existent series", async function () {
+    it("Should revert crosschainMint for non-existent series", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await viem.assertions.revertWithCustomError(
-        nft.write.credit([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
+        nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address }),
         nft,
         "NonexistentToken",
       );
     });
 
-    it("Should reject bridge debit on a Settled token id", async function () {
+    it("Should reject bridge crosschainBurn on a Settled token id", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       const settledTokenId = await nft.read.settledTokenId([SERIES_ID_1]);
 
       await viem.assertions.revertWithCustomError(
-        nft.write.debit([user1.account.address, settledTokenId, 1n], { account: bridger.account.address }),
+        nft.write.crosschainBurn([user1.account.address, settledTokenId, 1n], { account: bridger.account.address }),
         nft,
         "BridgeOnSettledForbidden",
       );
@@ -1132,7 +1132,7 @@ describe("IntexNFT1155", async function () {
       assert.equal(await nft.read.totalBalance([user2.account.address]), 5n);
     });
 
-    it("Should handle debits correctly for enumeration", async function () {
+    it("Should handle crosschainBurns correctly for enumeration", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
@@ -1142,13 +1142,13 @@ describe("IntexNFT1155", async function () {
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 1n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 10n);
 
-      // Partial debit - should still own the series
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
+      // Partial crosschainBurn - should still own the series
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 1n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 5n);
 
-      // Full debit - should no longer own the series
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
+      // Full crosschainBurn - should no longer own the series
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 0n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 0n);
 
@@ -1227,24 +1227,24 @@ describe("IntexNFT1155", async function () {
       assert(!user1Owned.includes(TOKEN_ID_2));
     });
 
-    it("Should handle credit/debit for enumeration", async function () {
+    it("Should handle crosschainMint/crosschainBurn for enumeration", async function () {
       const nft = await deployIntexNFT1155(viem, [deployer.account.address, bridger.account.address]);
 
       await nft.write.createSeries(seriesArgs(SERIES_ID_1), { account: bridger.account.address });
       await nft.write.markQualified([SERIES_ID_1], { account: bridger.account.address });
 
-      // Credit (like receiving from another chain)
-      await nft.write.credit([user1.account.address, TOKEN_ID_1, 15n], { account: bridger.account.address });
+      // CrosschainMint (like receiving from another chain)
+      await nft.write.crosschainMint([user1.account.address, TOKEN_ID_1, 15n], { account: bridger.account.address });
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 1n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 15n);
 
-      // Debit partial
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
+      // CrosschainBurn partial
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 5n], { account: bridger.account.address });
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 1n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 10n);
 
-      // Debit full
-      await nft.write.debit([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address });
+      // CrosschainBurn full
+      await nft.write.crosschainBurn([user1.account.address, TOKEN_ID_1, 10n], { account: bridger.account.address });
       assert.equal(await nft.read.ownedSeriesCount([user1.account.address]), 0n);
       assert.equal(await nft.read.totalBalance([user1.account.address]), 0n);
     });

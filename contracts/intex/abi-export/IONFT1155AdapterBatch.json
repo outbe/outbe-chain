@@ -82,7 +82,7 @@
           "type": "uint256"
         }
       ],
-      "name": "NoSuchFailedCredit",
+      "name": "NoSuchFailedCrosschainMint",
       "type": "error"
     },
     {
@@ -163,7 +163,7 @@
           "type": "bytes"
         }
       ],
-      "name": "CreditFailed",
+      "name": "CrosschainMintFailed",
       "type": "event"
     },
     {
@@ -182,7 +182,7 @@
           "type": "uint256"
         }
       ],
-      "name": "CreditRetried",
+      "name": "CrosschainMintRetried",
       "type": "event"
     },
     {
