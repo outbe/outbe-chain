@@ -108,14 +108,25 @@ Rationale, alternatives, deployment-order requirements, and known limitations (e
 
 ## Deployment
 
-Production deploys use the **Contracts Deployment** workflow (see [CD](#cd-continuous-deployment)). For local or one-off runs with Ignition:
+Every implementation contract is a UUPS proxy. The implementation holds only logic and chain-fixed immutables (LayerZero endpoint, endpoint ids, bridged token); all state lives in the proxy under ERC-7201 namespaced storage, and upgrades go through `upgradeToAndCall` without moving the proxy address.
+
+Proxies are deployed through a CREATE3 factory ([`contracts/deploy/Create3Factory.sol`](contracts/deploy/Create3Factory.sol)), so a proxy address depends only on `(factory, deployer, salt)` and not on the implementation init code. Addresses therefore stay fixed across implementation iterations and full network wipes, and are identical across chains for the non-LayerZero contracts. The factory is deployed once per chain through the canonical CREATE2 deployer (`0x4e59…956C`) at a pinned salt, so it lands at the same address everywhere.
+
+Deploy with the Foundry scripts in [`deploy/`](deploy/):
 
 ```bash
-yarn hardhat ignition deploy <module> --network bscTestnet --parameters params.json
-yarn hardhat ignition verify <deployment-id> --network bscTestnet
+forge script deploy/DeployBsc.s.sol --rpc-url <bsc-rpc> --broadcast
+forge script deploy/DeployOutbe.s.sol --rpc-url <outbe-rpc> --broadcast
 ```
 
-Use `--reset` to override an existing deployment. Parameters are resolved by `scripts/cd/resolve-parameters.ts`.
+Env: `DEPLOYER_PRIVATE_KEY`, `ADMIN_ADDRESS`, `BRIDGER_ADDRESS`, `DELEGATE_ADDRESS`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
+
+### Upgrade safety
+
+- `yarn validate:upgrades` runs the OpenZeppelin upgrades-core storage-layout validator over the implementations (build info + layout emitted per `foundry.toml`).
+- `forge test --match-path "test/foundry/upgrade/*"` runs the upgrade rehearsal: deploy v1, populate state, `upgradeToAndCall` to a v1.1 stub, and assert all state survives.
+
+> The production deployment workflow still uses the previous Hardhat mechanism; its migration to these Foundry scripts is tracked separately.
 
 ## Other Tasks
 
