@@ -545,9 +545,7 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
 /// integer truncation in the deficit derivation — the assertions can use
 /// strict equality rather than tolerance bands.
 fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u64>, U256) {
-    let nominal_amounts: Vec<U256> = (1u64..=15)
-        .map(|i| U256::in_units(10u64 * i))
-        .collect();
+    let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| U256::in_units(10u64 * i)).collect();
     let tribute_fis = vec![1u64; 15];
     let total_interest: U256 = nominal_amounts
         .iter()

@@ -1,4 +1,4 @@
-use crate::algorithm::{calc_fraction_distribution_fp};
+use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
