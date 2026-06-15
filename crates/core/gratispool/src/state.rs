@@ -8,7 +8,6 @@
 
 use alloy_primitives::{Address, U256};
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
 
 use outbe_primitives::error::Result;
@@ -19,53 +18,7 @@ use crate::constants::{
 };
 use crate::errors::GratisPoolError;
 use crate::schema::GratisPoolContract;
-
-// ---------------------------------------------------------------------------
-// Field-element conversion
-// ---------------------------------------------------------------------------
-
-/// `U256 → Fr` via BE-encoded bytes mod-reduced to the BN254 scalar field.
-///
-/// Matches `outbe_zkproof::poseidon::poseidon_hash` and the Noir circuit's
-/// in-witness interpretation of a public input.
-fn u256_to_fr(x: U256) -> Fr {
-    let bytes: [u8; 32] = x.to_be_bytes();
-    Fr::from_be_bytes_mod_order(&bytes)
-}
-
-/// `u64 → Fr` for tag and action constants.
-fn u64_to_fr(x: u64) -> Fr {
-    Fr::from(x)
-}
-
-/// `Address → Fr` — the 20-byte address is padded to 32 BE bytes and
-/// mod-reduced into the scalar field.
-fn address_to_fr(addr: Address) -> Fr {
-    let mut buf = [0u8; 32];
-    buf[12..32].copy_from_slice(addr.as_slice());
-    Fr::from_be_bytes_mod_order(&buf)
-}
-
-/// `Fr → U256` via BE-encoded bytes.
-fn fr_to_u256(x: Fr) -> U256 {
-    let be = x.into_bigint().to_bytes_be();
-    let mut out = [0u8; 32];
-    let off = 32 - be.len().min(32);
-    out[off..].copy_from_slice(&be[be.len().saturating_sub(32)..]);
-    U256::from_be_bytes(out)
-}
-
-/// Variadic Poseidon helper. Constructs a fresh `Poseidon` with `inputs.len()`
-/// arity and returns the hash as a `U256` (so callers can store / compare it
-/// in storage directly).
-fn poseidon(inputs: &[Fr]) -> Result<U256> {
-    let mut hasher = Poseidon::<Fr>::new_circom(inputs.len())
-        .map_err(|e| GratisPoolError::PoseidonFailed(e.to_string()))?;
-    let h = hasher
-        .hash(inputs)
-        .map_err(|e| GratisPoolError::PoseidonFailed(e.to_string()))?;
-    Ok(fr_to_u256(h))
-}
+use crate::zkp_utils::{address_to_fr, fr_to_u256, poseidon, u256_to_fr, u64_to_fr};
 
 // ---------------------------------------------------------------------------
 // Public helpers — formulas exposed to runtime / tests
@@ -73,50 +26,42 @@ fn poseidon(inputs: &[Fr]) -> Result<U256> {
 
 /// `commitment = poseidon(TAG_COMMIT_GRATIS, secret, nullifier_secret, denom_id)`.
 pub fn commitment_hash(secret: U256, nullifier_secret: U256, denom_id: u8) -> Result<U256> {
+    let secret_fr = u256_to_fr(secret)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("secret".to_string()))?;
+    let nullifier_secret_fr = u256_to_fr(nullifier_secret)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_secret".to_string()))?;
+
     poseidon(&[
         u64_to_fr(TAG_COMMIT_GRATIS),
-        u256_to_fr(secret),
-        u256_to_fr(nullifier_secret),
+        secret_fr,
+        nullifier_secret_fr,
         u64_to_fr(denom_id as u64),
     ])
 }
 
 /// `nullifier_hash = poseidon(TAG_NULLIFIER_GRATIS, nullifier_secret)`.
 pub fn nullifier_hash(nullifier_secret: U256) -> Result<U256> {
-    poseidon(&[
-        u64_to_fr(TAG_NULLIFIER_GRATIS),
-        u256_to_fr(nullifier_secret),
-    ])
+    let nullifier_secret_fr = u256_to_fr(nullifier_secret)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_secret".to_string()))?;
+    poseidon(&[u64_to_fr(TAG_NULLIFIER_GRATIS), nullifier_secret_fr])
 }
 
 /// `receiver_binding = poseidon(TAG_BINDING, action_tag, target_address, chain_id, nonce)`.
-///
-/// Runtime calls this on the on-chain `(action_tag, target_address,
-/// chain_id, nonce)` and asserts equality against the `receiver_binding`
-/// public input the prover committed to inside the proof. Mismatch means
-/// the proof was built for a different action, destination, or
-/// context-binding payload and must be rejected.
-///
-/// The `nonce` slot is the application-derived context-binding payload:
-///
-/// - `ACTION_REQUEST_CREDIS` — the credis position's `reclaim_commitment`.
-///   This binds the proof to the *exact* reclaim leg the caller is
-///   registering, so a mempool front-runner cannot substitute their own
-///   reclaim commitment and capture the eventual `unpledgeGratis`.
-/// - `ACTION_UNPLEDGE` — `U256::ZERO`. Unpledge is terminal with no
-///   follow-up artifact, so the binding slot stays unused.
 pub fn receiver_binding(
     action_tag: u64,
     target: Address,
     chain_id: u64,
     nonce: U256,
 ) -> Result<U256> {
+    let nonce_fr = u256_to_fr(nonce)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nonce".to_string()))?;
+
     poseidon(&[
         u64_to_fr(TAG_BINDING),
         u64_to_fr(action_tag),
         address_to_fr(target),
         u64_to_fr(chain_id),
-        u256_to_fr(nonce),
+        nonce_fr,
     ])
 }
 
@@ -137,8 +82,8 @@ fn merkle_zeros() -> Result<Vec<U256>> {
         let prev = zeros[i as usize];
         let parent = poseidon(&[
             u64_to_fr(TAG_MERKLE_GRATIS),
-            u256_to_fr(prev),
-            u256_to_fr(prev),
+            u256_to_fr(prev).unwrap(),
+            u256_to_fr(prev).unwrap(),
         ])?;
         zeros.push(parent);
     }
@@ -154,11 +99,11 @@ fn merkle_zeros() -> Result<Vec<U256>> {
 /// produces a different Merkle root for the same `(left, right)` pair and
 /// breaks proof / runtime parity.
 pub fn merkle_node(left: U256, right: U256) -> Result<U256> {
-    let tagged_left = u64_to_fr(TAG_MERKLE_GRATIS) + u256_to_fr(left);
+    let tagged_left = u64_to_fr(TAG_MERKLE_GRATIS) + u256_to_fr(left).unwrap();
     let mut hasher = Poseidon::<Fr>::new_circom(2)
         .map_err(|e| GratisPoolError::PoseidonFailed(e.to_string()))?;
     let h = hasher
-        .hash(&[tagged_left, u256_to_fr(right)])
+        .hash(&[tagged_left, u256_to_fr(right).unwrap()])
         .map_err(|e| GratisPoolError::PoseidonFailed(e.to_string()))?;
     Ok(fr_to_u256(h))
 }
@@ -242,6 +187,14 @@ impl GratisPoolContract<'_> {
     /// PoC search: linear scan over `ROOT_WINDOW` entries. With `ROOT_WINDOW
     /// = 30` that's 30 SLOADs per verify; reasonable until the window grows.
     pub(crate) fn has_root_in_window(&self, denom_id: u8, root: U256) -> Result<bool> {
+        // `0` is never a legitimate root (an empty tree's root is
+        // `merkle_zeros[MERKLE_DEPTH]`, which is non-zero). Reject it
+        // explicitly so an unwritten ring-buffer slot — which reads back as
+        // `U256::ZERO` before the window fills — can never be matched as a
+        // valid historical root.
+        if root == U256::ZERO {
+            return Ok(false);
+        }
         for slot in 0..ROOT_WINDOW {
             let key = GratisPoolContract::level_key(denom_id, slot);
             if self.roots.read(&key)? == root {
