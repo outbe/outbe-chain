@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -103,7 +102,7 @@ contract OriginMessenger is
     // --- Storage getters ---
     /// @notice Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
     /// @return The wired Desis address.
-    function desis() public view returns (address) {
+    function desis() external view returns (address) {
         return _s().desis;
     }
 
@@ -475,9 +474,9 @@ contract OriginMessenger is
 
     /// @notice Self-call shim that decodes and dispatches an inbound message by msgType.
     /// @dev Restricted to self (`msg.sender == address(this)`) so it can be invoked via `this.` from
-    ///      `_lzReceive`, isolating the dispatch in its own call frame. The try/catch that previously
-    ///      caught a dispatch revert here is temporarily removed (see `_lzReceive`), so a revert in
-    ///      this frame currently propagates and reverts the whole inbound delivery.
+    ///      `_lzReceive`, isolating the dispatch in its own call frame. `_lzReceive` wraps this call in
+    ///      a try/catch and emits `InboundMessageDropped` on revert, so a malformed message cannot stall
+    ///      the ORDERED channel (the nonce is already advanced).
     /// @param _guid Unique LayerZero message identifier.
     /// @param _srcEid LayerZero source endpoint id from `_origin`.
     /// @param _message Encoded bridge payload (header + body).
@@ -500,8 +499,8 @@ contract OriginMessenger is
     ///      `_origin.srcEid` so a peer registered for chain X cannot claim a payload originated
     ///      on chain Y (`SrcEidBodyMismatch` reverts the inbound packet). After `processBidsBatch`,
     ///      if the series stage is `BidsReceived` the auction is cleared and `ClearingAutoDispatched`
-    ///      is emitted; the surrounding try/catch is temporarily removed, so a `clearAuction` revert
-    ///      currently propagates rather than emitting `ClearingAutoDispatchFailed`.
+    ///      is emitted; a clearing-side revert is caught locally and surfaced as
+    ///      `ClearingAutoDispatchFailed` without rolling back the bid intake.
     /// @param _guid Unique message identifier
     /// @param _originSrcEid LayerZero source endpoint id from `_origin`
     /// @param _message Encoded bids batch payload

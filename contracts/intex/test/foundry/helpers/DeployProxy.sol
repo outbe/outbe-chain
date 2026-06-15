@@ -46,11 +46,8 @@ library DeployProxy {
         return TargetMessenger(payable(address(proxy)));
     }
 
-    function onftAdapter(address tokenAddr, address lzEndpoint, address delegate, uint32 outbeEid)
-        internal
-        returns (ONFT1155Adapter)
-    {
-        ONFT1155Adapter impl = new ONFT1155Adapter(tokenAddr, lzEndpoint, outbeEid);
+    function onftAdapter(address tokenAddr, address lzEndpoint, address delegate) internal returns (ONFT1155Adapter) {
+        ONFT1155Adapter impl = new ONFT1155Adapter(tokenAddr, lzEndpoint);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155Adapter.initialize, (delegate)));
         return ONFT1155Adapter(payable(address(proxy)));
     }

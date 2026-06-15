@@ -773,8 +773,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
     }
 
-    /// @notice Add a token ID to an owner's owned-series enumeration.
-    /// @dev Add a token ID to owner's owned series list (idempotent).
+    /// @dev Add `tokenId` to `owner`'s owned-series enumeration (idempotent).
     /// @param owner Owner address.
     /// @param tokenId Token ID to add.
     function _addOwnedSeries(address owner, uint256 tokenId) internal {
@@ -786,8 +785,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
     }
 
-    /// @notice Remove a token ID from an owner's owned-series enumeration.
-    /// @dev Remove a token ID from owner's owned series list (swap-and-pop, idempotent).
+    /// @dev Remove `tokenId` from `owner`'s owned-series enumeration (swap-and-pop, idempotent).
     /// @param owner Owner address.
     /// @param tokenId Token ID to remove.
     function _removeOwnedSeries(address owner, uint256 tokenId) internal {
@@ -808,8 +806,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
     }
 
-    /// @notice Add a holder to a series' holder enumeration.
-    /// @dev Add a holder to a series' holder list (idempotent).
+    /// @dev Add `holder` to series `tokenId`'s holder enumeration (idempotent).
     /// @param tokenId Token ID (series).
     /// @param holder Holder address to add.
     function _addSeriesHolder(uint256 tokenId, address holder) internal {
@@ -821,8 +818,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
     }
 
-    /// @notice Remove a holder from a series' holder enumeration.
-    /// @dev Remove a holder from a series' holder list (swap-and-pop, idempotent).
+    /// @dev Remove `holder` from series `tokenId`'s holder enumeration (swap-and-pop, idempotent).
     /// @param tokenId Token ID (series).
     /// @param holder Holder address to remove.
     function _removeSeriesHolder(uint256 tokenId, address holder) internal {

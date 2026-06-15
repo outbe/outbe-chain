@@ -5,6 +5,7 @@ import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -45,6 +46,17 @@ contract MessengersUupsTest is TestHelperOz5 {
         OriginMessenger impl = new OriginMessenger(address(endpoints[OUTBE_EID]), BNB_EID);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(address(this));
+
+        TargetMessenger timpl = new TargetMessenger(address(endpoints[BNB_EID]), OUTBE_EID);
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        timpl.initialize(address(this));
+    }
+
+    function test_RevertWhen_InitializeZeroDelegate() public {
+        OriginMessenger impl = new OriginMessenger(address(endpoints[OUTBE_EID]), BNB_EID);
+        bytes memory initData = abi.encodeCall(OriginMessenger.initialize, (address(0)));
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
+        new ERC1967Proxy(address(impl), initData);
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {
@@ -54,6 +66,13 @@ contract MessengersUupsTest is TestHelperOz5 {
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
         );
         target.upgradeToAndCall(address(newImpl), "");
+
+        OriginMessenger newOriginImpl = new OriginMessenger(address(endpoints[OUTBE_EID]), BNB_EID);
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
+        );
+        origin.upgradeToAndCall(address(newOriginImpl), "");
     }
 
     function test_Upgrade_PreservesWiringPeersAndEndpoint() public {

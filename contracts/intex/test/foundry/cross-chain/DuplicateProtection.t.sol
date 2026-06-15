@@ -66,8 +66,8 @@ contract DuplicateProtectionTest is TestHelperOz5 {
         onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
         onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
-        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);

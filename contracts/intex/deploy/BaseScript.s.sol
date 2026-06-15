@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
-import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {Create3Deploy} from "./Create3Deploy.sol";
 
 /// @title BaseScript
@@ -22,6 +22,7 @@ abstract contract BaseScript is Script {
     /// @notice Deploy the CREATE3 factory deterministically if absent, else return the existing one.
     /// @return factory The CREATE3 factory at its deterministic, cross-chain-identical address.
     function ensureCreate3Factory() public returns (Create3Factory factory) {
+        require(CREATE2_FACTORY.code.length != 0, "Arachnid CREATE2 deployer not present on this chain");
         bytes memory initCode = type(Create3Factory).creationCode;
         address predicted = vm.computeCreate2Address(FACTORY_SALT, keccak256(initCode), CREATE2_FACTORY);
         if (predicted.code.length == 0) {

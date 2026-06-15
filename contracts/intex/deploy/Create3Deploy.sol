@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 
 /// @title Create3Deploy
 /// @author Outbe

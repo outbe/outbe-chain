@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -133,6 +132,7 @@ contract ONFT1155AdapterBatch is
     /// @notice Initializes the proxy: LayerZero delegate, contract owner, and admin role holder.
     /// @param _delegate Owner, endpoint delegate, and receiver of `DEFAULT_ADMIN_ROLE`.
     function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
         __Ownable_init(_delegate);
         __OApp_init(_delegate);
         __AccessControl_init();

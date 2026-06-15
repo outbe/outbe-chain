@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 
 /// @dev Minimal contract used as deployment payload; its constructor arg is part of its init code,
 ///      so two probes with different args have different init code (used to prove the deployed

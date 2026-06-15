@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
@@ -71,9 +71,11 @@ contract DeployFlowTest is TestHelperOz5 {
         address impl = address(new IntexNFT1155());
         bytes memory initData = abi.encodeCall(IntexNFT1155.initialize, (admin, bridger));
         address first = Create3Deploy.deployProxy(factory, address(this), "IntexNFT1155", VERSION, impl, initData);
-        // Second call must not revert and must return the same proxy.
-        address second = Create3Deploy.deployProxy(factory, address(this), "IntexNFT1155", VERSION, impl, initData);
+        // A second call with a DIFFERENT impl must be a no-op: same proxy, original impl left untouched.
+        address impl2 = address(new IntexNFT1155());
+        address second = Create3Deploy.deployProxy(factory, address(this), "IntexNFT1155", VERSION, impl2, initData);
         assertEq(first, second, "redeploy not idempotent");
+        assertEq(_implSlot(second), impl, "idempotent deploy must not re-point impl");
     }
 
     function test_ProxyAddressIndependentOfImpl() public {
@@ -89,5 +91,20 @@ contract DeployFlowTest is TestHelperOz5 {
 
         assertEq(a, predicted, "a != predicted");
         assertEq(b, predicted, "b != predicted");
+    }
+
+    function test_DistinctDeployersGetDistinctAddresses() public {
+        address other = makeAddr("otherDeployer");
+        // The factory namespaces the CREATE3 salt by deployer, so the same prefix+version yields
+        // disjoint address spaces — one deployer cannot squat another's predicted address.
+        address predSelf = Create3Deploy.predictProxy(factory, address(this), "NsTest", VERSION);
+        address predOther = Create3Deploy.predictProxy(factory, other, "NsTest", VERSION);
+        assertTrue(predSelf != predOther, "deployer must namespace the salt");
+
+        // Deploying as this contract occupies only its own namespaced slot; `other`'s stays free.
+        address proxy =
+            Create3Deploy.deployProxy(factory, address(this), "NsTest", VERSION, address(new IntexNFT1155()), "");
+        assertEq(proxy, predSelf, "proxy != predicted");
+        assertEq(predOther.code.length, 0, "another deployer's address must remain free");
     }
 }

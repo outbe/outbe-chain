@@ -107,12 +107,11 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         new ONFT1155AdapterBatch(address(srcToken), address(0));
     }
 
-    /// @notice `_delegate` (also the owner) is rejected by `__Ownable_init` during proxy
-    ///         initialization. Documents that the framework — not an added guard — closes the
-    ///         zero-delegate brick path.
-    function test_Constructor_RevertsZeroDelegate_ViaFramework() public {
+    /// @notice The explicit `ZeroAddress("delegate")` guard in `initialize` rejects a zero
+    ///         delegate/owner during proxy initialization, before `__Ownable_init` would.
+    function test_Initialize_RevertsZeroDelegate() public {
         ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]));
-        vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
         new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155AdapterBatch.initialize, (address(0))));
     }
 

@@ -85,8 +85,8 @@ contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this), bEid);
-        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this), aEid);
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));

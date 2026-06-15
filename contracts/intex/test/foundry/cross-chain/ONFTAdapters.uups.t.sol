@@ -25,7 +25,7 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        adapter = DeployProxy.onftAdapter(tokenA, address(endpoints[A_EID]), admin, B_EID);
+        adapter = DeployProxy.onftAdapter(tokenA, address(endpoints[A_EID]), admin);
         batch = DeployProxy.onftAdapterBatch(tokenA, address(endpoints[A_EID]), admin);
     }
 
@@ -35,7 +35,6 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
         assertTrue(batch.hasRole(batch.DEFAULT_ADMIN_ROLE(), admin));
         assertEq(address(adapter.token()), tokenA);
         assertEq(address(batch.token()), tokenA);
-        assertEq(adapter.OUTBE_EID(), B_EID);
     }
 
     function test_RevertWhen_InitializeCalledTwice() public {
@@ -46,13 +45,17 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        ONFT1155Adapter impl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]), B_EID);
+        ONFT1155Adapter impl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
+
+        ONFT1155AdapterBatch batchImpl = new ONFT1155AdapterBatch(tokenA, address(endpoints[A_EID]));
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        batchImpl.initialize(admin);
     }
 
     function test_RevertWhen_AdapterUpgradeByNonOwner() public {
-        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]), B_EID);
+        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]));
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, stranger));
         adapter.upgradeToAndCall(address(newImpl), "");
@@ -71,7 +74,7 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
         vm.prank(admin);
         adapter.setPeer(B_EID, addressToBytes32(address(0xBEEF)));
 
-        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]), B_EID);
+        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(endpoints[A_EID]));
         vm.prank(admin);
         adapter.upgradeToAndCall(address(newImpl), "");
 

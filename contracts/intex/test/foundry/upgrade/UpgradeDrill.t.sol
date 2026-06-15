@@ -16,6 +16,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {
     UPGRADE_PROBE,
     IntexNFT1155V2,
+    IntexNFT1155V2Reinit,
     IntexAuctionV2,
     EscrowAdapterV2,
     OriginMessengerV2,
@@ -73,6 +74,28 @@ contract UpgradeDrillTest is TestHelperOz5 {
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
+    }
+
+    /// @dev Exercises the `upgradeToAndCall` init-data path: upgrade runs a `reinitializer(2)`
+    ///      migration that sets a new v2 field, while pre-upgrade state survives.
+    function test_Drill_IntexNFT1155_ReinitializerPath() public {
+        IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
+        address holder = makeAddr("holder");
+
+        vm.startPrank(admin);
+        nft.createSeries(7, 100, 0);
+        nft.mint(holder, 3, 7);
+        vm.stopPrank();
+
+        IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
+        vm.prank(admin);
+        nft.upgradeToAndCall(address(newImpl), abi.encodeCall(IntexNFT1155V2Reinit.initializeV2, (UPGRADE_PROBE)));
+
+        bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
+        assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
+        assertEq(IntexNFT1155V2Reinit(address(nft)).migratedFlag(), UPGRADE_PROBE, "reinitializer did not run");
+        assertEq(nft.balanceOf(holder, 7), 3, "balance lost across reinit");
+        assertEq(nft.totalSupply(7), 3, "supply lost across reinit");
     }
 
     function test_Drill_IntexAuction() public {
@@ -173,17 +196,16 @@ contract UpgradeDrillTest is TestHelperOz5 {
         assertEq(address(target.auction()), auction, "auction wiring lost");
         assertEq(address(target.escrowAdapter()), escrow, "escrow wiring lost");
         assertEq(target.peers(A_EID), addressToBytes32(address(0xCAFE)), "peer lost");
-        assertEq(target.OUTBE_EID(), A_EID, "immutable lost");
     }
 
     function test_Drill_ONFT1155Adapter() public {
         address tokenAddr = makeAddr("token");
-        ONFT1155Adapter adapter = DeployProxy.onftAdapter(tokenAddr, address(endpoints[A_EID]), admin, B_EID);
+        ONFT1155Adapter adapter = DeployProxy.onftAdapter(tokenAddr, address(endpoints[A_EID]), admin);
 
         vm.prank(admin);
         adapter.setPeer(B_EID, addressToBytes32(address(0xBEEF)));
 
-        ONFT1155AdapterV2 newImpl = new ONFT1155AdapterV2(tokenAddr, address(endpoints[A_EID]), B_EID);
+        ONFT1155AdapterV2 newImpl = new ONFT1155AdapterV2(tokenAddr, address(endpoints[A_EID]));
         vm.prank(admin);
         adapter.upgradeToAndCall(address(newImpl), "");
 

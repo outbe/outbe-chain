@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {console} from "forge-std/console.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
@@ -56,7 +56,7 @@ contract DeployBsc is BaseScript {
             factory,
             deployer,
             "ONFT1155Adapter",
-            address(new ONFT1155Adapter(nft, lzEndpoint, outbeEid)),
+            address(new ONFT1155Adapter(nft, lzEndpoint)),
             abi.encodeCall(ONFT1155Adapter.initialize, (delegate))
         );
         address onftBatch = deployProxy(

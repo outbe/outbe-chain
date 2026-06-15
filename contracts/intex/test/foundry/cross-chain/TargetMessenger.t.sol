@@ -124,7 +124,6 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     // --- Constructor Tests ---
     function test_constructor() public view {
-        assertEq(bnbAdapter.OUTBE_EID(), outbeEid);
         assertTrue(bnbAdapter.hasRole(bnbAdapter.DEFAULT_ADMIN_ROLE(), admin));
     }
 

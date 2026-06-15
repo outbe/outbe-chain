@@ -143,8 +143,8 @@ contract PatternADeferTest is TestHelperOz5 {
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
+        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
 
         address[] memory onfts = new address[](2);
         onfts[0] = address(onftBnb);
@@ -392,8 +392,7 @@ contract PatternADeferTest is TestHelperOz5 {
 
     function test_ONFT_ComposeDeferredOnDuplicateSendCompose() public {
         // Wire a third srcEid so the same guid can be delivered from a second peer.
-        ONFT1155Adapter onftThird =
-            DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[THIRD_EID]), admin, BNB_EID);
+        ONFT1155Adapter onftThird = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[THIRD_EID]), admin);
         address[] memory triple = new address[](2);
         triple[0] = address(onftBnb);
         triple[1] = address(onftThird);

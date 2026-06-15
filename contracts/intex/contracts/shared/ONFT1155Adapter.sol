@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {
@@ -43,8 +42,6 @@ contract ONFT1155Adapter is
 
     /// @notice The ERC1155 token this adapter debits on send and credits on receive.
     IERC1155Bridgeable public immutable token;
-    /// @notice LayerZero endpoint ID of the Outbe chain.
-    uint32 public immutable OUTBE_EID;
 
     /// @notice Snapshot of an inbound compose forward whose `endpoint.sendCompose` reverted.
     /// @dev `done` distinguishes "still pending" from "already flushed"; on flush the slot is
@@ -137,17 +134,17 @@ contract ONFT1155Adapter is
     event CreditRetried(bytes32 indexed guid);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _token, address _lzEndpoint, uint32 _outbeEid) OAppUpgradeable(_lzEndpoint) {
+    constructor(address _token, address _lzEndpoint) OAppUpgradeable(_lzEndpoint) {
         // `token` is immutable: a zero address would permanently brick this adapter.
         if (_token == address(0)) revert ZeroAddress("token");
         token = IERC1155Bridgeable(_token);
-        OUTBE_EID = _outbeEid;
         _disableInitializers();
     }
 
     /// @notice Initializes the proxy: LayerZero delegate and contract owner.
     /// @param _delegate Owner and endpoint delegate.
     function initialize(address _delegate) external initializer {
+        if (_delegate == address(0)) revert ZeroAddress("delegate");
         __Ownable_init(_delegate);
         __OApp_init(_delegate);
         __ReentrancyGuard_init();

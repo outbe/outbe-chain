@@ -49,9 +49,7 @@ contract TargetMessengerV2 is TargetMessenger {
 }
 
 contract ONFT1155AdapterV2 is ONFT1155Adapter {
-    constructor(address tokenAddr, address lzEndpoint, uint32 outbeEid)
-        ONFT1155Adapter(tokenAddr, lzEndpoint, outbeEid)
-    {}
+    constructor(address tokenAddr, address lzEndpoint) ONFT1155Adapter(tokenAddr, lzEndpoint) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
@@ -63,5 +61,32 @@ contract ONFT1155AdapterBatchV2 is ONFT1155AdapterBatch {
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
+    }
+}
+
+/// @dev v1.1 stub that exercises the `upgradeToAndCall` init-data path: it appends a field in a
+///      fresh ERC-7201 namespace and sets it from a `reinitializer(2)` migration entrypoint.
+contract IntexNFT1155V2Reinit is IntexNFT1155 {
+    /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155V2Reinit
+    struct V2Storage {
+        uint256 migratedFlag;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _V2_SLOT = 0xa6131e184e5aae318840a83507194e5ed64c56b50a1ac526e8c519cdd8bb2200;
+
+    function _v2() private pure returns (V2Storage storage $) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            $.slot := _V2_SLOT
+        }
+    }
+
+    function initializeV2(uint256 flag) external reinitializer(2) {
+        _v2().migratedFlag = flag;
+    }
+
+    function migratedFlag() external view returns (uint256) {
+        return _v2().migratedFlag;
     }
 }

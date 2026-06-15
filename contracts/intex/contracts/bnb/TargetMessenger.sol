@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -369,18 +368,16 @@ contract TargetMessenger is
             uint16 minIntexBidQuantity
         ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
 
-        _s().auction
-            .auctionStart(
-                seriesId,
-                IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd}),
-                IIntexAuction.AuctionParams({
-                    intexSize: intexSize,
-                    minIntexBidPrice: minIntexBidPrice,
-                    intexStrikePrice: intexStrikePrice,
-                    coenPriceFloor: coenPriceFloor,
-                    minIntexBidQuantity: minIntexBidQuantity
-                })
-            );
+        IIntexAuction.AuctionSchedule memory schedule =
+            IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd});
+        IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            intexSize: intexSize,
+            minIntexBidPrice: minIntexBidPrice,
+            intexStrikePrice: intexStrikePrice,
+            coenPriceFloor: coenPriceFloor,
+            minIntexBidQuantity: minIntexBidQuantity
+        });
+        _s().auction.auctionStart(seriesId, schedule, params);
 
         emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }

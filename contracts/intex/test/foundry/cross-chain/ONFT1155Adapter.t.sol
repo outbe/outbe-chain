@@ -48,8 +48,8 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this), bEid);
-        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this), aEid);
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this));
 
         // Grant RELAYER_ROLE to adapters
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
@@ -84,7 +84,7 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
     function test_constructor_revertsZeroToken() public {
         // Property of the implementation constructor — the token immutable is set there.
         vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "token"));
-        new ONFT1155Adapter(address(0), address(endpoints[aEid]), bEid);
+        new ONFT1155Adapter(address(0), address(endpoints[aEid]));
     }
 
     function test_send() public {

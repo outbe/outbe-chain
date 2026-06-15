@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
+// Vendored from Solady (https://github.com/Vectorized/solady, src/utils/CREATE3.sol).
+// Do not edit; re-vendor from a tagged upstream release if updating.
+
 /// @notice Deterministic deployments agnostic to the initialization code.
 /// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/CREATE3.sol)
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/CREATE3.sol)
