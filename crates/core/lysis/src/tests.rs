@@ -630,6 +630,91 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     );
 }
 
+/// Multi-FI scenario: 100 distinct-nominal tributes spread across 15 fidelity
+/// indices, 32% gratis allocation.
+#[test]
+fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation() {
+    use std::collections::BTreeMap;
+
+    // Distinct nominals 1..=100 COEN. Sum = 5050 COEN; 32% = 1616 COEN exactly.
+    let nominal_amounts: Vec<U256> = (1u64..=100).map(U256::in_units).collect();
+    // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
+    // FIs 11..=15 each get 6 — covers every bucket with uneven population.
+    let tribute_fis: Vec<u64> = (0u64..100).map(|i| (i % 15) + 1).collect();
+    let total_interest: U256 = nominal_amounts
+        .iter()
+        .copied()
+        .fold(U256::ZERO, |acc, v| acc + v);
+    debug_assert_eq!(total_interest, U256::in_units(5050u64));
+
+    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
+    debug_assert_eq!(gratis_allocation, U256::in_units(1616u64));
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    // 1. Every distinct FI must appear in the map.
+    assert_eq!(
+        map.len(),
+        15,
+        "every FI bucket present in input must receive a fraction"
+    );
+    for fi in 1u64..=15 {
+        assert!(map.contains_key(&fi), "FI {fi} missing from fraction map");
+    }
+
+    // 2. Every fraction must be positive — the I256 pipeline must not collapse
+    //    any group to zero, and the moment solver must not produce a negative
+    //    that clamps to 0 (would starve a whole FI bucket).
+    for (fi, frac) in &map {
+        assert!(
+            *frac > 0,
+            "FI {fi} got zero fraction: algorithm collapsed a group (got {frac})"
+        );
+    }
+
+    // 3. Algorithm-level budget invariant. Reconstruct the y_fp vector exactly
+    //    as the runtime does (BTreeMap-ordered group share with the truncation
+    //    delta absorbed into the last entry) and assert the normalized
+    //    `Σ(f_g · y_fp_g)/SCALE ≤ f_fp` post-condition. This is the
+    //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
+    let mut group_interest: BTreeMap<u64, U256> = BTreeMap::new();
+    for (i, &fi) in tribute_fis.iter().enumerate() {
+        *group_interest.entry(fi).or_insert(U256::ZERO) += nominal_amounts[i];
+    }
+    let mut y_fp: Vec<u128> = group_interest
+        .values()
+        .map(|gi| (*gi * SCALE_1E18 / total_interest).to::<u128>())
+        .collect();
+    let y_sum: u128 = y_fp.iter().sum();
+    if let Some(last) = y_fp.last_mut() {
+        if y_sum < SCALE {
+            *last += SCALE - y_sum;
+        }
+    }
+    let scale_u = U256::from(SCALE);
+    let weighted: U256 = group_interest
+        .keys()
+        .zip(y_fp.iter())
+        .map(|(fi, y)| {
+            let f = map.get(fi).copied().unwrap_or(0);
+            U256::from(f) * U256::from(*y) / scale_u
+        })
+        .sum();
+    let f_fp = U256::from(SCALE * 32 / 100); // 0.32 * 10^18
+    assert!(
+        weighted <= f_fp,
+        "weighted Σ(f·y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
+    );
+
+    println!("100-tribute / 15-FI fraction map: {:?}", map);
+    println!("weighted Σ(f·y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
+}
 
 /// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
 /// floor must adapt DOWN so the whole — small — allocation is loaded onto the
