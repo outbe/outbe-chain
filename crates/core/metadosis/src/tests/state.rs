@@ -177,7 +177,7 @@ fn test_calculate_metadosis_green_day() {
         let day_limit = U256::from(5_000u64);
 
         let calc = m
-            .calculate_metadosis_details(wwd, tribute_total, day_limit)
+            .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
 
         // SYMBOLIC_RATE = 32, GREEN day:
@@ -209,7 +209,7 @@ fn test_calculate_metadosis_red_day() {
         let day_limit = U256::from(5_000u64);
 
         let calc = m
-            .calculate_metadosis_details(wwd, tribute_total, day_limit)
+            .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
         let (allocation, remainder) = (
             calc.day_gratis_allocation,
@@ -244,7 +244,7 @@ fn test_calculate_metadosis_unknown_day_type_errors() {
         let day_limit = U256::from(5_000u64);
 
         assert!(m
-            .calculate_metadosis_details(wwd, tribute_total, day_limit)
+            .calculate_metadosis(wwd, tribute_total, day_limit)
             .is_err());
     });
 }

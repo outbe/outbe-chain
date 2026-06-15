@@ -32,7 +32,7 @@ pub struct MetadosisCalculation {
 
 impl MetadosisContract<'_> {
     /// Core metadosis calculation for a worldwide day.
-    pub fn calculate_metadosis_details(
+    pub fn calculate_metadosis(
         &self,
         wwd: WorldwideDay,
         tribute_nominal_total: U256,
@@ -420,8 +420,7 @@ fn process_metadosis(
     let effective_day_limit = day_limit;
 
     let tribute_nominal_total = day_totals.tribute_nominal_amount;
-    let calc =
-        metadosis.calculate_metadosis_details(wwd, tribute_nominal_total, effective_day_limit)?;
+    let calc = metadosis.calculate_metadosis(wwd, tribute_nominal_total, effective_day_limit)?;
 
     match outbe_lysis::runtime::lysis(metadosis.storage.clone(), wwd, calc.day_gratis_allocation) {
         Ok(lysis_result) => {
