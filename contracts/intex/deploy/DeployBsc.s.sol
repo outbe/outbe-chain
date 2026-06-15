@@ -14,16 +14,18 @@ import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
 /// @title DeployBsc
 /// @author Outbe
 /// @notice Deploy the BNB-side intex contracts as UUPS proxies through the CREATE3 factory.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, ADMIN_ADDRESS, BRIDGER_ADDRESS, DELEGATE_ADDRESS, LZ_ENDPOINT,
-///      OUTBE_EID (the remote endpoint id for the BNB-side LayerZero contracts). Wiring (peers,
-///      escrow/compact/vault, roles) is a separate step.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, OUTBE_EID (the remote endpoint id for the BNB-side
+///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE), the owner / LZ
+///      delegate, and the initial bridger (RELAYER_ROLE). Wiring (peers, escrow/compact/vault,
+///      roles) is a separate step.
 contract DeployBsc is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-        address bridger = vm.envAddress("BRIDGER_ADDRESS");
-        address delegate = vm.envAddress("DELEGATE_ADDRESS");
+        // The deployer holds every privileged role at deploy time: admin, owner/LZ delegate, bridger.
+        address admin = deployer;
+        address bridger = deployer;
+        address delegate = deployer;
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
 

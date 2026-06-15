@@ -12,15 +12,17 @@ import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 /// @title DeployOutbe
 /// @author Outbe
 /// @notice Deploy the Outbe-side intex contracts as UUPS proxies through the CREATE3 factory.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, ADMIN_ADDRESS, BRIDGER_ADDRESS, DELEGATE_ADDRESS, LZ_ENDPOINT,
-///      BNB_EID (the remote endpoint id for the Outbe-side LayerZero contracts). Wiring is separate.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID (the remote endpoint id for the Outbe-side
+///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE), the owner / LZ
+///      delegate, and the initial bridger (RELAYER_ROLE). Wiring is separate.
 contract DeployOutbe is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-        address bridger = vm.envAddress("BRIDGER_ADDRESS");
-        address delegate = vm.envAddress("DELEGATE_ADDRESS");
+        // The deployer holds every privileged role at deploy time: admin, owner/LZ delegate, bridger.
+        address admin = deployer;
+        address bridger = deployer;
+        address delegate = deployer;
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
 

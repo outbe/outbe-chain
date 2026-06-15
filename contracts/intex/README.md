@@ -118,7 +118,7 @@ forge script deploy/DeployBsc.s.sol --rpc-url <bsc-rpc> --broadcast
 forge script deploy/DeployOutbe.s.sol --rpc-url <outbe-rpc> --broadcast
 ```
 
-Env: `DEPLOYER_PRIVATE_KEY`, `ADMIN_ADDRESS`, `BRIDGER_ADDRESS`, `DELEGATE_ADDRESS`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
+Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). The deployer is the admin (`DEFAULT_ADMIN_ROLE`), owner / LZ delegate, and initial bridger (`RELAYER_ROLE`), so no separate admin/delegate/bridger addresses are passed. Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
 
 ### Upgrade safety
 
