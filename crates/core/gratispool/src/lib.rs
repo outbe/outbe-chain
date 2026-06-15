@@ -21,14 +21,9 @@ pub mod runtime;
 pub mod schema;
 pub mod state;
 
-// `verifier` is `pub` only under the `test-helpers` feature so other crates'
-// integration tests can override the verifier outcome. Production builds keep
-// it crate-private — the only entry point into proof verification is through
-// the `runtime::verify_and_spend_*` functions.
-#[cfg(feature = "test-helpers")]
+pub(crate) mod zkp_utils;
+
 pub mod verifier;
-#[cfg(not(feature = "test-helpers"))]
-mod verifier;
 
 pub use errors::GratisPoolError;
 pub use runtime::SpendArgs;

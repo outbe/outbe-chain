@@ -194,12 +194,12 @@ ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
 either = "1"
 
 # ZK / Poseidon
-outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.0.2" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-outbe-zk-circuit-noir = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-outbe-crypto-common = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-ark-bn254 = "0.5"
-ark-ff = { version = "0.5", features = ["std"] }
+outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.10.0" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
+outbe-zk-circuit-noir = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
+outbe-crypto-common = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
+ark-bn254 = "0.6"
+ark-ff = { version = "0.6", features = ["std"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

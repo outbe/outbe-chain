@@ -25,12 +25,16 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::constants::{denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE};
+use crate::constants::{
+    denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_COMMIT_GRATIS, TAG_MERKLE_GRATIS,
+    TAG_NULLIFIER_GRATIS,
+};
 use crate::errors::GratisPoolError;
 use crate::precompile::emit_commitment_inserted;
 use crate::schema::GratisPoolContract;
 use crate::state::receiver_binding;
 use crate::verifier;
+use crate::zkp_utils::u256_to_fr;
 
 /// ABI-shape of a spend proof (same shape for both `requestCredis` and
 /// `unpledgeGratis`). Reused from the precompile dispatch path; lives on the
@@ -139,6 +143,13 @@ fn verify_and_spend(
 ) -> Result<U256> {
     let amount = denomination(args.denom_id).ok_or(GratisPoolError::DenomUnknown)?;
 
+    u256_to_fr(args.merkle_root)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("merkle_root".to_string()))?;
+    u256_to_fr(args.nullifier_hash)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_hash".to_string()))?;
+    u256_to_fr(args.receiver_binding)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("receiver_binding".to_string()))?;
+
     // 1. The proof's receiver_binding public input must match what the
     //    runtime recomputes for this call.
     let chain_id = storage.chain_id()?;
@@ -154,27 +165,28 @@ fn verify_and_spend(
         return Err(GratisPoolError::RootStale.into());
     }
 
-    // 3. The nullifier must not already be spent.
-    if !pool.nullifier_spent.insert(args.nullifier_hash)? {
-        return Err(GratisPoolError::NullifierSpent.into());
-    };
-
-    // 4. The proof must verify against the committed gratis-pool VK *and*
-    //    against the four runtime-authoritative public inputs. The
-    //    verifier prepends them to the proof body so the binding is
-    //    atomic — a proof valid for some other (root, nullifier, denom,
-    //    binding) tuple cannot be replayed against this call's `args`.
-    //    Order matches circuit declaration order in the upstream
+    // 3. The proof must verify against the VK *and* against runtime-authoritative
+    //    public inputs. The verifier prepends them to the proof body,
+    //    so the binding is atomic — a proof valid for some other (root, nullifier, denom,
+    //    binding, tag-triple) tuple cannot be replayed against this call's
+    //    `args`. Order matches circuit declaration order in the upstream
     //    `outbe-commitment-nullifier-circuit::main` (see `outbe-circuits`).
     let public_inputs: [U256; verifier::NUM_PUBLIC_INPUTS] = [
         args.merkle_root,
         args.nullifier_hash,
         U256::from(args.denom_id),
         args.receiver_binding,
+        U256::from(TAG_COMMIT_GRATIS),
+        U256::from(TAG_NULLIFIER_GRATIS),
+        U256::from(TAG_MERKLE_GRATIS),
     ];
-    if !verifier::verify(&public_inputs, &args.proof) {
-        return Err(GratisPoolError::ProofInvalid.into());
-    }
+    verifier::verify(&public_inputs, &args.proof)?;
+
+    // 4. Consume the nullifier last. `Set::insert` returns `false` if it was
+    //    already present, which is the double-spend rejection.
+    if !pool.nullifier_spent.insert(args.nullifier_hash)? {
+        return Err(GratisPoolError::NullifierSpent.into());
+    };
 
     Ok(amount)
 }

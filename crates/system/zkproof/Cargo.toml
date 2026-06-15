@@ -21,3 +21,11 @@ ark-ff.workspace = true
 # build time.
 outbe-zk-canonical.workspace = true
 outbe-zk-circuit-noir.workspace = true
+
+# Developer tooling: the `regen_ownership_fixture` example produces the
+# OWNERSHIP proof bytes that `tests/fixtures/ownership.bin` ships.
+# Re-run whenever `outbe-circuits` or its Noir/Barretenberg backend
+# bumps something that changes the OWNERSHIP combined-proof format.
+[dev-dependencies]
+outbe-crypto-common.workspace = true
+rand.workspace = true
