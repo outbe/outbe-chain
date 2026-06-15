@@ -47,6 +47,7 @@ clean: ## Clean up forge artifacts
 
 .PHONY: clean-all
 clean-all: clean  ## Clean all build artifacts, and caches
+	forge soldeer clean
 	rm -rf ./out
 	rm -rf ./build
 	rm -rf ./cache
