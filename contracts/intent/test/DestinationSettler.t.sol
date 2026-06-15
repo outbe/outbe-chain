@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import {Test} from "forge-std/Test.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 import {BaseTest} from "./BaseTest.sol";
@@ -20,7 +19,7 @@ event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
 event Refund(bytes32[] orderIds);
 
 contract DestinationSettlerForTest is DestinationSettler {
-    uint32 private immutable _fixedLocalDomain;
+    uint32 private immutable _FIXED_LOCAL_DOMAIN;
     IAuction private _auctionContract;
     ISolverEscrow private _solverEscrowContract;
 
@@ -29,12 +28,12 @@ contract DestinationSettlerForTest is DestinationSettler {
     bytes[] public dispatchedOrdersFillerData;
 
     constructor(uint32 fixedDomain, address auction_) {
-        _fixedLocalDomain = fixedDomain;
+        _FIXED_LOCAL_DOMAIN = fixedDomain;
         _auctionContract = IAuction(auction_);
     }
 
     function _localDomain() internal view override returns (uint32) {
-        return _fixedLocalDomain;
+        return _FIXED_LOCAL_DOMAIN;
     }
 
     function _auction() internal view override returns (IAuction) {

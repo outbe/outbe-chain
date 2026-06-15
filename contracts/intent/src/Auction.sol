@@ -57,8 +57,12 @@ contract Auction is IAuction, Ownable2Step {
     // ============ Modifiers ============
 
     modifier onlyRouter() {
-        if (msg.sender != router) revert UnauthorizedRouter();
+        _onlyRouter();
         _;
+    }
+
+    function _onlyRouter() internal view {
+        if (msg.sender != router) revert UnauthorizedRouter();
     }
 
     // ============ Constructor ============
@@ -96,6 +100,7 @@ contract Auction is IAuction, Ownable2Step {
         bytes32 commitHash = _commits[orderId][epoch][msg.sender];
         if (commitHash == bytes32(0)) revert NotCommitted();
 
+        // TODO fix note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
         bytes32 expected = keccak256(abi.encode(orderId, outputAmount, salt));
         if (commitHash != expected) revert InvalidReveal();
 

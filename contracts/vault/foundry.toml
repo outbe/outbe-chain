@@ -29,8 +29,8 @@ outbe-peira = "https://rpc.testnet.outbe.net"
 bsc-testnet = "https://bsc-testnet.bnbchain.org"
 
 [lint]
-exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode"]
-ignore = ['test/**/*.sol']
+#exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode"]
+#ignore = ['test/**/*.sol']
 
 [fuzz]
 runs = 1000

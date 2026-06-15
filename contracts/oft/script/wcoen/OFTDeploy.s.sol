@@ -72,11 +72,11 @@ contract OFTDeploy is Script {
         return keccak256(bytes(vm.envOr("WCOEN_ADAPTER_CREATE2_SALT", string("WCOEN_OFT_ADAPTER"))));
     }
 
-    function _getWcoenCreationCode() internal view returns (bytes memory) {
+    function _getWcoenCreationCode() internal returns (bytes memory) {
         return type(WCOEN).creationCode;
     }
 
-    function _getAdapterCreationCode(address token) internal view returns (bytes memory) {
+    function _getAdapterCreationCode(address token) internal returns (bytes memory) {
         address owner = vm.envAddress("DEPLOYER_ADDRESS");
         address endpoint = vm.envAddress("LZ_ENDPOINT");
         return abi.encodePacked(type(OFTAdapter).creationCode, abi.encode(token, endpoint, owner));
@@ -84,7 +84,6 @@ contract OFTDeploy is Script {
 
     function _getOftCreationCode(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (bytes memory)
     {
         address owner = vm.envAddress("DEPLOYER_ADDRESS");
@@ -95,7 +94,6 @@ contract OFTDeploy is Script {
 
     function _predictOutbe(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (address predicted, bytes32 salt, bytes memory creationCode)
     {
         salt = _getOftCreate2Salt();
@@ -103,7 +101,7 @@ contract OFTDeploy is Script {
         predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
     }
 
-    function _predictSource() internal view returns (SourceDeployment memory source) {
+    function _predictSource() internal returns (SourceDeployment memory source) {
         address configuredToken = vm.envOr("WCOEN_TOKEN", address(0));
         if (configuredToken == address(0)) {
             source.tokenSalt = _getWcoenCreate2Salt();
@@ -178,7 +176,7 @@ contract OFTDeploy is Script {
     }
 
     /// @notice Predict CREATE2 addresses for source-side WCOEN and Outbe OFTAdapter.
-    function predictSource() external view returns (address sourceToken, address adapter) {
+    function predictSource() external returns (address sourceToken, address adapter) {
         SourceDeployment memory source = _predictSource();
         sourceToken = source.token;
         adapter = source.adapter;
@@ -196,7 +194,7 @@ contract OFTDeploy is Script {
     }
 
     /// @notice Predict the CREATE2 address for WCOENOFT on BSC using env metadata.
-    function predictOutbe() external view returns (address oftToken) {
+    function predictOutbe() external returns (address oftToken) {
         string memory oftName = vm.envOr("OFT_NAME", string("WCOEN"));
         string memory oftSymbol = vm.envOr("OFT_SYMBOL", string("WCOEN"));
         uint8 oftDecimals = _getOftDecimals();
@@ -236,7 +234,6 @@ contract OFTDeploy is Script {
 
     function _predictOutbeAndLog(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
         internal
-        view
         returns (address oftToken)
     {
         bytes32 salt;
