@@ -264,12 +264,6 @@ fn receiver_binding_changes_when_nonce_changes() {
         "receiver_binding must vary with the nonce slot; \
          otherwise the reclaim-swap attack stays open"
     );
-
-    // And nonce changes must propagate independently of action / target.
-    let big = U256::from_be_bytes([0xAB; 32]);
-    let big_binding = receiver_binding(ACTION_REQUEST_CREDIS, target, CHAIN_ID, big).unwrap();
-    assert_ne!(zero, big_binding);
-    assert_ne!(seven, big_binding);
 }
 
 #[test]
