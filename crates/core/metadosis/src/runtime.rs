@@ -32,7 +32,7 @@ pub struct MetadosisCalculation {
 
 impl MetadosisContract<'_> {
     /// Core metadosis calculation for a worldwide day.
-    pub fn calculate_metadosis_details(
+    pub fn calculate_metadosis(
         &self,
         wwd: WorldwideDay,
         tribute_nominal_total: U256,
@@ -64,23 +64,6 @@ impl MetadosisContract<'_> {
             day_gratis_allocation: allocation,
             day_metadosis_limit_remainder: remainder,
         })
-    }
-
-    /// Returns (gratis_allocation, remainder) where:
-    /// - gratis_allocation = min(demand, limit) adjusted for RED days
-    /// - remainder = limit - gratis_allocation
-    pub fn calculate_metadosis(
-        &self,
-        wwd: WorldwideDay,
-        tribute_nominal_total: U256,
-        day_metadosis_limit: U256,
-    ) -> Result<(U256, U256)> {
-        let calc =
-            self.calculate_metadosis_details(wwd, tribute_nominal_total, day_metadosis_limit)?;
-        Ok((
-            calc.day_gratis_allocation,
-            calc.day_metadosis_limit_remainder,
-        ))
     }
 
     /// Returns effective lookback and offering hours based on chain identity.
@@ -437,8 +420,7 @@ fn process_metadosis(
     let effective_day_limit = day_limit;
 
     let tribute_nominal_total = day_totals.tribute_nominal_amount;
-    let calc =
-        metadosis.calculate_metadosis_details(wwd, tribute_nominal_total, effective_day_limit)?;
+    let calc = metadosis.calculate_metadosis(wwd, tribute_nominal_total, effective_day_limit)?;
 
     match outbe_lysis::runtime::lysis(metadosis.storage.clone(), wwd, calc.day_gratis_allocation) {
         Ok(lysis_result) => {

@@ -1,4 +1,5 @@
-use crate::algorithm::{calc_fraction_distribution_fp, LYSIS_LIMIT_MAX, LYSIS_LIMIT_MIN};
+use crate::algorithm::calc_fraction_distribution_fp;
+use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_oracle::{contract::OracleContract, scurve};
@@ -68,64 +69,14 @@ pub fn lysis(
         });
     }
 
-    // 3. Group tributes by fidelity index (sorted ascending for algorithm stability)
-    let mut fi_groups: std::collections::BTreeMap<u64, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for (i, &fi) in tribute_fis.iter().enumerate() {
-        fi_groups.entry(fi).or_default().push(i);
-    }
-
-    // 4. Prepare distribution parameters in fixed-point (SCALE = 10^18)
-    let sorted_fis: Vec<u64> = fi_groups.keys().copied().collect();
-    let mut y_fp: Vec<u128> = Vec::with_capacity(sorted_fis.len());
-    let mut p: Vec<u64> = Vec::with_capacity(sorted_fis.len());
-
-    for &fi in &sorted_fis {
-        let indices = &fi_groups[&fi];
-        let group_interest: U256 = indices
-            .iter()
-            .map(|&i| tributes[i].nominal_amount_minor)
-            .fold(U256::ZERO, |acc, v| acc + v);
-        // y_fp = group_interest * SCALE / total_interest (integer division truncates)
-        let share = (group_interest * SCALE_1E18 / total_interest).to::<u128>();
-        y_fp.push(share);
-        p.push(indices.len() as u64);
-    }
-
-    // normalize y_fp so sum == SCALE exactly. Integer division in the
-    // loop above truncates each share; the missing delta is absorbed into the
-    // last share. Deterministic because `sorted_fis` is BTreeMap-ordered on all
-    // nodes. Guarantees the downstream `calc_fraction_distribution_fp` invariant
-    // `sum(y_fp) == SCALE`.
-    let y_sum: u128 = y_fp.iter().sum();
-    if let Some(last) = y_fp.last_mut() {
-        if y_sum < SCALE_1E18_U128 {
-            *last += SCALE_1E18_U128 - y_sum;
-        }
-        // y_sum > SCALE is unreachable: each share is ≤ group/total ≤ 1.
-    }
-
-    let nt = tributes.len();
-
-    // 5. Deficit coefficient in fixed-point → clamp to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2]
-    // Clamp at U256 level before downcast to avoid silent u128 truncation.
-    //.clamp(MIN, MAX/2) — MIN is the floor guarantee, MAX/2 is the ceiling.
-    let deficit_u256 = gratis_allocation * SCALE_1E18 / total_interest;
-    let deficit_fp = deficit_u256.min(U256::from(u128::MAX)).to::<u128>();
-    let f_fp = deficit_fp.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    let fmax_fp = LYSIS_LIMIT_MAX;
-
-    // 6. Run distribution algorithm (pure integer)
-    let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;
-
-    // 7. Build FI → fraction map (fixed-point)
-    let mut fi_fraction_map: std::collections::HashMap<u64, u128> =
-        std::collections::HashMap::with_capacity(sorted_fis.len());
-    for (i, &fi) in sorted_fis.iter().enumerate() {
-        if let Some(&frac) = fractions.get(i) {
-            fi_fraction_map.insert(fi, frac);
-        }
-    }
+    // 3-7. Compute the FI → gratis-fraction map from the tribute amounts.
+    let nominal_amounts: Vec<U256> = tributes.iter().map(|t| t.nominal_amount_minor).collect();
+    let fi_fraction_map = compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )?;
 
     // 8. Resolve entry_price_minor
     let entry_price_minor = resolve_entry_price_minor(storage.clone(), wwd)?;
@@ -154,8 +105,8 @@ pub fn lysis(
         remaining -= gratis_load;
 
         // floor_price = max(tribute_price, entry_price) * (1 + floor_rate 8%)
-        let floor_basis = tribute.tribute_price_minor.max(entry_price_minor);
-        let floor_price_minor = floor_basis * U256::from(108u64) / U256::from(100u64);
+        let floor_price_minor =
+            calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
 
         // fidelity is capped to u32::MAX on write (see
         // `outbe_fidelity::FidelityContract::set_fidelity_index`), so the
@@ -205,6 +156,79 @@ pub fn lysis(
         tribute_ids,
         remaining_gratis: remaining,
     })
+}
+
+/// Computes the FI → gratis-fraction map (fixed-point, SCALE = 10^18) from each
+/// tribute's nominal amount and fidelity index. Pure integer math; deterministic
+/// across nodes.
+///
+/// `nominal_amounts` and `tribute_fis` are index-aligned: entry `i` is the
+/// nominal interest and fidelity index of the same tribute. `total_interest` is
+/// the sum of all `nominal_amounts` (precomputed by the caller).
+pub(crate) fn compute_fi_fraction_map(
+    nominal_amounts: &[U256],
+    tribute_fis: &[u64],
+    total_interest: U256,
+    gratis_allocation: U256,
+) -> Result<std::collections::HashMap<u64, u128>> {
+    // 3. Group tributes by fidelity index (sorted ascending for algorithm stability)
+    let mut fi_groups: std::collections::BTreeMap<u64, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (i, &fi) in tribute_fis.iter().enumerate() {
+        fi_groups.entry(fi).or_default().push(i);
+    }
+
+    // 4. Prepare distribution parameters in fixed-point (SCALE = 10^18)
+    let sorted_fis: Vec<u64> = fi_groups.keys().copied().collect();
+    let mut y_fp: Vec<u128> = Vec::with_capacity(sorted_fis.len());
+    let mut p: Vec<u64> = Vec::with_capacity(sorted_fis.len());
+
+    for &fi in &sorted_fis {
+        let indices = &fi_groups[&fi];
+        let group_interest: U256 = indices
+            .iter()
+            .map(|&i| nominal_amounts[i])
+            .fold(U256::ZERO, |acc, v| acc + v);
+        // y_fp = group_interest * SCALE / total_interest (integer division truncates)
+        let share = (group_interest * SCALE_1E18 / total_interest).to::<u128>();
+        y_fp.push(share);
+        p.push(indices.len() as u64);
+    }
+
+    // normalize y_fp so sum == SCALE exactly. Integer division in the
+    // loop above truncates each share; the missing delta is absorbed into the
+    // last share. Deterministic because `sorted_fis` is BTreeMap-ordered on all
+    // nodes. Guarantees the downstream `calc_fraction_distribution_fp` invariant
+    // `sum(y_fp) == SCALE`.
+    let y_sum: u128 = y_fp.iter().sum();
+    if let Some(last) = y_fp.last_mut() {
+        if y_sum < SCALE_1E18_U128 {
+            *last += SCALE_1E18_U128 - y_sum;
+        }
+        // y_sum > SCALE is unreachable: each share is ≤ group/total ≤ 1.
+    }
+
+    let nt = nominal_amounts.len();
+
+    // 5. Deficit coefficient in fixed-point → derive per-FI floor and ceiling.
+    let deficit_u256 = gratis_allocation * SCALE_1E18 / total_interest;
+    let deficit_fp = deficit_u256.min(U256::from(u128::MAX)).to::<u128>();
+    let f_fp = deficit_fp;
+    let fmax_fp = f_fp.saturating_mul(2);
+
+    // 6. Run distribution algorithm (pure integer)
+    let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;
+
+    // 7. Build FI → fraction map (fixed-point)
+    let mut fi_fraction_map: std::collections::HashMap<u64, u128> =
+        std::collections::HashMap::with_capacity(sorted_fis.len());
+    for (i, &fi) in sorted_fis.iter().enumerate() {
+        if let Some(&frac) = fractions.get(i) {
+            fi_fraction_map.insert(fi, frac);
+        }
+    }
+
+    Ok(fi_fraction_map)
 }
 
 fn resolve_entry_price_minor(storage: StorageHandle, worldwide_day: WorldwideDay) -> Result<U256> {

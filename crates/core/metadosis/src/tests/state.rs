@@ -176,7 +176,7 @@ fn test_calculate_metadosis_green_day() {
         let tribute_total = U256::from(10_000u64);
         let day_limit = U256::from(5_000u64);
 
-        let (allocation, remainder) = m
+        let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
 
@@ -185,8 +185,8 @@ fn test_calculate_metadosis_green_day() {
         //   limit      = day_limit         = 5_000
         //   allocation = min(demand, limit) = 3_200
         //   remainder  = day_limit - allocation = 1_800
-        assert_eq!(allocation, U256::from(3_200u64));
-        assert_eq!(remainder, U256::from(1_800u64));
+        assert_eq!(calc.day_gratis_allocation, U256::from(3_200u64));
+        assert_eq!(calc.day_metadosis_limit_remainder, U256::from(1_800u64));
     });
 }
 
@@ -208,9 +208,13 @@ fn test_calculate_metadosis_red_day() {
         let tribute_total = U256::from(10_000u64);
         let day_limit = U256::from(5_000u64);
 
-        let (allocation, remainder) = m
+        let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
+        let (allocation, remainder) = (
+            calc.day_gratis_allocation,
+            calc.day_metadosis_limit_remainder,
+        );
 
         // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
         //   demand     = 10_000 * 32 / 100 / 8 = 400
