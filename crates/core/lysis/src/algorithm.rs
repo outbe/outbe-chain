@@ -4,10 +4,6 @@ use outbe_primitives::units::SCALE_1E18_U128;
 
 pub(crate) const SCALE: u128 = SCALE_1E18_U128;
 
-/// Default lysis parameters (fixed-point, denominator = SCALE).
-pub const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
-pub const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
-
 /// Policy parameters (fixed-point, denominator = 1000).
 /// a=0.2 → 200/1000, b=0.1 → 100/1000, c=0.2 → 200/1000
 const POLICY_A_NUM: u32 = 1;
@@ -368,6 +364,9 @@ mod tests {
 
     #[test]
     fn test_single_group_returns_f() {
+        const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
+        const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
+
         let y_fp = vec![SCALE]; // 100%
         let p = vec![10];
         let f_fp = LYSIS_LIMIT_MIN;
@@ -380,6 +379,9 @@ mod tests {
 
     #[test]
     fn test_two_groups_sum_reasonable() {
+        const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
+        const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
+
         let y_fp = vec![SCALE / 2, SCALE / 2]; // 50/50
         let p = vec![5, 5];
         let f_fp = LYSIS_LIMIT_MIN;

@@ -1,4 +1,4 @@
-use crate::algorithm::{calc_fraction_distribution_fp, LYSIS_LIMIT_MAX, LYSIS_LIMIT_MIN};
+use crate::algorithm::{calc_fraction_distribution_fp};
 use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
@@ -213,8 +213,8 @@ fn compute_fi_fraction_map(
     // 5. Deficit coefficient in fixed-point → derive per-FI floor and ceiling.
     let deficit_u256 = gratis_allocation * SCALE_1E18 / total_interest;
     let deficit_fp = deficit_u256.min(U256::from(u128::MAX)).to::<u128>();
-    let f_fp = deficit_fp.min(LYSIS_LIMIT_MIN);
-    let fmax_fp = LYSIS_LIMIT_MAX.min(f_fp.saturating_mul(2));
+    let f_fp = deficit_fp;
+    let fmax_fp = f_fp.saturating_mul(2);
 
     // 6. Run distribution algorithm (pure integer)
     let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;

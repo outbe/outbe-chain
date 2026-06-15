@@ -7,7 +7,8 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData};
 
-const SCALE: u128 = 1_000_000_000_000_000_000;
+const LYSIS_LIMIT_MIN: u128 = SCALE * 8 / 100; // 0.08
+const LYSIS_LIMIT_MAX: u128 = SCALE * 16 / 100; // 0.16
 
 fn gas_audit_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
