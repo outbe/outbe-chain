@@ -32,8 +32,9 @@ use crate::constants::{
 use crate::errors::GratisPoolError;
 use crate::precompile::emit_commitment_inserted;
 use crate::schema::GratisPoolContract;
-use crate::state::{receiver_binding, require_canonical_field};
+use crate::state::{receiver_binding};
 use crate::verifier;
+use crate::zkp_utils::u256_to_fr;
 
 /// ABI-shape of a spend proof (same shape for both `requestCredis` and
 /// `unpledgeGratis`). Reused from the precompile dispatch path; lives on the
@@ -142,9 +143,12 @@ fn verify_and_spend(
 ) -> Result<U256> {
     let amount = denomination(args.denom_id).ok_or(GratisPoolError::DenomUnknown)?;
 
-    require_canonical_field(args.merkle_root)?;
-    require_canonical_field(args.nullifier_hash)?;
-    require_canonical_field(args.receiver_binding)?;
+    u256_to_fr(args.merkle_root)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("merkle_root".to_string()))?;
+    u256_to_fr(args.nullifier_hash)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_hash".to_string()))?;
+    u256_to_fr(args.receiver_binding)
+        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("receiver_binding".to_string()))?;
 
     // 1. The proof's receiver_binding public input must match what the
     //    runtime recomputes for this call.
