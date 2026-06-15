@@ -8,13 +8,13 @@
 all: help
 
 ## Solidity
+.PHONY: install
+install: ## Install dependencies using soldeer
+	forge soldeer install
+
 .PHONY: build
 build: ## Build Solidity contracts using forge
 	forge build
-
-.PHONY: install
-install: ## Restore soldeer dependencies
-	forge soldeer install
 
 .PHONY: export-abi
 export-abi: build ## Export contracts ABI
