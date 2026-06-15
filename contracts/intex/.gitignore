@@ -1,15 +1,13 @@
 # Node modules
 /node_modules
 
-# Yarn
-.yarn
+# Yarn (keep committed patches; ignore the rest)
+.yarn/*
+!.yarn/patches
 
 # Compilation output
 /dist
 /out
-
-# Yarn
-.yarn
 
 # pnpm deploy output
 /bundle
