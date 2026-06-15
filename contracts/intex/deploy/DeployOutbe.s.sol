@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.30;
+
+import {console} from "forge-std/console.sol";
+import {BaseScript} from "./BaseScript.s.sol";
+import {Create3Factory} from "@contracts/deploy/Create3Factory.sol";
+import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
+import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+
+/// @title DeployOutbe
+/// @author Outbe
+/// @notice Deploy the Outbe-side intex contracts as UUPS proxies through the CREATE3 factory.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, ADMIN_ADDRESS, BRIDGER_ADDRESS, DELEGATE_ADDRESS, LZ_ENDPOINT,
+///      BNB_EID (the remote endpoint id for the Outbe-side LayerZero contracts). Wiring is separate.
+contract DeployOutbe is BaseScript {
+    function run() external {
+        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer = vm.addr(pk);
+        address admin = vm.envAddress("ADMIN_ADDRESS");
+        address bridger = vm.envAddress("BRIDGER_ADDRESS");
+        address delegate = vm.envAddress("DELEGATE_ADDRESS");
+        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
+        uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
+
+        vm.startBroadcast(pk);
+
+        Create3Factory factory = ensureCreate3Factory();
+
+        address nft = deployProxy(
+            factory,
+            deployer,
+            "IntexNFT1155",
+            address(new IntexNFT1155()),
+            abi.encodeCall(IntexNFT1155.initialize, (admin, bridger))
+        );
+        address onft = deployProxy(
+            factory,
+            deployer,
+            "ONFT1155Adapter",
+            address(new ONFT1155Adapter(nft, lzEndpoint, bnbEid)),
+            abi.encodeCall(ONFT1155Adapter.initialize, (delegate))
+        );
+        address onftBatch = deployProxy(
+            factory,
+            deployer,
+            "ONFT1155AdapterBatch",
+            address(new ONFT1155AdapterBatch(nft, lzEndpoint)),
+            abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate))
+        );
+        address messenger = deployProxy(
+            factory,
+            deployer,
+            "OriginMessenger",
+            address(new OriginMessenger(lzEndpoint, bnbEid)),
+            abi.encodeCall(OriginMessenger.initialize, (delegate))
+        );
+
+        vm.stopBroadcast();
+
+        console.log("Create3Factory:", address(factory));
+        console.log("IntexNFT1155:", nft);
+        console.log("ONFT1155Adapter:", onft);
+        console.log("ONFT1155AdapterBatch:", onftBatch);
+        console.log("OriginMessenger:", messenger);
+    }
+}

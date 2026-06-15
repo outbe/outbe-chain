@@ -6,6 +6,7 @@ cbor_metadata = false
 src = 'contracts'
 out = 'out'
 test = 'test/foundry'
+script = 'deploy'
 cache_path = 'cache/foundry'
 verbosity = 3
 optimizer = true
