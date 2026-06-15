@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import {console2} from "forge-std/console2.sol";
 import {MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 import {BaseTest} from "./BaseTest.sol";
@@ -23,7 +22,7 @@ contract LayerZeroRouterForTest is LayerZeroRouter {
     uint32[] public settledMessageOrigin;
     bytes32[] public settledMessageSender;
 
-    uint32 private immutable _fixedLocalDomain;
+    uint32 private immutable _FIXED_LOCAL_DOMAIN;
 
     constructor(
         address _lzEndpoint,
@@ -34,11 +33,11 @@ contract LayerZeroRouterForTest is LayerZeroRouter {
         address _escrow,
         address _auction
     ) LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction) {
-        _fixedLocalDomain = fixedDomain;
+        _FIXED_LOCAL_DOMAIN = fixedDomain;
     }
 
     function _localDomain() internal view override returns (uint32) {
-        return _fixedLocalDomain;
+        return _FIXED_LOCAL_DOMAIN;
     }
 
     function dispatchSettle(uint32 _originDomain, bytes32[] memory _orderIds, bytes[] memory _ordersFillerData)

@@ -39,7 +39,7 @@ interface ILzOAppV2 {
 /// @notice Упрощённый мок EndpointV2 для локальных тестов.
 /// НЕ для продакшена.
 contract EndpointV2Mock {
-    uint32 public immutable eid;
+    uint32 public immutable EID;
 
     mapping(uint32 => EndpointV2Mock) public remoteEndpoints;
     mapping(uint32 => bytes32) public peers;
@@ -57,7 +57,7 @@ contract EndpointV2Mock {
     }
 
     constructor(uint32 _eid) {
-        eid = _eid;
+        EID = _eid;
     }
 
     function setOApp(address _oapp) external {
@@ -86,7 +86,7 @@ contract EndpointV2Mock {
         returns (MessagingFee memory)
     {
         // Return fixed fee of 100 wei (very small for testing)
-        return MessagingFee(100, 0);
+        return MessagingFee({nativeFee: 100, lzTokenFee: 0});
     }
 
     function send(
@@ -110,11 +110,13 @@ contract EndpointV2Mock {
         bytes32 sender = bytes32(uint256(uint160(oapp)));
 
         // Deliver message to destination endpoint
-        dstEndpoint.deliverMessage(eid, sender, _params.message);
+        dstEndpoint.deliverMessage(EID, sender, _params.message);
 
         // Return receipt
         return MessagingReceipt({
-            guid: keccak256(abi.encodePacked(eid, sender, _params.dstEid)), nonce: 1, fee: MessagingFee(msg.value, 0)
+            guid: keccak256(abi.encodePacked(EID, sender, _params.dstEid)),
+            nonce: 1,
+            fee: MessagingFee({nativeFee: msg.value, lzTokenFee: 0})
         });
     }
 
@@ -125,7 +127,7 @@ contract EndpointV2Mock {
         ILzOAppV2(oapp)
             .lzReceive(
                 origin,
-                keccak256(abi.encodePacked(_srcEid, _sender, eid)), // guid
+                keccak256(abi.encodePacked(_srcEid, _sender, EID)), // guid
                 _message,
                 msg.sender, // executor = calling endpoint
                 bytes("")

@@ -92,8 +92,12 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Modifiers ============
 
     modifier onlyAuthorizedCaller() {
-        if (msg.sender != AUTHORIZED_CALLER) revert UnauthorizedCaller();
+        _onlyAuthorizedCaller();
         _;
+    }
+
+    function _onlyAuthorizedCaller() internal view {
+        if (msg.sender != AUTHORIZED_CALLER) revert UnauthorizedCaller();
     }
 
     // ============ Constructor ============

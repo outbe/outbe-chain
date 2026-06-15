@@ -27,6 +27,7 @@ library OrderEncoder {
     }
 
     function id(OrderData memory order) internal pure returns (bytes32) {
+        // TODO fix note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
         return keccak256(encode(order));
     }
 

@@ -110,8 +110,8 @@ abstract contract OriginSettler is OriginSettlerBase {
         _compact()
             .allocatedTransfer(
                 AllocatedTransfer({
-                allocatorData: "", nonce: nonce, expires: type(uint256).max, id: lockId, recipients: recipients
-            })
+                    allocatorData: "", nonce: nonce, expires: type(uint256).max, id: lockId, recipients: recipients
+                })
             );
     }
 
