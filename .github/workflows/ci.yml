@@ -85,6 +85,80 @@ jobs:
         with:
           path: code-coverage-results.md
 
+  test-arm:
+    name: test (arm64)
+    # M-24: consensus-critical paths (deterministic encoding, header hash,
+    # state-root, fee math) must hold on x86 AND ARM per the testing rules. The
+    # x86 `test` job runs under llvm-cov for coverage; this job re-runs the full
+    # workspace on arm64 to catch architecture-dependent non-determinism.
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    # depot arm64 runner; adjust to the org's depot ARM SKU if the label differs.
+    runs-on: depot-ubuntu-latest-arm
+    timeout-minutes: 40
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace
+
+  doctests:
+    name: doctests
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      # The `test` job runs under llvm-cov, which does NOT execute doctests
+      # (M-24). Run them explicitly so executable doc-examples are covered.
+      - run: mise run test-doc
+
+  localnet:
+    name: localnet smoke
+    # Per-PR OPT-IN convenience run: add [localnet] to the commit message to run
+    # the 4-validator multi-node consensus smoke (fresh-start + restart-recovery)
+    # on this PR. It stays advisory (continue-on-error) because genesis-DKG start
+    # timing varies under shared CI load and would flake a per-PR blocking gate.
+    # The REQUIRED regression gate is the daily `localnet-nightly.yml` workflow,
+    # which runs the same smoke non-advisory (M-24).
+    if: contains(github.event.head_commit.message, '[localnet]')
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: cargo build --release --bin outbe-chain
+      - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
+        run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke
+
   typos:
     name: typos
     runs-on: depot-ubuntu-latest
@@ -125,7 +199,7 @@ jobs:
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
 
   # Non-blocking audit jobs (continue-on-error). Promote to required after the
-  # first clean run on main; see .ruler/skills/rust-module-audit for context.
+  # first clean run on main.
   deny:
     name: cargo deny
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -193,6 +267,9 @@ jobs:
       - fmt
       - clippy
       - test
+      - test-arm
+      - doctests
+      - localnet
       - typos
       - udeps
       - no-test-deps
@@ -205,5 +282,5 @@ jobs:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: clippy, test, udeps, no-test-deps, deny, machete, geiger, miri
+          allowed-skips: clippy, test, test-arm, doctests, localnet, udeps, no-test-deps, deny, machete, geiger, miri
           jobs: ${{ toJSON(needs) }}

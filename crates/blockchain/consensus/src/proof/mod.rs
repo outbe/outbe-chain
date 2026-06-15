@@ -20,6 +20,7 @@ pub mod error;
 pub mod fingerprint;
 pub mod hybrid_wire;
 pub mod late_finalize;
+pub mod seed_partial;
 pub mod verifier;
 
 pub use committee::{
@@ -27,8 +28,9 @@ pub use committee::{
     OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, VRF_MATERIAL_VERSION_GENESIS,
 };
 pub use constants::{
-    simplex_namespace, OUTBE_APP_NAMESPACE, OUTBE_FINALIZE_NAMESPACE_V2,
-    OUTBE_HYBRID_SEED_NAMESPACE_V2, OUTBE_NOTARIZE_NAMESPACE_V2,
+    consensus_chain_id, finalize_namespace, hybrid_seed_namespace, init_consensus_chain_id,
+    notarize_namespace, nullify_namespace, outbe_app_namespace, participant_set_commitment,
+    seed_attest_namespace, simplex_namespace,
 };
 pub use error::V2VerifyError;
 pub use fingerprint::{
@@ -37,6 +39,10 @@ pub use fingerprint::{
 };
 pub use hybrid_wire::{HybridCertificate, VrfProof};
 pub use late_finalize::verify_late_finalize_proof;
+pub use seed_partial::{
+    seed_partial_attest_message, verify_seed_partial_against_commitment,
+    verify_seed_partial_attest, verify_seed_partial_attest_bytes,
+};
 pub use verifier::{
     verify_v2_proof, verify_v2_proof_low_level, CommitteeSnapshotView, VerifiedProof, VoteBinding,
     VoteSubject,

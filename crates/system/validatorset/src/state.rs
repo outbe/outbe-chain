@@ -121,6 +121,8 @@ pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()>
         .write(&key, B256::ZERO)?;
     vs.committee_snapshot_vrf_group_public_key_len
         .write(&key, 0)?;
+    vs.committee_snapshot_vrf_public_polynomial_hash
+        .write(&key, B256::ZERO)?;
     Ok(())
 }
 
@@ -178,6 +180,8 @@ pub fn write_committee_snapshot(
         .write(&key, vrf_pk_hash)?;
     vs.committee_snapshot_vrf_group_public_key_len
         .write(&key, vrf_pk_len)?;
+    vs.committee_snapshot_vrf_public_polynomial_hash
+        .write(&key, snapshot.vrf_public_polynomial_hash)?;
     for (i, chunk) in snapshot.vrf_group_public_key_bytes.chunks(32).enumerate() {
         let idx = i as u64;
         let mut buf = [0u8; 32];
@@ -270,11 +274,43 @@ pub fn read_committee_snapshot(
         }
     }
 
+    let vrf_public_polynomial_hash = vs
+        .committee_snapshot_vrf_public_polynomial_hash
+        .read(&snapshot_key)?;
+
     Ok(Some(CommitteeSnapshot {
         committee,
         vrf_material_version,
         vrf_group_public_key_bytes,
+        vrf_public_polynomial_hash,
     }))
+}
+
+/// Read the committee snapshot for `epoch` via the prune ring (slot 44), WITHOUT
+/// needing the `committee_set_hash`.
+///
+/// The ring maps `epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS -> snapshot_key`. For
+/// an epoch within the retained window the slot holds that epoch's key; for an
+/// epoch older than the window the slot has been overwritten by a newer epoch
+/// that collides on the ring index, so this returns that newer committee (the
+/// snapshot does not store its own epoch). Callers that bind the result to a
+/// specific epoch (SlashIndicator evidence) MUST therefore verify against
+/// the returned committee and treat a verification failure as "unverifiable",
+/// never trusting the epoch match implicitly. Returns `None` when the ring slot
+/// is empty.
+pub fn read_committee_snapshot_for_epoch(
+    storage: StorageHandle,
+    epoch: u64,
+) -> Result<Option<CommitteeSnapshot>> {
+    let key = {
+        let vs = ValidatorSet::new(storage.clone());
+        let ring_idx = epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+        vs.committee_snapshot_key_ring.read(&ring_idx)?
+    };
+    if key == B256::ZERO {
+        return Ok(None);
+    }
+    read_committee_snapshot(storage, key)
 }
 
 /// Pre-computes `(committee_set_hash, snapshot_key)` without touching storage.

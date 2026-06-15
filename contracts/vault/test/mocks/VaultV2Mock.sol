@@ -31,6 +31,7 @@ contract VaultV2Mock {
     {
         (bytes32[] memory ids, int256 change) = IAdapter(adapter).allocate(data, assets, msg.sig, msg.sender);
         for (uint256 i; i < ids.length; i++) {
+            // forge-lint: disable-next-line(unsafe-typecast)
             allocation[ids[i]] = uint256(int256(allocation[ids[i]]) + change);
         }
         return (ids, change);
@@ -42,6 +43,7 @@ contract VaultV2Mock {
     {
         (bytes32[] memory ids, int256 change) = IAdapter(adapter).deallocate(data, assets, msg.sig, msg.sender);
         for (uint256 i; i < ids.length; i++) {
+            // forge-lint: disable-next-line(unsafe-typecast)
             allocation[ids[i]] = uint256(int256(allocation[ids[i]]) + change);
         }
         return (ids, change);

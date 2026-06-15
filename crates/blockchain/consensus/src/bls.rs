@@ -27,7 +27,7 @@ use std::{io::Write as _, num::NonZeroU32, path::Path};
 use tracing::debug;
 
 /// Maximum number of validators supported (used as upper bound for codec deserialization).
-const MAX_VALIDATORS: u32 = 256;
+pub(crate) const MAX_VALIDATORS: u32 = 256;
 
 // ---------------------------------------------------------------------------
 // KeyBackend — storage backend for BLS key material
@@ -58,13 +58,15 @@ const ENC_MAGIC: &[u8] = b"OUTBE_ENC\x01";
 const KEYCHAIN_MARKER: &str = "OUTBE_KEYCHAIN\n";
 
 /// Derive a 256-bit AES key from a passphrase using Argon2id.
-fn derive_key(passphrase: &str, salt: &[u8; 32]) -> [u8; 32] {
+fn derive_key(passphrase: &str, salt: &[u8; 32]) -> Result<[u8; 32]> {
     use argon2::Argon2;
     let mut key = [0u8; 32];
+    // Argon2id into a fixed 32-byte buffer cannot fail in practice; return a
+    // structured error instead of `expect` on the key-load/startup path.
     Argon2::default()
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
-        .expect("argon2 key derivation should not fail");
-    key
+        .map_err(|e| eyre::eyre!("argon2 key derivation failed: {e}"))?;
+    Ok(key)
 }
 
 /// Encrypt `data` with AES-256-GCM and write the envelope to `path`.
@@ -77,7 +79,7 @@ fn save_encrypted(path: &Path, data: &[u8], passphrase: &str) -> Result<()> {
     rand::thread_rng().fill_bytes(&mut salt);
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    let key = derive_key(passphrase, &salt);
+    let key = derive_key(passphrase, &salt)?;
     let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key)
         .map_err(|_| eyre::eyre!("failed to create AES-256-GCM key"))?;
     let mut sealing_key = aead::SealingKey::new(unbound, OneNonce::new(nonce_bytes));
@@ -223,13 +225,15 @@ fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
         if raw.len() < header_len + 32 + 12 {
             return Err(eyre::eyre!("encrypted file too short"));
         }
-        let salt: &[u8; 32] = raw[header_len..header_len + 32].try_into().unwrap();
+        let salt: &[u8; 32] = raw[header_len..header_len + 32]
+            .try_into()
+            .map_err(|_| eyre::eyre!("encrypted file salt slice"))?;
         let nonce_bytes = &raw[header_len + 32..header_len + 44];
         let ciphertext = &raw[header_len + 44..];
 
         use ring::aead::{self, BoundKey};
 
-        let key = derive_key(passphrase, salt);
+        let key = derive_key(passphrase, salt)?;
         let nonce: [u8; 12] = nonce_bytes
             .try_into()
             .map_err(|_| eyre::eyre!("invalid nonce length"))?;

@@ -4,8 +4,8 @@
 //! Each test builds a real DKG fixture, constructs a real BLS-signed
 //! `HybridCertificate` against the bytes the metadata-bound verifier
 //! derives internally (`Proposal::encode()` vote message under
-//! `OUTBE_FINALIZE_NAMESPACE_V2`, `Round::encode()` seed message under
-//! `OUTBE_HYBRID_SEED_NAMESPACE_V2`), injects exactly one defect, and
+//! `finalize_namespace`, `Round::encode()` seed message under
+//! `hybrid_seed_namespace`), injects exactly one defect, and
 //! asserts the exact `V2VerifyError` variant.
 //!
 //! Implements the 13.rs` deferred
@@ -33,10 +33,10 @@ use commonware_cryptography::{
 };
 use commonware_utils::Participant;
 use outbe_consensus::hybrid::HybridScheme;
-use outbe_consensus::proof::constants::{OUTBE_FINALIZE_NAMESPACE_V2, OUTBE_NOTARIZE_NAMESPACE_V2};
+use outbe_consensus::proof::constants::{finalize_namespace, notarize_namespace};
 use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
 use outbe_consensus::proof::{
-    verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof, OUTBE_HYBRID_SEED_NAMESPACE_V2,
+    hybrid_seed_namespace, verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof,
 };
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
@@ -92,6 +92,7 @@ fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
         committee,
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 
@@ -151,20 +152,24 @@ fn build_cert(
     );
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
+    // vote namespaces bind the ordered committee; build the canonical `Set`
+    // from the full DKG committee (matches what the verifier rebuilds).
+    let committee_set: commonware_utils::ordered::Set<PublicKey> =
+        commonware_utils::ordered::Set::from_iter_dedup(dkg.keys.iter().map(|k| k.public_key()));
     let namespace = match proof_kind {
-        ParentParticipationProof::Finalization => OUTBE_FINALIZE_NAMESPACE_V2,
-        ParentParticipationProof::CertifiedNotarization => OUTBE_NOTARIZE_NAMESPACE_V2,
+        ParentParticipationProof::Finalization => finalize_namespace(&committee_set),
+        ParentParticipationProof::CertifiedNotarization => notarize_namespace(&committee_set),
     };
     let sigs: Vec<_> = signer_indices
         .iter()
-        .map(|&i| dkg.keys[i as usize].sign(namespace, &vote_message))
+        .map(|&i| dkg.keys[i as usize].sign(&namespace, &vote_message))
         .collect();
     let bls_aggregated_vote =
         aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
 
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
-        OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &hybrid_seed_namespace(),
         &seed_message,
     );
     let vrf_proof = Some(VrfProof::<MinSig> {
@@ -248,7 +253,7 @@ fn cluster_happy_path_quorum_certificate_verifies() {
 #[test]
 fn wrong_bls_domain_rejects() {
     // Sign votes under the WRONG namespace; the metadata-bound verifier
-    // derives `OUTBE_FINALIZE_NAMESPACE_V2` internally and the aggregate
+    // derives `finalize_namespace` internally and the aggregate
     // verify fails.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -263,7 +268,7 @@ fn wrong_bls_domain_rejects() {
         aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
-        OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &hybrid_seed_namespace(),
         &seed_message,
     );
     let cert: HybridCertificate<MinSig> = HybridCertificate {
@@ -639,7 +644,7 @@ fn wrong_vrf_seed_round_rejects() {
     let wrong_seed = wrong_round.encode().to_vec();
     let wrong_threshold = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
-        OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &hybrid_seed_namespace(),
         &wrong_seed,
     );
     let mut cert_with_wrong_vrf = cert.clone();

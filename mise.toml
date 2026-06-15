@@ -198,9 +198,26 @@ mise run localnet-start
 description = "Remove all validator-*/ and pids/ from OUT_DIR"
 run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
 
-[tasks.localnet-chain244-smoke]
-description = "Build + run system-tx localnet smoke"
-run = 'OUTBE_CHAIN_BINARY="${OUTBE_CHAIN_BINARY:-./target/debug/outbe-chain}" VALIDATORS="$VALIDATORS" ./scripts/chain244-system-tx-smoke.sh "$OUT_DIR"'
+[tasks.localnet-smoke]
+description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
+run = './scripts/localnet-smoke.sh'
+
+# Full S1-S7 gramine-mock TEE e2e scenario suite. Builds the node + mock
+# enclave, then runs all five scenario scripts. Requires sudo + gramine + the
+# `outbe-tee-enclave-gramine` docker image (joiner enclave). Runnable on any box
+# with gramine-direct (no SGX hardware required for the mock); the real-SGX smoke
+# is `sgx-smoke`.
+[tasks.e2e]
+description = "Run the S1-S7 gramine-mock TEE e2e scenario suite"
+run = """
+cargo build -p outbe-chain --bin outbe-chain
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
+for s in s1_s2_s6_s3_lifecycle s4_restart_active s5_dkg_failure s7a_downtime_slash s7b_stale_join; do
+  echo "=== e2e $s ==="
+  ./scripts/e2e/$s.sh || exit 1
+done
+echo "e2e: ALL SCENARIOS PASS"
+"""
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #
 

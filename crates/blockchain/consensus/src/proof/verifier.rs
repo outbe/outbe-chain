@@ -51,9 +51,7 @@ use outbe_primitives::consensus_metadata::{
 };
 use std::collections::BTreeSet;
 
-use super::constants::{
-    OUTBE_FINALIZE_NAMESPACE_V2, OUTBE_HYBRID_SEED_NAMESPACE_V2, OUTBE_NOTARIZE_NAMESPACE_V2,
-};
+use super::constants::{finalize_namespace, hybrid_seed_namespace, notarize_namespace};
 use super::error::V2VerifyError;
 use super::hybrid_wire::{HybridCertificate, VrfProof};
 
@@ -323,7 +321,7 @@ fn verify_threshold_vrf_proof(
 ) -> Result<(), V2VerifyError> {
     verify_message::<MinSig>(
         group_pk,
-        OUTBE_HYBRID_SEED_NAMESPACE_V2,
+        &hybrid_seed_namespace(),
         seed_message,
         &proof.threshold_signature,
     )
@@ -522,9 +520,14 @@ pub fn verify_v2_proof(
         });
     }
 
+    // vote namespaces bind the ordered committee. Build the canonical
+    // `Set` from the snapshot committee (same sorted/deduped order as the signer's
+    // participant set) so these bytes equal what the signer used.
+    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        commonware_utils::ordered::Set::from_iter_dedup(participants.iter().cloned());
     let namespace = match subject {
-        VoteSubject::Finalize => OUTBE_FINALIZE_NAMESPACE_V2,
-        VoteSubject::Notarize => OUTBE_NOTARIZE_NAMESPACE_V2,
+        VoteSubject::Finalize => finalize_namespace(&committee_set),
+        VoteSubject::Notarize => notarize_namespace(&committee_set),
     };
 
     let round = proposal.round;
@@ -533,7 +536,7 @@ pub fn verify_v2_proof(
 
     let binding = VoteBinding {
         subject,
-        namespace,
+        namespace: &namespace,
         message: &message,
         seed_message: &seed_message,
     };

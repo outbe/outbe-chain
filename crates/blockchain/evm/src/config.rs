@@ -401,8 +401,38 @@ impl std::fmt::Debug for OutbeEvmConfig {
 }
 
 impl OutbeEvmConfig {
+    /// Install the genesis-fixed consensus chain id into the process-wide
+    /// consensus-namespace source of truth BEFORE any block
+    /// execution or proof verification.
+    ///
+    /// Called from EVERY `OutbeEvmConfig` constructor so the binding is live no
+    /// matter which one the running node uses: `new_with_bridge` for the offline
+    /// reth subcommands, and `new_with_bridge_and_summary_provider` /
+    /// `new_with_provider_only` via [`OutbeExecutorBuilder::build_evm`] for the
+    /// live validator and full node. Previously only `::new` installed it, but
+    /// production never builds via `::new`, so `consensus_chain_id()` stayed at
+    /// its default `0` and the signing namespace collapsed to `b"outbe" || 0` on
+    /// every chain — silently disabling the cross-chain-replay binding.
+    ///
+    /// Idempotent: the first value wins (the chain id is genesis-fixed and
+    /// constant for the process), so duplicate constructions are no-ops.
+    fn install_consensus_chain_id(chain_spec: &Arc<ChainSpec<OutbeHeader>>) {
+        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id());
+        // Surface the actually-bound id exactly once so operators can confirm the
+        // namespace is chain-separated (a `0` here would mean it is degenerate).
+        static LOG_ONCE: std::sync::Once = std::sync::Once::new();
+        LOG_ONCE.call_once(|| {
+            tracing::info!(
+                target: "outbe::evm",
+                chain_id = outbe_consensus::proof::consensus_chain_id(),
+                "consensus chain id bound into the signing namespace"
+            );
+        });
+    }
+
     /// Creates a new [`OutbeEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec<OutbeHeader>>) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
         Self {
             inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
@@ -417,6 +447,7 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
     ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
         let summary_cache = bridge.clone();
         Self {
             inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
@@ -434,6 +465,7 @@ impl OutbeEvmConfig {
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
     ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
         Self {
             inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
@@ -454,6 +486,7 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
     ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
         Self {
             inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
             block_assembler: OutbeBlockAssembler::new(chain_spec),

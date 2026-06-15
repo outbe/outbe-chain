@@ -73,10 +73,10 @@ pub enum V2VerifyError {
     #[error("VRF group public key hash mismatch: expected {expected}, got {actual}")]
     WrongVrfGroupKeyHash { expected: B256, actual: B256 },
     /// VRF verification was attempted under a namespace other than
-    /// [`crate::OUTBE_HYBRID_SEED_NAMESPACE_V2`] (defence-in-depth — the
+    /// [`crate::hybrid_seed_namespace`] (defence-in-depth — the
     /// verifier hard-codes the namespace, so this only triggers if an
     /// upstream caller smuggled a different one).
-    #[error("VRF namespace differs from OUTBE_HYBRID_SEED_NAMESPACE_V2")]
+    #[error("VRF namespace differs from hybrid_seed_namespace")]
     WrongVrfNamespace,
     /// VRF seed round (`Round(epoch, view).encode()`) differs from the
     /// `(metadata.epoch, metadata.view)` round the verifier expected.
@@ -88,7 +88,7 @@ pub enum V2VerifyError {
         expected_view: u64,
     },
     /// Threshold VRF proof failed verification against the active VRF
-    /// group public key under [`crate::OUTBE_HYBRID_SEED_NAMESPACE_V2`].
+    /// group public key under [`crate::hybrid_seed_namespace`].
     #[error("VRF threshold signature failed verification")]
     InvalidVrfSignature,
 

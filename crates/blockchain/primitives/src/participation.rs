@@ -56,7 +56,7 @@ pub fn encode_participation_extended_with_limit(
     byzantine_validators: &[Address],
     max_extra_data_size: usize,
 ) -> Result<Bytes> {
-    // A-08: Return structured error instead of panicking on length mismatch.
+    // Return structured error instead of panicking on length mismatch.
     if validators.len() != signers.len() {
         return Err(PrecompileError::Fatal(format!(
             "validators/signers length mismatch: {} vs {}",
@@ -377,7 +377,7 @@ mod tests {
         );
     }
 
-    /// A-08: Length mismatch returns error instead of panicking.
+    /// Length mismatch returns error instead of panicking.
     #[test]
     fn test_encode_length_mismatch_returns_error() {
         let validators: Vec<Address> = (0..4).map(Address::with_last_byte).collect();

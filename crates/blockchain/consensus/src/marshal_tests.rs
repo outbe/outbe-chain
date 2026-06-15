@@ -151,10 +151,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // A-38: MarshalReporter must acknowledge, not drop
+    // MarshalReporter must acknowledge, not drop
     // -----------------------------------------------------------------------
 
-    /// A-38: Exact::acknowledge() resolves the waiter successfully.
+    /// Exact::acknowledge() resolves the waiter successfully.
     /// drop() without acknowledge triggers cancel. This test verifies
     /// the acknowledge path works as MarshalReporter now uses it.
     #[tokio::test]
@@ -179,7 +179,7 @@ mod tests {
         ack2.acknowledge();
     }
 
-    /// A-38: Verify drop(ack) triggers cancellation, not success.
+    /// Verify drop(ack) triggers cancellation, not success.
     /// This confirms the old behavior (drop) was wrong.
     #[tokio::test]
     async fn test_exact_drop_cancels_waiter() {
@@ -220,10 +220,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // A-10: Finalization retry constants
+    // Finalization retry constants
     // -----------------------------------------------------------------------
 
-    /// A-10: Verify retry constants are reasonable and accessible.
+    /// Verify retry constants are reasonable and accessible.
     #[test]
     fn test_finalize_retry_constants() {
         use crate::application::handler::{
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(resolved.view(), View::new(90));
     }
 
-    /// A-10: Simulated marshal failure — retry exhaustion returns error.
+    /// Simulated marshal failure — retry exhaustion returns error.
     #[test]
     fn test_retry_exhaustion_on_persistent_failure() {
         use crate::finalization::util::{retry_with_backoff, RetryFailureKind};
@@ -303,7 +303,7 @@ mod tests {
         });
     }
 
-    /// A-10: Retry succeeds on second attempt — no stall.
+    /// Retry succeeds on second attempt — no stall.
     #[test]
     fn test_retry_succeeds_after_transient_failure() {
         use crate::finalization::util::retry_with_backoff;
@@ -347,7 +347,7 @@ mod tests {
         });
     }
 
-    /// A-10: Immediate success — no retries needed.
+    /// Immediate success — no retries needed.
     #[test]
     fn test_retry_immediate_success_no_stall() {
         use crate::finalization::util::retry_with_backoff;

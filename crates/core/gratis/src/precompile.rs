@@ -40,7 +40,7 @@ pub fn dispatch(
             }
 
             mineCoen(c) => mutate(c, caller, |sender, c| {
-                // A-32: mine_coen burns synthetic gratis and returns amount.
+                // mine_coen burns synthetic gratis and returns amount.
                 // We must mint native tokens to the caller.
                 let amount = gratis.mine_coen(sender, c.amount)?;
                 if !amount.is_zero() {

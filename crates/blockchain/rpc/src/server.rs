@@ -7,6 +7,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use jsonrpsee::core::RpcResult;
+use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     storage::{
@@ -14,7 +15,10 @@ use outbe_primitives::{
         StorageHandle,
     },
 };
-use reth_ethereum::storage::{StateProvider as _, StateProviderBox, StateProviderFactory};
+use reth_ethereum::primitives::AlloyBlockHeader as _;
+use reth_ethereum::storage::{
+    BlockNumReader, HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
+};
 use std::sync::Arc;
 
 use crate::api::{
@@ -89,7 +93,12 @@ where
 #[jsonrpsee::core::async_trait]
 impl<P> OutbeApiServer for OutbeApiHandler<P>
 where
-    P: StateProviderFactory + Send + Sync + 'static,
+    P: StateProviderFactory
+        + HeaderProvider<Header = OutbeHeader>
+        + BlockNumReader
+        + Send
+        + Sync
+        + 'static,
 {
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
@@ -165,13 +174,6 @@ where
         })
     }
 
-    async fn get_pending_rewards(&self, address: Address) -> RpcResult<U256> {
-        self.with_latest_state(|storage| {
-            let rewards = outbe_rewards::contract::Rewards::new(storage);
-            rewards.pending_rewards.read(&address)
-        })
-    }
-
     async fn get_slash_info(&self, address: Address) -> RpcResult<SlashInfo> {
         self.with_latest_state(|storage| {
             let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
@@ -212,18 +214,27 @@ where
         })
     }
 
-    async fn get_vrf_seed(&self, _block_number: Option<u64>) -> RpcResult<Option<B256>> {
-        // Returns the latest VRF seed from the consensus status.
-        // Historical VRF seeds are stored in each block header's `mixHash`
-        // (prev_randao) field — use `eth_getBlockByNumber` to read them.
-        // The `block_number` parameter is reserved for future use.
-        let status = self
-            .bridge
-            .as_ref()
-            .map(|b| b.consensus_status())
-            .unwrap_or_default();
-
-        Ok(status.last_vrf_seed)
+    async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
+        // read the committed VRF seed from the target block header's
+        // `mixHash` (prev_randao) via the provider, honoring `block_number`.
+        // This is the authoritative, per-node-consistent committed value — not
+        // the process-local in-memory consensus seed (which a full node never
+        // has and which can diverge between nodes). `None` resolves to the
+        // latest canonical block, which under Outbe's fast finality is the
+        // latest finalized block.
+        let target = match block_number {
+            Some(n) => n,
+            None => self
+                .provider
+                .best_block_number()
+                .map_err(|e| internal_err(format!("failed to read latest block number: {e}")))?,
+        };
+        let header = self
+            .provider
+            .header_by_number(target)
+            .map_err(|e| internal_err(format!("failed to read header for block {target}: {e}")))?;
+        // `mix_hash()` is itself `Option<B256>`; a missing block also yields None.
+        Ok(header.and_then(|h| h.mix_hash()))
     }
 
     async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {

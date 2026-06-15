@@ -420,7 +420,7 @@ fn test_mine_rejects_total_supply_overflow_across_accounts() {
     });
 }
 
-/// A-32: mineCoen must burn synthetic gratis AND mint native tokens.
+/// mineCoen must burn synthetic gratis AND mint native tokens.
 /// Simulates the precompile dispatch path: mine_coen() + increase_balance().
 #[test]
 fn test_mine_coen_increases_native_balance() {
@@ -443,7 +443,7 @@ fn test_mine_coen_increases_native_balance() {
     });
 }
 
-/// A-32: mine_coen with insufficient balance must fail without partial burn.
+/// mine_coen with insufficient balance must fail without partial burn.
 #[test]
 fn test_mine_coen_failure_no_partial_burn() {
     with_gratis_mut(|g| {

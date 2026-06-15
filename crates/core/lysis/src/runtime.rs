@@ -84,7 +84,7 @@ pub fn lysis(
     // 9. Issue NODs for each tribute
     let mut nod_ids = Vec::with_capacity(tributes.len());
     let mut tribute_ids = Vec::with_capacity(tributes.len());
-    // A-39: Track which tribute token_ids were successfully processed.
+    // Track which tribute token_ids were successfully processed.
     let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
 
@@ -141,7 +141,7 @@ pub fn lysis(
     // see `outbe_nod::runtime::NodContract::mine_gratis` for the price check
     // and `outbe_nod::hooks::NodLifecycle` (if present) for eager bulk scan.
 
-    // A-39: Only delete tributes that were successfully processed (NOD issued).
+    // Only delete tributes that were successfully processed (NOD issued).
     // Skipped tributes are preserved for potential reprocessing.
     for token_id in &processed_tribute_ids {
         tribute_contract.burn(*token_id)?;

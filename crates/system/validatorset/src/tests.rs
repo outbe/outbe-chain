@@ -91,7 +91,7 @@ fn test_activate_missing_validator_returns_revert() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. test_register_self — A-45: self-registration now requires BLS proof
+// 2. test_register_self — self-registration now requires BLS proof
 // ---------------------------------------------------------------------------
 #[test]
 fn test_register_self_without_sig_rejected() {
@@ -99,7 +99,7 @@ fn test_register_self_without_sig_rejected() {
     let pk = dummy_consensus_pubkey(2);
 
     with_vs_configured(10, |vs| {
-        // A-45: Self-registration without BLS signature must fail
+        // Self-registration without BLS signature must fail
         let result = vs.register_validator(val_addr, val_addr, &pk);
         assert!(
             result.is_err(),
@@ -1412,7 +1412,7 @@ fn test_already_active_validator_does_not_raise_pending() {
 }
 
 // ===========================================================================
-// A-09: Forced-exit validator status guard tests
+// Forced-exit validator status guard tests
 // ===========================================================================
 
 #[test]
@@ -1487,7 +1487,7 @@ fn test_repeated_force_exit_remains_exiting() {
 }
 
 // ===========================================================================
-// A-18: BLS pubkey uniqueness tests
+// BLS pubkey uniqueness tests
 // ===========================================================================
 
 #[test]
@@ -1505,7 +1505,7 @@ fn test_duplicate_pubkey_rejected() {
 }
 
 // ===========================================================================
-// A-21: Activate validator status guard tests
+// Activate validator status guard tests
 // ===========================================================================
 
 #[test]
@@ -1532,7 +1532,7 @@ fn activate_rejected_from_non_promotable_status() {
 }
 
 // ===========================================================================
-// A-44: EXITING validators get per-epoch counters reset
+// EXITING validators get per-epoch counters reset
 // ===========================================================================
 
 #[test]
@@ -1559,7 +1559,7 @@ fn test_epoch_reset_includes_exiting() {
 }
 
 // ===========================================================================
-// A-45: Invalid BLS signature rejected for self-registration
+// Invalid BLS signature rejected for self-registration
 // ===========================================================================
 
 #[test]
@@ -1574,7 +1574,61 @@ fn test_register_self_invalid_sig_rejected() {
     });
 }
 
-/// A-45: Valid self-registration with correct BLS signature succeeds.
+/// Valid self-registration with correct BLS signature succeeds.
+// the free, permissionless self-registration surface is capped at
+// MAX_SELF_REGISTERED_UNSTAKED; owner registrations bypass the cap.
+#[test]
+fn m27_self_registration_capped_owner_bypasses() {
+    use crate::runtime::MAX_SELF_REGISTERED_UNSTAKED;
+    use blst::min_pk::SecretKey;
+
+    const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
+    fn self_reg_inputs(i: u32) -> (Address, [u8; 48], [u8; 96]) {
+        let mut ikm = [7u8; 32];
+        ikm[28..].copy_from_slice(&i.to_be_bytes());
+        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
+        let mut ab = [0u8; 20];
+        ab[16..].copy_from_slice(&i.to_be_bytes());
+        // avoid the zero address (index 0 sentinel) by setting a high byte.
+        ab[0] = 0x5a;
+        let val = Address::from(ab);
+        let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
+        let sig: [u8; 96] = sk.sign(val.as_slice(), DST, &[]).to_bytes();
+        (val, pk, sig)
+    }
+
+    // max_validators well above the self-registration cap so the cap, not the
+    // global capacity, is what bites.
+    with_vs_configured(200, |vs| {
+        for i in 0..MAX_SELF_REGISTERED_UNSTAKED {
+            let (val, pk, sig) = self_reg_inputs(i);
+            vs.register_validator_with_sig(val, val, &pk, Some(&sig))
+                .unwrap_or_else(|e| panic!("self-registration {i} within cap must succeed: {e}"));
+        }
+        assert_eq!(
+            vs.registered_count().unwrap(),
+            MAX_SELF_REGISTERED_UNSTAKED,
+            "exactly the cap of self-registrations should be REGISTERED"
+        );
+
+        // The next self-registration is rejected before consuming a slot.
+        let (val, pk, sig) = self_reg_inputs(MAX_SELF_REGISTERED_UNSTAKED);
+        let err = vs
+            .register_validator_with_sig(val, val, &pk, Some(&sig))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("self-registration limit reached"),
+            "over-cap self-registration must be rejected, got: {err}"
+        );
+
+        // The owner can still register validators directly, bypassing the cap.
+        let owner_val = address!("0x000000000000000000000000000000000000beef");
+        vs.register_validator_with_sig(OWNER, owner_val, &[0xABu8; 48], None)
+            .expect("owner registration must bypass the self-registration cap");
+        assert!(vs.is_validator(owner_val).unwrap());
+    });
+}
+
 #[test]
 fn test_register_self_valid_sig_accepted() {
     use blst::min_pk::SecretKey;

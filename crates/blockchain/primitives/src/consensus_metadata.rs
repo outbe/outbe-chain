@@ -165,7 +165,7 @@ impl CertifiedParentAccountingMetadata {
         buf.extend_from_slice(&self.finalized_view.to_be_bytes());
         buf.extend_from_slice(&self.parent_view.to_be_bytes());
         encode_addresses(&mut buf, &self.ordered_committee);
-        encode_bytes_u16(&mut buf, &self.signer_bitmap);
+        encode_bytes_u16(&mut buf, &self.signer_bitmap)?;
         encode_bytes_u32(&mut buf, self.proof.as_ref());
         buf.extend_from_slice(self.committee_set_hash.as_slice());
         buf.extend_from_slice(&self.vrf_material_version.to_be_bytes());
@@ -326,12 +326,15 @@ fn encode_addresses(buf: &mut Vec<u8>, addrs: &[Address]) {
     }
 }
 
-fn encode_bytes_u16(buf: &mut Vec<u8>, data: &[u8]) {
-    if data.len() > u16::MAX as usize {
-        unreachable!("encode_bytes_u16 called with oversized payload");
-    }
+fn encode_bytes_u16(buf: &mut Vec<u8>, data: &[u8]) -> Result<()> {
+    // Callers already guard with `ensure_count_fits_u16`; re-check here and return
+    // a structured error instead of panicking (no `unreachable!` on a consensus
+    // codec path) so an oversized payload can never silently truncate the u16
+    // length prefix.
+    ensure_count_fits_u16("bytes payload", data.len())?;
     buf.extend_from_slice(&(data.len() as u16).to_be_bytes());
     buf.extend_from_slice(data);
+    Ok(())
 }
 
 fn encode_bytes_u32(buf: &mut Vec<u8>, data: &[u8]) {

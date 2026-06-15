@@ -51,14 +51,23 @@ pub struct OutbeProtocolSchedule {
     /// Reject evidence whose epoch is more than this many epochs behind the
     /// current consensus epoch.
     pub invalid_vrf_evidence_max_epoch_lag: u64,
-    /// Per-evidence base gas charged by `SlashIndicator.submitInvalidVrfProofEvidence`.
+    /// Heavy per-evidence base gas charged by every `SlashIndicator` BLS-evidence
+    /// submission selector (double-proposal, conflicting-vote/notarize/finalize,
+    /// nullify-finalize, invalid-VRF-proof, seed-partial-equivocation,
+    /// invalid-seed-partial). Each verifier runs ~2+ BLS12-381 pairings plus
+    /// ecrecover/storage reads; on the ZeroFee chain those would be near-free to
+    /// spam, so this charges a heavy base proportional to that work and block gas
+    /// then bounds how many evidence txs fit per block (complementing the
+    /// ACTIVE-validator ACL added in). This struct is the single source of
+    /// truth: `outbe_slashindicator::precompile::base_gas` reads it; do not
+    /// duplicate the literal.
     ///
-    /// **Initial value is intentionally `u64::MAX` (reject-everything placeholder).**
-    /// bench-calibrates and replaces this value via
-    /// `ceil_to_next_10_000(measured_worst_case_gas * 125 / 100)`
-    /// Merging to main is gated on a tripwire test
-    /// ([`vrf_evidence_base_gas_is_placeholder_max`] in the schedule test
-    /// suite) that fails as long as the placeholder is unchanged.
+    /// `200_000` is the-chosen heavy base; it may be refined by measuring
+    /// the worst-case verifier gas across committee sizes and applying
+    /// `ceil_to_next_10_000(measured_worst_case_gas * 125 / 100)`. Any change is
+    /// hard-fork-equivalent and is guarded by the
+    /// [`vrf_evidence_base_gas_is_calibrated`] test (no `u64::MAX` placeholder may
+    /// ship).
     pub slash_indicator_vrf_evidence_base_gas: u64,
 
     // ----- Performance budgets -----
@@ -83,7 +92,7 @@ impl Default for OutbeProtocolSchedule {
             invalid_vrf_evidence_max_age_blocks: 2_048,
             invalid_vrf_evidence_max_bytes: 256 * 1024,
             invalid_vrf_evidence_max_epoch_lag: 1,
-            slash_indicator_vrf_evidence_base_gas: u64::MAX,
+            slash_indicator_vrf_evidence_base_gas: 200_000,
 
             phase1_preflight_p99_budget_ms_n100: 25,
         }

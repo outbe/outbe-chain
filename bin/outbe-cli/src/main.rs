@@ -134,14 +134,24 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_rewards_pending() {
-        let cli = Cli::try_parse_from([
+    fn test_cli_parse_rewards_emission() {
+        // `rewards emission` is a remaining valid subcommand.
+        let cli = Cli::try_parse_from(["outbe-cli", "rewards", "emission"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_rejects_removed_rewards_claim_and_pending() {
+        // Validator emission is paid in gems; the dead `claim` / `pending`
+        // subcommands were removed and must no longer parse.
+        assert!(Cli::try_parse_from(["outbe-cli", "rewards", "claim"]).is_err());
+        assert!(Cli::try_parse_from([
             "outbe-cli",
             "rewards",
             "pending",
             "0x1111111111111111111111111111111111111111",
-        ]);
-        assert!(cli.is_ok());
+        ])
+        .is_err());
     }
 
     #[test]

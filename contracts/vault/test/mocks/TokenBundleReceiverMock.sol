@@ -9,7 +9,7 @@ contract TokenBundleReceiverMock is ITokenBundle {
     event TopUpCalled(address sender, address token, uint256 amount);
 
     function topUp(address sender, address token, uint256 amount) external override {
-        IERC20(token).transferFrom(sender, address(this), amount);
+        assert(IERC20(token).transferFrom(sender, address(this), amount));
         emit TopUpCalled(sender, token, amount);
     }
 

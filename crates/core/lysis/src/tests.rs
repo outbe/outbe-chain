@@ -212,9 +212,7 @@ fn test_many_fi_groups() {
     }
 }
 
-/// D3 / A-25: an extreme deficit (gratis >> total_interest) must cap the per-FI
-/// floor at LYSIS_LIMIT_MIN (8%), matching the reference `f = min(MIN, deficit)`
-/// semantics in outbe-cosmos `x/lysis/keeper/keeper.go`.
+/// deficit_fp must clamp to u128::MAX when gratis >> total_interest.
 #[test]
 fn test_deficit_caps_floor_at_min() {
     let deficit = u128::MAX; // abundant gratis
@@ -227,11 +225,7 @@ fn test_deficit_caps_floor_at_min() {
     assert_eq!(fmax_fp, LYSIS_LIMIT_MAX, "fmax = min(MAX, 2*8%) = 16%");
 }
 
-/// D3: the per-FI floor `f` must adapt DOWN when gratis is scarce (deficit < 8%),
-/// and cap at 8% when gratis is abundant; `fmax = min(MAX, 2*f)`.
-///
-/// Regression for the degenerate `clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2)`,
-/// where both bounds equalled 0.08 and pinned `f_fp` to exactly 8% in every case.
+/// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
 fn test_deficit_derivation_scarce_and_abundant() {
     // Scarce: deficit below the 8% floor → f = deficit (adapts down).

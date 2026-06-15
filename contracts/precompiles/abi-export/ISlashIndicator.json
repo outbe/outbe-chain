@@ -58,6 +58,42 @@
   },
   {
     "type": "function",
+    "name": "submitConflictingFinalizeEvidence",
+    "inputs": [
+      {
+        "name": "block1",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "block2",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitConflictingNotarizeEvidence",
+    "inputs": [
+      {
+        "name": "block1",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "block2",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "submitConflictingVoteEvidence",
     "inputs": [
       {
@@ -94,7 +130,51 @@
   },
   {
     "type": "function",
+    "name": "submitInvalidSeedPartialEvidence",
+    "inputs": [
+      {
+        "name": "evidence",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "submitInvalidVrfProofEvidence",
+    "inputs": [
+      {
+        "name": "evidence",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitNullifyFinalizeEvidence",
+    "inputs": [
+      {
+        "name": "nullifyBlock",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "finalizeBlock",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitSeedPartialEquivocationEvidence",
     "inputs": [
       {
         "name": "evidence",
@@ -157,6 +237,43 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InvalidSeedPartialApplied",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "submitter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roundEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "roundView",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "vrfVersion",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -229,6 +346,43 @@
       },
       {
         "name": "missCount",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SeedPartialEquivocationApplied",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "submitter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roundEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "roundView",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "vrfVersion",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"

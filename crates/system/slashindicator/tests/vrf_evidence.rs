@@ -1,7 +1,6 @@
 //! — integration tests for `SlashIndicator.submitInvalidVrfProofEvidence`.
 //! The tests are grouped by axis:
 //!
-//! * gas-floor tripwire
 //! * size / age / epoch-lag caps
 //! * codec & Phase 1 envelope shape
 //! * committee / proposer binding
@@ -24,11 +23,10 @@
 //!     amount and force-exits the proposer.
 //!
 //! Tests rely on `submit_invalid_vrf_evidence_with_schedule`, the
-//! `#[doc(hidden)]` test-seam that lets us pass a calibrated
-//! `slash_indicator_vrf_evidence_base_gas`. Production callers always go
-//! through `submit_invalid_vrf_evidence`, which passes
-//! `OutbeProtocolSchedule::default()`; pins that the default
-//! tripwire rejects every call.
+//! `#[doc(hidden)]` test-seam that lets us pass relaxed evidence limits
+//! (`invalid_vrf_evidence_max_bytes` / `_max_age_blocks` / `_max_epoch_lag`).
+//! Production callers always go through `submit_invalid_vrf_evidence`, which
+//! passes `OutbeProtocolSchedule::default()`.
 
 use alloy_consensus::{SignableTransaction as _, TxEnvelope};
 use alloy_eips::eip2718::Encodable2718;
@@ -55,8 +53,8 @@ use commonware_cryptography::{
 use commonware_utils::Participant;
 use outbe_consensus::hybrid::HybridScheme;
 use outbe_consensus::proof::{
-    constants::OUTBE_FINALIZE_NAMESPACE_V2, invalid_vrf_evidence_hash_v2, HybridCertificate,
-    V2VerifyError, VrfProof, OUTBE_HYBRID_SEED_NAMESPACE_V2,
+    constants::finalize_namespace, hybrid_seed_namespace, invalid_vrf_evidence_hash_v2,
+    HybridCertificate, V2VerifyError, VrfProof,
 };
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::consensus_metadata::{
@@ -99,12 +97,13 @@ const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
 
-// Calibrated schedule used by every test except the default-schedule one (which proves the
-// real default tripwire blocks every call). All limits relaxed so a single
-// test can stress a single axis without bumping into the others.
+// Schedule with relaxed evidence limits so a single test can stress a single
+// axis (size / age / epoch-lag) without bumping into the others.
 fn relaxed_schedule() -> OutbeProtocolSchedule {
     OutbeProtocolSchedule {
-        slash_indicator_vrf_evidence_base_gas: 1, // any value < u64::MAX disables tripwire
+        // Base gas is the precompile gas charge, not consumed by the verification
+        // path these tests exercise; left at a small value.
+        slash_indicator_vrf_evidence_base_gas: 1,
         invalid_vrf_evidence_max_bytes: 1_000_000,
         invalid_vrf_evidence_max_age_blocks: 10_000,
         invalid_vrf_evidence_max_epoch_lag: 100,
@@ -164,6 +163,7 @@ fn build_snapshot(dkg: &Dkg, proposer_addr: Address) -> CommitteeSnapshot {
         committee,
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 
@@ -191,9 +191,13 @@ fn build_cert(
     );
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
+    // finalize votes bind the ordered committee; build the canonical `Set`
+    // from the DKG committee (matches the snapshot the verifier reads).
+    let committee_set: commonware_utils::ordered::Set<PublicKey> =
+        commonware_utils::ordered::Set::from_iter_dedup(dkg.pubkeys.iter().cloned());
     let sigs: Vec<_> = signer_indices
         .iter()
-        .map(|&i| dkg.keys[i as usize].sign(OUTBE_FINALIZE_NAMESPACE_V2, &vote_message))
+        .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
         .collect();
     let bls_aggregated_vote =
         aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
@@ -201,7 +205,7 @@ fn build_cert(
     let vrf_proof = if include_valid_vrf {
         let threshold_signature = sign_message::<MinSig>(
             &dkg.vrf_threshold_private,
-            OUTBE_HYBRID_SEED_NAMESPACE_V2,
+            &hybrid_seed_namespace(),
             &seed_message,
         );
         Some(VrfProof::<MinSig> {
