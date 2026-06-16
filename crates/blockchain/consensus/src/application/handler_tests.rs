@@ -1111,6 +1111,93 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
     );
 }
 
+// P4-T4 unit-seam regression: after a crash where the executor/Reth finalized
+// parent N but FinalizationActor had not yet persisted the local
+// FinalizedParentCertStore record, restart sees an empty in-process selection
+// store while marshal's durable archive still contains N's finalization. The
+// proposal selector must take the same recovery branch that build_block uses and
+// return a canonical exact-parent proof instead of forfeiting the N+1 slot.
+#[test]
+fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
+    use crate::finalization::parent_cert_store::CertifiedParentProofKey;
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let epoch = Epoch::new(0);
+            let finalized_round = Round::new(epoch, View::new(5));
+            let child_round = Round::new(epoch, View::new(6));
+            let parent_height = 4u64;
+            let parent_block = consensus_block_with_number(0x74, parent_height);
+            let parent_digest = parent_block.digest();
+            let (scheme_provider, committee_provider, _metadata, finalization) =
+                finalization_metadata_fixture(&parent_block, finalized_round);
+            let committee = (*committee_provider
+                .ordered_committee(epoch)
+                .expect("fixture registers the committee"))
+            .clone();
+            let clock = context.child("p4_t4_selector_recovery");
+
+            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
+                context,
+                scheme_provider.clone(),
+                EmptyMarshalBuffer::default(),
+            )
+            .await;
+
+            // Crash-window seed: marshal archive is durable/retained, but the
+            // post-restart ApplicationShared below has a fresh empty
+            // FinalizedParentCertStore via finalizer_test_shared(...).
+            let _ = marshal_mailbox
+                .proposed(finalized_round, parent_block.clone())
+                .await;
+            let mut reporter = marshal_mailbox.clone();
+            let _ = reporter.report(Activity::Finalization(finalization));
+            assert!(
+                wait_for_marshal_info(&clock, &marshal_mailbox, parent_digest)
+                    .await
+                    .is_some(),
+                "marshal must retain the finalized parent archive entry"
+            );
+
+            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let _ = shared.committee_provider.register(epoch, committee);
+            let key = CertifiedParentProofKey::new(
+                epoch.get(),
+                finalized_round.view().get(),
+                parent_digest.0,
+            );
+
+            let lookup = shared
+                .select_parent_proof_for_proposal(
+                    &clock,
+                    child_round,
+                    parent_digest,
+                    commonware_consensus::types::Height::new(parent_height),
+                    Some(key),
+                )
+                .await;
+            let record = match lookup {
+                super::ParentProofLookup::Found(record) => record,
+                super::ParentProofLookup::NoProofNeeded => {
+                    panic!("non-genesis parent must require a proof")
+                }
+                super::ParentProofLookup::Unavailable => {
+                    panic!("marshal archive recovery must prevent parent-proof forfeit")
+                }
+            };
+            assert_eq!(record.finalized_block_hash, parent_digest.0);
+            assert_eq!(record.finalized_block_number, parent_height);
+            let metadata = record.to_v2_metadata();
+            assert_eq!(metadata.finalized_block_hash, parent_digest.0);
+            assert_eq!(metadata.finalized_block_number, parent_height);
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+        },
+    );
+}
+
 #[test]
 fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
