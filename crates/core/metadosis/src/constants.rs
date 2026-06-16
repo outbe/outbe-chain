@@ -39,5 +39,5 @@ pub const SECONDS_PER_HOUR: u64 = 3600;
 
 // --- Intex auction parameters ---
 
-/// Intex size: 100k Coen per 1 Intex (scaled to raw 18-dec Promis on the wire).
-pub const INTEX_SIZE: u128 = 100_000;
+/// Promis load: 100k Promis per 1 Intex (scaled to 18-dec minor on the wire as `promis_load_minor`).
+pub const PROMIS_LOAD: u128 = 100_000;
