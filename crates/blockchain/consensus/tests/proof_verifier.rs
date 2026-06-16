@@ -166,6 +166,68 @@ fn wrong_accounted_block_number_rejects() {
     assert!(!matches!(err, V2VerifyError::WrongAccountedHash { .. }));
 }
 
+#[test]
+fn sibling_fork_binding_discriminates_by_hash_not_number() {
+    // Reorg / sibling-fork lock. Two finalized-parent candidates occupy the
+    // SAME slot (height/epoch/view) but have DIFFERENT block hashes — a fork.
+    // A parent-accounting proof bound to one sibling must be accepted only
+    // against that sibling's hash and rejected against the other, proving the
+    // binding key is the block hash, not the block number. (outbe's reorg-safe
+    // reference is the cert-carried verifier hash rule, not an EL-state read,
+    // so this is the right altitude to lock it.)
+    let snapshot = fixture_snapshot(3);
+    let parent_a = B256::with_last_byte(0xA1);
+    let parent_b = B256::with_last_byte(0xB2);
+    assert_ne!(parent_a, parent_b);
+
+    let meta_a = fixture_metadata(&snapshot, parent_a);
+    let meta_b = fixture_metadata(&snapshot, parent_b);
+    // Siblings share the slot; only the hash differs.
+    assert_eq!(meta_a.finalized_block_number, meta_b.finalized_block_number);
+    assert_eq!(meta_a.finalized_epoch, meta_b.finalized_epoch);
+    assert_eq!(meta_a.finalized_view, meta_b.finalized_view);
+
+    // Cross-fork: each proof is rejected against the OTHER sibling's hash.
+    let err_ab = verify_v2_proof(&meta_a, &snapshot, &meta_a.proof, parent_b)
+        .expect_err("proof bound to A must reject against sibling B");
+    assert!(
+        matches!(err_ab, V2VerifyError::WrongAccountedHash { .. }),
+        "{err_ab:?}"
+    );
+    let err_ba = verify_v2_proof(&meta_b, &snapshot, &meta_b.proof, parent_a)
+        .expect_err("proof bound to B must reject against sibling A");
+    assert!(
+        matches!(err_ba, V2VerifyError::WrongAccountedHash { .. }),
+        "{err_ba:?}"
+    );
+
+    // Same-fork: each proof passes the parent-hash gate against its OWN hash —
+    // it then fails downstream on the opaque fixture cert, NEVER with
+    // WrongAccountedHash. This makes the cross-fork rejections non-vacuous.
+    let err_aa = verify_v2_proof(&meta_a, &snapshot, &meta_a.proof, parent_a)
+        .expect_err("opaque fixture cert fails downstream, past the hash gate");
+    assert!(
+        !matches!(err_aa, V2VerifyError::WrongAccountedHash { .. }),
+        "{err_aa:?}"
+    );
+
+    // Binding is the hash, not the number: flipping only the block number on a
+    // correctly-hash-bound proof does NOT trip the parent-hash gate.
+    let mut meta_a_wrong_number = fixture_metadata(&snapshot, parent_a);
+    meta_a_wrong_number.finalized_block_number = meta_a.finalized_block_number + 10_000;
+    let err_num = verify_v2_proof(
+        &meta_a_wrong_number,
+        &snapshot,
+        &meta_a_wrong_number.proof,
+        parent_a,
+    )
+    .expect_err("number flip alone does not trip the hash gate; fails downstream");
+    assert!(
+        !matches!(err_num, V2VerifyError::WrongAccountedHash { .. }),
+        "{err_num:?}"
+    );
+}
+
 // ── Tests: committee / snapshot binding ───────────────────────────────────
 
 #[test]
