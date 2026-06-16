@@ -780,3 +780,18 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
         "reveal must dispatch on the mid-offering tick, not bundled with clearing: {stages:?}"
     );
 }
+
+#[test]
+fn build_auction_config_rounds_cost_amount_up_to_100() {
+    use crate::runtime::build_auction_config;
+    let cfg = build_auction_config(U256::from(1_000_000_150_000_000u128));
+    assert_eq!(
+        cfg.cost_amount_minor % 100,
+        0,
+        "cost_amount must be a multiple of 100"
+    );
+    assert_eq!(cfg.cost_amount_minor, 100_000_100);
+
+    let exact = build_auction_config(U256::from(2_000_000_000_000_000u128));
+    assert_eq!(exact.cost_amount_minor, 200_000_000);
+}

@@ -669,13 +669,13 @@ fn desis_dispatch(
     }
 }
 
-fn build_auction_config(coen_price: U256) -> AuctionConfig {
-    // coen_price: 1e18 (oracle) · INTEX_SIZE: unitless → /1e12 lands strike at 1e6 (USDC scale).
-    let strike_u256 =
-        coen_price.saturating_mul(U256::from(INTEX_SIZE)) / U256::from(10u128.pow(12));
-    let cost_amount_minor: u64 = strike_u256.try_into().unwrap_or(u64::MAX);
+pub(crate) fn build_auction_config(coen_price: U256) -> AuctionConfig {
+    let cost_amount_u256 =
+        coen_price.saturating_mul(U256::from(PROMIS_LOAD)) / U256::from(10u128.pow(12));
+    let raw_cost_amount: u64 = cost_amount_u256.try_into().unwrap_or(u64::MAX);
+    let cost_amount_minor = raw_cost_amount.div_ceil(100).saturating_mul(100);
     AuctionConfig {
-        promis_load_minor: INTEX_SIZE.saturating_mul(SCALE_1E18_U128),
+        promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
         min_intex_bid_price: 0,
         cost_amount_minor,
         coen_price,
