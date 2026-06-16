@@ -109,6 +109,10 @@ jobs:
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
+    env:
+      # forge comes from setup-foundry-soldeer; don't let mise pull in the repo's
+      # Rust toolchain just to run the export-abi task.
+      MISE_AUTO_INSTALL: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -120,16 +124,21 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
+      - name: Install mise
+        uses: jdx/mise-action@v2
+        with:
+          install: false
+
       - name: Ensure jq is installed
         run: jq --version || (sudo apt-get update && sudo apt-get install -y jq)
 
       - name: Export ABI
-        run: make export-abi
+        run: mise run export-abi
 
       - name: Verify abi-export is up to date
         run: |
           if ! git diff --quiet -- abi-export; then
-            echo "::error::abi-export is stale — run 'make export-abi' and commit the result"
+            echo "::error::abi-export is stale — run 'mise run export-abi' and commit the result"
             git diff -- abi-export
             exit 1
           fi
