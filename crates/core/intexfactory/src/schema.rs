@@ -12,8 +12,6 @@ pub struct IssuanceParams {
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
     pub cost_amount_minor: u64,
-    /// COEN clearing price (1e18, oracle scale). Floor and call trigger are
-    /// derived from it at issuance.
     pub coen_price: U256,
     pub intex_call_period: u32,
     pub call_window_days: u16,

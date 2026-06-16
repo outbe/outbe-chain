@@ -33,10 +33,10 @@ pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// COEN price floor = clearing price * 1.08; integer ratio 108/100.
+/// Floor price = COEN/0xUSD price * 1.08; integer ratio 108/100.
 pub const FLOOR_PRICE_NUM: u64 = 108;
 pub const FLOOR_PRICE_DEN: u64 = 100;
 
-/// Forced-call trigger = floor * 1.64; integer ratio 164/100.
-pub const CALL_PRICE_NUM: u64 = 164;
+/// Call price = COEN/0xUSD price * 2.28; integer ratio 228/100.
+pub const CALL_PRICE_NUM: u64 = 228;
 pub const CALL_PRICE_DEN: u64 = 100;
