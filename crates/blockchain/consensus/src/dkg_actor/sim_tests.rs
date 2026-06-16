@@ -13,7 +13,7 @@
 //!    (unpredictability is required), so seed-determinism is a test affordance
 //!    that lets us assert byte-identical reproducibility and adversarial
 //!    rejection on *typed* errors — stronger than the existing string / outer
-//!    `tokio::time::timeout` assertions.
+//!    timeout-based assertions.
 //!
 //!  * **Actor over the real wire** (`deterministic::Runner` + `simulated::Network`):
 //!    runs the production [`run_initial_dkg`] actor over the simulated p2p network

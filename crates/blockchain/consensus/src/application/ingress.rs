@@ -141,59 +141,72 @@ mod tests {
     }
 
     /// genesis() on a closed channel must return Digest::ZERO, not hang or panic.
-    #[tokio::test]
-    async fn test_genesis_closed_returns_zero() {
-        let (mut mailbox, rx) = make_mailbox(1);
-        drop(rx);
+    #[test]
+    fn test_genesis_closed_returns_zero() {
+        use commonware_runtime::Runner as _;
+        commonware_runtime::deterministic::Runner::default().start(|_context| async move {
+            let (mut mailbox, rx) = make_mailbox(1);
+            drop(rx);
 
-        let result = mailbox.genesis(Epoch::new(0)).await;
-        assert_eq!(result, Digest::ZERO);
+            let result = mailbox.genesis(Epoch::new(0)).await;
+            assert_eq!(result, Digest::ZERO);
+        });
     }
 
     /// verify() must deliver through backpressure, not drop.
-    #[tokio::test]
-    async fn test_verify_delivers_all_messages() {
-        let (mut mailbox, mut rx) = make_mailbox(1);
-        let total = 5usize;
+    #[test]
+    fn test_verify_delivers_all_messages() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (mut mailbox, mut rx) = make_mailbox(1);
+            let total = 5usize;
 
-        let sender = tokio::spawn(async move {
-            for i in 0..total {
-                let digest = Digest(B256::with_last_byte(i as u8));
-                let _rx = mailbox.verify(dummy_context(), digest).await;
+            let sender = context
+                .child("verify_sender")
+                .spawn(move |_ctx| async move {
+                    for i in 0..total {
+                        let digest = Digest(B256::with_last_byte(i as u8));
+                        let _rx = mailbox.verify(dummy_context(), digest).await;
+                    }
+                });
+
+            let mut count = 0;
+            for _ in 0..total {
+                let msg = rx.next().await.expect("channel closed prematurely");
+                assert!(matches!(msg, Message::Verify(_)));
+                count += 1;
             }
+
+            sender.await.unwrap();
+            assert_eq!(count, total);
         });
-
-        let mut count = 0;
-        for _ in 0..total {
-            let msg = rx.next().await.expect("channel closed prematurely");
-            assert!(matches!(msg, Message::Verify(_)));
-            count += 1;
-        }
-
-        sender.await.unwrap();
-        assert_eq!(count, total);
     }
 
     /// propose() must deliver through backpressure, not drop.
-    #[tokio::test]
-    async fn test_propose_delivers_all_messages() {
-        let (mut mailbox, mut rx) = make_mailbox(1);
-        let total = 5usize;
+    #[test]
+    fn test_propose_delivers_all_messages() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (mut mailbox, mut rx) = make_mailbox(1);
+            let total = 5usize;
 
-        let sender = tokio::spawn(async move {
+            let sender = context
+                .child("propose_sender")
+                .spawn(move |_ctx| async move {
+                    for _ in 0..total {
+                        let _rx = mailbox.propose(dummy_context()).await;
+                    }
+                });
+
+            let mut count = 0;
             for _ in 0..total {
-                let _rx = mailbox.propose(dummy_context()).await;
+                let msg = rx.next().await.expect("channel closed prematurely");
+                assert!(matches!(msg, Message::Propose(_)));
+                count += 1;
             }
+
+            sender.await.unwrap();
+            assert_eq!(count, total);
         });
-
-        let mut count = 0;
-        for _ in 0..total {
-            let msg = rx.next().await.expect("channel closed prematurely");
-            assert!(matches!(msg, Message::Propose(_)));
-            count += 1;
-        }
-
-        sender.await.unwrap();
-        assert_eq!(count, total);
     }
 }

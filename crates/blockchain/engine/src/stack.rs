@@ -2190,10 +2190,14 @@ where
             // block-1 payload), under one deadline. Any error or timeout halts.
             // The deadline is measured on the consensus runtime `Clock` (the same
             // time source the deterministic test runtime can mock and advance), not
-            // tokio's wall-clock — keeping startup-timeout behavior reproducible and
-            // removing a direct `tokio::time` dependency from the consensus stack.
+            // wall-clock — keeping startup-timeout behavior reproducible and free of a
+            // direct async-runtime timer dependency in the consensus stack.
             // `Clock::timeout` requires a `Send + 'static` future; the `async move`
             // owns every capture, so the bound holds.
+            // Owned `Clock` clone moved into the `'static` startup future so the TEE
+            // DKG identity-exchange cadence runs on the consensus runtime clock, not
+            // tokio's wall-clock (mockable under the deterministic test runtime).
+            let dkg_clock = ctx.child("tee_dkg_clock");
             let payload = ctx
                 .timeout(deadline, async move {
                     // Host connect policy from the genesis teePolicy: strict
@@ -2202,6 +2206,7 @@ where
                         crate::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
                     let tribute_offer_public = crate::tee_bootstrap::run_tee_dkg_at_startup(
                         &socket,
+                        &dkg_clock,
                         n,
                         dkg_chain_id,
                         0,
@@ -2280,9 +2285,11 @@ where
                     // hardcoded 0 (future-proofs the handoff for offer-key rotation).
                     let tribute_offer_epoch =
                         validators::read_tee_offer_epoch_at_latest(&node.provider).unwrap_or(0);
+                    let handoff_clock = ctx.child("tee_handoff_clock");
                     ctx.timeout(deadline, async move {
                         crate::tee_bootstrap::run_tee_handoff_join(
                             &socket_join,
+                            handoff_clock,
                             on_chain_offer,
                             chain_id,
                             tribute_offer_epoch,
@@ -2756,6 +2763,7 @@ where
         marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
 
     let recovered_finalized_round = match recover_application_finalized_round(
+        ctx,
         &marshal_mailbox,
         last_execution_height,
     )
@@ -2795,7 +2803,7 @@ where
             // produces, so no new seeding semantics or reth unwind is involved.
             let finalized_tip = last_consensus_finalized.get();
             if unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip)
-                && recover_application_finalized_round(&marshal_mailbox, finalized_tip)
+                && recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip)
                     .await
                     .is_ok()
             {
@@ -3133,7 +3141,7 @@ where
         let floor_digest = if current_epoch.get() == 0 {
             Digest(genesis_hash)
         } else {
-            let deadline = std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+            let deadline = ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
             loop {
                 let (height, hash, round_ready) = {
                     let view = finalization_view.read().map_err(|_| {
@@ -3148,7 +3156,7 @@ where
                 if height > 0 && hash != alloy_primitives::B256::ZERO && round_ready {
                     break Digest(hash);
                 }
-                if std::time::Instant::now() >= deadline {
+                if ctx.current() >= deadline {
                     return Err(eyre::eyre!(
                         "epoch={} restart without finalized anchor after {:?}; \
                          handle_genesis would return ZERO, or Phase 1 would lack \
@@ -3157,7 +3165,7 @@ where
                         EPOCH_RESTART_ANCHOR_TIMEOUT,
                     ));
                 }
-                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
             }
         };
 
@@ -3770,7 +3778,7 @@ where
                             // path: the restarted engine's floor needs the activation block
                             // finalized before `'epoch_loop` rebuilds the scheme.
                             let deadline =
-                                std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
                                     let view = finalization_view.read().map_err(|_| {
@@ -3790,7 +3798,7 @@ where
                                 {
                                     break;
                                 }
-                                if std::time::Instant::now() >= deadline {
+                                if ctx.current() >= deadline {
                                     return Err(eyre::eyre!(
                                         "verifier DKG activation race after {:?}: \
                                          finalized=(height={}, hash={}, round_ready={}) \
@@ -3802,7 +3810,7 @@ where
                                         activation_height
                                     ));
                                 }
-                                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                             }
                             // Queue adoption of the just-activated boundary's DKG
                             // material. It CANNOT be read here: the activated cycle's
@@ -4007,7 +4015,7 @@ where
                             // guard while pointing Simplex at the wrong parent.
                             let activation_height = last_dkg_activation_height;
                             let deadline =
-                                std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
                                     let view = finalization_view.read().map_err(|_| {
@@ -4027,7 +4035,7 @@ where
                                 {
                                     break;
                                 }
-                                if std::time::Instant::now() >= deadline {
+                                if ctx.current() >= deadline {
                                     return Err(eyre::eyre!(
                                         "DKG activation race after {:?}: \
                                          finalized_anchor=(height={}, hash={}, round_ready={}) \
@@ -4040,7 +4048,7 @@ where
                                         activation_height
                                     ));
                                 }
-                                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                             }
                             continue 'epoch_loop;
                             }
@@ -4153,7 +4161,7 @@ where
                                 // verifier engine's floor needs the activation block finalized
                                 // before `'epoch_loop` rebuilds the verifier scheme.
                                 let deadline =
-                                    std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                    ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                                 loop {
                                     let (finalized, finalized_hash, round_ready) = {
                                         let view = finalization_view.read().map_err(|_| {
@@ -4173,7 +4181,7 @@ where
                                     {
                                         break;
                                     }
-                                    if std::time::Instant::now() >= deadline {
+                                    if ctx.current() >= deadline {
                                         return Err(eyre::eyre!(
                                             "exited-validator demotion activation race after {:?}: \
                                              finalized=(height={}, hash={}, round_ready={}) activation_height={}",
@@ -4184,7 +4192,7 @@ where
                                             activation_height
                                         ));
                                     }
-                                    tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                    ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                                 }
                                 continue 'epoch_loop;
                             }
@@ -4651,6 +4659,7 @@ where
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn recover_application_finalized_round(
+    clock: &impl Clock,
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
 ) -> Result<Option<Round>> {
@@ -4660,11 +4669,16 @@ async fn recover_application_finalized_round(
 
     let height = Height::new(last_execution_height);
     for attempt in 1..=FINALIZED_ROUND_RECOVERY_ATTEMPTS {
-        match tokio::time::timeout(
-            FINALIZED_ROUND_RECOVERY_TIMEOUT,
-            marshal_mailbox.get_finalization(height),
-        )
-        .await
+        // Measure the per-attempt timeout on the consensus runtime `Clock`, not
+        // tokio's wall-clock, so recovery is reproducible under the deterministic
+        // test runtime. `Clock::timeout` requires a `Send + 'static` future, so the
+        // mailbox is cloned (a cheap sender clone) and moved into the request.
+        let mailbox = marshal_mailbox.clone();
+        match clock
+            .timeout(FINALIZED_ROUND_RECOVERY_TIMEOUT, async move {
+                mailbox.get_finalization(height).await
+            })
+            .await
         {
             Ok(Some(finalization)) => {
                 let round = finalization.proposal.round;
@@ -4676,7 +4690,7 @@ async fn recover_application_finalized_round(
                 return Ok(Some(round));
             }
             Ok(None) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
-                tokio::time::sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
+                clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Ok(None) => {
                 return Err(eyre::eyre!(
@@ -4685,7 +4699,7 @@ async fn recover_application_finalized_round(
                 ));
             }
             Err(_) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
-                tokio::time::sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
+                clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Err(_) => {
                 return Err(eyre::eyre!(

@@ -63,6 +63,7 @@ tempfile.workspace = true
 outbe-tributefactory.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }
+commonware-runtime.workspace = true
 criterion.workspace = true
 
 # Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).

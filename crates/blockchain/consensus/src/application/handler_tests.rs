@@ -954,8 +954,8 @@ async fn wait_for_marshal_info(
     digest: Digest,
 ) -> Option<(commonware_consensus::types::Height, Digest)> {
     // Runtime-clock bounded poll (deterministic-runtime friendly): poll the
-    // marshal mapping until it appears or the deadline elapses. `tokio::time`
-    // does not advance under the deterministic runtime, so use `Clock` here.
+    // marshal mapping until it appears or the deadline elapses. A wall-clock async
+    // timer does not advance under the deterministic runtime, so use `Clock` here.
     let deadline = clock.current() + Duration::from_secs(2);
     loop {
         if let Some(info) = mailbox.get_info(&digest).await {

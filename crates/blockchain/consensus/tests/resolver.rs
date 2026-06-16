@@ -153,9 +153,9 @@ enum MockBehaviour {
     /// Return this fixed Notarization on every call. Boxed because the
     /// Notarization inline is ~500 bytes — see clippy::large_enum_variant.
     Returns(Box<Notarization<HybridScheme<MinSig>, OutbeDigest>>),
-    /// Sleep past the per-attempt timeout to force the resolver's
-    /// `tokio::time::timeout` to elapse.
-    SleepLongerThanTimeout,
+    /// Never respond, so the resolver's per-attempt `Clock::sleep(attempt_timeout)`
+    /// race always wins and the attempt times out (deterministic — no real sleep).
+    NeverResponds,
 }
 
 #[derive(Clone)]
@@ -195,12 +195,13 @@ impl ParentProofTransport for MockTransport {
         }
         match &*self.behaviour {
             MockBehaviour::Returns(n) => Ok((**n).clone()),
-            MockBehaviour::SleepLongerThanTimeout => {
-                // Sleep ~2× the per-attempt timeout so the resolver's
-                // `tokio::time::timeout` always fires.
-                tokio::time::sleep(attempt_timeout.saturating_mul(2) + Duration::from_millis(20))
-                    .await;
-                Err(TransportError::Other("should have timed out".into()))
+            MockBehaviour::NeverResponds => {
+                // Never resolve: the resolver's per-attempt `Clock::sleep(attempt_timeout)`
+                // race wins every attempt, so the attempt times out without any real sleep.
+                std::future::pending::<
+                    Result<Notarization<HybridScheme<MinSig>, OutbeDigest>, TransportError>,
+                >()
+                .await
             }
         }
     }
@@ -211,10 +212,10 @@ impl ParentProofTransport for MockTransport {
 #[test]
 fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
     use commonware_runtime::Runner as _;
-    // Runs on the tokio runtime so the mock transport's `tokio::time::sleep`
-    // and the resolver's `Clock::sleep` (the timeout race) share one reactor;
+    // Runs on the deterministic runtime: the resolver's `Clock::sleep` timeout race
+    // and any mock delay advance on one virtual clock, so the test is reproducible.
     // `context` is the `Clock` threaded into `fetch_parent_proof`.
-    commonware_runtime::tokio::Runner::default().start(|context| async move {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
         // Transport returns a Notarization for payload "X" but the resolver was
         // asked for the parent hash of payload "Y". NoProofForExactParent.
         let round = Round::new(Epoch::new(0), View::new(2));
@@ -259,7 +260,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
 #[test]
 fn remote_notarized_fetch_without_local_certification_witness_returns_no_proof() {
     use commonware_runtime::Runner as _;
-    commonware_runtime::tokio::Runner::default().start(|context| async move {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
         // Mock returns a valid Notarization matching the requested parent_hash,
         // but the store has no witness: NoLocalCertificationWitness.
         let round = Round::new(Epoch::new(0), View::new(2));
@@ -294,7 +295,7 @@ fn remote_notarized_fetch_without_local_certification_witness_returns_no_proof()
 #[test]
 fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other_hash_record() {
     use commonware_runtime::Runner as _;
-    commonware_runtime::tokio::Runner::default().start(|context| async move {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
         // Pre-existing record at hash X for round R. Fetch requested for hash Y.
         // Mock returns notarization at round R but for hash X (competing branch).
         // Resolver must short-circuit on hash mismatch AND the record at X
@@ -351,11 +352,11 @@ fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other
 #[test]
 fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
     use commonware_runtime::Runner as _;
-    commonware_runtime::tokio::Runner::default().start(|context| async move {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
         // All three budget dimensions in one test: max_attempts capped,
         // per-attempt timeout enforced, max_bytes propagated to the transport.
         let round = Round::new(Epoch::new(0), View::new(2));
-        let transport = MockTransport::new(MockBehaviour::SleepLongerThanTimeout);
+        let transport = MockTransport::new(MockBehaviour::NeverResponds);
 
         const ATTEMPTS: u32 = 2;
         const TIMEOUT_MS: u64 = 50;

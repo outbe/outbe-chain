@@ -168,6 +168,7 @@ impl Reporter for Mailbox {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
+    use commonware_runtime::{Clock as _, Runner as _};
     use commonware_utils::acknowledgement::{Acknowledgement, Exact};
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::{primitives::SealedBlock, Block};
@@ -180,18 +181,27 @@ mod tests {
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
     }
 
-    #[tokio::test]
-    async fn report_acknowledges_block_when_mailbox_is_closed() {
-        let (tx, rx) = mpsc::unbounded();
-        drop(rx);
-        let mut mailbox = Mailbox::new(tx);
-        let (ack, waiter) = Exact::handle();
+    #[test]
+    fn report_acknowledges_block_when_mailbox_is_closed() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (tx, rx) = mpsc::unbounded();
+            drop(rx);
+            let mut mailbox = Mailbox::new(tx);
+            let (ack, waiter) = Exact::handle();
 
-        let _ = mailbox.report(Update::Block(make_test_block(0xA1), ack));
+            let _ = mailbox.report(Update::Block(make_test_block(0xA1), ack));
 
-        tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("ack waiter must complete")
-            .expect("closed peer_manager mailbox must acknowledge cloned block update");
+            // The closed mailbox acknowledges the cloned block update inline, so
+            // the waiter resolves immediately. Race it against a runtime `Clock`
+            // sleep (mirrors `dkg_actor::sim_tests`) instead of a wall-clock async
+            // timeout; the safety bound never fires.
+            let mut waiter = std::pin::pin!(waiter);
+            let mut timeout = std::pin::pin!(context.sleep(Duration::from_secs(1)));
+            let result = commonware_macros::select! {
+                result = &mut waiter => result,
+                _ = &mut timeout => panic!("ack waiter must complete"),
+            };
+            result.expect("closed peer_manager mailbox must acknowledge cloned block update");
+        });
     }
 }
