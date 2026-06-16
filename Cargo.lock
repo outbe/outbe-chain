@@ -7783,6 +7783,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "commonware-parallel",
+ "commonware-runtime",
  "commonware-utils",
  "criterion 0.5.1",
  "ed25519-dalek",
