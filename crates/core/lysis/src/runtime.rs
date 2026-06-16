@@ -3,7 +3,7 @@ use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_oracle::{contract::OracleContract, scurve};
-use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128};
+use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -11,9 +11,6 @@ use outbe_primitives::{
 
 /// FI tree height constant used in the distribution algorithm.
 const FI_TREE_HEIGHT: usize = 10;
-
-/// Fixed-point scale for algorithm interface (10^18).
-const _SCALE: u128 = 1_000_000_000_000_000_000;
 
 /// Result of a lysis execution.
 pub struct LysisResult {
@@ -92,10 +89,10 @@ pub fn lysis(
         tribute_ids.push(tribute.token_id);
 
         let fi = tribute_fis[i];
-        let fraction_fp = fi_fraction_map.get(&fi).copied().unwrap_or(0);
+        let fraction_fp = fi_fraction_map.get(&fi).copied().unwrap_or(U256::ZERO);
 
         // gratis_load = fraction * nominal / SCALE (integer math)
-        let gratis_load = tribute.nominal_amount_minor * U256::from(fraction_fp) / SCALE_1E18;
+        let gratis_load = tribute.nominal_amount_minor * fraction_fp / SCALE_1E18;
 
         if gratis_load.is_zero() || gratis_load > remaining {
             // Cannot cover this tribute — skip NOD issuance
@@ -170,7 +167,7 @@ pub(crate) fn compute_fi_fraction_map(
     tribute_fis: &[u64],
     total_interest: U256,
     gratis_allocation: U256,
-) -> Result<std::collections::HashMap<u64, u128>> {
+) -> Result<std::collections::HashMap<u64, U256>> {
     // 3. Group tributes by fidelity index (sorted ascending for algorithm stability)
     let mut fi_groups: std::collections::BTreeMap<u64, Vec<usize>> =
         std::collections::BTreeMap::new();
@@ -180,7 +177,7 @@ pub(crate) fn compute_fi_fraction_map(
 
     // 4. Prepare distribution parameters in fixed-point (SCALE = 10^18)
     let sorted_fis: Vec<u64> = fi_groups.keys().copied().collect();
-    let mut y_fp: Vec<u128> = Vec::with_capacity(sorted_fis.len());
+    let mut y_fp: Vec<U256> = Vec::with_capacity(sorted_fis.len());
     let mut p: Vec<u64> = Vec::with_capacity(sorted_fis.len());
 
     for &fi in &sorted_fis {
@@ -190,7 +187,7 @@ pub(crate) fn compute_fi_fraction_map(
             .map(|&i| nominal_amounts[i])
             .fold(U256::ZERO, |acc, v| acc + v);
         // y_fp = group_interest * SCALE / total_interest (integer division truncates)
-        let share = (group_interest * SCALE_1E18 / total_interest).to::<u128>();
+        let share = group_interest * SCALE_1E18 / total_interest;
         y_fp.push(share);
         p.push(indices.len() as u64);
     }
@@ -200,10 +197,10 @@ pub(crate) fn compute_fi_fraction_map(
     // last share. Deterministic because `sorted_fis` is BTreeMap-ordered on all
     // nodes. Guarantees the downstream `calc_fraction_distribution_fp` invariant
     // `sum(y_fp) == SCALE`.
-    let y_sum: u128 = y_fp.iter().sum();
+    let y_sum: U256 = y_fp.iter().copied().sum();
     if let Some(last) = y_fp.last_mut() {
-        if y_sum < SCALE_1E18_U128 {
-            *last += SCALE_1E18_U128 - y_sum;
+        if y_sum < SCALE_1E18 {
+            *last += SCALE_1E18 - y_sum;
         }
         // y_sum > SCALE is unreachable: each share is ≤ group/total ≤ 1.
     }
@@ -211,16 +208,16 @@ pub(crate) fn compute_fi_fraction_map(
     let nt = nominal_amounts.len();
 
     // 5. Deficit coefficient in fixed-point → derive per-FI floor and ceiling.
-    let deficit_u256 = gratis_allocation * SCALE_1E18 / total_interest;
-    let deficit_fp = deficit_u256.min(U256::from(u128::MAX)).to::<u128>();
-    let f_fp = deficit_fp;
-    let fmax_fp = f_fp.saturating_mul(2);
+    // `f_fp` is bounded by `SCALE_1E18 ≈ 2^60` in normalized scenarios, so
+    // doubling for `fmax_fp` is safe in U256 (no saturating needed).
+    let f_fp = gratis_allocation * SCALE_1E18 / total_interest;
+    let fmax_fp = f_fp * U256::from(2u64);
 
     // 6. Run distribution algorithm (pure integer)
     let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;
 
     // 7. Build FI → fraction map (fixed-point)
-    let mut fi_fraction_map: std::collections::HashMap<u64, u128> =
+    let mut fi_fraction_map: std::collections::HashMap<u64, U256> =
         std::collections::HashMap::with_capacity(sorted_fis.len());
     for (i, &fi) in sorted_fis.iter().enumerate() {
         if let Some(&frac) = fractions.get(i) {

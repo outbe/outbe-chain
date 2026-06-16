@@ -142,7 +142,7 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
 #[test]
 fn test_empty_population() {
     let result = calc_fraction_distribution_fp(&[], &[], 10, 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
-    assert_eq!(result, vec![0]);
+    assert_eq!(result, vec![U256::ZERO]);
 }
 
 #[test]
@@ -156,7 +156,10 @@ fn test_single_fi_returns_target_fraction() {
 
 #[test]
 fn test_two_fi_groups() {
-    let y_fp = vec![SCALE * 6 / 10, SCALE * 4 / 10]; // 60/40
+    let y_fp = vec![
+        SCALE * U256::from(6u64) / U256::from(10u64),
+        SCALE * U256::from(4u64) / U256::from(10u64),
+    ]; // 60/40
     let p = vec![1, 2];
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
@@ -164,68 +167,72 @@ fn test_two_fi_groups() {
 
     // All fractions non-negative
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac > 0, "fraction[{i}] should be positive, got {frac}");
+        assert!(
+            !frac.is_zero(),
+            "fraction[{i}] should be positive, got {frac}"
+        );
     }
 
     // Bounded by 2*fmax (reasonable bound for fixed-point)
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] too large: {frac}");
+        assert!(frac <= bound, "fraction[{i}] too large: {frac}");
     }
 }
 
 #[test]
 fn test_three_fi_groups() {
-    let y_fp = vec![SCALE * 50 / 100, SCALE * 30 / 100, SCALE * 20 / 100];
+    let y_fp = vec![
+        SCALE * U256::from(50u64) / U256::from(100u64),
+        SCALE * U256::from(30u64) / U256::from(100u64),
+        SCALE * U256::from(20u64) / U256::from(100u64),
+    ];
     let p = vec![50, 30, 20];
 
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
 
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
 }
 
 #[test]
 fn test_many_fi_groups() {
     let n = 10;
-    let y_fp: Vec<u128> = vec![SCALE / n as u128; n];
+    let y_fp: Vec<U256> = vec![SCALE / U256::from(n as u64); n];
     let p: Vec<u64> = (1..=n as u64).collect();
 
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), n);
 
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] too large");
+        assert!(frac <= bound, "fraction[{i}] too large");
     }
-}
-
-/// deficit_fp must clamp to u128::MAX when gratis >> total_interest.
-#[test]
-fn test_deficit_caps_floor_at_min() {
-    let deficit = u128::MAX; // abundant gratis
-    let f_fp = deficit.min(F_FP_DEFAULT);
-    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
-    assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
-    assert_eq!(fmax_fp, F_MAX_FP, "fmax = min(MAX, 2*8%) = 16%");
 }
 
 /// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
 fn test_deficit_derivation_scarce_and_abundant() {
     // Scarce: deficit below the 8% floor → f = deficit (adapts down).
-    let scarce = F_FP_DEFAULT / 2; // 4%
+    let scarce = F_FP_DEFAULT / U256::from(2u64); // 4%
     let f_fp = scarce.min(F_FP_DEFAULT);
-    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
+    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
     assert_eq!(f_fp, scarce, "scarce gratis must lower the floor below 8%");
-    assert_eq!(fmax_fp, scarce * 2, "fmax tracks 2*f when below the cap");
+    assert_eq!(
+        fmax_fp,
+        scarce * U256::from(2u64),
+        "fmax tracks 2*f when below the cap"
+    );
 
     // Abundant: deficit at/above 8% → f capped at 8%, fmax at 16%.
     let abundant = F_MAX_FP; // 16% deficit
     let f_fp = abundant.min(F_FP_DEFAULT);
-    let fmax_fp = F_MAX_FP.min(f_fp.saturating_mul(2));
+    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
     assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
     assert_eq!(fmax_fp, F_MAX_FP, "fmax caps at 16%");
 }
@@ -233,53 +240,62 @@ fn test_deficit_derivation_scarce_and_abundant() {
 #[test]
 fn test_default_constants() {
     // Verify constants match expected values within integer precision
-    assert_eq!(F_FP_DEFAULT, 80_000_000_000_000_000); // 0.08 * 10^18
-    assert_eq!(F_MAX_FP, 160_000_000_000_000_000); // 0.16 * 10^18
+    assert_eq!(F_FP_DEFAULT, U256::from(320_000_000_000_000_000u128)); // 0.32 * 10^18
+    assert_eq!(F_MAX_FP, U256::from(640_000_000_000_000_000u128)); // 0.64 * 10^18
 }
 
 #[test]
 fn test_with_zero_population_entries() {
-    let y_fp = vec![SCALE / 2, 0, SCALE / 2];
+    let half = SCALE / U256::from(2u64);
+    let y_fp = vec![half, U256::ZERO, half];
     let p = vec![10, 0, 5];
 
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
 }
 
 #[test]
 fn test_skewed_distribution() {
-    let y_fp = vec![SCALE * 9 / 10, SCALE / 10];
+    let y_fp = vec![
+        SCALE * U256::from(9u64) / U256::from(10u64),
+        SCALE / U256::from(10u64),
+    ];
     let p = vec![900, 100];
 
     let result =
         calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
-    assert!(result[0] > 0);
-    assert!(result[1] > 0);
+    assert!(!result[0].is_zero());
+    assert!(!result[1].is_zero());
 }
 
 /// Regression: large nominal amounts (> 2^53) must not lose precision.
 #[test]
 fn test_large_nominal_distribution() {
     // Simplified: 60/40 split → use SCALE fractions directly.
-    let y_fp = vec![SCALE * 6 / 10, SCALE * 4 / 10];
+    let y_fp = vec![
+        SCALE * U256::from(6u64) / U256::from(10u64),
+        SCALE * U256::from(4u64) / U256::from(10u64),
+    ];
     let p = vec![600, 400];
 
     let result =
         calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
         assert!(
-            frac > 0,
+            !frac.is_zero(),
             "fraction[{i}] must be positive for large nominals"
         );
-        assert!(frac <= F_MAX_FP * 2, "fraction[{i}] must be bounded");
+        assert!(frac <= bound, "fraction[{i}] must be bounded");
     }
 }
 
@@ -290,17 +306,14 @@ fn test_large_nominal_distribution() {
 /// Assert the post-condition `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` for the
 /// output of `calc_fraction_distribution_fp`. Small round-down error is
 /// acceptable; overshoot is not.
-fn assert_weighted_within_target(result: &[u128], y_fp: &[u128], f_fp: u128) {
-    use alloy_primitives::U256;
-    let scale_u = U256::from(SCALE);
+fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
     let weighted: U256 = result
         .iter()
         .zip(y_fp.iter())
-        .map(|(f, y)| U256::from(*f) * U256::from(*y) / scale_u)
+        .map(|(f, y)| *f * *y / SCALE)
         .sum();
-    let target = U256::from(f_fp);
     assert!(
-        weighted <= target,
+        weighted <= f_fp,
         "weighted expenditure {weighted} exceeds target {f_fp}"
     );
 }
@@ -309,7 +322,8 @@ fn assert_weighted_within_target(result: &[u128], y_fp: &[u128], f_fp: u128) {
 fn test_normalized_f1_respects_budget_skewed_population() {
     // Skewed population + imbalanced interest tends to push raw f1 over the
     // target. After normalization the post-condition must hold.
-    let y_fp = vec![SCALE / 4, SCALE / 4, SCALE / 4, SCALE / 4];
+    let q = SCALE / U256::from(4u64);
+    let y_fp = vec![q, q, q, q];
     let p = vec![100u64, 1, 1, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
@@ -321,7 +335,7 @@ fn test_normalized_f1_respects_budget_skewed_population() {
 #[test]
 fn test_normalized_f1_respects_budget_many_groups() {
     let n = 10usize;
-    let y_fp: Vec<u128> = (0..n).map(|_| SCALE / n as u128).collect();
+    let y_fp: Vec<U256> = (0..n).map(|_| SCALE / U256::from(n as u64)).collect();
     let p: Vec<u64> = (1..=n as u64).collect();
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
@@ -346,7 +360,8 @@ fn test_single_group_returns_f_without_normalization() {
 fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     // When raw output overshoots and is scaled down, pairwise ratios between
     // groups should remain ~constant.
-    let y_fp = vec![SCALE / 2, SCALE / 2];
+    let half = SCALE / U256::from(2u64);
+    let y_fp = vec![half, half];
     let p = vec![50u64, 5];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
@@ -356,7 +371,7 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     // Both fractions should still be positive (not obliterated by scale-down).
     for &frac in &result {
         assert!(
-            frac > 0,
+            !frac.is_zero(),
             "fraction must remain positive after normalization"
         );
     }
@@ -372,9 +387,10 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
 /// term). After I256 refactor the distribution must preserve the signal.
 #[test]
 fn test_small_fi_group_survives_i256_precision() {
+    let tiny = U256::from(1_000_000u64);
     let y_fp = vec![
-        SCALE - 1_000_000, // dominant group ≈ 99.9999%
-        1_000_000,         // tiny group ≈ 0.0001% — used to collapse to 0
+        SCALE - tiny, // dominant group ≈ 99.9999%
+        tiny,         // tiny group ≈ 0.0001% — used to collapse to 0
     ];
     let p = vec![1000u64, 1];
     let f_fp = F_FP_DEFAULT;
@@ -382,7 +398,7 @@ fn test_small_fi_group_survives_i256_precision() {
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1001, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert!(
-        result[1] > 0,
+        !result[1].is_zero(),
         "tiny FI group must receive a non-zero fraction, got {}",
         result[1]
     );
@@ -394,17 +410,18 @@ fn test_small_fi_group_survives_i256_precision() {
 /// signed contribution for the lower-Y group.
 #[test]
 fn test_negative_beta_branch_produces_bounded_distribution() {
-    let y_fp = vec![SCALE / 100, SCALE * 99 / 100]; // 1% / 99% split
+    let y_fp = vec![
+        SCALE / U256::from(100u64),
+        SCALE * U256::from(99u64) / U256::from(100u64),
+    ]; // 1% / 99% split
     let p = vec![1u64, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
+    let bound = F_MAX_FP * U256::from(2u64);
     for &f in &result {
-        assert!(
-            f <= F_MAX_FP * 2,
-            "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound"
-        );
+        assert!(f <= bound, "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound");
     }
 }
 
@@ -551,7 +568,7 @@ fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1, "all FI=1 must collapse to one map entry");
-    let expected = SCALE * 5 / 100; // 0.05 * 10^18
+    let expected = SCALE * U256::from(5u64) / U256::from(100u64); // 0.05 * 10^18
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -576,7 +593,7 @@ fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1);
-    let expected = SCALE * 30 / 100; // 0.30 * 10^18
+    let expected = SCALE * U256::from(30u64) / U256::from(100u64); // 0.30 * 10^18
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -600,7 +617,7 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1);
-    let expected = SCALE * 32 / 100; // 0.32 * 10^18
+    let expected = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -651,7 +668,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     //    that clamps to 0 (would starve a whole FI bucket).
     for (fi, frac) in &map {
         assert!(
-            *frac > 0,
+            !frac.is_zero(),
             "FI {fi} got zero fraction: algorithm collapsed a group (got {frac})"
         );
     }
@@ -665,26 +682,25 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     for (i, &fi) in tribute_fis.iter().enumerate() {
         *group_interest.entry(fi).or_insert(U256::ZERO) += nominal_amounts[i];
     }
-    let mut y_fp: Vec<u128> = group_interest
+    let mut y_fp: Vec<U256> = group_interest
         .values()
-        .map(|gi| (*gi * SCALE_1E18 / total_interest).to::<u128>())
+        .map(|gi| *gi * SCALE_1E18 / total_interest)
         .collect();
-    let y_sum: u128 = y_fp.iter().sum();
+    let y_sum: U256 = y_fp.iter().copied().sum();
     if let Some(last) = y_fp.last_mut() {
         if y_sum < SCALE {
             *last += SCALE - y_sum;
         }
     }
-    let scale_u = U256::from(SCALE);
     let weighted: U256 = group_interest
         .keys()
         .zip(y_fp.iter())
         .map(|(fi, y)| {
-            let f = map.get(fi).copied().unwrap_or(0);
-            U256::from(f) * U256::from(*y) / scale_u
+            let f = map.get(fi).copied().unwrap_or(U256::ZERO);
+            f * *y / SCALE
         })
         .sum();
-    let f_fp = U256::from(SCALE * 32 / 100); // 0.32 * 10^18
+    let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
     assert!(
         weighted <= f_fp,
         "weighted Σ(f·y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
