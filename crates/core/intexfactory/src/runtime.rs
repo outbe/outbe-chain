@@ -7,12 +7,11 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
 use crate::constants::{
-    COEN_CALL_TRIGGER_DEN, COEN_CALL_TRIGGER_NUM, COEN_PRICE_FLOOR_DEN, COEN_PRICE_FLOOR_NUM,
-    INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO,
-    RESERVE_VAULT,
+    CALL_PRICE_DEN, CALL_PRICE_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM, INTEX_NFT1155_ADDRESS,
+    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -23,7 +22,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in IntexRegistry and enroll it in the floor-bin
+/// Capture series identity in Intex and enroll it in the floor-bin
 /// index. The outbound LayerZero send is added with messenger wiring.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     // u32 timestamp; bounded until 2106.
@@ -32,24 +31,24 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 
     // Floor and call trigger are oracle-scale COEN prices derived from the
     // clearing price (floor = price * 1.08, trigger = floor * 1.64).
-    let coen_price_floor = derived_floor(params.coen_price)?;
-    let coen_price_call_trigger = derived_call_trigger(coen_price_floor)?;
+    let floor_price_minor = derived_floor(params.coen_price)?;
+    let call_price_minor = derived_call_price(floor_price_minor)?;
 
-    let record = outbe_intexregistry::CreateSeriesParams {
+    let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         issued_intex_count: params.issued_intex_count,
-        intex_size: params.intex_size,
-        intex_strike_price: params.intex_strike_price,
-        coen_price_floor,
+        promis_load_minor: params.promis_load_minor,
+        cost_amount_minor: params.cost_amount_minor,
+        floor_price_minor,
         intex_call_period: params.intex_call_period,
-        call_trigger: outbe_intexregistry::IntexCallTrigger {
+        call_trigger: outbe_intex::IntexCallTrigger {
             window_days: params.call_window_days,
             threshold_days: params.call_threshold_days,
-            coen_price_call_trigger,
+            call_price_minor,
         },
         issued_at,
     };
-    outbe_intexregistry::api::create_series(storage, record)?;
+    outbe_intex::api::create_series(storage, record)?;
 
     // Register the series on the local IntexNFT1155 so holders can be tracked
     // on the Outbe side (required for the call-bridge credit path).
@@ -68,21 +67,21 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     // Send ISSUANCE_INSTRUCTIONS to BNB via LayerZero.
     // OriginMessenger._payNative pays from its relay float when msg.value == 0;
     // we still quote so the fee struct carries the correct nativeFee for _lzSend.
-    let coen_price_floor_u64 = u64::try_from(coen_price_floor)
+    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
         .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
-    let coen_price_call_trigger_u64 = u64::try_from(coen_price_call_trigger)
+    let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("coen call trigger exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
-        intexSize: params.intex_size,
-        intexStrikePrice: params.intex_strike_price,
-        coenPriceFloor: coen_price_floor_u64,
+        promisLoadMinor: params.promis_load_minor,
+        costAmountMinor: params.cost_amount_minor,
+        floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: params.intex_call_period,
         settlementTokenAlias: QUALIFIER_REFERENCE_ISO,
         callWindowDays: params.call_window_days,
         callThresholdDays: params.call_threshold_days,
-        coenPriceCallTrigger: coen_price_call_trigger_u64,
+        callPriceMinor: call_price_minor_u64,
         recipients: params.recipients,
         quantities: params.quantities,
     };
@@ -118,7 +117,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
     IntexFactoryContract::new(storage.clone())
-        .insert_unqualified(params.series_id, coen_price_floor)?;
+        .insert_unqualified(params.series_id, floor_price_minor)?;
 
     emit_event(
         storage,
@@ -133,16 +132,16 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 /// COEN price floor = clearing price * 1.08 (oracle scale, integer 108/100).
 pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
     coen_price
-        .checked_mul(U256::from(COEN_PRICE_FLOOR_NUM))
-        .map(|v| v / U256::from(COEN_PRICE_FLOOR_DEN))
+        .checked_mul(U256::from(FLOOR_PRICE_NUM))
+        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))
 }
 
 /// Forced-call trigger = floor * 1.64 (oracle scale, integer 164/100).
-pub(crate) fn derived_call_trigger(floor: U256) -> Result<U256> {
+pub(crate) fn derived_call_price(floor: U256) -> Result<U256> {
     floor
-        .checked_mul(U256::from(COEN_CALL_TRIGGER_NUM))
-        .map(|v| v / U256::from(COEN_CALL_TRIGGER_DEN))
+        .checked_mul(U256::from(CALL_PRICE_NUM))
+        .map(|v| v / U256::from(CALL_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("coen call trigger overflow".into()))
 }
 
@@ -161,7 +160,7 @@ pub fn set_authorized_settler(
     factory.write_authorized_settler(holder, series_id, settler)
 }
 
-/// Settle: `settler` is the caller. Gating reads IntexRegistry; value movement
+/// Settle: `settler` is the caller. Gating reads Intex; value movement
 /// (token / vault / NFT) goes via storage.call.
 pub fn settle(
     storage: &StorageHandle<'_>,
@@ -177,7 +176,7 @@ pub fn settle(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
 
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     let state = series.lifecycle_state()?;
     // Settle is allowed in Qualified (voluntary) and Called (forced).
     if state != IntexState::Qualified && state != IntexState::Called {
@@ -210,8 +209,8 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // payment = intexStrikePrice * amount (in payment-token units).
-    let payment = U256::from(series.intex_strike_price)
+    // payment = costAmountMinor * amount (in payment-token units).
+    let payment = U256::from(series.cost_amount_minor)
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
@@ -338,14 +337,14 @@ pub fn mine_promis(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
 
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
     let settled = nft_balance_of(storage, holder, settled_token_id(series_id))?;
     if settled < amount {
         return Err(IntexFactoryError::InsufficientSettled.into());
     }
 
     let promis_amount = series
-        .intex_size
+        .promis_load_minor
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("promis amount overflow".into()))?;
 

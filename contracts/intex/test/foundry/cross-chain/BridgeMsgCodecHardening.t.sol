@@ -106,14 +106,14 @@ contract BridgeMsgCodecHardeningTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: 1,
             issuedIntexCount: 1,
-            intexSize: 1,
-            intexStrikePrice: 1,
-            coenPriceFloor: 1,
+            promisLoadMinor: 1,
+            costAmountMinor: 1,
+            floorPriceMinor: 1,
             intexCallPeriod: 0,
             settlementTokenAlias: 840,
             callWindowDays: 0,
             callThresholdDays: 0,
-            coenPriceCallTrigger: 0,
+            callPriceMinor: 0,
             recipients: recipients,
             quantities: quantities
         });

@@ -115,7 +115,7 @@ contract IntexNFT1155SupplyTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, 6, cap));
         nft.mintBatch(recipients, quantities, SERIES_ID);
 
-        // No balances credited — the cap revert fires before any _mint.
+        // No balances minted — the cap revert fires before any _mint.
         assertEq(nft.totalSupply(TOKEN_ID), 0);
         assertEq(nft.balanceOf(holderA, TOKEN_ID), 0);
         assertEq(nft.balanceOf(holderB, TOKEN_ID), 0);
@@ -396,8 +396,8 @@ contract IntexNFT1155SupplyTest is Test {
         nft.mint(holderA, 1, SERIES_ID);
     }
 
-    function test_R01_Credit_AtCap_Reverts() public {
-        // After totalSupply reaches the cap (via mint), credit must reject any further
+    function test_R01_CrosschainMint_AtCap_Reverts() public {
+        // After totalSupply reaches the cap (via mint), crosschainMint must reject any further
         // incoming supply — the live-totalSupply invariant is `totalSupply ≤ cap` at all times.
         uint32 cap = 10;
         _createSeries(cap);
@@ -407,13 +407,13 @@ contract IntexNFT1155SupplyTest is Test {
         nft.markQualified(SERIES_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
-        nft.credit(holderB, TOKEN_ID, 1);
+        nft.crosschainMint(holderB, TOKEN_ID, 1);
         vm.stopPrank();
     }
 
-    function test_R01_Credit_AfterDebit_RefillsCapRoom() public {
-        // Cross-chain return: tokens bridged out (debit) come back (credit). The credit cap is
-        // per-instant `totalSupply ≤ cap`, so the room cleared by debit may be refilled by credit.
+    function test_R01_CrosschainMint_AfterCrosschainBurn_RefillsCapRoom() public {
+        // Cross-chain return: tokens bridged out (crosschainBurn) come back (crosschainMint). The crosschainMint cap is
+        // per-instant `totalSupply ≤ cap`, so the room cleared by crosschainBurn may be refilled by crosschainMint.
         // mintedCount stays pinned to the original mint, so primary mint stays blocked.
         uint32 cap = 10;
         _createSeries(cap);
@@ -421,14 +421,14 @@ contract IntexNFT1155SupplyTest is Test {
         vm.startPrank(bridger);
         nft.mint(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
-        nft.debit(holderA, TOKEN_ID, 4);
-        nft.credit(holderB, TOKEN_ID, 4);
+        nft.crosschainBurn(holderA, TOKEN_ID, 4);
+        nft.crosschainMint(holderB, TOKEN_ID, 4);
         vm.stopPrank();
 
         assertEq(nft.totalSupply(TOKEN_ID), cap);
         assertEq(nft.balanceOf(holderA, TOKEN_ID), 6);
         assertEq(nft.balanceOf(holderB, TOKEN_ID), 4);
-        assertEq(nft.readData(SERIES_ID).mintedCount, cap, "credit must not bump mintedCount");
+        assertEq(nft.readData(SERIES_ID).mintedCount, cap, "crosschainMint must not bump mintedCount");
     }
 
     function test_R01_Mint_AfterExpireSeries_DoesNotReopenCap() public {
@@ -502,12 +502,12 @@ contract IntexNFT1155SupplyTest is Test {
         );
         nft.mintBatch(recipients, quantities, SERIES_ID);
 
-        // credit overshoot — typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
+        // crosschainMint overshoot — typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
         nft.markQualified(SERIES_ID);
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))
         );
-        nft.credit(holderB, TOKEN_ID, 1);
+        nft.crosschainMint(holderB, TOKEN_ID, 1);
         vm.stopPrank();
     }
 

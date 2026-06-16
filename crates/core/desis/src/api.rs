@@ -34,7 +34,7 @@ pub fn reveal_auction(
 }
 
 /// Signal `Revealing` → clearing stage.
-/// Rounding remainder (supply_promis % intex_size) is returned to PromisLimit.
+/// Rounding remainder (supply_promis % promis_load_minor) is returned to PromisLimit.
 pub fn begin_clearing(
     storage: StorageHandle<'_>,
     auction_date: u32,

@@ -109,7 +109,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            intexSize: 1000, minIntexBidPrice: 1, intexStrikePrice: 1, coenPriceFloor: 1, minIntexBidQuantity: 1
+            promisLoadMinor: 1000, minIntexBidPrice: 1, costAmountMinor: 1, floorPriceMinor: 1, minIntexBidQuantity: 1
         });
 
         vm.startPrank(admin);

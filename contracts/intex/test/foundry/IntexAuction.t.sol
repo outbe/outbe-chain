@@ -58,26 +58,28 @@ contract AuctionTest is Test {
         });
     }
 
-    /// @dev Build auction params with the given minimum bid price and intex size.
-    function _params(uint64 minIntexBidPrice, uint128 intexSize, uint16 minIntexBidQuantity)
+    /// @dev Build auction params with the given minimum bid price and Promis load.
+    function _params(uint64 minIntexBidPrice, uint128 promisLoadMinor, uint16 minIntexBidQuantity)
         internal
         pure
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
-            intexSize: intexSize,
+            promisLoadMinor: promisLoadMinor,
             minIntexBidPrice: minIntexBidPrice,
-            intexStrikePrice: 100,
-            coenPriceFloor: 100,
+            costAmountMinor: 100,
+            floorPriceMinor: 100,
             minIntexBidQuantity: minIntexBidQuantity
         });
     }
 
     /// @dev Create and start an auction as the relayer. The schedule is anchored to the
     ///      current `block.timestamp` via `_schedule()`.
-    function _start(uint32 seriesId, uint64 minIntexBidPrice, uint128 intexSize, uint16 minIntexBidQuantity) internal {
+    function _start(uint32 seriesId, uint64 minIntexBidPrice, uint128 promisLoadMinor, uint16 minIntexBidQuantity)
+        internal
+    {
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(minIntexBidPrice, intexSize, minIntexBidQuantity));
+        auction.auctionStart(seriesId, _schedule(), _params(minIntexBidPrice, promisLoadMinor, minIntexBidQuantity));
     }
 
     /// @dev Send the green-day signal and warp past `commitEnd` so the computed stage is
@@ -127,15 +129,15 @@ contract AuctionTest is Test {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250115; // yyyymmdd format
         uint64 floor = 50;
-        uint128 intexSize = 1000;
+        uint128 promisLoadMinor = 1000;
         uint16 bidMinimumQuantity = 1;
-        _start(seriesId, floor, intexSize, bidMinimumQuantity);
+        _start(seriesId, floor, promisLoadMinor, bidMinimumQuantity);
 
         assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         IIntexAuction.AuctionData memory info = auction.getAuctionInfo(seriesId);
         assertEq(info.params.minIntexBidPrice, floor);
-        assertEq(info.params.intexSize, intexSize);
+        assertEq(info.params.promisLoadMinor, promisLoadMinor);
 
         _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
         _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
@@ -170,9 +172,9 @@ contract AuctionTest is Test {
         assertEq(fin.result.auctionIntexClearingPrice, 75);
         assertEq(fin.result.issuedIntexCount, 100);
         assertEq(fin.result.wonBidsCount, 2);
-        assertEq(fin.params.intexSize, intexSize);
-        // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * intexSize.
-        assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * intexSize);
+        assertEq(fin.params.promisLoadMinor, promisLoadMinor);
+        // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * promisLoadMinor.
+        assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * promisLoadMinor);
     }
 
     function test_CommitCancel_And_Reverts() public {
@@ -385,7 +387,7 @@ contract AuctionTest is Test {
 
         (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedBidData[] memory bids) =
             auction.getAuctionDetails(seriesId);
-        assertEq(b.params.intexSize, 1000);
+        assertEq(b.params.promisLoadMinor, 1000);
         assertEq(bids.length, 0);
     }
 

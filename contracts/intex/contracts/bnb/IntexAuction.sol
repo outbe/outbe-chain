@@ -264,7 +264,7 @@ contract IntexAuction is
         a.result.issuedIntexCount = issuedIntexCount;
         a.result.auctionIntexClearingPrice = auctionIntexClearingPrice;
         a.result.wonBidsCount = wonBidsCount;
-        a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.intexSize;
+        a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
         emit AuctionClearingExecuted(seriesId, auctionIntexClearingPrice, issuedIntexCount);

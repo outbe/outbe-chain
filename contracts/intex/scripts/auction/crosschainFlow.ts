@@ -45,10 +45,10 @@ export interface ViemClient {
 export interface AuctionConfig {
   seriesId: number;
   clearingTimestamp: number;
-  intexSize: bigint;
+  promisLoadMinor: bigint;
   minIntexBidPrice: bigint;
-  intexStrikePrice: bigint;
-  coenPriceFloor: bigint;
+  costAmountMinor: bigint;
+  floorPriceMinor: bigint;
   minIntexBidQuantity: number;
   /** Call period in seconds; 0 ⇒ contract default of 21 days (used at issuance). */
   intexCallPeriod: number;
@@ -59,7 +59,7 @@ export interface AuctionConfig {
   /** Number of days within the window that breach the forced-call trigger. */
   callThresholdDays: number;
   /** COEN price level that arms the forced call. */
-  coenPriceCallTrigger: bigint;
+  callPriceMinor: bigint;
 }
 
 // Telosis contract read API
@@ -157,9 +157,9 @@ export interface OutbeFlowArgs {
   series?: string;
   floor?: BigIntInput;
   clearingTimestamp?: BigIntInput;
-  intexSize?: BigIntInput;
-  intexStrikePrice?: BigIntInput;
-  coenPriceFloor?: BigIntInput;
+  promisLoadMinor?: BigIntInput;
+  costAmountMinor?: BigIntInput;
+  floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
   supply?: BigIntInput;
   extraOptions?: Hex;
@@ -170,15 +170,15 @@ export interface CreateAuctionArgs {
   series?: string;
   floor?: BigIntInput;
   clearingTimestamp?: BigIntInput;
-  intexSize?: BigIntInput;
-  intexStrikePrice?: BigIntInput;
-  coenPriceFloor?: BigIntInput;
+  promisLoadMinor?: BigIntInput;
+  costAmountMinor?: BigIntInput;
+  floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
   intexCallPeriod?: BigIntInput;
   settlementTokenAlias?: BigIntInput;
   callWindowDays?: BigIntInput;
   callThresholdDays?: BigIntInput;
-  coenPriceCallTrigger?: BigIntInput;
+  callPriceMinor?: BigIntInput;
   extraOptions?: Hex;
   msgValue?: BigIntInput;
 }
@@ -220,15 +220,15 @@ export interface SendRefundInstructionsArgs {
 // =============================================================================
 
 const DEFAULT_FLOOR = 80_000_000n; // 80 payment-token units (6 decimals)
-const DEFAULT_INTEX_SIZE = 1_000_000_000_000_000_000_000_000n; // 1M Promis (18 decimals)
-const DEFAULT_INTEX_STRIKE_PRICE = 1_000_000_000n;
-const DEFAULT_COEN_PRICE_FLOOR = 80_000_000n;
+const DEFAULT_PROMIS_LOAD_MINOR = 1_000_000_000_000_000_000_000_000n; // 1M Promis (18 decimals)
+const DEFAULT_COST_AMOUNT_MINOR = 1_000_000_000n;
+const DEFAULT_FLOOR_PRICE_MINOR = 80_000_000n;
 const DEFAULT_MIN_INTEX_BID_QUANTITY = 5;
 const DEFAULT_INTEX_CALL_PERIOD = 0; // 0 ⇒ contract default of 21 days
 const DEFAULT_SETTLEMENT_TOKEN_ALIAS = 840; // ISO 4217 numeric alias (840 = USD)
 const DEFAULT_CALL_WINDOW_DAYS = 0;
 const DEFAULT_CALL_THRESHOLD_DAYS = 0;
-const DEFAULT_COEN_PRICE_CALL_TRIGGER = 0n;
+const DEFAULT_CALL_PRICE_MINOR = 0n;
 const DEFAULT_MSG_VALUE = 100_000_000_000_000_000n; // 0.1 COEN fallback (LZ Outbe->BSC often ~0.13 COEN)
 const FEE_BUFFER_BPS = 50n; // 0.5% buffer over quoted fee
 const EMPTY_EXTRA_OPTIONS = "0x" as Hex;
@@ -379,9 +379,9 @@ export async function createAndStartAuction(
   const minIntexBidPrice = parseFloor(args.floor);
   const clearingTimestamp =
     toOptionalNumber(args.clearingTimestamp) ?? Number(seriesIdToNoonTimestamp(seriesStr));
-  const intexSize = toOptionalBigInt(args.intexSize) ?? DEFAULT_INTEX_SIZE;
-  const intexStrikePrice = toOptionalBigInt(args.intexStrikePrice) ?? DEFAULT_INTEX_STRIKE_PRICE;
-  const coenPriceFloor = toOptionalBigInt(args.coenPriceFloor) ?? DEFAULT_COEN_PRICE_FLOOR;
+  const promisLoadMinor = toOptionalBigInt(args.promisLoadMinor) ?? DEFAULT_PROMIS_LOAD_MINOR;
+  const costAmountMinor = toOptionalBigInt(args.costAmountMinor) ?? DEFAULT_COST_AMOUNT_MINOR;
+  const floorPriceMinor = toOptionalBigInt(args.floorPriceMinor) ?? DEFAULT_FLOOR_PRICE_MINOR;
   const minIntexBidQuantity =
     toOptionalNumber(args.minIntexBidQuantity) ?? DEFAULT_MIN_INTEX_BID_QUANTITY;
   const intexCallPeriod = toOptionalNumber(args.intexCallPeriod) ?? DEFAULT_INTEX_CALL_PERIOD;
@@ -389,22 +389,22 @@ export async function createAndStartAuction(
     toOptionalNumber(args.settlementTokenAlias) ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
   const callWindowDays = toOptionalNumber(args.callWindowDays) ?? DEFAULT_CALL_WINDOW_DAYS;
   const callThresholdDays = toOptionalNumber(args.callThresholdDays) ?? DEFAULT_CALL_THRESHOLD_DAYS;
-  const coenPriceCallTrigger =
-    toOptionalBigInt(args.coenPriceCallTrigger) ?? DEFAULT_COEN_PRICE_CALL_TRIGGER;
+  const callPriceMinor =
+    toOptionalBigInt(args.callPriceMinor) ?? DEFAULT_CALL_PRICE_MINOR;
 
   const config: AuctionConfig = {
     seriesId,
     clearingTimestamp,
-    intexSize,
+    promisLoadMinor,
     minIntexBidPrice,
-    intexStrikePrice,
-    coenPriceFloor,
+    costAmountMinor,
+    floorPriceMinor,
     minIntexBidQuantity,
     intexCallPeriod,
     settlementTokenAlias,
     callWindowDays,
     callThresholdDays,
-    coenPriceCallTrigger,
+    callPriceMinor,
   };
 
   const extraOptions = args.extraOptions ?? EMPTY_EXTRA_OPTIONS;
@@ -423,10 +423,10 @@ export async function createAndStartAuction(
           commitEnd: clearingTimestamp,
           revealEnd: clearingTimestamp,
           issuanceEnd: clearingTimestamp,
-          intexSize,
+          promisLoadMinor,
           minIntexBidPrice,
-          intexStrikePrice,
-          coenPriceFloor,
+          costAmountMinor,
+          floorPriceMinor,
           minIntexBidQuantity,
         },
         extraOptions,
@@ -441,9 +441,9 @@ export async function createAndStartAuction(
     seriesId,
     clearingTimestamp,
     minIntexBidPrice: minIntexBidPrice.toString(),
-    intexSize: intexSize.toString(),
-    intexStrikePrice: intexStrikePrice.toString(),
-    coenPriceFloor: coenPriceFloor.toString(),
+    promisLoadMinor: promisLoadMinor.toString(),
+    costAmountMinor: costAmountMinor.toString(),
+    floorPriceMinor: floorPriceMinor.toString(),
     minIntexBidQuantity,
     msgValue: msgValue.toString(),
   });
@@ -606,14 +606,14 @@ export async function sendIssuanceInstructions(
       bridge.read.quoteSendIssuanceInstructions([
         {
           seriesId: args.seriesId,
-          intexSize: config.intexSize,
-          intexStrikePrice: config.intexStrikePrice,
-          coenPriceFloor: config.coenPriceFloor,
+          promisLoadMinor: config.promisLoadMinor,
+          costAmountMinor: config.costAmountMinor,
+          floorPriceMinor: config.floorPriceMinor,
           intexCallPeriod: config.intexCallPeriod,
           settlementTokenAlias: config.settlementTokenAlias,
           callWindowDays: config.callWindowDays,
           callThresholdDays: config.callThresholdDays,
-          coenPriceCallTrigger: config.coenPriceCallTrigger,
+          callPriceMinor: config.callPriceMinor,
           recipients: result.winners,
           quantities: result.winnerQuantities,
         },

@@ -82,7 +82,7 @@ pub mod marker_addresses {
         // runtime marker is their only preservation path.
         GEM_ADDRESS,
         GEM_FACTORY_ADDRESS,
-        INTEX_REGISTRY_ADDRESS,
+        INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
         AGENT_REWARD_ADDRESS,

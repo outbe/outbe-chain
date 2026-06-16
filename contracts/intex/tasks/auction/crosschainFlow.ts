@@ -115,8 +115,8 @@ const outbeInteractiveAction = async (args: OutbeMockInteractiveTaskArgs, hre: u
     series,
     floor: toOptional(args.floor),
     clearingTimestamp: toOptional(args.clearingTimestamp),
-    intexSize: toOptional(args.intexSize),
-    intexStrikePrice: toOptional(args.intexStrikePrice),
+    promisLoadMinor: toOptional(args.promisLoadMinor),
+    costAmountMinor: toOptional(args.costAmountMinor),
     minIntexBidQuantity: toOptional(args.minIntexBidQuantity),
     msgValue,
   });
@@ -258,8 +258,8 @@ const createAndStartAction = async (args: OutbeMockInteractiveTaskArgs, hre: unk
     series,
     floor: toOptional(args.floor),
     clearingTimestamp: toOptional(args.clearingTimestamp),
-    intexSize: toOptional(args.intexSize),
-    intexStrikePrice: toOptional(args.intexStrikePrice),
+    promisLoadMinor: toOptional(args.promisLoadMinor),
+    costAmountMinor: toOptional(args.costAmountMinor),
     minIntexBidQuantity: toOptional(args.minIntexBidQuantity),
     msgValue,
   });
@@ -335,9 +335,9 @@ const checkAuctionAction = async (args: OutbeMockInteractiveTaskArgs, hre: unkno
     bidsCount: info.bidsCount.toString(),
     config: {
       minIntexBidPrice: info.config.minIntexBidPrice.toString(),
-      intexSize: info.config.intexSize.toString(),
-      intexStrikePrice: info.config.intexStrikePrice.toString(),
-      coenPriceFloor: info.config.coenPriceFloor.toString(),
+      promisLoadMinor: info.config.promisLoadMinor.toString(),
+      costAmountMinor: info.config.costAmountMinor.toString(),
+      floorPriceMinor: info.config.floorPriceMinor.toString(),
       minIntexBidQuantity: info.config.minIntexBidQuantity,
     },
   });
@@ -360,8 +360,8 @@ const outbeInteractive = task("outbe-interactive", "Interactive Outbe auction fl
   .addOption({ name: "series", description: "Series in yyyymmdd format", defaultValue: "" })
   .addOption({ name: "floor", description: "Bid floor price", defaultValue: "80000000" })
   .addOption({ name: "clearingTimestamp", description: "Clearing timestamp (UNIX)", defaultValue: "" })
-  .addOption({ name: "intexSize", description: "Intex size (18 decimals)", defaultValue: "" })
-  .addOption({ name: "intexStrikePrice", description: "Intex strike price", defaultValue: "1000000000" })
+  .addOption({ name: "promisLoadMinor", description: "Promis load (18 decimals)", defaultValue: "" })
+  .addOption({ name: "costAmountMinor", description: "Cost amount", defaultValue: "1000000000" })
   .addOption({ name: "minIntexBidQuantity", description: "Minimum bid quantity", defaultValue: "5" })
   .addOption({ name: "supply", description: "INTEX supply (mandatory, must be > 0)", defaultValue: "" })
   .addOption({ name: "msgValue", description: "Native token value for LZ fees (wei)", defaultValue: "" })
@@ -383,8 +383,8 @@ const outbeCreateAndStart = task("outbe-create-and-start", "Create and start auc
   .addOption({ name: "series", description: "Series in yyyymmdd format", defaultValue: "" })
   .addOption({ name: "floor", description: "Bid floor price", defaultValue: "80000000" })
   .addOption({ name: "clearingTimestamp", description: "Clearing timestamp (UNIX)", defaultValue: "" })
-  .addOption({ name: "intexSize", description: "Intex size (18 decimals)", defaultValue: "" })
-  .addOption({ name: "intexStrikePrice", description: "Intex strike price", defaultValue: "1000000000" })
+  .addOption({ name: "promisLoadMinor", description: "Promis load (18 decimals)", defaultValue: "" })
+  .addOption({ name: "costAmountMinor", description: "Cost amount", defaultValue: "1000000000" })
   .addOption({ name: "minIntexBidQuantity", description: "Minimum bid quantity", defaultValue: "5" })
   .addOption({ name: "msgValue", description: "Native token value for LZ fees (wei)", defaultValue: "" })
   .setAction(lazy(createAndStartAction));

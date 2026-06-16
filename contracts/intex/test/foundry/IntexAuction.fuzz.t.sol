@@ -31,7 +31,7 @@ contract IntexAuctionFuzzTest is Test {
 
     uint16 internal constant MIN_QTY = 1;
     uint64 internal constant MIN_PRICE = 10;
-    uint128 internal constant INTEX_SIZE = 1000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
 
     function setUp() public {
         iba1 = vm.addr(iba1Pk);
@@ -157,10 +157,10 @@ contract IntexAuctionFuzzTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            intexSize: INTEX_SIZE,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidPrice: MIN_PRICE,
-            intexStrikePrice: 100,
-            coenPriceFloor: 100,
+            costAmountMinor: 100,
+            floorPriceMinor: 100,
             minIntexBidQuantity: MIN_QTY
         });
         vm.prank(bridger);

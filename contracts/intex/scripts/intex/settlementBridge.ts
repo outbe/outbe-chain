@@ -95,9 +95,9 @@ const INTEX_READ_ABI = [
     outputs: [
       {
         components: [
-          { name: "intexSize", type: "uint128" },
-          { name: "intexStrikePrice", type: "uint64" },
-          { name: "coenPriceFloor", type: "uint64" },
+          { name: "promisLoadMinor", type: "uint128" },
+          { name: "costAmountMinor", type: "uint64" },
+          { name: "floorPriceMinor", type: "uint64" },
           { name: "issuedAt", type: "uint32" },
           { name: "calledAt", type: "uint32" },
           { name: "intexCallPeriod", type: "uint32" },
@@ -112,7 +112,7 @@ const INTEX_READ_ABI = [
             components: [
               { name: "windowDays", type: "uint16" },
               { name: "thresholdDays", type: "uint16" },
-              { name: "coenPriceCallTrigger", type: "uint64" },
+              { name: "callPriceMinor", type: "uint64" },
             ],
           },
         ],
@@ -129,9 +129,9 @@ const INTEX_CREATE_SERIES_ABI = [
     inputs: [
       { name: "seriesId", type: "uint32" },
       { name: "issuedIntexCount", type: "uint32" },
-      { name: "intexSize", type: "uint128" },
-      { name: "intexStrikePrice", type: "uint64" },
-      { name: "coenPriceFloor", type: "uint64" },
+      { name: "promisLoadMinor", type: "uint128" },
+      { name: "costAmountMinor", type: "uint64" },
+      { name: "floorPriceMinor", type: "uint64" },
       { name: "intexCallPeriod", type: "uint32" },
       { name: "settlementTokenAlias", type: "uint16" },
       {
@@ -140,7 +140,7 @@ const INTEX_CREATE_SERIES_ABI = [
         components: [
           { name: "windowDays", type: "uint16" },
           { name: "thresholdDays", type: "uint16" },
-          { name: "coenPriceCallTrigger", type: "uint64" },
+          { name: "callPriceMinor", type: "uint64" },
         ],
       },
     ],
@@ -424,19 +424,19 @@ export async function createSeriesOnOutbe(
   });
 
   const d = bscData as {
-    intexSize: bigint;
-    intexStrikePrice: bigint;
-    coenPriceFloor: bigint;
+    promisLoadMinor: bigint;
+    costAmountMinor: bigint;
+    floorPriceMinor: bigint;
     intexCallPeriod: number;
     issuedIntexCount: number;
     settlementTokenAlias: number;
-    intexCallTrigger: { windowDays: number; thresholdDays: number; coenPriceCallTrigger: bigint };
+    intexCallTrigger: { windowDays: number; thresholdDays: number; callPriceMinor: bigint };
   };
 
   console.log("[create-series-outbe] BSC series params:", {
-    intexSize: d.intexSize.toString(),
-    intexStrikePrice: d.intexStrikePrice.toString(),
-    coenPriceFloor: d.coenPriceFloor.toString(),
+    promisLoadMinor: d.promisLoadMinor.toString(),
+    costAmountMinor: d.costAmountMinor.toString(),
+    floorPriceMinor: d.floorPriceMinor.toString(),
     issuedIntexCount: d.issuedIntexCount,
     seriesId,
   });
@@ -493,9 +493,9 @@ export async function createSeriesOnOutbe(
     args: [
       seriesId,
       d.issuedIntexCount,
-      d.intexSize,
-      d.intexStrikePrice,
-      d.coenPriceFloor,
+      d.promisLoadMinor,
+      d.costAmountMinor,
+      d.floorPriceMinor,
       intexCallPeriod,
       settlementTokenAlias,
       d.intexCallTrigger,
@@ -783,9 +783,9 @@ export async function checkSeriesStatus(
         args: [args.seriesId],
       });
       const d = data as {
-        intexSize: bigint;
-        intexStrikePrice: bigint;
-        coenPriceFloor: bigint;
+        promisLoadMinor: bigint;
+        costAmountMinor: bigint;
+        floorPriceMinor: bigint;
         issuedAt: number;
         calledAt: number;
         intexCallPeriod: number;
@@ -793,7 +793,7 @@ export async function checkSeriesStatus(
       };
       console.log("[status] IntexNFT1155 (Outbe):", {
         state: INTEX_STATE_NAMES[d.state] ?? `Unknown(${d.state})`,
-        intexStrikePrice: d.intexStrikePrice.toString(),
+        costAmountMinor: d.costAmountMinor.toString(),
         callDeadline: derivedCallDeadline(d.calledAt, d.intexCallPeriod),
       });
 

@@ -87,7 +87,7 @@ contract DuplicateProtectionTest is TestHelperOz5 {
         bnbMessenger.wire(address(auction), address(intex), admin, address(onftBatchBnb));
         outbeMessenger.wire(desis, makeAddr("factory"));
 
-        // Seed the receiving NFT contracts with a series + RELAYER role so ONFT credits succeed
+        // Seed the receiving NFT contracts with a series + RELAYER role so ONFT crosschainMints succeed
         // and so TM's `_handleMarkCalled` reaches `intex.markCalled` without an auth revert.
         intex.createSeries(SERIES_ID, 10_000, 0);
         intex.markQualified(SERIES_ID);

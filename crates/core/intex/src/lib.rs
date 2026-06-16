@@ -1,4 +1,4 @@
-//! IntexRegistry: canonical, cross-chain Intex series ledger.
+//! Intex: canonical, cross-chain Intex series ledger.
 //!
 //! Owns the per-series identity parameters and lifecycle status that previously
 //! lived on the Origin `IntexNFT1155.SeriesData` struct. IntexFactory writes and
@@ -12,10 +12,8 @@ pub mod precompile;
 pub mod schema;
 pub(crate) mod state;
 
-pub use errors::IntexRegistryError;
-pub use schema::{
-    CreateSeriesParams, IntexCallTrigger, IntexRegistryContract, IntexState, SeriesRecord,
-};
+pub use errors::IntexError;
+pub use schema::{CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesRecord};
 
 #[cfg(test)]
 mod tests;

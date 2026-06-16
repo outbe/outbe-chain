@@ -22,7 +22,7 @@ export interface WalletAccount {
 export interface IntexCallTrigger {
   windowDays: number;
   thresholdDays: number;
-  coenPriceCallTrigger: bigint;
+  callPriceMinor: bigint;
 }
 
 export interface Intex1155IssuanceRuntime {
@@ -52,10 +52,10 @@ export interface AuctionDataRaw {
     issuanceEnd: number;
   };
   params: {
-    intexSize: bigint;
+    promisLoadMinor: bigint;
     minIntexBidPrice: bigint;
-    intexStrikePrice: bigint;
-    coenPriceFloor: bigint;
+    costAmountMinor: bigint;
+    floorPriceMinor: bigint;
     minIntexBidQuantity: number;
   };
   result: {
@@ -136,20 +136,20 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
     );
   }
 
-  const intexSize = auctionData.params.intexSize;
-  const intexStrikePrice = auctionData.params.intexStrikePrice;
-  const coenPriceFloor = auctionData.params.coenPriceFloor;
+  const promisLoadMinor = auctionData.params.promisLoadMinor;
+  const costAmountMinor = auctionData.params.costAmountMinor;
+  const floorPriceMinor = auctionData.params.floorPriceMinor;
 
   const intexCallPeriod = opts.intexCallPeriod ?? DEFAULT_INTEX_CALL_PERIOD;
   const settlementTokenAlias = opts.settlementTokenAlias ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
   const callTrigger: IntexCallTrigger =
-    opts.callTrigger ?? { windowDays: 0, thresholdDays: 0, coenPriceCallTrigger: 0n };
+    opts.callTrigger ?? { windowDays: 0, thresholdDays: 0, callPriceMinor: 0n };
 
   console.log("[intex1155-issuance]", {
     seriesId,
-    intexSize: intexSize.toString(),
-    intexStrikePrice: intexStrikePrice.toString(),
-    coenPriceFloor: coenPriceFloor.toString(),
+    promisLoadMinor: promisLoadMinor.toString(),
+    costAmountMinor: costAmountMinor.toString(),
+    floorPriceMinor: floorPriceMinor.toString(),
     intexCallPeriod,
     settlementTokenAlias,
     issuedIntexCount: auctionData.result.issuedIntexCount.toString(),
@@ -160,9 +160,9 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
       [
         seriesId,
         auctionData.result.issuedIntexCount,
-        intexSize,
-        intexStrikePrice,
-        coenPriceFloor,
+        promisLoadMinor,
+        costAmountMinor,
+        floorPriceMinor,
         intexCallPeriod,
         settlementTokenAlias,
         callTrigger,

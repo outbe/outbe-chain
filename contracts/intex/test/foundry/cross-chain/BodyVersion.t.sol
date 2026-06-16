@@ -68,7 +68,7 @@ contract BodyVersionTest is Test {
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
-            uint128 intexSize,
+            uint128 promisLoadMinor,
             uint64 minBid,
             uint64 strike,
             uint64 floor,
@@ -79,7 +79,7 @@ contract BodyVersionTest is Test {
         assertEq(commitEnd, 100);
         assertEq(revealEnd, 200);
         assertEq(issuanceEnd, 300);
-        assertEq(intexSize, 1e18);
+        assertEq(promisLoadMinor, 1e18);
         assertEq(minBid, 5e6);
         assertEq(strike, 7e6);
         assertEq(floor, 11e6);

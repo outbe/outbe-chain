@@ -123,14 +123,14 @@ export const ERC20_ABI = [
   },
 ] as const;
 
-/** AuctionConfig mirrors IDesis.AuctionConfig. clearingTimestamp and coenPriceFloor are derived on-chain. */
+/** AuctionConfig mirrors IDesis.AuctionConfig. clearingTimestamp and floorPriceMinor are derived on-chain. */
 export interface AuctionConfig {
   seriesId: number;
   revealWindow: number;
   issuanceWindow: number;
-  intexSize: bigint;
+  promisLoadMinor: bigint;
   minIntexBidPrice: bigint;
-  intexStrikePrice: bigint;
+  costAmountMinor: bigint;
   minIntexBidQuantity: number;
 }
 
@@ -150,14 +150,14 @@ export function buildAuctionConfig(opts: { seriesId: number }): AuctionConfig {
     seriesId: opts.seriesId,
     revealWindow: 12 * 60 * 60,
     issuanceWindow: 60 * 60,
-    intexSize: 1000n,
+    promisLoadMinor: 1000n,
     minIntexBidPrice: 0n,
-    intexStrikePrice: 2_800_000_000n,
+    costAmountMinor: 2_800_000_000n,
     minIntexBidQuantity: 4,
   };
 }
 
-/** IssuanceConfig mirrors IDesis.IssuanceConfig. coenPriceCallTrigger is derived on-chain. */
+/** IssuanceConfig mirrors IDesis.IssuanceConfig. callPriceMinor is derived on-chain. */
 export interface IssuanceConfig {
   intexCallPeriod: number;
   settlementTokenAlias: number;
@@ -175,9 +175,9 @@ export function buildIssuanceConfig(): IssuanceConfig {
   };
 }
 
-/** intexStrikePrice * 1.08 / intexSize — matches Desis._derivedCoenPriceFloor. */
-function derivedCoenPriceFloor(strikePrice: bigint, intexSize: bigint): bigint {
-  return (strikePrice * 108n) / (intexSize * 100n);
+/** costAmountMinor * 1.08 / promisLoadMinor — matches Desis._derivedFloorPriceMinor. */
+function derivedFloorPriceMinor(strikePrice: bigint, promisLoadMinor: bigint): bigint {
+  return (strikePrice * 108n) / (promisLoadMinor * 100n);
 }
 
 /** Build the LZ quote-friendly start params; mirrors the derivation Desis does on-chain. */
@@ -188,10 +188,10 @@ export function auctionStageStartParams(config: AuctionConfig) {
     commitEnd: clearing - config.revealWindow,
     revealEnd: clearing,
     issuanceEnd: clearing + config.issuanceWindow,
-    intexSize: config.intexSize,
+    promisLoadMinor: config.promisLoadMinor,
     minIntexBidPrice: config.minIntexBidPrice,
-    intexStrikePrice: config.intexStrikePrice,
-    coenPriceFloor: derivedCoenPriceFloor(config.intexStrikePrice, config.intexSize),
+    costAmountMinor: config.costAmountMinor,
+    floorPriceMinor: derivedFloorPriceMinor(config.costAmountMinor, config.promisLoadMinor),
     minIntexBidQuantity: config.minIntexBidQuantity,
   };
 }

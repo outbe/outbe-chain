@@ -21,9 +21,9 @@ export interface AuctionFlowTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  costAmountMinor?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   issuedIntexCount?: string;
@@ -43,9 +43,9 @@ export interface AuctionStartTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  costAmountMinor?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
 }
 
@@ -93,9 +93,9 @@ export interface AuctionInteractiveTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  costAmountMinor?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   wallets?: string;
@@ -161,8 +161,8 @@ export interface OutbeMockInteractiveTaskArgs extends TaskArgs {
   series?: string;
   floor?: string;
   clearingTimestamp?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
+  promisLoadMinor?: string;
+  costAmountMinor?: string;
   minIntexBidQuantity?: string;
   supply?: string;
   msgValue?: string;

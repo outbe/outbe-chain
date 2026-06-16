@@ -75,9 +75,9 @@ const INTEX_READ_ABI = [
     outputs: [
       {
         components: [
-          { name: "intexSize", type: "uint128" },
-          { name: "intexStrikePrice", type: "uint64" },
-          { name: "coenPriceFloor", type: "uint64" },
+          { name: "promisLoadMinor", type: "uint128" },
+          { name: "costAmountMinor", type: "uint64" },
+          { name: "floorPriceMinor", type: "uint64" },
           { name: "issuedAt", type: "uint32" },
           { name: "calledAt", type: "uint32" },
           { name: "intexCallPeriod", type: "uint32" },
@@ -91,7 +91,7 @@ const INTEX_READ_ABI = [
             components: [
               { name: "windowDays", type: "uint16" },
               { name: "thresholdDays", type: "uint16" },
-              { name: "coenPriceCallTrigger", type: "uint64" },
+              { name: "callPriceMinor", type: "uint64" },
             ],
           },
         ],
@@ -193,8 +193,8 @@ export interface SettleOpts {
 export interface SettlePreviewResult {
   seriesId: number;
   state: string;
-  intexStrikePrice: bigint;
-  intexSize: bigint;
+  costAmountMinor: bigint;
+  promisLoadMinor: bigint;
   /** Effective call deadline (calledAt + intexCallPeriod). null if the series is not yet `Called`. */
   callDeadline: Date | null;
   holderBalance: bigint;
@@ -205,7 +205,7 @@ export interface SettlePreviewResult {
   payerTokenBalance: bigint;
   currentAllowance: bigint;
   needsApproval: boolean;
-  /** Promis amount the holder will be eligible to mine after settle (= amount * intexSize). */
+  /** Promis amount the holder will be eligible to mine after settle (= amount * promisLoadMinor). */
   promisToMint: bigint;
 }
 
@@ -246,9 +246,9 @@ export async function previewSettle(
     functionName: "readData",
     args: [seriesId],
   });
-  const { intexSize, intexStrikePrice, calledAt, intexCallPeriod, state } = data as {
-    intexSize: bigint;
-    intexStrikePrice: bigint;
+  const { promisLoadMinor, costAmountMinor, calledAt, intexCallPeriod, state } = data as {
+    promisLoadMinor: bigint;
+    costAmountMinor: bigint;
     calledAt: number;
     intexCallPeriod: number;
     state: number;
@@ -280,7 +280,7 @@ export async function previewSettle(
 
   // Settlement cost is computed off-chain (matches IntexSettlement._settlementCost).
   const settleAmount = holderBalance;
-  const assetsRequired = intexStrikePrice * settleAmount;
+  const assetsRequired = costAmountMinor * settleAmount;
 
   const [paymentSymbol, paymentDecimals, payerTokenBalance, currentAllowance] = await Promise.all([
     publicClient.readContract({ address: paymentTokenAddress, abi: ERC20_ABI, functionName: "symbol" }) as Promise<string>,
@@ -292,8 +292,8 @@ export async function previewSettle(
   return {
     seriesId,
     state: INTEX_STATE_NAMES[state] ?? `Unknown(${state})`,
-    intexStrikePrice,
-    intexSize,
+    costAmountMinor,
+    promisLoadMinor,
     callDeadline,
     holderBalance,
     settleAmount,
@@ -303,7 +303,7 @@ export async function previewSettle(
     payerTokenBalance,
     currentAllowance,
     needsApproval: currentAllowance < assetsRequired,
-    promisToMint: settleAmount * intexSize,
+    promisToMint: settleAmount * promisLoadMinor,
   };
 }
 
@@ -333,8 +333,8 @@ export async function executeSettle(
 
   console.log("\n=== Settlement Preview ===");
   console.log(`  Series state:        ${preview.state}`);
-  console.log(`  Intex strike price:  ${preview.intexStrikePrice}`);
-  console.log(`  Intex size:          ${preview.intexSize}`);
+  console.log(`  Cost amount:         ${preview.costAmountMinor}`);
+  console.log(`  Promis load:         ${preview.promisLoadMinor}`);
   console.log(
     `  Call deadline:       ${preview.callDeadline ? preview.callDeadline.toISOString() : "n/a (not Called)"}`,
   );

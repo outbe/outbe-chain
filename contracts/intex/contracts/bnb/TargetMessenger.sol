@@ -361,20 +361,20 @@ contract TargetMessenger is
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
-            uint128 intexSize,
+            uint128 promisLoadMinor,
             uint64 minIntexBidPrice,
-            uint64 intexStrikePrice,
-            uint64 coenPriceFloor,
+            uint64 costAmountMinor,
+            uint64 floorPriceMinor,
             uint16 minIntexBidQuantity
         ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
 
         IIntexAuction.AuctionSchedule memory schedule =
             IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd});
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            intexSize: intexSize,
+            promisLoadMinor: promisLoadMinor,
             minIntexBidPrice: minIntexBidPrice,
-            intexStrikePrice: intexStrikePrice,
-            coenPriceFloor: coenPriceFloor,
+            costAmountMinor: costAmountMinor,
+            floorPriceMinor: floorPriceMinor,
             minIntexBidQuantity: minIntexBidQuantity
         });
         _s().auction.auctionStart(seriesId, schedule, params);

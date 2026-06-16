@@ -71,7 +71,7 @@ contract DynamicLzGasTest is TestHelperOz5 {
         oapps[1] = address(dstBatch);
         this.wireOApps(oapps);
 
-        // Both sides have the series; src holders are minted below, dst credits on receive.
+        // Both sides have the series; src holders are minted below, dst crosschainMints on receive.
         srcToken.createSeries(SERIES_ID, 1_000_000, 0);
         dstToken.createSeries(SERIES_ID, 1_000_000, 0);
         srcToken.markQualified(SERIES_ID);
@@ -150,7 +150,7 @@ contract DynamicLzGasTest is TestHelperOz5 {
         for (uint256 i = 0; i < count; i++) {
             holders[i] = address(uint160(0x1000 + i));
             amounts[i] = 1;
-            srcToken.mint(holders[i], 1, SERIES_ID); // give each source holder a unit to debit
+            srcToken.mint(holders[i], 1, SERIES_ID); // give each source holder a unit to crosschainBurn
         }
 
         bytes memory empty = "";
@@ -159,12 +159,12 @@ contract DynamicLzGasTest is TestHelperOz5 {
         srcBatch.systemMultiSend{value: fee.nativeFee}(TOKEN_ID, holders, amounts, DST_EID, empty, fee);
 
         // Deliver the queued packet to the destination. The dynamic lzReceiveOption sizes the gas
-        // to the item count so the inbound `_lzReceive` credits every holder without OOM.
+        // to the item count so the inbound `_lzReceive` crosschainMints every holder without OOM.
         verifyPackets(DST_EID, addressToBytes32(address(dstBatch)));
 
-        // Every holder credited on the destination token.
+        // Every holder crosschainMinted on the destination token.
         for (uint256 i = 0; i < count; i++) {
-            assertEq(dstToken.balanceOf(holders[i], TOKEN_ID), 1, "holder credited on destination");
+            assertEq(dstToken.balanceOf(holders[i], TOKEN_ID), 1, "holder crosschainMinted on destination");
         }
     }
 
@@ -201,6 +201,6 @@ contract DynamicLzGasTest is TestHelperOz5 {
 
         verifyPackets(DST_EID, addressToBytes32(address(dstBatch)));
 
-        assertEq(dstToken.balanceOf(holder, TOKEN_ID), 1, "single holder credited");
+        assertEq(dstToken.balanceOf(holder, TOKEN_ID), 1, "single holder crosschainMinted");
     }
 }

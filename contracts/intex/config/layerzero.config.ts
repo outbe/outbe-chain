@@ -35,7 +35,7 @@ const outbeTestnetNewContract: OmniPointHardhat = {
   contractName: "ONFT1155Adapter",
 };
 
-// Gas for _lzReceive on destination (credit + event)
+// Gas for _lzReceive on destination (crosschainMint + event)
 const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
   {
     msgType: 1, // SEND

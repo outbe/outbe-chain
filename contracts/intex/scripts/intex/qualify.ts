@@ -27,9 +27,9 @@ const INTEX_QUALIFY_ABI = [
     outputs: [
       {
         components: [
-          { name: "intexSize", type: "uint128" },
-          { name: "intexStrikePrice", type: "uint64" },
-          { name: "coenPriceFloor", type: "uint64" },
+          { name: "promisLoadMinor", type: "uint128" },
+          { name: "costAmountMinor", type: "uint64" },
+          { name: "floorPriceMinor", type: "uint64" },
           { name: "issuedAt", type: "uint32" },
           { name: "calledAt", type: "uint32" },
           { name: "intexCallPeriod", type: "uint32" },
@@ -43,7 +43,7 @@ const INTEX_QUALIFY_ABI = [
             components: [
               { name: "windowDays", type: "uint16" },
               { name: "thresholdDays", type: "uint16" },
-              { name: "coenPriceCallTrigger", type: "uint64" },
+              { name: "callPriceMinor", type: "uint64" },
             ],
           },
         ],

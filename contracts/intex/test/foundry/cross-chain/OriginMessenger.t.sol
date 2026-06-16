@@ -93,10 +93,10 @@ contract OriginMessengerTest is TestHelperOz5 {
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
-            intexSize: 1000,
+            promisLoadMinor: 1000,
             minIntexBidPrice: 50e6,
-            intexStrikePrice: 100e6,
-            coenPriceFloor: 50e6,
+            costAmountMinor: 100e6,
+            floorPriceMinor: 50e6,
             minIntexBidQuantity: 1
         });
     }
@@ -109,14 +109,14 @@ contract OriginMessengerTest is TestHelperOz5 {
         return IOriginMessenger.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             issuedIntexCount: 10_000,
-            intexSize: 1000,
-            intexStrikePrice: 100e6,
-            coenPriceFloor: 50e6,
+            promisLoadMinor: 1000,
+            costAmountMinor: 100e6,
+            floorPriceMinor: 50e6,
             intexCallPeriod: 0,
             settlementTokenAlias: 840,
             callWindowDays: 30,
             callThresholdDays: 5,
-            coenPriceCallTrigger: 25e6,
+            callPriceMinor: 25e6,
             recipients: recipients,
             quantities: quantities
         });

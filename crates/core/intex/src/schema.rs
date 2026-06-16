@@ -1,6 +1,6 @@
-//! Storage schema for the IntexRegistry runtime module.
+//! Storage schema for the Intex runtime module.
 //!
-//! IntexRegistry is the canonical, cross-chain Intex series ledger: it owns the
+//! Intex is the canonical, cross-chain Intex series ledger: it owns the
 //! per-series identity parameters captured once at issuance and the lifecycle
 //! status updated as the series progresses. It mirrors the identity + lifecycle
 //! half of the Origin `IntexNFT1155.SeriesData` struct; the supply/balance half
@@ -11,9 +11,9 @@
 
 use alloy_primitives::U256;
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::INTEX_REGISTRY_ADDRESS;
+use outbe_primitives::addresses::INTEX_ADDRESS;
 
-use crate::errors::IntexRegistryError;
+use crate::errors::IntexError;
 
 /// Series lifecycle state. Mirrors `IIntexNFT1155.IntexState`.
 ///
@@ -30,12 +30,12 @@ pub enum IntexState {
 
 impl IntexState {
     /// Decode a stored `u8` into the typed state, rejecting unknown values.
-    pub fn from_u8(value: u8) -> Result<Self, IntexRegistryError> {
+    pub fn from_u8(value: u8) -> Result<Self, IntexError> {
         match value {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
-            other => Err(IntexRegistryError::InvalidStateValue(other)),
+            other => Err(IntexError::InvalidStateValue(other)),
         }
     }
 }
@@ -49,13 +49,13 @@ pub struct IntexCallTrigger {
     /// Number of days within the window that breach the trigger.
     pub threshold_days: u16,
     /// COEN price level that arms the forced call (1e18, oracle scale).
-    pub coen_price_call_trigger: U256,
+    pub call_price_minor: U256,
 }
 
 /// Identity parameters captured once at series creation. Mirrors the
 /// non-supply, non-lifecycle inputs of `IntexNFT1155.createSeries`.
 ///
-/// `intex_size` is kept as `u128` here to mirror the Origin `uint128` ABI
+/// `promis_load_minor` is kept as `u128` here to mirror the Origin `uint128` ABI
 /// exactly; storage holds it as `U256` (the storage DSL has no `u128` slot
 /// codec), and the `u128 -> U256` widening is always lossless.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,11 +65,11 @@ pub struct CreateSeriesParams {
     /// the live mint counter lives on the ERC-1155 ledger.
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
-    pub intex_size: u128,
-    /// Intex strike price (payment-token decimals).
-    pub intex_strike_price: u64,
+    pub promis_load_minor: u128,
+    /// Cost amount (payment-token decimals); "strike" is UI-only terminology.
+    pub cost_amount_minor: u64,
     /// COEN price floor (1e18, oracle scale).
-    pub coen_price_floor: U256,
+    pub floor_price_minor: U256,
     /// Duration in seconds between `called_at` and the settlement deadline.
     pub intex_call_period: u32,
     /// Forced-call trigger parameters.
@@ -92,13 +92,13 @@ pub struct SeriesRecord {
     // --- identity (immutable after creation) ---
     /// Promis tokens per Intex unit; bounded by source `uint128`.
     #[attribute(order = 0)]
-    pub intex_size: U256,
+    pub promis_load_minor: U256,
 
     #[attribute(order = 1)]
-    pub intex_strike_price: u64,
+    pub cost_amount_minor: u64,
 
     #[attribute(order = 2)]
-    pub coen_price_floor: U256,
+    pub floor_price_minor: U256,
 
     #[attribute(order = 3)]
     pub issued_intex_count: u32,
@@ -110,7 +110,7 @@ pub struct SeriesRecord {
     pub call_threshold_days: u16,
 
     #[attribute(order = 6)]
-    pub coen_price_call_trigger: U256,
+    pub call_price_minor: U256,
 
     // --- lifecycle (mutated as the series progresses) ---
     /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
@@ -131,7 +131,7 @@ pub struct SeriesRecord {
 
 impl SeriesRecord {
     /// Typed lifecycle state.
-    pub fn lifecycle_state(&self) -> Result<IntexState, IntexRegistryError> {
+    pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
         IntexState::from_u8(self.state)
     }
 
@@ -140,19 +140,19 @@ impl SeriesRecord {
         IntexCallTrigger {
             window_days: self.call_window_days,
             threshold_days: self.call_threshold_days,
-            coen_price_call_trigger: self.coen_price_call_trigger,
+            call_price_minor: self.call_price_minor,
         }
     }
 }
 
-/// EVM storage layout for the IntexRegistry module.
+/// EVM storage layout for the Intex module.
 ///
 /// - `series` holds one identity + lifecycle record per `seriesId`.
 /// - `total_series` / `series_id_at_index` provide dense, no-`Vec` enumeration
 ///   in the same shape as the credis/nod owner index.
 #[storage_schema]
-#[contract(addr = INTEX_REGISTRY_ADDRESS)]
-pub struct IntexRegistryContract {
+#[contract(addr = INTEX_ADDRESS)]
+pub struct IntexContract {
     /// Per-series identity + lifecycle record keyed by `series_id`.
     #[attribute(order = 0)]
     pub series: outbe_primitives::storage::dsl::Map<u32, SeriesRecord>,

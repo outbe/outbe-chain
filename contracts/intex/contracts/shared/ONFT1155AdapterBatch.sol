@@ -63,7 +63,7 @@ contract ONFT1155AdapterBatch is
     uint8 public constant BODY_VERSION_V2 = ONFT1155BatchMsgCodec.BODY_VERSION_V2;
 
     /// @notice Max items per cross-chain batch (unified system-wide cap). Enforced on the
-    ///         outbound debit path and the inbound decoded array length (the latter in the codec).
+    ///         outbound crosschainBurn path and the inbound decoded array length (the latter in the codec).
     uint256 public constant MAX_BATCH_SIZE = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE;
 
     /// @notice Destination gas overhead for an inbound batch independent of item count
@@ -71,23 +71,23 @@ contract ONFT1155AdapterBatch is
     /// @dev Calibrated against a measured `_lzReceive`: 1 item ≈ 247k, 10 ≈ 1.83M, 50 ≈ 8.12M gas
     ///      (cold recipients, worst case). Marginal ≈ 160–176k/item; base picks up the fixed
     ///      overhead. The `LzGasEstimator` 20% buffer absorbs the remainder.
-    uint128 internal constant CREDIT_BASE_GAS = 120_000;
+    uint128 internal constant CROSSCHAIN_MINT_BASE_GAS = 120_000;
 
-    /// @notice Marginal destination gas per credited item: one self-call `creditOne` (call
-    ///         overhead) + `token.credit` (ERC-1155 mint + enumerable holder-set bookkeeping +
+    /// @notice Marginal destination gas per crosschainMinted item: one self-call `crosschainMintOne` (call
+    ///         overhead) + `token.crosschainMint` (ERC-1155 mint + enumerable holder-set bookkeeping +
     ///         supply-cap check).
-    uint128 internal constant CREDIT_PER_ITEM_GAS = 180_000;
+    uint128 internal constant CROSSCHAIN_MINT_PER_ITEM_GAS = 180_000;
 
     /// @notice Granted to TargetMessenger; gates the relay-funded `systemMultiSend` holder migration.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
-    /// @notice The bridgeable ERC-1155 token this adapter debits on send and credits on receive.
+    /// @notice The bridgeable ERC-1155 token this adapter crosschainBurns on send and crosschainMints on receive.
     IERC1155Bridgeable public immutable token;
 
-    /// @notice Snapshot of one item in a batch whose `token.credit` reverted.
+    /// @notice Snapshot of one item in a batch whose `token.crosschainMint` reverted.
     /// @dev `exists` distinguishes "never failed" from "failed and already retried"; on a
-    ///      successful retry the slot is deleted so re-retry reverts `NoSuchFailedCredit`.
-    struct FailedCredit {
+    ///      successful retry the slot is deleted so re-retry reverts `NoSuchFailedCrosschainMint`.
+    struct FailedCrosschainMint {
         address to;
         uint256 tokenId;
         uint256 amount;
@@ -97,12 +97,12 @@ contract ONFT1155AdapterBatch is
 
     /// @custom:storage-location erc7201:outbe.intex.ONFT1155AdapterBatch
     struct ONFT1155AdapterBatchStorage {
-        /// @dev Set of inbound `(srcEid, guid)` packets already credited. Batch transfers are
+        /// @dev Set of inbound `(srcEid, guid)` packets already crosschainMinted. Batch transfers are
         ///      independent — GUID idempotency (not ORDERED nonce) keeps one delayed batch from
         ///      stalling every other recipient.
         mapping(uint32 srcEid => mapping(bytes32 guid => bool)) processed;
-        /// @dev Per-guid map of items in the originating batch whose `token.credit` reverted.
-        mapping(bytes32 guid => mapping(uint256 idx => FailedCredit)) failedCredits;
+        /// @dev Per-guid map of items in the originating batch whose `token.crosschainMint` reverted.
+        mapping(bytes32 guid => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
         /// @dev Set only while `systemMultiSend` performs its `_lzSend`, so `_payNative` knows to
         ///      draw the fee from the pre-funded balance. The user-facing `batchSend`/`multiSend`
         ///      leave it false and are always caller-funded — they can never spend the system float.
@@ -148,20 +148,20 @@ contract ONFT1155AdapterBatch is
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---
-    /// @notice Failed credit snapshot for item `idx` of the batch keyed by `guid`.
+    /// @notice Failed crosschainMint snapshot for item `idx` of the batch keyed by `guid`.
     /// @param guid Inbound packet GUID.
     /// @param idx Position of the item in that batch.
-    /// @return to Recipient address that failed to credit.
-    /// @return tokenId Token ID that failed to credit.
-    /// @return amount Amount that failed to credit.
-    /// @return reason Raw revert data from the failed credit.
-    /// @return exists True when a parked failed-credit entry is present.
-    function failedCredits(bytes32 guid, uint256 idx)
+    /// @return to Recipient address that failed to crosschainMint.
+    /// @return tokenId Token ID that failed to crosschainMint.
+    /// @return amount Amount that failed to crosschainMint.
+    /// @return reason Raw revert data from the failed crosschainMint.
+    /// @return exists True when a parked failed-crosschainMint entry is present.
+    function failedCrosschainMints(bytes32 guid, uint256 idx)
         external
         view
         returns (address to, uint256 tokenId, uint256 amount, bytes memory reason, bool exists)
     {
-        FailedCredit storage f = _s().failedCredits[guid][idx];
+        FailedCrosschainMint storage f = _s().failedCrosschainMints[guid][idx];
         return (f.to, f.tokenId, f.amount, f.reason, f.exists);
     }
 
@@ -194,11 +194,11 @@ contract ONFT1155AdapterBatch is
         if (_sendParam.tokenIds.length != _sendParam.amounts.length) revert ArrayLengthMismatch();
 
         // Build first: the zero-`to` and `MAX_BATCH_SIZE` guards live here, so an invalid or
-        // over-size batch fails fast before any `token.debit` runs.
+        // over-size batch fails fast before any `token.crosschainBurn` runs.
         (bytes memory message, bytes memory options) = _buildBatchMsgAndOptions(_sendParam);
 
         for (uint256 i = 0; i < _sendParam.tokenIds.length; i++) {
-            token.debit(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
+            token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
         msgReceipt = _lzSend(_sendParam.dstEid, message, options, _fee, _refundAddress);
@@ -208,7 +208,7 @@ contract ONFT1155AdapterBatch is
 
     /// @notice Encode the LZ message and size the receive options for a single-recipient batch.
     /// @dev Body: `abi.encodePacked(BODY_VERSION_V2, SEND, abi.encode(BatchPayload))` — single-pass
-    ///      `abi.encode` (no growing-buffer concat). Caps the batch fail-fast so neither the debit
+    ///      `abi.encode` (no growing-buffer concat). Caps the batch fail-fast so neither the crosschainBurn
     ///      loop in `batchSend` nor the LZ fee in `quoteBatchSend` runs for an over-size batch.
     /// @param _sendParam Batch send parameters
     /// @return message Encoded LayerZero message
@@ -229,10 +229,10 @@ contract ONFT1155AdapterBatch is
             })
         );
 
-        // Destination credits `tokenIds.length` items in a loop; size the gas option to that count
+        // Destination crosschainMints `tokenIds.length` items in a loop; size the gas option to that count
         // so a large batch does not OOM the inbound `_lzReceive`. The contract owns liveness sizing
         // here — a single dynamic `lzReceiveOption` is the complete options blob (no compose / DVN
-        // extras are needed for a plain credit batch), so we skip `combineOptions`.
+        // extras are needed for a plain crosschainMint batch), so we skip `combineOptions`.
         options = _receiveOption(_sendParam.tokenIds.length);
     }
 
@@ -260,12 +260,12 @@ contract ONFT1155AdapterBatch is
             revert ArrayLengthMismatch();
         }
 
-        // Build first so the `MAX_BATCH_SIZE` guard fails fast before any `token.debit`.
+        // Build first so the `MAX_BATCH_SIZE` guard fails fast before any `token.crosschainBurn`.
         (bytes memory message, bytes memory options) = _buildMultiMsgAndOptions(_sendParam);
 
         for (uint256 i = 0; i < len; i++) {
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
-            token.debit(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
+            token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
         msgReceipt = _lzSend(_sendParam.dstEid, message, options, _fee, _refundAddress);
@@ -332,12 +332,12 @@ contract ONFT1155AdapterBatch is
         if (len == 0) revert EmptyBatch();
         if (len != amounts.length) revert ArrayLengthMismatch();
 
-        // Build first so the `MAX_BATCH_SIZE` guard fails fast before any `token.debit`.
+        // Build first so the `MAX_BATCH_SIZE` guard fails fast before any `token.crosschainBurn`.
         bytes memory message = _buildSystemMultiMsg(tokenId, holders, amounts);
         bytes memory options = _receiveOption(len);
 
         for (uint256 i = 0; i < len; i++) {
-            token.debit(holders[i], tokenId, amounts[i]);
+            token.crosschainBurn(holders[i], tokenId, amounts[i]);
         }
 
         // Relay-funded: pay the fee from the pre-funded balance (this runs from TargetMessenger's
@@ -375,10 +375,10 @@ contract ONFT1155AdapterBatch is
         );
     }
 
-    /// @dev Build the destination `lzReceiveOption` sized for an inbound credit loop of `itemCount`
+    /// @dev Build the destination `lzReceiveOption` sized for an inbound crosschainMint loop of `itemCount`
     ///      items. Keeps the inbound `_lzReceive` from running out of gas on large batches.
     function _receiveOption(uint256 itemCount) internal pure returns (bytes memory) {
-        return LzGasEstimator.receiveOption(CREDIT_BASE_GAS, CREDIT_PER_ITEM_GAS, itemCount);
+        return LzGasEstimator.receiveOption(CROSSCHAIN_MINT_BASE_GAS, CROSSCHAIN_MINT_PER_ITEM_GAS, itemCount);
     }
 
     /// @notice Pay the LayerZero native fee, drawing from the pre-funded balance on the relay path.
@@ -424,7 +424,7 @@ contract ONFT1155AdapterBatch is
     }
 
     // --- Receive ---
-    /// @notice Validate and route an inbound LayerZero message to its credit handler by msgType.
+    /// @notice Validate and route an inbound LayerZero message to its crosschainMint handler by msgType.
     /// @dev Validation order: idempotency → minimum header length → body version → msgType allowed-set
     ///      → per-handler `abi.decode`. The `_executor` and `_extraData` LZ params are unused here.
     /// @param _origin Source chain origin data
@@ -443,7 +443,7 @@ contract ONFT1155AdapterBatch is
         nonReentrant
     {
         // Idempotency first — a redelivered `(srcEid, guid)` reverts before any state mutation.
-        // Shared nonReentrant across all four entrypoints blocks credit-callback re-entry.
+        // Shared nonReentrant across all four entrypoints blocks crosschainMint-callback re-entry.
         // Validation order: idempotency → minimum header → version → msgType allowed-set → the
         // per-handler `abi.decode` (which reverts on a structurally-bad body and is then
         // length-/size-validated by the codec).
@@ -467,7 +467,7 @@ contract ONFT1155AdapterBatch is
         }
     }
 
-    /// @notice Decode and credit a single-recipient batch transfer.
+    /// @notice Decode and crosschainMint a single-recipient batch transfer.
     /// @dev `decodeBatch` validates version + array-length match + `MAX_BATCH_SIZE`; the adapter
     ///      then owns the address semantics: high-bit `MalformedAddress` and the explicit
     ///      `bytes32(0)` reject (reusing `InvalidReceiver`, mirroring the outbound zero-`to` guard).
@@ -482,13 +482,13 @@ contract ONFT1155AdapterBatch is
         address toAddress = address(uint160(uint256(p.to)));
 
         for (uint256 i = 0; i < p.tokenIds.length; i++) {
-            _tryCreditOne(_origin.srcEid, _guid, i, toAddress, p.tokenIds[i], p.amounts[i]);
+            _tryCrosschainMintOne(_origin.srcEid, _guid, i, toAddress, p.tokenIds[i], p.amounts[i]);
         }
 
         emit ONFTBatchReceived(_guid, _origin.srcEid, toAddress, p.tokenIds, p.amounts);
     }
 
-    /// @notice Decode and credit a multi-recipient transfer.
+    /// @notice Decode and crosschainMint a multi-recipient transfer.
     /// @dev `decodeMulti` validates version + array-length match + `MAX_BATCH_SIZE`; the per-item
     ///      loop owns the address semantics: high-bit `MalformedAddress` and the explicit
     ///      `bytes32(0)` reject (`InvalidReceiver`), so a malformed entry cannot slip past as
@@ -503,52 +503,57 @@ contract ONFT1155AdapterBatch is
             ONFT1155BatchMsgCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             address toAddress = address(uint160(uint256(p.recipients[i])));
-            _tryCreditOne(_origin.srcEid, _guid, i, toAddress, p.tokenIds[i], p.amounts[i]);
+            _tryCrosschainMintOne(_origin.srcEid, _guid, i, toAddress, p.tokenIds[i], p.amounts[i]);
         }
 
         emit ONFTMultiReceived(_guid, _origin.srcEid, p.recipients, p.tokenIds, p.amounts);
     }
 
-    /// @dev Self-call wrapper around `token.credit` that isolates per-item reverts. A failure
-    ///      on item `i` records a `FailedCredit` snapshot for `(guid, i)` and emits `CreditFailed`
+    /// @dev Self-call wrapper around `token.crosschainMint` that isolates per-item reverts. A failure
+    ///      on item `i` records a `FailedCrosschainMint` snapshot for `(guid, i)` and emits `CrosschainMintFailed`
     ///      instead of reverting the whole batch — that's the Critical funds-lock fix.
-    function _tryCreditOne(uint32 srcEid, bytes32 guid, uint256 idx, address to, uint256 tokenId, uint256 amount)
-        internal
-    {
-        try this.creditOne(to, tokenId, amount) {
-        // ok — credit landed
+    function _tryCrosschainMintOne(
+        uint32 srcEid,
+        bytes32 guid,
+        uint256 idx,
+        address to,
+        uint256 tokenId,
+        uint256 amount
+    ) internal {
+        try this.crosschainMintOne(to, tokenId, amount) {
+        // ok — crosschainMint landed
         }
         catch (bytes memory reason) {
-            _s().failedCredits[guid][idx] =
-                FailedCredit({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
-            emit CreditFailed(srcEid, guid, idx, to, tokenId, amount, reason);
+            _s().failedCrosschainMints[guid][idx] =
+                FailedCrosschainMint({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
+            emit CrosschainMintFailed(srcEid, guid, idx, to, tokenId, amount, reason);
         }
     }
 
-    /// @notice Self-call shim around `token.credit`. Only callable by this contract itself —
+    /// @notice Self-call shim around `token.crosschainMint`. Only callable by this contract itself —
     ///         exposing it externally would let anyone mint tokens for arbitrary recipients.
     /// @dev `external` (not `public`) so the self-call goes through the EVM call boundary and the
-    ///      revert lands in the catch-block of `_tryCreditOne`. The `NotSelf` guard fires the
+    ///      revert lands in the catch-block of `_tryCrosschainMintOne`. The `NotSelf` guard fires the
     ///      moment a non-self caller attempts to use it.
-    /// @param to Recipient address to credit
+    /// @param to Recipient address to crosschainMint
     /// @param tokenId ERC-1155 token id to mint
-    /// @param amount Amount to credit
-    function creditOne(address to, uint256 tokenId, uint256 amount) external {
+    /// @param amount Amount to crosschainMint
+    function crosschainMintOne(address to, uint256 tokenId, uint256 amount) external {
         if (msg.sender != address(this)) revert NotSelf();
-        token.credit(to, tokenId, amount);
+        token.crosschainMint(to, tokenId, amount);
     }
 
-    /// @notice Permissionless retry of a previously-failed credit. On success the entry is
-    ///         deleted so a re-retry reverts `NoSuchFailedCredit`. Mirrors the
+    /// @notice Permissionless retry of a previously-failed crosschainMint. On success the entry is
+    ///         deleted so a re-retry reverts `NoSuchFailedCrosschainMint`. Mirrors the
     ///         `EscrowAdapter.retryFinalize` shape
-    /// @param guid Inbound packet GUID where the credit originally failed.
+    /// @param guid Inbound packet GUID where the crosschainMint originally failed.
     /// @param idx Position of the failed item in that batch.
-    function retryCredit(bytes32 guid, uint256 idx) external nonReentrant {
+    function retryCrosschainMint(bytes32 guid, uint256 idx) external nonReentrant {
         ONFT1155AdapterBatchStorage storage $ = _s();
-        FailedCredit memory f = $.failedCredits[guid][idx];
-        if (!f.exists) revert NoSuchFailedCredit(guid, idx);
-        delete $.failedCredits[guid][idx];
-        token.credit(f.to, f.tokenId, f.amount);
-        emit CreditRetried(guid, idx);
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(guid, idx);
+        delete $.failedCrosschainMints[guid][idx];
+        token.crosschainMint(f.to, f.tokenId, f.amount);
+        emit CrosschainMintRetried(guid, idx);
     }
 }

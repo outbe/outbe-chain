@@ -14,14 +14,14 @@ sol! {
         struct IssuanceInstructionsParams {
             uint32 seriesId;
             uint32 issuedIntexCount;
-            uint128 intexSize;
-            uint64 intexStrikePrice;
-            uint64 coenPriceFloor;
+            uint128 promisLoadMinor;
+            uint64 costAmountMinor;
+            uint64 floorPriceMinor;
             uint32 intexCallPeriod;
             uint16 settlementTokenAlias;
             uint16 callWindowDays;
             uint16 callThresholdDays;
-            uint64 coenPriceCallTrigger;
+            uint64 callPriceMinor;
             address[] recipients;
             uint256[] quantities;
         }

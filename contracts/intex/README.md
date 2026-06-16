@@ -42,7 +42,7 @@ yarn hardhat demo:auction:all --series-id 20260526 --outbe-network outbeTestnetN
 | `--bnb-network` | `bscTestnet` | BNB chain |
 | `--quantity` | `5` | bid quantity |
 | `--bid-price` | `60000000` | bid price per Intex (minor units) |
-| `--supply` | `100` | issued supply (Intex units) — passed at the `clearing` phase, multiplied by `intexSize` for Desis |
+| `--supply` | `100` | issued supply (Intex units) — passed at the `clearing` phase, multiplied by `promisLoadMinor` for Desis |
 
 > **Prefund OriginMessenger before each series.** After the final bid batch lands on Outbe, OriginMessenger calls `Desis.clearAuction` itself in relay mode (msg.value = 0). The three resulting LZ sends (AUCTION_RESULT + ISSUANCE_INSTRUCTIONS + REFUND_INSTRUCTIONS) draw from the messenger's own native float — top it up before kicking off a run (~0.05 native on testnets is plenty per series). `cast send <ORIGIN_MESSENGER> --value 0.05ether` or any plain transfer to its address works (`receive()` accepts native).
 
@@ -69,7 +69,7 @@ Run after a series is `Issued` (see [Settlement / Intex Lifecycle](#settlement--
 - `demo:settlement:mark-qualified` — `Issued → Qualified`, signalled to BNB.
 - `demo:settlement:mark-called` — `Qualified → Called`, signalled to BNB.
 - `demo:settlement:settle` — authorize a settler and run `IntexSettlement.settle`; adds `--holder`, `--amount`, `--settler`.
-- `settlement-mine` — Phase 3: holder calls `IntexSettlement.minePromis(seriesId, amount)`, which atomically burns `amount` Settled Intex and mints `amount * intexSize` Promis to the caller.
+- `settlement-mine` — Phase 3: holder calls `IntexSettlement.minePromis(seriesId, amount)`, which atomically burns `amount` Settled Intex and mints `amount * promisLoadMinor` Promis to the caller.
 
 ### Harness self-test
 
@@ -87,10 +87,10 @@ Runner keys are read from `.env`, one per chain: `OUTBE_PRIVATE_KEY` / `OUTBE_RP
 
 A series moves through `Issued → Qualified → Called → Settled`. See [docs/nft/lifecycle.md](docs/nft/lifecycle.md) for the full state diagram and rationale.
 
-- **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer credit/debit and voluntary settle are rejected.
+- **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer crosschainMint/crosschainBurn and voluntary settle are rejected.
 - **Qualified** — `markQualified` flips the series once qualification conditions are met. Holders can bridge to Outbe and voluntarily `settle`.
 - **Called** — `markCalled` (cross-chain) sweeps holder balances to Outbe and arms a `callPeriod` deadline within which holders must settle.
-- **Settled** — `IntexSettlement.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). `Promis.minePromis` later burns Settled Intex to credit Promis.
+- **Settled** — `IntexSettlement.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). `Promis.minePromis` later burns Settled Intex to crosschainMint Promis.
 
 `expireSeries` is an action, not a state: it burns remaining Issued tokens and emits `SeriesExpired`; Settled tokens are unaffected.
 

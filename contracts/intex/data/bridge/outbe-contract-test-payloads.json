@@ -81,8 +81,8 @@
         "seriesId": 12022026,
         "clearingTimestamp": 1739361600,
         "bidFloorPrice": "80000000",
-        "intexSize": "1000000",
-        "intexStrikePrice": "1000000000",
+        "promisLoadMinor": "1000000",
+        "costAmountMinor": "1000000000",
         "bidMinimumQuantity": 4
       }
     },
@@ -115,7 +115,7 @@
       "msgType": 8,
       "data": {
         "auctionId": "0x31322d30322d323032360000000000000000000000000000000000000000000000",
-        "intexSize": "1000000",
+        "promisLoadMinor": "1000000",
         "strikePrice": "1000000000",
         "clearingPrice": "82000000",
         "bidFloorPrice": "80000000",

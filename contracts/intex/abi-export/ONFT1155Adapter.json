@@ -12,20 +12,21 @@
           "internalType": "address",
           "name": "_lzEndpoint",
           "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "_delegate",
-          "type": "address"
-        },
-        {
-          "internalType": "uint32",
-          "name": "_outbeEid",
-          "type": "uint32"
         }
       ],
       "stateMutability": "nonpayable",
       "type": "constructor"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "target",
+          "type": "address"
+        }
+      ],
+      "name": "AddressEmptyCode",
+      "type": "error"
     },
     {
       "inputs": [
@@ -55,6 +56,27 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "implementation",
+          "type": "address"
+        }
+      ],
+      "name": "ERC1967InvalidImplementation",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ERC1967NonPayable",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "FailedCall",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "InvalidDelegate",
       "type": "error"
@@ -62,6 +84,11 @@
     {
       "inputs": [],
       "name": "InvalidEndpointCall",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidInitialization",
       "type": "error"
     },
     {
@@ -152,7 +179,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "NoSuchFailedCredit",
+      "name": "NoSuchFailedCrosschainMint",
       "type": "error"
     },
     {
@@ -175,6 +202,11 @@
         }
       ],
       "name": "NotEnoughNative",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotInitializing",
       "type": "error"
     },
     {
@@ -245,6 +277,22 @@
         }
       ],
       "name": "SafeERC20FailedOperation",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UUPSUnauthorizedCallContext",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "slot",
+          "type": "bytes32"
+        }
+      ],
+      "name": "UUPSUnsupportedProxiableUUID",
       "type": "error"
     },
     {
@@ -353,7 +401,7 @@
           "type": "bytes"
         }
       ],
-      "name": "CreditFailed",
+      "name": "CrosschainMintFailed",
       "type": "event"
     },
     {
@@ -366,7 +414,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "CreditRetried",
+      "name": "CrosschainMintRetried",
       "type": "event"
     },
     {
@@ -397,6 +445,19 @@
         }
       ],
       "name": "EnforcedOptionSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "version",
+          "type": "uint64"
+        }
+      ],
+      "name": "Initialized",
       "type": "event"
     },
     {
@@ -531,17 +592,17 @@
       "type": "event"
     },
     {
-      "inputs": [],
-      "name": "OUTBE_EID",
-      "outputs": [
+      "anonymous": false,
+      "inputs": [
         {
-          "internalType": "uint32",
-          "name": "",
-          "type": "uint32"
+          "indexed": true,
+          "internalType": "address",
+          "name": "implementation",
+          "type": "address"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "name": "Upgraded",
+      "type": "event"
     },
     {
       "inputs": [],
@@ -564,6 +625,19 @@
           "internalType": "uint16",
           "name": "",
           "type": "uint16"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "UPGRADE_INTERFACE_VERSION",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
         }
       ],
       "stateMutability": "view",
@@ -652,7 +726,7 @@
           "type": "uint256"
         }
       ],
-      "name": "creditOne",
+      "name": "crosschainMintOne",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -697,12 +771,12 @@
       "inputs": [
         {
           "internalType": "uint32",
-          "name": "eid",
+          "name": "_eid",
           "type": "uint32"
         },
         {
           "internalType": "uint16",
-          "name": "msgType",
+          "name": "_msgType",
           "type": "uint16"
         }
       ],
@@ -710,7 +784,7 @@
       "outputs": [
         {
           "internalType": "bytes",
-          "name": "enforcedOption",
+          "name": "",
           "type": "bytes"
         }
       ],
@@ -725,7 +799,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "failedCredits",
+      "name": "failedCrosschainMints",
       "outputs": [
         {
           "internalType": "address",
@@ -770,6 +844,19 @@
         }
       ],
       "name": "flushPendingCompose",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_delegate",
+          "type": "address"
+        }
+      ],
+      "name": "initialize",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -942,7 +1029,7 @@
       "inputs": [
         {
           "internalType": "uint32",
-          "name": "eid",
+          "name": "_eid",
           "type": "uint32"
         }
       ],
@@ -950,7 +1037,7 @@
       "outputs": [
         {
           "internalType": "bytes32",
-          "name": "peer",
+          "name": "",
           "type": "bytes32"
         }
       ],
@@ -991,6 +1078,19 @@
           "internalType": "bool",
           "name": "done",
           "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "proxiableUUID",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
         }
       ],
       "stateMutability": "view",
@@ -1079,7 +1179,7 @@
           "type": "bytes32"
         }
       ],
-      "name": "retryCredit",
+      "name": "retryCrosschainMint",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1289,6 +1389,24 @@
       "name": "transferOwnership",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newImplementation",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        }
+      ],
+      "name": "upgradeToAndCall",
+      "outputs": [],
+      "stateMutability": "payable",
       "type": "function"
     }
   ]

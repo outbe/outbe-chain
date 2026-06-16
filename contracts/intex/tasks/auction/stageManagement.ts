@@ -45,9 +45,9 @@ const auctionFlowAction = async (args: AuctionFlowTaskArgs, hre: unknown) => {
     commitEnd: toOptional(args.commitEnd),
     revealEnd: toOptional(args.revealEnd),
     issuanceEnd: toOptional(args.issuanceEnd),
-    intexSize: toOptional(args.intexSize),
-    intexStrikePrice: toOptional(args.intexStrikePrice),
-    coenPriceFloor: toOptional(args.coenPriceFloor),
+    promisLoadMinor: toOptional(args.promisLoadMinor),
+    costAmountMinor: toOptional(args.costAmountMinor),
+    floorPriceMinor: toOptional(args.floorPriceMinor),
     minIntexBidQuantity: toOptional(args.minIntexBidQuantity),
     isGreenDay: args.isGreenDay,
     issuedIntexCount: toOptional(args.issuedIntexCount),
@@ -74,9 +74,9 @@ const auctionStartAction = async (args: AuctionStartTaskArgs, hre: unknown) => {
     commitEnd: toOptional(args.commitEnd),
     revealEnd: toOptional(args.revealEnd),
     issuanceEnd: toOptional(args.issuanceEnd),
-    intexSize: toOptional(args.intexSize),
-    intexStrikePrice: toOptional(args.intexStrikePrice),
-    coenPriceFloor: toOptional(args.coenPriceFloor),
+    promisLoadMinor: toOptional(args.promisLoadMinor),
+    costAmountMinor: toOptional(args.costAmountMinor),
+    floorPriceMinor: toOptional(args.floorPriceMinor),
     minIntexBidQuantity: toOptional(args.minIntexBidQuantity),
   });
 };
@@ -129,9 +129,9 @@ const auctionFlow = task("auction-flow", "Run full Auction flow")
   .addOption({ name: "commitEnd", description: "Commit stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "revealEnd", description: "Reveal stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "issuanceEnd", description: "Issuance stage end timestamp (UNIX)", defaultValue: "" })
-  .addOption({ name: "intexSize", description: "Intex size", defaultValue: "1000000" })
-  .addOption({ name: "intexStrikePrice", description: "Intex strike price", defaultValue: "1000000000" })
-  .addOption({ name: "coenPriceFloor", description: "COEN price floor", defaultValue: "" })
+  .addOption({ name: "promisLoadMinor", description: "Promis load", defaultValue: "1000000" })
+  .addOption({ name: "costAmountMinor", description: "Cost amount", defaultValue: "1000000000" })
+  .addOption({ name: "floorPriceMinor", description: "Floor price", defaultValue: "" })
   .addOption({ name: "minIntexBidQuantity", description: "Minimum bid quantity", defaultValue: "12" })
   .addOption({ name: "isGreenDay", description: "Is green day (true/false)", defaultValue: "true" })
   .addOption({ name: "issuedIntexCount", description: "Override issued Intex count", defaultValue: "" })
@@ -153,9 +153,9 @@ const auctionStart = task("auction-start", "Start a new auction")
   .addOption({ name: "commitEnd", description: "Commit stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "revealEnd", description: "Reveal stage end timestamp (UNIX)", defaultValue: "" })
   .addOption({ name: "issuanceEnd", description: "Issuance stage end timestamp (UNIX)", defaultValue: "" })
-  .addOption({ name: "intexSize", description: "Intex size", defaultValue: "1000000" })
-  .addOption({ name: "intexStrikePrice", description: "Intex strike price", defaultValue: "1000000000" })
-  .addOption({ name: "coenPriceFloor", description: "COEN price floor", defaultValue: "" })
+  .addOption({ name: "promisLoadMinor", description: "Promis load", defaultValue: "1000000" })
+  .addOption({ name: "costAmountMinor", description: "Cost amount", defaultValue: "1000000000" })
+  .addOption({ name: "floorPriceMinor", description: "Floor price", defaultValue: "" })
   .addOption({ name: "minIntexBidQuantity", description: "Minimum bid quantity", defaultValue: "12" })
   .setAction(lazy(auctionStartAction));
 

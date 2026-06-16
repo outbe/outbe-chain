@@ -95,13 +95,13 @@ describe("IntexAuction", async function () {
     return { schedule, anchor: now };
   }
 
-  // Auction params struct with the given minimum bid price, intex size and min quantity.
-  function buildParams(minIntexBidPrice: bigint, intexSize: bigint, minIntexBidQuantity: number) {
+  // Auction params struct with the given minimum bid price, Promis load and min quantity.
+  function buildParams(minIntexBidPrice: bigint, promisLoadMinor: bigint, minIntexBidQuantity: number) {
     return {
-      intexSize,
+      promisLoadMinor,
       minIntexBidPrice,
-      intexStrikePrice: 100n,
-      coenPriceFloor: 100n,
+      costAmountMinor: 100n,
+      floorPriceMinor: 100n,
       minIntexBidQuantity,
     };
   }
@@ -111,12 +111,12 @@ describe("IntexAuction", async function () {
     auction: Awaited<ReturnType<typeof deployContracts>>["auction"],
     seriesId: number,
     minIntexBidPrice: bigint,
-    intexSize: bigint,
+    promisLoadMinor: bigint,
     minIntexBidQuantity: number,
   ) {
     const { schedule, anchor } = await buildSchedule();
     await auction.write.auctionStart(
-      [seriesId, schedule, buildParams(minIntexBidPrice, intexSize, minIntexBidQuantity)],
+      [seriesId, schedule, buildParams(minIntexBidPrice, promisLoadMinor, minIntexBidQuantity)],
       { account: bridger.account.address },
     );
     return { schedule, anchor };
@@ -172,10 +172,10 @@ describe("IntexAuction", async function () {
 
       const seriesId = 20250115; // yyyymmdd format
       const minIntexBidPrice = 50n * 10n ** 6n; // 50 with 6 decimals
-      const intexSize = 1000n;
+      const promisLoadMinor = 1000n;
       const minIntexBidQuantity = 1;
 
-      const { schedule } = await startAuction(auction, seriesId, minIntexBidPrice, intexSize, minIntexBidQuantity);
+      const { schedule } = await startAuction(auction, seriesId, minIntexBidPrice, promisLoadMinor, minIntexBidQuantity);
 
       const auctionData = await auction.read.getAuctionInfo([seriesId]);
       assert.equal(Number(auctionData.worldwideDayState), 0); // Unknown
@@ -183,7 +183,7 @@ describe("IntexAuction", async function () {
       assert.equal(Number(auctionData.schedule.revealEnd), schedule.revealEnd);
       assert.equal(Number(auctionData.schedule.issuanceEnd), schedule.issuanceEnd);
       assert.equal(auctionData.params.minIntexBidPrice, minIntexBidPrice);
-      assert.equal(auctionData.params.intexSize, intexSize);
+      assert.equal(auctionData.params.promisLoadMinor, promisLoadMinor);
       assert.equal(Number(auctionData.params.minIntexBidQuantity), minIntexBidQuantity);
 
       const stage = await auction.read.getAuctionStage([seriesId]);
@@ -520,8 +520,8 @@ describe("IntexAuction", async function () {
       const { auction } = await deployContracts();
 
       const seriesId = 20250127;
-      const intexSize = 1000n;
-      const { anchor } = await startAuction(auction, seriesId, 50n * 10n ** 6n, intexSize, 1);
+      const promisLoadMinor = 1000n;
+      const { anchor } = await startAuction(auction, seriesId, 50n * 10n ** 6n, promisLoadMinor, 1);
 
       const quantity = 10n;
       const bidPrice = 80n * 10n ** 6n;
@@ -567,9 +567,9 @@ describe("IntexAuction", async function () {
       assert.equal(auctionData.result.auctionIntexClearingPrice, auctionIntexClearingPrice);
       assert.equal(Number(auctionData.result.issuedIntexCount), Number(issuedIntexCount));
       assert.equal(Number(auctionData.result.wonBidsCount), Number(wonBidsCount));
-      assert.equal(auctionData.params.intexSize, intexSize);
-      // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * intexSize.
-      assert.equal(auctionData.result.issuedIntexLoadedPromis, issuedIntexCount * intexSize);
+      assert.equal(auctionData.params.promisLoadMinor, promisLoadMinor);
+      // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * promisLoadMinor.
+      assert.equal(auctionData.result.issuedIntexLoadedPromis, issuedIntexCount * promisLoadMinor);
 
       const stage = await auction.read.getAuctionStage([seriesId]);
       assert.equal(Number(stage), 3); // Completed
@@ -685,9 +685,9 @@ describe("IntexAuction", async function () {
 
       const seriesId = 20250202; // yyyymmdd format
       const minIntexBidPrice = 50n * 10n ** 6n;
-      const intexSize = 1000n;
+      const promisLoadMinor = 1000n;
 
-      const { schedule } = await startAuction(auction, seriesId, minIntexBidPrice, intexSize, 1);
+      const { schedule } = await startAuction(auction, seriesId, minIntexBidPrice, promisLoadMinor, 1);
 
       // getAuctionInfo
       const auctionData = await auction.read.getAuctionInfo([seriesId]);
@@ -697,7 +697,7 @@ describe("IntexAuction", async function () {
 
       // getAuctionDetails
       const [details, bids] = await auction.read.getAuctionDetails([seriesId]);
-      assert.equal(details.params.intexSize, intexSize);
+      assert.equal(details.params.promisLoadMinor, promisLoadMinor);
       assert.equal(bids.length, 0);
     });
 

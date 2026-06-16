@@ -397,7 +397,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_ONFTBatch_StaleV1Version_RevertsUnsupportedBodyVersion() public {
-        // A pre-migration V1 packet must fail closed rather than misdecode into a wrong credit.
+        // A pre-migration V1 packet must fail closed rather than misdecode into a wrong crosschainMint.
         bytes memory packet = _batchV2(address(0xCAFE), 1, 100);
         packet[0] = bytes1(uint8(1)); // downgrade the version byte to stale V1
         vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.UnsupportedBodyVersion.selector, uint8(1)));
@@ -453,7 +453,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_ONFTBatch_MalformedTo_RevertsMalformedAddress() public {
-        // A `to` with non-zero high bits is rejected before any credit (empty item arrays).
+        // A `to` with non-zero high bits is rejected before any crosschainMint (empty item arrays).
         bytes32 badTo = bytes32(uint256(1) << 200);
         bytes memory packet = abi.encodePacked(
             ONFT1155BatchMsgCodec.BODY_VERSION_V2,
@@ -484,7 +484,7 @@ contract InboundValidationTest is TestHelperOz5 {
 
     function test_ONFTBatch_ZeroTo_RevertsInvalidReceiver() public {
         // SEND branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
-        // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the credit.
+        // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the crosschainMint.
         bytes memory packet = abi.encodePacked(
             ONFT1155BatchMsgCodec.BODY_VERSION_V2,
             ONFT1155BatchMsgCodec.SEND,
@@ -500,7 +500,7 @@ contract InboundValidationTest is TestHelperOz5 {
 
     function test_ONFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
         // SEND_MULTI cap parity to the SEND OverCap test — decodeMulti rejects oversize arrays
-        // before the per-item loop touches any recipient or credit.
+        // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);
         uint256[] memory tokenIds = new uint256[](over);

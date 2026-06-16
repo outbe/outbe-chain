@@ -6,7 +6,7 @@
 //   - The caller is the holder of the Intex being moved.
 //
 // The adapter quotes the LayerZero fee, the caller pays it as `msg.value`, and the
-// destination chain credits the same `tokenId` to the same holder once the LZ
+// destination chain crosschain-mints the same `tokenId` to the same holder once the LZ
 // packet is delivered.
 
 import type { Address, Hex } from "viem";

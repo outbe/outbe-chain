@@ -88,7 +88,7 @@ contract TargetMessengerTest is TestHelperOz5 {
         // Grant SYSTEM_RELAYER_ROLE to TargetMessenger on batch adapter
         batchAdapter.grantRole(batchAdapter.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
 
-        // Grant RELAYER_ROLE to batch adapter on intex (for debit)
+        // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
         intex.grantRole(intex.RELAYER_ROLE(), address(batchAdapter));
     }
 

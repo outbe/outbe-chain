@@ -7292,8 +7292,8 @@ dependencies = [
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-gratispool",
+ "outbe-intex",
  "outbe-intexfactory",
- "outbe-intexregistry",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
@@ -7429,6 +7429,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-intex"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-intexfactory"
 version = "0.1.0"
 dependencies = [
@@ -7436,23 +7447,12 @@ dependencies = [
  "alloy-sol-types",
  "hex",
  "outbe-common",
- "outbe-intexregistry",
+ "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
  "ring",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-intexregistry"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-macros",
- "outbe-primitives",
  "thiserror 2.0.18",
 ]
 

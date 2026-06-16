@@ -55,20 +55,20 @@ interface IIntexAuction {
     /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
         /// @notice Promis tokens per Intex unit (18 decimals).
-        uint128 intexSize;
+        uint128 promisLoadMinor;
         /// @notice Minimum allowed bid price per Intex unit; rejects bids below this on reveal.
         uint64 minIntexBidPrice;
-        /// @notice Intex strike price (payment-token decimals).
-        uint64 intexStrikePrice;
-        /// @notice COEN price floor (payment-token decimals).
-        uint64 coenPriceFloor;
+        /// @notice Cost amount (payment-token minor units).
+        uint64 costAmountMinor;
+        /// @notice Floor price (payment-token minor units).
+        uint64 floorPriceMinor;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
     }
 
     /// @notice Auction results and statistics (final, set at clearing).
     struct AuctionResult {
-        /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * intexSize`); derived on-chain at clearing.
+        /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * promisLoadMinor`); derived on-chain at clearing.
         uint128 issuedIntexLoadedPromis;
         /// @notice Uniform auction clearing price used to issue Intex.
         uint64 auctionIntexClearingPrice;
@@ -200,7 +200,7 @@ interface IIntexAuction {
     function startClearingStage(uint32 seriesId) external;
 
     /// @notice Execute auction clearing with final data from Outbe.
-    /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedIntexCount * intexSize`).
+    /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedIntexCount * promisLoadMinor`).
     /// @param seriesId Auction series id.
     /// @param issuedIntexCount Final number of issued Intex units.
     /// @param auctionIntexClearingPrice Uniform clearing price calculated by Outbe.

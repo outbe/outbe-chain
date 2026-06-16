@@ -15,7 +15,7 @@ import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.s
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 
 /// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
-///      mid-`_lzReceive` (via `token.credit` → `_mint`), re-enters the adapter's
+///      mid-`_lzReceive` (via `token.crosschainMint` → `_mint`), re-enters the adapter's
 ///      `multiSend` entrypoint. With both `_lzReceive` and `multiSend` carrying
 ///      OZ `nonReentrant`, the inner call reverts with `ReentrancyGuardReentrantCall`
 ///      at the modifier check (before the empty-batch validation), and we capture
@@ -74,7 +74,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 /// @title ONFT1155AdapterBatchReentrancyTest
 /// @notice Behavioral test that `_lzReceive` and `multiSend` are mutually `nonReentrant`-guarded.
 /// @dev Source chain (A) caller initiates a single-recipient batch transfer to the hostile probe
-///      on the destination chain (B). On B, `_lzReceive` → `_handleBatchReceive` → `token.credit`
+///      on the destination chain (B). On B, `_lzReceive` → `_handleBatchReceive` → `token.crosschainMint`
 ///      → `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
 ///      `ReentrancyGuardReentrantCall` — proving the guard is held by `_lzReceive` AND that

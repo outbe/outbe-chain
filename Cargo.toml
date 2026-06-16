@@ -30,7 +30,7 @@ members = [
     "crates/core/nodfactory",
     "crates/core/gem",
     "crates/core/gemfactory",
-    "crates/core/intexregistry",
+    "crates/core/intex",
     "crates/core/intexfactory",
     "crates/core/desis",
     "crates/core/lysis",
@@ -91,7 +91,7 @@ outbe-nod = { path = "crates/core/nod" }
 outbe-nodfactory = { path = "crates/core/nodfactory" }
 outbe-gem = { path = "crates/core/gem" }
 outbe-gemfactory = { path = "crates/core/gemfactory" }
-outbe-intexregistry = { path = "crates/core/intexregistry" }
+outbe-intex = { path = "crates/core/intex" }
 outbe-intexfactory = { path = "crates/core/intexfactory" }
 outbe-desis = { path = "crates/core/desis" }
 outbe-lysis = { path = "crates/core/lysis" }

@@ -456,7 +456,7 @@ contract EscrowAdapterTest is Test {
             paidAmount: 0 // full refund, valid
         });
 
-        uint256 bidder2BalanceBefore = paymentToken.balanceOf(bidder2); // after lockFunds debit
+        uint256 bidder2BalanceBefore = paymentToken.balanceOf(bidder2); // after lockFunds crosschainBurn
 
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(GUID, seriesId1, bidder1, "");

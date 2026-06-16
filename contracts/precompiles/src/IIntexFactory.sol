@@ -6,7 +6,7 @@ pragma solidity ^0.8.30;
 ///         settlement, Promis mining, and the dual-wallet authorized-settler
 ///         setter. Issuance is a module-to-module call (Desis → IntexFactory)
 ///         exposed through the Rust `api`, not a precompile selector. Series
-///         identity + lifecycle live in IntexRegistry; this precompile owns
+///         identity + lifecycle live in Intex; this precompile owns
 ///         settlement bookkeeping and the autonomous qualification index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by

@@ -402,7 +402,7 @@ contract PatternADeferTest is TestHelperOz5 {
         bytes32 guid = bytes32(uint256(0xE001));
         bytes memory packet = _onftComposedPacket(recipient, TOKEN_ID, 1, hex"deadbeef");
 
-        // First delivery: credit + sendCompose succeed.
+        // First delivery: crosschainMint + sendCompose succeed.
         _deliverToOnft(OUTBE_EID, address(onftOutbe), guid, packet);
 
         // Second delivery (different srcEid bypasses processed[srcEid][guid]; same (to, guid)

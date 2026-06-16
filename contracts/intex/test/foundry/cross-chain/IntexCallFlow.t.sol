@@ -105,7 +105,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(bnbAdapter));
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(batchAdapterBnb));
         // The system bridge runs while the series is Called; both batch adapters need
-        // SYSTEM_RELAYER_ROLE on their local Intex to debit/credit during that window.
+        // SYSTEM_RELAYER_ROLE on their local Intex to crosschainBurn/crosschainMint during that window.
         intexBnb.grantRole(intexBnb.SYSTEM_RELAYER_ROLE(), address(batchAdapterBnb));
         batchAdapterBnb.grantRole(batchAdapterBnb.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
@@ -137,7 +137,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
     /// @notice Helper: triggers markCalled from Desis and delivers both LZ messages.
     function _triggerCallAndBridge(uint32 seriesId, bool hasHolders) internal {
         // Desis applies markCalled locally on Outbe before sending the LZ notice to BSC.
-        // Without it, the system bridge credit on Outbe would land in `Issued` and revert.
+        // Without it, the system bridge crosschainMint on Outbe would land in `Issued` and revert.
         if (hasHolders) {
             intexOutbe.markCalled(seriesId);
         }
@@ -236,7 +236,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         assertEq(balances[1], 40);
     }
 
-    /// @notice BSC holder tracking cleared after call bridge (all debited).
+    /// @notice BSC holder tracking cleared after call bridge (all crosschainBurned).
     function test_call_holderTrackingClearedOnBsc() public {
         _createSeries(intexBnb);
         intexBnb.mint(holder1, 70, SERIES_ID);

@@ -60,10 +60,10 @@ contract BridgeMsgCodecGoldenTest is Test {
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
-            uint128 intexSize,
+            uint128 promisLoadMinor,
             uint64 minIntexBidPrice,
-            uint64 intexStrikePrice,
-            uint64 coenPriceFloor,
+            uint64 costAmountMinor,
+            uint64 floorPriceMinor,
             uint16 minIntexBidQuantity
         ) = this.exposedDecodeAuctionStageStart(
             BridgeMsgCodec.encodeAuctionStageStart(
@@ -82,10 +82,10 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(commitEnd, 0x55667788, "commitEnd");
         assertEq(revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(issuanceEnd, 0xDDEEFF00, "issuanceEnd");
-        assertEq(intexSize, 0x0102030405060708090A0B0C0D0E0F10, "intexSize");
+        assertEq(promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(minIntexBidPrice, 0x1122334455667788, "minIntexBidPrice");
-        assertEq(intexStrikePrice, 0x99AABBCCDDEEFF00, "intexStrikePrice");
-        assertEq(coenPriceFloor, 0xA1B2C3D4E5F60718, "coenPriceFloor");
+        assertEq(costAmountMinor, 0x99AABBCCDDEEFF00, "costAmountMinor");
+        assertEq(floorPriceMinor, 0xA1B2C3D4E5F60718, "floorPriceMinor");
         assertEq(minIntexBidQuantity, 0xABCD, "minIntexBidQuantity");
     }
 
@@ -188,14 +188,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
         p.seriesId = 0x11223344;
         p.issuedIntexCount = 0x55667788;
-        p.intexSize = 0x0102030405060708090A0B0C0D0E0F10;
-        p.intexStrikePrice = 0x1122334455667788;
-        p.coenPriceFloor = 0x99AABBCCDDEEFF00;
+        p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
+        p.costAmountMinor = 0x1122334455667788;
+        p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.intexCallPeriod = 0xCAFEBABE;
         p.settlementTokenAlias = 0x1234;
         p.callWindowDays = 0x5678;
         p.callThresholdDays = 0x9ABC;
-        p.coenPriceCallTrigger = 0xA1B2C3D4E5F60718;
+        p.callPriceMinor = 0xA1B2C3D4E5F60718;
         p.recipients = recipients;
         p.quantities = quantities;
 
@@ -204,14 +204,14 @@ contract BridgeMsgCodecGoldenTest is Test {
 
         assertEq(d.seriesId, 0x11223344, "seriesId");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
-        assertEq(d.intexSize, 0x0102030405060708090A0B0C0D0E0F10, "intexSize");
-        assertEq(d.intexStrikePrice, 0x1122334455667788, "intexStrikePrice");
-        assertEq(d.coenPriceFloor, 0x99AABBCCDDEEFF00, "coenPriceFloor");
+        assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
+        assertEq(d.costAmountMinor, 0x1122334455667788, "costAmountMinor");
+        assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
         assertEq(d.settlementTokenAlias, 0x1234, "settlementTokenAlias");
         assertEq(d.callWindowDays, 0x5678, "callWindowDays");
         assertEq(d.callThresholdDays, 0x9ABC, "callThresholdDays");
-        assertEq(d.coenPriceCallTrigger, 0xA1B2C3D4E5F60718, "coenPriceCallTrigger");
+        assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(d.recipients[0], address(0xA11CE), "recipients[0]");
         assertEq(d.recipients[1], address(0xB0B), "recipients[1]");
         assertEq(d.quantities[0], 0xDEAD, "quantities[0]");

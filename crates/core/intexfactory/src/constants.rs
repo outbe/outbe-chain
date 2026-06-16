@@ -22,8 +22,10 @@ pub const ORIGIN_MESSENGER_ADDRESS: Address =
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
 
-/// Qualification maturity: strictly more than 21 days since issuance.
-pub const MATURITY_PERIOD_SECONDS: u64 = 21 * 24 * 60 * 60;
+/// Qualification maturity in days since issuance (mirrors Nod's MATURITY_PERIOD_DAYS).
+pub const MATURITY_PERIOD_DAYS: u64 = 21;
+/// Derived seconds, for comparison against block timestamps.
+pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
 
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
@@ -32,9 +34,9 @@ pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 pub const BIN_STEP_BP: u16 = 25;
 
 /// COEN price floor = clearing price * 1.08; integer ratio 108/100.
-pub const COEN_PRICE_FLOOR_NUM: u64 = 108;
-pub const COEN_PRICE_FLOOR_DEN: u64 = 100;
+pub const FLOOR_PRICE_NUM: u64 = 108;
+pub const FLOOR_PRICE_DEN: u64 = 100;
 
 /// Forced-call trigger = floor * 1.64; integer ratio 164/100.
-pub const COEN_CALL_TRIGGER_NUM: u64 = 164;
-pub const COEN_CALL_TRIGGER_DEN: u64 = 100;
+pub const CALL_PRICE_NUM: u64 = 164;
+pub const CALL_PRICE_DEN: u64 = 100;

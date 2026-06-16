@@ -59,7 +59,7 @@ impl IntexFactoryContract<'_> {
         self.mine_seq.write(&key, value)
     }
 
-    // --- unqualified-series bin index (by coen_price_floor) ---
+    // --- unqualified-series bin index (by floor_price_minor) ---
 
     /// Map an 18-decimal price to its LB-style bin id (bounded by the codec).
     pub fn price_to_bin(price: U256) -> Result<u32> {
@@ -97,7 +97,7 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    // --- qualified-series bin index (by coen_price_call_trigger) ---
+    // --- qualified-series bin index (by call_price_minor) ---
 
     pub(crate) fn insert_qualified(&mut self, series_id: u32, trigger_price: U256) -> Result<()> {
         insert_bin(

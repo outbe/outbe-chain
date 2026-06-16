@@ -10,7 +10,7 @@ use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
 const CHAIN_ID: u64 = 1;
 const SERIES_ID: u32 = 20260101;
-const INTEX_SIZE: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -33,9 +33,9 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn default_config() -> AuctionConfig {
     AuctionConfig {
-        intex_size: INTEX_SIZE,
+        promis_load_minor: PROMIS_LOAD_MINOR,
         min_intex_bid_price: 100,
-        intex_strike_price: 500,
+        cost_amount_minor: 500,
         coen_price: U256::ZERO,
     }
 }
@@ -93,7 +93,7 @@ fn begin_clearing_stores_pending() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        let supply_promis = 10 * INTEX_SIZE;
+        let supply_promis = 10 * PROMIS_LOAD_MINOR;
         let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
         assert_eq!(remainder, 0); // no rounding with exact multiple
         let contract = s.contract::<DesisContract>();
@@ -108,7 +108,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             SERIES_ID,
@@ -232,7 +232,7 @@ fn clear_auction_allocates_up_to_supply() {
         let supply = 3u32;
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(5, 200)).unwrap();
         let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
@@ -246,7 +246,7 @@ fn clear_auction_transitions_to_cleared() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(1, 200)).unwrap();
         runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
         let contract = s.contract::<DesisContract>();
@@ -263,7 +263,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // Three bids at descending prices: 300, 200, 150.
         let three_bids = vec![
             BidData {
@@ -298,7 +298,7 @@ fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap(); // min_bid_price=100
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 3 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 3 * PROMIS_LOAD_MINOR).unwrap();
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -326,7 +326,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 1u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
         // Winner bids 300, clearing price will be 300 (only one slot).
         let two_bids = vec![
             BidData {
