@@ -69,6 +69,15 @@ pub fn run(opts: RunOpts) -> i32 {
             "outbe-tee-enclave: MODE = gramine-sgx — hardware attestation ENABLED ({})",
             attest.label()
         );
+    } else if attest.sgx_present() {
+        // Real SGX, but remote attestation not configured: EGETKEY sealing works
+        // (confidential at rest), yet no DCAP quote can be produced. Not "no SGX".
+        eprintln!(
+            "outbe-tee-enclave: MODE = gramine-sgx — remote attestation DISABLED ({}); \
+             EGETKEY sealing available, NOT remote-attested (configure \
+             sgx.remote_attestation = \"dcap\" for production)",
+            attest.label()
+        );
     } else {
         eprintln!(
             "outbe-tee-enclave: MODE = {} — attestation DISABLED, NOT confidential \

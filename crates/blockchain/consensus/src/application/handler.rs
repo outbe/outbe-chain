@@ -928,6 +928,11 @@ enum BuildBlockOutcome {
     BoundaryUnavailable,
 }
 
+// Like `BuildBlockOutcome` above: an internal direct-parent proof lookup result,
+// produced once per proposal in `select_parent_proof_for_proposal` and consumed
+// immediately at the single match site. `Found` is the common case, so boxing the
+// record would only add a heap allocation on the hot proposer path for no benefit.
+#[allow(clippy::large_enum_variant)]
 enum ParentProofLookup {
     NoProofNeeded,
     Found(CertifiedParentProofRecord),
