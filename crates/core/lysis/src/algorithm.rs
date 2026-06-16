@@ -5,8 +5,6 @@ use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128};
 pub(crate) const SCALE_U128: u128 = SCALE_1E18_U128;
 pub(crate) const SCALE: U256 = SCALE_1E18;
 
-/// `const fn` widener so derived `U256` constants can be expressed via
-/// compile-time `u128` arithmetic. `U256::from(...)` is not `const fn`.
 pub(crate) const fn u256_from_u128(v: u128) -> U256 {
     U256::from_limbs([v as u64, (v >> 64) as u64, 0, 0])
 }

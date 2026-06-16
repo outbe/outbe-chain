@@ -186,7 +186,6 @@ pub(crate) fn compute_fi_fraction_map(
             .iter()
             .map(|&i| nominal_amounts[i])
             .fold(U256::ZERO, |acc, v| acc + v);
-        // y_fp = group_interest * SCALE / total_interest (integer division truncates)
         let share = group_interest * SCALE_1E18 / total_interest;
         y_fp.push(share);
         p.push(indices.len() as u64);
