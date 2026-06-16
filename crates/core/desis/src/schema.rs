@@ -82,11 +82,11 @@ pub struct DesisContract {
     // --- Auction config (per series) ---
     /// series_id -> promis_load_minor.
     #[attribute(order = 0)]
-    pub config_intex_size: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
     pub config_min_bid_price: outbe_primitives::storage::dsl::Map<u32, u64>,
     #[attribute(order = 2)]
-    pub config_strike_price: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub config_cost_amount_minor: outbe_primitives::storage::dsl::Map<u32, u64>,
     #[attribute(order = 3)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// COEN/USD oracle price (1e18) captured at auction start; carried to IntexFactory.
