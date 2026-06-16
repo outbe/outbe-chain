@@ -20,6 +20,9 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 "cargo:cargo-auditable" = "latest"
 "cargo:cargo-audit"     = "latest"
 
+# ── Release / versioning ────────────────────────────────────────────── #
+cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
+
 [env]
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
 OUT_DIR            = "/tmp/outbe-testnet"

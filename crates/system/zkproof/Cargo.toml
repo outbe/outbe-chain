@@ -29,3 +29,6 @@ outbe-zk-circuit-noir.workspace = true
 [dev-dependencies]
 outbe-crypto-common.workspace = true
 rand.workspace = true
+
+[lints]
+workspace = true

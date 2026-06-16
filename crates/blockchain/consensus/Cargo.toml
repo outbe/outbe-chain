@@ -73,3 +73,6 @@ proptest.workspace = true
 rand_chacha = "0.3"
 rand_core.workspace = true
 commonware-math.workspace = true
+
+[lints]
+workspace = true

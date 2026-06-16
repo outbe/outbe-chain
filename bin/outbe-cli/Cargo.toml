@@ -44,3 +44,6 @@ eyre.workspace = true
 
 [dev-dependencies]
 outbe-rpc = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

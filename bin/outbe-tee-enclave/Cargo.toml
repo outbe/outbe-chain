@@ -72,3 +72,6 @@ criterion.workspace = true
 [[bench]]
 name = "tribute_offer_throughput"
 harness = false
+
+[lints]
+workspace = true

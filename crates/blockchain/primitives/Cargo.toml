@@ -49,3 +49,6 @@ trybuild = "1"
 [features]
 default = []
 test-utils = []
+
+[lints]
+workspace = true
