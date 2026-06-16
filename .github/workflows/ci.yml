@@ -10,6 +10,9 @@ permissions:
   contents: read
   checks: write
   pull-requests: write
+  # The `bump` job's commit + tag push to protected main is done with a PAT
+  # (secrets.RELEASE_TOKEN, in the branch ruleset's bypass list), NOT the
+  # GITHUB_TOKEN — so GITHUB_TOKEN stays least-privilege here.
 
 env:
   CARGO_TERM_COLOR: always
@@ -284,3 +287,81 @@ jobs:
         with:
           allowed-skips: clippy, test, test-arm, doctests, localnet, udeps, no-test-deps, deny, machete, geiger, miri
           jobs: ${{ toJSON(needs) }}
+
+  # ─── Versioning (cocogitto) ───────────────────────────────────────── #
+  # PR-only: preview the version cog WOULD cut, without tagging anything.
+  # cog is pinned in mise.toml (`cocogitto = "7"`); installed on demand here
+  # rather than the full mise toolchain. Legacy pre-adoption commits are not
+  # Conventional, so checks run `--from-latest-tag` (validate only commits
+  # since the last `v*` release — requires a baseline `v0.1.0` tag to exist).
+  preview-version:
+    name: preview next version
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # cog reads the full history + tags
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - run: mise install cocogitto
+      - name: Validate new commits (Conventional Commits since last tag)
+        run: mise exec -- cog check --from-latest-tag
+      - name: Preview bump
+        run: |
+          set -euo pipefail
+          # Neutralise cog.toml's branch_whitelist for this read-only preview so
+          # it works from a PR ref (nothing is committed/tagged/pushed).
+          cfg="$(mktemp -d)/cog.toml"
+          sed 's/^branch_whitelist.*/branch_whitelist = []/' cog.toml > "$cfg"
+          if out="$(mise exec -- cog --config "$cfg" bump --auto --dry-run --skip-untracked 2>/dev/null)"; then
+            tag="$(printf '%s\n' "$out" | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*' | tail -n1 || true)"
+            echo "::notice::next release would be: ${tag:-<no bump warranted>}"
+          else
+            echo "::notice::no bump warranted"
+          fi
+
+  # main only, after every gate is green: cog bump --auto cuts the next v* tag
+  # and (via cog.toml post-bump hooks) pushes the bump commit + tag. The push
+  # is authenticated with a PAT (secrets.RELEASE_TOKEN) whose owner is in the
+  # branch ruleset's bypass list, so it lands on protected main. A PAT-authored
+  # tag push DOES trigger `release.yml` (`on: push: tags`), so no explicit
+  # dispatch is needed (and adding one would double-fire the release).
+  bump:
+    name: bump version & tag
+    needs: [ci-success]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }} # PAT in the ruleset bypass -> push to protected main + trigger release.yml
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - run: mise install cocogitto
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Validate new commits
+        run: mise exec -- cog check --from-latest-tag
+      - name: Cocogitto bump
+        id: bump
+        run: |
+          set -euo pipefail
+          # Neutralise branch_whitelist: cog doesn't see the CI checkout as the
+          # `main` branch, so the in-cog guard would reject the bump. The job
+          # `if:` already restricts this to a push on main. Hooks (version sed +
+          # git push of the commit and tag) are preserved from cog.toml and run
+          # with the PAT checkout creds.
+          cfg="$(mktemp -d)/cog.toml"
+          sed 's/^branch_whitelist.*/branch_whitelist = []/' cog.toml > "$cfg"
+          mise exec -- cog --config "$cfg" bump --auto
+          tag="$(git tag --points-at HEAD | grep '^v' | head -n1 || true)"
+          if [ -n "$tag" ]; then echo "::notice::cut ${tag} (release.yml triggered by the tag push)"; else echo "::notice::no bump warranted"; fi

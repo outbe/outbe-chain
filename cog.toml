@@ -1,0 +1,29 @@
+# Cocogitto (cog) — conventional-commit history check + auto-versioning.
+#
+# `cog check` validates that the commit history follows the Conventional
+# Commits spec; `cog bump --auto` derives the next SemVer from the commit
+# types since the last tag, writes the tag, and rolls the workspace version.
+tag_prefix = "v"
+branch_whitelist = ["main"]
+ignore_merge_commits = true
+generate_mono_repository_global_tag = false
+
+# Rewrite the workspace version before cog assembles its
+# `chore(version): vX.Y.Z` commit. The `0,/RE/` sed range matches only the
+# FIRST `^version = "..."` line in the file — by Cargo.toml convention the
+# `[workspace.package]` one. Every member inherits it via `version.workspace
+# = true`, so a single bump rolls the node, CLIs, and crates forward together.
+pre_bump_hooks = [
+    "sed -i '0,/^version/{s/^version.*/version = \"{{version}}\"/}' Cargo.toml",
+]
+
+# After cog bumps the version + writes the tag, push both back so the release
+# pipeline (which reads the tag from `git tag --points-at HEAD`) can pick it up.
+post_bump_hooks = [
+    "git push origin HEAD:main",
+    "git push origin v{{version}}",
+]
+
+[changelog]
+path = "CHANGELOG.md"
+authors = []
