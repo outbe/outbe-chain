@@ -8,6 +8,11 @@
 //! quote, no fixed sealing key). Outside Gramine entirely (bare process) every
 //! pseudo-file is absent and every call returns the "unavailable" path.
 //!
+//! Note that `attestation_type` reading `none` is ambiguous: it is also what real
+//! `gramine-sgx` reports when the manifest does not enable remote attestation. We
+//! disambiguate via EGETKEY availability (see [`attestation_type`] /
+//! [`AttestationType::SgxNoAttest`]) so a real-SGX run is never mislabeled "no SGX".
+//!
 //! Hardware MRENCLAVE/MRSIGNER/ISVSVN are parsed out of the real quote's embedded
 //! SGX report body — they are never hardcoded.
 
@@ -23,6 +28,13 @@ const ATTEST_DIR: &str = "/dev/attestation";
 pub enum AttestationType {
     /// `gramine-direct` (or any non-SGX Gramine): no hardware, no real quote.
     None,
+    /// Real `gramine-sgx`, but remote attestation is not configured (the manifest
+    /// has no `sgx.remote_attestation = "dcap"`/`"epid"`), so
+    /// `/dev/attestation/attestation_type` reads `none`. SGX hardware IS present:
+    /// EGETKEY sealing keys (`keys/_sgx_mrsigner`) derive. This is NOT
+    /// remote-attested — it cannot produce a DCAP quote — but it is confidential
+    /// at rest. Distinguished from [`None`] by EGETKEY availability.
+    SgxNoAttest,
     /// `gramine-sgx` with DCAP remote attestation.
     Dcap,
     /// `gramine-sgx` with legacy EPID.
@@ -39,14 +51,42 @@ impl AttestationType {
         matches!(self, AttestationType::Dcap | AttestationType::Epid)
     }
 
+    /// True when real SGX hardware is present — including [`SgxNoAttest`], which
+    /// has EGETKEY sealing but no remote attestation. Distinct from
+    /// [`is_hardware`](Self::is_hardware), which is narrower: "remote-attestation
+    /// capable" (a real quote can be produced). Use this for "is there SGX at all"
+    /// wording; use `is_hardware` to gate quote-dependent claims.
+    pub fn sgx_present(&self) -> bool {
+        matches!(
+            self,
+            AttestationType::Dcap | AttestationType::Epid | AttestationType::SgxNoAttest
+        )
+    }
+
     pub fn label(&self) -> String {
         match self {
             AttestationType::None => "none (gramine-direct / no SGX)".to_string(),
+            AttestationType::SgxNoAttest => {
+                "none (gramine-sgx; remote attestation disabled — EGETKEY sealing available)"
+                    .to_string()
+            }
             AttestationType::Dcap => "dcap (gramine-sgx)".to_string(),
             AttestationType::Epid => "epid (gramine-sgx)".to_string(),
             AttestationType::Other(s) => format!("other:{s}"),
             AttestationType::Unavailable => "unavailable (not under Gramine)".to_string(),
         }
+    }
+}
+
+/// Disambiguate a Gramine `none` attestation type. `/dev/attestation/attestation_type`
+/// reads `none` both under `gramine-direct` (no SGX) and under real `gramine-sgx` whose
+/// manifest did not enable remote attestation. EGETKEY availability is the discriminator:
+/// real SGX derives `keys/_sgx_mrsigner`, gramine-direct cannot.
+fn classify_none(egetkey_available: bool) -> AttestationType {
+    if egetkey_available {
+        AttestationType::SgxNoAttest
+    } else {
+        AttestationType::None
     }
 }
 
@@ -58,20 +98,27 @@ impl AttestationType {
 /// is unavailable (the type file is absent/`none`, `keys/` is empty, and
 /// `user_report_data` is not writable); a bare process has no `/dev/attestation`
 /// at all.
+///
+/// A `none` type file is ambiguous: it appears both under `gramine-direct` and
+/// under real `gramine-sgx` whose manifest did not enable remote attestation. We
+/// resolve it via EGETKEY availability (`sealing_key_raw` reading
+/// `keys/_sgx_mrsigner`) — real SGX → [`AttestationType::SgxNoAttest`],
+/// gramine-direct → [`AttestationType::None`]. See [`classify_none`].
 pub fn attestation_type() -> AttestationType {
     if let Ok(s) = fs::read_to_string(format!("{ATTEST_DIR}/attestation_type")) {
         return match s.trim() {
             "dcap" => AttestationType::Dcap,
             "epid" => AttestationType::Epid,
-            "none" | "" => AttestationType::None,
+            "none" | "" => classify_none(sealing_key_raw(true).is_ok()),
             other => AttestationType::Other(other.to_string()),
         };
     }
     // No readable type file. If the Gramine attestation dir exists at all we are
-    // under Gramine without working hardware attestation (gramine-direct);
-    // otherwise we are not under Gramine.
+    // under Gramine without a configured remote-attestation type; EGETKEY
+    // availability still tells real SGX (gramine-sgx) from gramine-direct.
+    // Otherwise we are not under Gramine.
     if fs::metadata(ATTEST_DIR).is_ok() {
-        AttestationType::None
+        classify_none(sealing_key_raw(true).is_ok())
     } else {
         AttestationType::Unavailable
     }
@@ -184,4 +231,42 @@ pub fn probe_to_stderr() {
         }
     }
     eprintln!("=== end probe ===");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_none_uses_egetkey_as_discriminator() {
+        // EGETKEY derives → real SGX with attestation disabled.
+        assert_eq!(classify_none(true), AttestationType::SgxNoAttest);
+        // EGETKEY absent → gramine-direct / no SGX.
+        assert_eq!(classify_none(false), AttestationType::None);
+    }
+
+    #[test]
+    fn sgx_no_attest_label_does_not_claim_no_sgx() {
+        let label = AttestationType::SgxNoAttest.label();
+        assert!(label.contains("gramine-sgx"), "label was: {label}");
+        assert!(
+            !label.contains("no SGX"),
+            "label must not claim no SGX: {label}"
+        );
+        // The genuine no-SGX case keeps its label.
+        assert!(AttestationType::None.label().contains("no SGX"));
+    }
+
+    #[test]
+    fn sgx_no_attest_is_present_but_not_remote_attested() {
+        // Real SGX present, but not remote-attestation capable (no quote).
+        assert!(AttestationType::SgxNoAttest.sgx_present());
+        assert!(!AttestationType::SgxNoAttest.is_hardware());
+        // gramine-direct: neither.
+        assert!(!AttestationType::None.sgx_present());
+        assert!(!AttestationType::None.is_hardware());
+        // DCAP: both.
+        assert!(AttestationType::Dcap.sgx_present());
+        assert!(AttestationType::Dcap.is_hardware());
+    }
 }
