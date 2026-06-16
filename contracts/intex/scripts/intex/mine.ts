@@ -95,7 +95,7 @@ const INTEX_READ_DATA_ABI = [
             components: [
               { name: "windowDays", type: "uint16" },
               { name: "thresholdDays", type: "uint16" },
-              { name: "coenPriceCallTrigger", type: "uint64" },
+              { name: "callPriceMinor", type: "uint64" },
             ],
           },
         ],

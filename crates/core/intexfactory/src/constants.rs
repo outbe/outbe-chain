@@ -38,5 +38,5 @@ pub const FLOOR_PRICE_NUM: u64 = 108;
 pub const FLOOR_PRICE_DEN: u64 = 100;
 
 /// Forced-call trigger = floor * 1.64; integer ratio 164/100.
-pub const COEN_CALL_TRIGGER_NUM: u64 = 164;
-pub const COEN_CALL_TRIGGER_DEN: u64 = 100;
+pub const CALL_PRICE_NUM: u64 = 164;
+pub const CALL_PRICE_DEN: u64 = 100;

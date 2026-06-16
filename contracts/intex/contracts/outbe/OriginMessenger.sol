@@ -262,7 +262,7 @@ contract OriginMessenger is
             settlementTokenAlias: p.settlementTokenAlias,
             callWindowDays: p.callWindowDays,
             callThresholdDays: p.callThresholdDays,
-            coenPriceCallTrigger: p.coenPriceCallTrigger,
+            callPriceMinor: p.callPriceMinor,
             recipients: p.recipients,
             quantities: p.quantities
         });

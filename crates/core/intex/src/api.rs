@@ -34,7 +34,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         issued_intex_count: params.issued_intex_count,
         call_window_days: params.call_trigger.window_days,
         call_threshold_days: params.call_trigger.threshold_days,
-        coen_price_call_trigger: params.call_trigger.coen_price_call_trigger,
+        call_price_minor: params.call_trigger.call_price_minor,
         state: IntexState::Issued as u8,
         issued_at: params.issued_at,
         called_at: 0,

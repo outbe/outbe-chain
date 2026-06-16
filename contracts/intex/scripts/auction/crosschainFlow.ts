@@ -59,7 +59,7 @@ export interface AuctionConfig {
   /** Number of days within the window that breach the forced-call trigger. */
   callThresholdDays: number;
   /** COEN price level that arms the forced call. */
-  coenPriceCallTrigger: bigint;
+  callPriceMinor: bigint;
 }
 
 // Telosis contract read API
@@ -178,7 +178,7 @@ export interface CreateAuctionArgs {
   settlementTokenAlias?: BigIntInput;
   callWindowDays?: BigIntInput;
   callThresholdDays?: BigIntInput;
-  coenPriceCallTrigger?: BigIntInput;
+  callPriceMinor?: BigIntInput;
   extraOptions?: Hex;
   msgValue?: BigIntInput;
 }
@@ -228,7 +228,7 @@ const DEFAULT_INTEX_CALL_PERIOD = 0; // 0 ⇒ contract default of 21 days
 const DEFAULT_SETTLEMENT_TOKEN_ALIAS = 840; // ISO 4217 numeric alias (840 = USD)
 const DEFAULT_CALL_WINDOW_DAYS = 0;
 const DEFAULT_CALL_THRESHOLD_DAYS = 0;
-const DEFAULT_COEN_PRICE_CALL_TRIGGER = 0n;
+const DEFAULT_CALL_PRICE_MINOR = 0n;
 const DEFAULT_MSG_VALUE = 100_000_000_000_000_000n; // 0.1 COEN fallback (LZ Outbe->BSC often ~0.13 COEN)
 const FEE_BUFFER_BPS = 50n; // 0.5% buffer over quoted fee
 const EMPTY_EXTRA_OPTIONS = "0x" as Hex;
@@ -389,8 +389,8 @@ export async function createAndStartAuction(
     toOptionalNumber(args.settlementTokenAlias) ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
   const callWindowDays = toOptionalNumber(args.callWindowDays) ?? DEFAULT_CALL_WINDOW_DAYS;
   const callThresholdDays = toOptionalNumber(args.callThresholdDays) ?? DEFAULT_CALL_THRESHOLD_DAYS;
-  const coenPriceCallTrigger =
-    toOptionalBigInt(args.coenPriceCallTrigger) ?? DEFAULT_COEN_PRICE_CALL_TRIGGER;
+  const callPriceMinor =
+    toOptionalBigInt(args.callPriceMinor) ?? DEFAULT_CALL_PRICE_MINOR;
 
   const config: AuctionConfig = {
     seriesId,
@@ -404,7 +404,7 @@ export async function createAndStartAuction(
     settlementTokenAlias,
     callWindowDays,
     callThresholdDays,
-    coenPriceCallTrigger,
+    callPriceMinor,
   };
 
   const extraOptions = args.extraOptions ?? EMPTY_EXTRA_OPTIONS;
@@ -613,7 +613,7 @@ export async function sendIssuanceInstructions(
           settlementTokenAlias: config.settlementTokenAlias,
           callWindowDays: config.callWindowDays,
           callThresholdDays: config.callThresholdDays,
-          coenPriceCallTrigger: config.coenPriceCallTrigger,
+          callPriceMinor: config.callPriceMinor,
           recipients: result.winners,
           quantities: result.winnerQuantities,
         },

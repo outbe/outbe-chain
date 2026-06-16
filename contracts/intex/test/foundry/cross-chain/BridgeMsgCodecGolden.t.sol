@@ -195,7 +195,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.settlementTokenAlias = 0x1234;
         p.callWindowDays = 0x5678;
         p.callThresholdDays = 0x9ABC;
-        p.coenPriceCallTrigger = 0xA1B2C3D4E5F60718;
+        p.callPriceMinor = 0xA1B2C3D4E5F60718;
         p.recipients = recipients;
         p.quantities = quantities;
 
@@ -211,7 +211,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.settlementTokenAlias, 0x1234, "settlementTokenAlias");
         assertEq(d.callWindowDays, 0x5678, "callWindowDays");
         assertEq(d.callThresholdDays, 0x9ABC, "callThresholdDays");
-        assertEq(d.coenPriceCallTrigger, 0xA1B2C3D4E5F60718, "coenPriceCallTrigger");
+        assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(d.recipients[0], address(0xA11CE), "recipients[0]");
         assertEq(d.recipients[1], address(0xB0B), "recipients[1]");
         assertEq(d.quantities[0], 0xDEAD, "quantities[0]");

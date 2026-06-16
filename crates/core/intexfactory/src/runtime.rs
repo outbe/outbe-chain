@@ -10,9 +10,8 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    COEN_CALL_TRIGGER_DEN, COEN_CALL_TRIGGER_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM,
-    INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO,
-    RESERVE_VAULT,
+    CALL_PRICE_DEN, CALL_PRICE_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM, INTEX_NFT1155_ADDRESS,
+    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -33,7 +32,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     // Floor and call trigger are oracle-scale COEN prices derived from the
     // clearing price (floor = price * 1.08, trigger = floor * 1.64).
     let floor_price_minor = derived_floor(params.coen_price)?;
-    let coen_price_call_trigger = derived_call_trigger(floor_price_minor)?;
+    let call_price_minor = derived_call_price(floor_price_minor)?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
@@ -45,7 +44,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         call_trigger: outbe_intex::IntexCallTrigger {
             window_days: params.call_window_days,
             threshold_days: params.call_threshold_days,
-            coen_price_call_trigger,
+            call_price_minor,
         },
         issued_at,
     };
@@ -70,7 +69,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     // we still quote so the fee struct carries the correct nativeFee for _lzSend.
     let floor_price_minor_u64 = u64::try_from(floor_price_minor)
         .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
-    let coen_price_call_trigger_u64 = u64::try_from(coen_price_call_trigger)
+    let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("coen call trigger exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
@@ -82,7 +81,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         settlementTokenAlias: QUALIFIER_REFERENCE_ISO,
         callWindowDays: params.call_window_days,
         callThresholdDays: params.call_threshold_days,
-        coenPriceCallTrigger: coen_price_call_trigger_u64,
+        callPriceMinor: call_price_minor_u64,
         recipients: params.recipients,
         quantities: params.quantities,
     };
@@ -139,10 +138,10 @@ pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
 }
 
 /// Forced-call trigger = floor * 1.64 (oracle scale, integer 164/100).
-pub(crate) fn derived_call_trigger(floor: U256) -> Result<U256> {
+pub(crate) fn derived_call_price(floor: U256) -> Result<U256> {
     floor
-        .checked_mul(U256::from(COEN_CALL_TRIGGER_NUM))
-        .map(|v| v / U256::from(COEN_CALL_TRIGGER_DEN))
+        .checked_mul(U256::from(CALL_PRICE_NUM))
+        .map(|v| v / U256::from(CALL_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("coen call trigger overflow".into()))
 }
 

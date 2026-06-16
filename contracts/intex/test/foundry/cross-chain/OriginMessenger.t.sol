@@ -116,7 +116,7 @@ contract OriginMessengerTest is TestHelperOz5 {
             settlementTokenAlias: 840,
             callWindowDays: 30,
             callThresholdDays: 5,
-            coenPriceCallTrigger: 25e6,
+            callPriceMinor: 25e6,
             recipients: recipients,
             quantities: quantities
         });

@@ -144,7 +144,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             settlementTokenAlias: SETTLEMENT_TOKEN_ALIAS,
             callWindowDays: 30,
             callThresholdDays: 5,
-            coenPriceCallTrigger: 25e6,
+            callPriceMinor: 25e6,
             recipients: recipients,
             quantities: quantities
         });

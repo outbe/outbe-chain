@@ -97,7 +97,7 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    // --- qualified-series bin index (by coen_price_call_trigger) ---
+    // --- qualified-series bin index (by call_price_minor) ---
 
     pub(crate) fn insert_qualified(&mut self, series_id: u32, trigger_price: U256) -> Result<()> {
         insert_bin(

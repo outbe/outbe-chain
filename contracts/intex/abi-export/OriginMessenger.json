@@ -1699,7 +1699,7 @@
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceCallTrigger",
+              "name": "callPriceMinor",
               "type": "uint64"
             },
             {
@@ -2350,7 +2350,7 @@
             },
             {
               "internalType": "uint64",
-              "name": "coenPriceCallTrigger",
+              "name": "callPriceMinor",
               "type": "uint64"
             },
             {

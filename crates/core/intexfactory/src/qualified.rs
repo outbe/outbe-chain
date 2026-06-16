@@ -101,7 +101,7 @@ pub(crate) fn try_qualify(
     }
     outbe_intex::api::mark_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
-    factory.insert_qualified(series_id, series.coen_price_call_trigger)?;
+    factory.insert_qualified(series_id, series.call_price_minor)?;
 
     // Notify the target chain of the Qualified transition via LayerZero; best-effort.
     // OriginMessenger failure (e.g. exhausted relay float) does not revert the

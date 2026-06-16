@@ -35,8 +35,8 @@ describe("IntexNFT1155", async function () {
   // Sentinel page size that always drains the holder set in one expireSeries call.
   const EXPIRE_FULL_LIMIT = 2n ** 256n - 1n;
 
-  // IntexCallTrigger{uint16 windowDays, uint16 thresholdDays, uint64 coenPriceCallTrigger}
-  const TRIGGER = { windowDays: 30, thresholdDays: 5, coenPriceCallTrigger: 2000000n };
+  // IntexCallTrigger{uint16 windowDays, uint16 thresholdDays, uint64 callPriceMinor}
+  const TRIGGER = { windowDays: 30, thresholdDays: 5, callPriceMinor: 2000000n };
 
   /**
    * createSeries args in the new ABI order:
@@ -93,7 +93,7 @@ describe("IntexNFT1155", async function () {
       assert.equal(data.intexCallPeriod, DEFAULT_CALL_PERIOD); // default 21 days
       assert.equal(data.intexCallTrigger.windowDays, TRIGGER.windowDays);
       assert.equal(data.intexCallTrigger.thresholdDays, TRIGGER.thresholdDays);
-      assert.equal(data.intexCallTrigger.coenPriceCallTrigger, TRIGGER.coenPriceCallTrigger);
+      assert.equal(data.intexCallTrigger.callPriceMinor, TRIGGER.callPriceMinor);
     });
 
     it("Should prevent non-bridge from creating series", async function () {

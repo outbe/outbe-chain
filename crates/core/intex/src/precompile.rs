@@ -47,7 +47,7 @@ fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {
         issuedIntexCount: r.issued_intex_count,
         callWindowDays: r.call_window_days,
         callThresholdDays: r.call_threshold_days,
-        coenPriceCallTrigger: r.coen_price_call_trigger,
+        callPriceMinor: r.call_price_minor,
         state: r.state,
         issuedAt: r.issued_at,
         calledAt: r.called_at,

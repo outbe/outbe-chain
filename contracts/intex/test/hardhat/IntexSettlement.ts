@@ -20,7 +20,7 @@ describe("IntexSettlement", async function () {
   const CALL_TRIGGER = {
     windowDays: 0,
     thresholdDays: 0,
-    coenPriceCallTrigger: 0n,
+    callPriceMinor: 0n,
   };
 
   async function deployContracts() {

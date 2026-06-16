@@ -16,7 +16,7 @@ interface IIntex {
         uint32 issuedIntexCount;
         uint16 callWindowDays;
         uint16 callThresholdDays;
-        uint256 coenPriceCallTrigger;
+        uint256 callPriceMinor;
         uint8 state;
         uint32 issuedAt;
         uint32 calledAt;

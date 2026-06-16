@@ -274,7 +274,7 @@ export async function createIntex1155IssuanceRuntime(
           bigint,
           number,
           number,
-          { windowDays: number; thresholdDays: number; coenPriceCallTrigger: bigint },
+          { windowDays: number; thresholdDays: number; callPriceMinor: bigint },
         ],
         o: { account: { address: Hex } },
       ) => Promise<Hex>;

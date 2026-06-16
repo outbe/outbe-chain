@@ -49,7 +49,7 @@ pub struct IntexCallTrigger {
     /// Number of days within the window that breach the trigger.
     pub threshold_days: u16,
     /// COEN price level that arms the forced call (1e18, oracle scale).
-    pub coen_price_call_trigger: U256,
+    pub call_price_minor: U256,
 }
 
 /// Identity parameters captured once at series creation. Mirrors the
@@ -66,7 +66,7 @@ pub struct CreateSeriesParams {
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,
-    /// Intex strike price (payment-token decimals).
+    /// Cost amount (payment-token decimals); "strike" is UI-only terminology.
     pub cost_amount_minor: u64,
     /// COEN price floor (1e18, oracle scale).
     pub floor_price_minor: U256,
@@ -110,7 +110,7 @@ pub struct SeriesRecord {
     pub call_threshold_days: u16,
 
     #[attribute(order = 6)]
-    pub coen_price_call_trigger: U256,
+    pub call_price_minor: U256,
 
     // --- lifecycle (mutated as the series progresses) ---
     /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
@@ -140,7 +140,7 @@ impl SeriesRecord {
         IntexCallTrigger {
             window_days: self.call_window_days,
             threshold_days: self.call_threshold_days,
-            coen_price_call_trigger: self.coen_price_call_trigger,
+            call_price_minor: self.call_price_minor,
         }
     }
 }

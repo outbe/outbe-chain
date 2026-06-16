@@ -70,7 +70,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "coenPriceCallTrigger",
+            "name": "callPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },

@@ -157,7 +157,7 @@ export function buildAuctionConfig(opts: { seriesId: number }): AuctionConfig {
   };
 }
 
-/** IssuanceConfig mirrors IDesis.IssuanceConfig. coenPriceCallTrigger is derived on-chain. */
+/** IssuanceConfig mirrors IDesis.IssuanceConfig. callPriceMinor is derived on-chain. */
 export interface IssuanceConfig {
   intexCallPeriod: number;
   settlementTokenAlias: number;

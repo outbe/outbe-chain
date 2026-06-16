@@ -113,7 +113,7 @@ contract BridgeMsgCodecHardeningTest is Test {
             settlementTokenAlias: 840,
             callWindowDays: 0,
             callThresholdDays: 0,
-            coenPriceCallTrigger: 0,
+            callPriceMinor: 0,
             recipients: recipients,
             quantities: quantities
         });

@@ -41,10 +41,10 @@ pub struct AuctionConfig {
     pub promis_load_minor: u128,
     /// Minimum acceptable bid price (payment-token decimals). 0 → no floor.
     pub min_intex_bid_price: u64,
-    /// Strike price (payment-token decimals).
+    /// Cost amount (payment-token decimals); "strike" is UI-only terminology.
     pub cost_amount_minor: u64,
     /// Live COEN/USD oracle price (1e18) captured at auction start; carried to
-    /// IntexFactory.issue to derive floor_price_minor and coen_price_call_trigger.
+    /// IntexFactory.issue to derive floor_price_minor and call_price_minor.
     pub coen_price: U256,
 }
 

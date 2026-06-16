@@ -108,7 +108,7 @@ pub(crate) fn try_call(
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }
-    let trigger = series.coen_price_call_trigger;
+    let trigger = series.call_price_minor;
     let window = u32::from(series.call_window_days);
     let threshold = u32::from(series.call_threshold_days);
     if window == 0 || threshold == 0 {

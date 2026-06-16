@@ -112,7 +112,7 @@ const INTEX_READ_ABI = [
             components: [
               { name: "windowDays", type: "uint16" },
               { name: "thresholdDays", type: "uint16" },
-              { name: "coenPriceCallTrigger", type: "uint64" },
+              { name: "callPriceMinor", type: "uint64" },
             ],
           },
         ],
@@ -140,7 +140,7 @@ const INTEX_CREATE_SERIES_ABI = [
         components: [
           { name: "windowDays", type: "uint16" },
           { name: "thresholdDays", type: "uint16" },
-          { name: "coenPriceCallTrigger", type: "uint64" },
+          { name: "callPriceMinor", type: "uint64" },
         ],
       },
     ],
@@ -430,7 +430,7 @@ export async function createSeriesOnOutbe(
     intexCallPeriod: number;
     issuedIntexCount: number;
     settlementTokenAlias: number;
-    intexCallTrigger: { windowDays: number; thresholdDays: number; coenPriceCallTrigger: bigint };
+    intexCallTrigger: { windowDays: number; thresholdDays: number; callPriceMinor: bigint };
   };
 
   console.log("[create-series-outbe] BSC series params:", {

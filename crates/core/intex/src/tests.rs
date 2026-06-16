@@ -29,7 +29,7 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
         call_trigger: IntexCallTrigger {
             window_days: 30,
             threshold_days: 5,
-            coen_price_call_trigger: U256::from(900u64),
+            call_price_minor: U256::from(900u64),
         },
         issued_at: ISSUED_AT,
     }
@@ -56,7 +56,7 @@ fn create_then_read_round_trip() {
             IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 5,
-                coen_price_call_trigger: U256::from(900u64),
+                call_price_minor: U256::from(900u64),
             }
         );
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
@@ -230,7 +230,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.issuedIntexCount, 100);
         assert_eq!(data.callWindowDays, 30);
         assert_eq!(data.callThresholdDays, 5);
-        assert_eq!(data.coenPriceCallTrigger, U256::from(900u64));
+        assert_eq!(data.callPriceMinor, U256::from(900u64));
         assert_eq!(data.state, IntexState::Qualified as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);
         assert_eq!(data.intexCallPeriod, CALL_PERIOD);

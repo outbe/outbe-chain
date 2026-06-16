@@ -22,7 +22,7 @@ async function main() {
         bigint,
         number,
         number,
-        { windowDays: number; thresholdDays: number; coenPriceCallTrigger: bigint },
+        { windowDays: number; thresholdDays: number; callPriceMinor: bigint },
       ],
       opts: { account: string },
     ) => Promise<`0x${string}`>;
@@ -40,7 +40,7 @@ async function main() {
   const costAmountMinor = 1000n * 10n ** 6n; // $1,000 (6 decimals)
   const floorPriceMinor = 70n * 10n ** 6n; // $70 (6 decimals)
   const settlementTokenAlias = 840; // ISO 4217 numeric alias (840 = USD)
-  const callTrigger = { windowDays: 0, thresholdDays: 0, coenPriceCallTrigger: 0n };
+  const callTrigger = { windowDays: 0, thresholdDays: 0, callPriceMinor: 0n };
 
   await nftWrite.createSeries(
     [SERIES_ID, issuedIntexCount, promisLoadMinor, costAmountMinor, floorPriceMinor, 0, settlementTokenAlias, callTrigger],

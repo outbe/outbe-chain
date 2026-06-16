@@ -54,7 +54,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 7)]
     pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Qualified-series bin index (by coen_price_call_trigger) for the daily
+    // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
     #[attribute(order = 8)]
     pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,

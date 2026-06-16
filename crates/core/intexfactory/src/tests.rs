@@ -79,7 +79,7 @@ fn issue_creates_series_in_registry() {
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
-                coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
+                call_price_minor: U256::from(EXPECTED_TRIGGER),
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -116,7 +116,7 @@ fn issue_enrolls_series_in_dense_enumeration() {
 fn floor_and_trigger_derivation() {
     // floor = price * 108/100, trigger = floor * 164/100 (oracle scale, U256).
     let floor = runtime::derived_floor(U256::from(COEN_PRICE)).unwrap();
-    let trigger = runtime::derived_call_trigger(floor).unwrap();
+    let trigger = runtime::derived_call_price(floor).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(trigger, U256::from(EXPECTED_TRIGGER));
 
@@ -125,7 +125,7 @@ fn floor_and_trigger_derivation() {
     let floor_1e18 = runtime::derived_floor(one).unwrap();
     assert_eq!(floor_1e18, U256::from(1_080_000_000_000_000_000u64));
     assert_eq!(
-        runtime::derived_call_trigger(floor_1e18).unwrap(),
+        runtime::derived_call_price(floor_1e18).unwrap(),
         U256::from(1_771_200_000_000_000_000u64)
     );
 }
@@ -580,7 +580,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             call_trigger: outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
-                coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
+                call_price_minor: U256::from(EXPECTED_TRIGGER),
             },
             issued_at: ISSUED_AT,
         },

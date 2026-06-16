@@ -287,7 +287,7 @@ library BridgeMsgCodec {
         uint16 settlementTokenAlias;
         uint16 callWindowDays;
         uint16 callThresholdDays;
-        uint64 coenPriceCallTrigger;
+        uint64 callPriceMinor;
         address[] recipients;
         uint256[] quantities;
     }

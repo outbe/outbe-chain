@@ -33,7 +33,7 @@ describe("TargetMessenger", async function () {
   const CALL_TRIGGER = {
     windowDays: 30,
     thresholdDays: 5,
-    coenPriceCallTrigger: 25n * 10n ** 6n,
+    callPriceMinor: 25n * 10n ** 6n,
   };
 
   // Build a strictly-increasing future schedule relative to the current block time.

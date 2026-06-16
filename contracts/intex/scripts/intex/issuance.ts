@@ -22,7 +22,7 @@ export interface WalletAccount {
 export interface IntexCallTrigger {
   windowDays: number;
   thresholdDays: number;
-  coenPriceCallTrigger: bigint;
+  callPriceMinor: bigint;
 }
 
 export interface Intex1155IssuanceRuntime {
@@ -143,7 +143,7 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
   const intexCallPeriod = opts.intexCallPeriod ?? DEFAULT_INTEX_CALL_PERIOD;
   const settlementTokenAlias = opts.settlementTokenAlias ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
   const callTrigger: IntexCallTrigger =
-    opts.callTrigger ?? { windowDays: 0, thresholdDays: 0, coenPriceCallTrigger: 0n };
+    opts.callTrigger ?? { windowDays: 0, thresholdDays: 0, callPriceMinor: 0n };
 
   console.log("[intex1155-issuance]", {
     seriesId,
