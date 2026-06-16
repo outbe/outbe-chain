@@ -166,8 +166,8 @@ where
     let mut attempts = 0u32;
     loop {
         // `Clock::timeout` returns `Err(commonware_runtime::Error::Timeout)` on
-        // expiry (not tokio's `Elapsed`); the inner `Ok`/`Err(())` is the
-        // resolver's own output, unchanged from the previous `tokio::time::timeout`.
+        // expiry; the inner `Ok`/`Err(())` is the resolver's own output, unchanged
+        // from the previous timeout-based implementation.
         let last_kind = match clock.timeout(per_attempt_timeout, resolve()).await {
             Ok(Ok(value)) => return Ok(value),
             Ok(Err(())) => RetryFailureKind::Unavailable,

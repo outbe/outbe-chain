@@ -419,83 +419,93 @@ mod tests {
 
     /// The committee coordination must produce a byte-identical, fully-signed
     /// payload on every node that the consumer (`run_tee_bootstrap`) accepts.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    async fn bootstrap_coordination_produces_identical_signed_payload() {
+    #[test]
+    fn bootstrap_coordination_produces_identical_signed_payload() {
+        use commonware_runtime::{deterministic, Runner as _, Spawner as _, Supervisor as _};
         use tokio::sync::mpsc;
-        let n = 4usize;
-        let keys: Vec<SigningKey> = (1u8..=4)
-            .map(|s| SigningKey::from_slice(&[s; 32]).unwrap())
-            .collect();
-        let addrs: Vec<Address> = keys.iter().map(evm_address).collect();
-        let committee: BTreeSet<Address> = addrs.iter().copied().collect();
-        let regs: Vec<EnclaveRegistration> = addrs
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| registration(v, 0x20 + i as u8))
-            .collect();
-        let params = params();
 
-        let mut senders = Vec::new();
-        let mut receivers = Vec::new();
-        for _ in 0..n {
-            let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
-            senders.push(tx);
-            receivers.push(rx);
-        }
+        deterministic::Runner::default().start(|context| async move {
+            let n = 4usize;
+            let keys: Vec<SigningKey> = (1u8..=4)
+                .map(|s| SigningKey::from_slice(&[s; 32]).unwrap())
+                .collect();
+            let addrs: Vec<Address> = keys.iter().map(evm_address).collect();
+            let committee: BTreeSet<Address> = addrs.iter().copied().collect();
+            let regs: Vec<EnclaveRegistration> = addrs
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| registration(v, 0x20 + i as u8))
+                .collect();
+            let params = params();
 
-        let mut tasks = Vec::new();
-        for i in 0..n {
-            let reg = regs[i].clone();
-            let key = keys[i].clone();
-            let params = params.clone();
-            let committee = committee.clone();
-            let mut gossip = Bus {
-                senders: senders.clone(),
-                my_index: i,
-                receiver: receivers.remove(0),
-            };
-            tasks.push(tokio::spawn(async move {
-                run_tee_bootstrap_coordination(
-                    reg,
-                    &params,
-                    &committee,
-                    |h| sign65(&key, h),
-                    &mut gossip,
-                )
-                .await
-            }));
-        }
-        drop(senders);
+            let mut senders = Vec::new();
+            let mut receivers = Vec::new();
+            for _ in 0..n {
+                let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                senders.push(tx);
+                receivers.push(rx);
+            }
 
-        let mut payloads = Vec::new();
-        for t in tasks {
-            payloads.push(t.await.unwrap().expect("coordination completes"));
-        }
+            let mut handles = Vec::new();
+            for i in 0..n {
+                let reg = regs[i].clone();
+                let key = keys[i].clone();
+                let params = params.clone();
+                let committee = committee.clone();
+                let mut gossip = Bus {
+                    senders: senders.clone(),
+                    my_index: i,
+                    receiver: receivers.remove(0),
+                };
+                let handle = context.child("bootstrap").spawn(move |_ctx| async move {
+                    run_tee_bootstrap_coordination(
+                        reg,
+                        &params,
+                        &committee,
+                        |h| sign65(&key, h),
+                        &mut gossip,
+                    )
+                    .await
+                });
+                handles.push(handle);
+            }
+            drop(senders);
 
-        // Byte-identical on every node.
-        let encoded0 = payloads[0].encode().unwrap();
-        for p in &payloads {
-            assert_eq!(
-                p.encode().unwrap(),
-                encoded0,
-                "all nodes produce identical payload"
-            );
-        }
+            let mut payloads = Vec::new();
+            for handle in handles {
+                payloads.push(
+                    handle
+                        .await
+                        .expect("coordination task join")
+                        .expect("coordination completes"),
+                );
+            }
 
-        // Passes the consumer checks.
-        let p = &payloads[0];
-        assert_eq!(p.registrations.len(), n);
-        assert_eq!(p.validator_signatures.len(), n);
-        let hash = p.signing_hash();
-        for sig in &p.validator_signatures {
-            assert_eq!(
-                recover_signer(&hash, &sig.signature).unwrap(),
-                sig.validator
-            );
-            assert!(committee.contains(&sig.validator));
-        }
-        for reg in &p.registrations {
-            assert_eq!(reg.computed_keys_hash(), reg.keys_hash);
-        }
+            // Byte-identical on every node.
+            let encoded0 = payloads[0].encode().unwrap();
+            for p in &payloads {
+                assert_eq!(
+                    p.encode().unwrap(),
+                    encoded0,
+                    "all nodes produce identical payload"
+                );
+            }
+
+            // Passes the consumer checks.
+            let p = &payloads[0];
+            assert_eq!(p.registrations.len(), n);
+            assert_eq!(p.validator_signatures.len(), n);
+            let hash = p.signing_hash();
+            for sig in &p.validator_signatures {
+                assert_eq!(
+                    recover_signer(&hash, &sig.signature).unwrap(),
+                    sig.validator
+                );
+                assert!(committee.contains(&sig.validator));
+            }
+            for reg in &p.registrations {
+                assert_eq!(reg.computed_keys_hash(), reg.keys_hash);
+            }
+        });
     }
 }

@@ -7230,6 +7230,7 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
+ "commonware-macros",
  "commonware-math",
  "commonware-p2p",
  "commonware-parallel",
@@ -7757,6 +7758,7 @@ name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "commonware-runtime",
  "dcap-qvl",
  "ed25519-dalek",
  "k256 0.13.4",

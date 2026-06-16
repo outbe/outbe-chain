@@ -16,6 +16,7 @@ use alloy_primitives::{keccak256, Address, B256};
 use commonware_codec::Encode as _;
 use commonware_cryptography::bls12381;
 use commonware_p2p::{Receiver as P2pReceiver, Recipients, Sender as P2pSender};
+use commonware_runtime::Clock;
 
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_bootstrap::TeeBootstrapPayload;
@@ -113,6 +114,7 @@ where
     /// ceremony id and participant order).
     pub async fn exchange_identities(
         &mut self,
+        clock: &impl Clock,
         my_bls: Vec<u8>,
         my_enc: [u8; 32],
         n: usize,
@@ -131,34 +133,44 @@ where
         // peer has not yet registered, so a node that announces before its peers
         // register would otherwise be lost and the exchange would hang. Retrying
         // makes the exchange robust to that registration race on every round.
+        // The poll cadence is measured on the consensus runtime `Clock` (the same
+        // time source the deterministic test runtime can mock and advance), not
+        // tokio's wall-clock — keeping the identity-exchange re-announce loop
+        // reproducible and free of a direct async-runtime timer dependency. `select!`
+        // is biased top-to-bottom, so a ready message is preferred over the tick;
+        // on the tick arm the in-flight `recv` future is dropped (cancel-safe on
+        // this receiver, so no buffered message is lost).
+        const POLL: std::time::Duration = std::time::Duration::from_millis(750);
         let mut idle_ticks = 0u32;
         while ids.len() < n {
-            match tokio::time::timeout(std::time::Duration::from_millis(750), self.receiver.recv())
-                .await
-            {
-                Ok(Ok((from, raw))) => {
-                    let bytes = raw.as_ref();
-                    match bytes.first().copied() {
-                        Some(DKG_ENV_IDENTITY) => {
-                            if let Some((bls, enc)) = parse_identity(&bytes[1..]) {
-                                self.routing.insert(bls.clone(), from);
-                                ids.insert(bls, enc);
+            commonware_macros::select! {
+                recv = self.receiver.recv() => {
+                    match recv {
+                        Ok((from, raw)) => {
+                            let bytes = raw.as_ref();
+                            match bytes.first().copied() {
+                                Some(DKG_ENV_IDENTITY) => {
+                                    if let Some((bls, enc)) = parse_identity(&bytes[1..]) {
+                                        self.routing.insert(bls.clone(), from);
+                                        ids.insert(bls, enc);
+                                    }
+                                }
+                                Some(DKG_ENV_CEREMONY) => {
+                                    if let Ok(msg) = DkgWireMessage::from_bytes(&bytes[1..]) {
+                                        self.buffered.push_back((from.encode().to_vec(), msg));
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        Some(DKG_ENV_CEREMONY) => {
-                            if let Ok(msg) = DkgWireMessage::from_bytes(&bytes[1..]) {
-                                self.buffered.push_back((from.encode().to_vec(), msg));
-                            }
+                        Err(_) => {
+                            return Err(eyre::eyre!(
+                                "TEE DKG identity gossip closed before all {n} identities collected"
+                            ));
                         }
-                        _ => {}
                     }
-                }
-                Ok(Err(_)) => {
-                    return Err(eyre::eyre!(
-                        "TEE DKG identity gossip closed before all {n} identities collected"
-                    ));
-                }
-                Err(_) => {
+                },
+                _ = clock.sleep(POLL) => {
                     // Timeout with no new identity: re-announce so peers that
                     // registered the round late still receive us. Bound the wait.
                     idle_ticks += 1;
@@ -169,7 +181,7 @@ where
                         ));
                     }
                     let _ = self.sender.send(Recipients::All, env.clone(), true);
-                }
+                },
             }
         }
         Ok(ids.into_iter().collect())
@@ -277,8 +289,10 @@ pub fn quote_policy_from_tee_policy(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tee_dkg_at_startup<S, R>(
     enclave_socket: &Path,
+    clock: &impl Clock,
     n: usize,
     chain_id: B256,
     tribute_offer_epoch: u64,
@@ -310,7 +324,7 @@ where
 
     let mut gossip = CommonwareDkgGossip::new(sender, receiver);
     let identities = gossip
-        .exchange_identities(my_bls.clone(), my_enc, n)
+        .exchange_identities(clock, my_bls.clone(), my_enc, n)
         .await?;
     let ceremony_id = compute_ceremony_id(chain_id, 0, &identities);
     let coord = CeremonyCoordinator::new(ceremony_id, 0, my_bls, identities);
@@ -410,8 +424,9 @@ where
 /// install a wrong key). Returns once the enclave holds the offer key; the caller
 /// bounds the wait (fail-fast timeout).
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tee_handoff_join<S, R>(
+pub async fn run_tee_handoff_join<S, R, C>(
     enclave_socket: &Path,
+    clock: C,
     expected_tribute_offer_public: B256,
     chain_id: B256,
     tribute_offer_epoch: u64,
@@ -423,6 +438,7 @@ pub async fn run_tee_handoff_join<S, R>(
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     let endpoint = enclave_socket
         .to_str()
@@ -430,7 +446,11 @@ where
     let mut client = EnclaveClient::connect_endpoint(endpoint, connect_policy)
         .map_err(|e| eyre::eyre!("TEE handoff enclave connect failed: {e}"))?;
     let my_quote = client.quote().clone();
-    let mut gossip = CommonwareHandoffGossip { sender, receiver };
+    let mut gossip = CommonwareHandoffGossip {
+        sender,
+        receiver,
+        clock,
+    };
     outbe_tee::run_handoff_as_newcomer(
         &mut client,
         &mut gossip,
@@ -447,15 +467,17 @@ where
 /// Adapts the consensus P2P channel to the key-handoff [`outbe_tee::HandoffGossip`] surface
 /// — `recv` yields the sender's encoded consensus key so the newcomer can require a
 /// QUORUM of distinct responders.
-struct CommonwareHandoffGossip<S, R> {
+struct CommonwareHandoffGossip<S, R, C> {
     sender: S,
     receiver: R,
+    clock: C,
 }
 
-impl<S, R> outbe_tee::HandoffGossip for CommonwareHandoffGossip<S, R>
+impl<S, R, C> outbe_tee::HandoffGossip for CommonwareHandoffGossip<S, R, C>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     async fn broadcast(&mut self, bytes: Vec<u8>) -> Result<(), CeremonyError> {
         let _ = self.sender.send(Recipients::All, bytes, true);
@@ -464,18 +486,23 @@ where
 
     async fn recv(&mut self) -> outbe_tee::HandoffEvent {
         // Bound the wait so the newcomer driver gets a periodic idle tick and can
-        // re-broadcast a lost request (mirrors the DKG identity-exchange re-announce,
-        // which relies on the same `tokio::time::timeout` cancel-safety on this
-        // receiver). On timeout the in-flight `recv` future is dropped; a buffered
-        // message is not lost (same guarantee the DKG path already depends on).
+        // re-broadcast a lost request (mirrors the DKG identity-exchange re-announce).
+        // The cadence is measured on the consensus runtime `Clock` (mockable under the
+        // deterministic test runtime), not tokio's wall-clock. `select!` is biased
+        // top-to-bottom; on the idle tick the in-flight `recv` future is dropped
+        // (cancel-safe on this receiver, so a buffered message is not lost).
         const POLL: std::time::Duration = std::time::Duration::from_millis(750);
-        match tokio::time::timeout(POLL, self.receiver.recv()).await {
-            Ok(Ok((from, raw))) => outbe_tee::HandoffEvent::Message {
-                peer: from.encode().to_vec(),
-                bytes: raw.as_ref().to_vec(),
+        commonware_macros::select! {
+            recv = self.receiver.recv() => {
+                match recv {
+                    Ok((from, raw)) => outbe_tee::HandoffEvent::Message {
+                        peer: from.encode().to_vec(),
+                        bytes: raw.as_ref().to_vec(),
+                    },
+                    Err(_) => outbe_tee::HandoffEvent::Closed,
+                }
             },
-            Ok(Err(_)) => outbe_tee::HandoffEvent::Closed,
-            Err(_) => outbe_tee::HandoffEvent::Idle,
+            _ = self.clock.sleep(POLL) => outbe_tee::HandoffEvent::Idle,
         }
     }
 }

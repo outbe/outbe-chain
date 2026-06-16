@@ -1005,10 +1005,11 @@ fn recovery_finalization_fixture(
 #[test]
 fn recover_application_finalized_round_returns_none_at_genesis_height() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let recovered = recover_application_finalized_round(&marshal_mailbox, 0)
+        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 0)
             .await
             .unwrap();
 
@@ -1027,6 +1028,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         let round = Round::new(Epoch::new(0), View::new(1175));
         let block = recovery_block(5700);
         let (provider, finalization) = recovery_finalization_fixture(&block, round);
+        let clock = context.child("recover_clock");
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, provider).await;
 
@@ -1034,7 +1036,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 
-        let recovered = recover_application_finalized_round(&marshal_mailbox, 5700)
+        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
             .await
             .unwrap();
 
@@ -1050,10 +1052,11 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
 #[test]
 fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
     let error = commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let error = recover_application_finalized_round(&marshal_mailbox, 5700)
+        let error = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
             .await
             .unwrap_err()
             .to_string();

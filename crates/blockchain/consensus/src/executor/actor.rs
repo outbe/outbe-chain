@@ -784,7 +784,7 @@ mod tests {
     use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
     use commonware_consensus::marshal::Update;
     use commonware_consensus::types::Height;
-    use commonware_runtime::{Clock as _, Runner as _, Supervisor as _};
+    use commonware_runtime::{Clock as _, Runner as _, Spawner as _, Supervisor as _};
     use commonware_utils::acknowledgement::{Acknowledgement as _, Exact};
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
@@ -976,7 +976,7 @@ mod tests {
 
     #[test]
     fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let target = B256::repeat_byte(0xAA);
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -985,7 +985,7 @@ mod tests {
                 super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
             actor.state = actor.state.update_finalized(Height::new(7), Digest(target));
 
-            let engine_task = tokio::spawn(async move {
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
                 let Some(message) = engine_rx.recv().await else {
                     panic!("heartbeat must send an FCU message");
                 };
@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let block = executor_test_block(7, 0x77);
             let finalized_hash = block.block_hash();
@@ -1023,7 +1023,7 @@ mod tests {
             let (mut actor, _mailbox) =
                 super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
 
-            let engine_task = tokio::spawn(async move {
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
                 let Some(message) = engine_rx.recv().await else {
                     panic!("engine channel closed before new_payload");
                 };
@@ -1096,7 +1096,7 @@ mod tests {
     // and going back to acking/ignoring makes this test fail.
     #[test]
     fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let block = executor_test_block(7, 0x77);
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1105,7 +1105,7 @@ mod tests {
                 super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
 
             // Execution layer rejects the finalized block.
-            let engine_task = tokio::spawn(async move {
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
                 let Some(message) = engine_rx.recv().await else {
                     panic!("engine channel closed before new_payload");
                 };
@@ -1147,7 +1147,7 @@ mod tests {
     // block would be swallowed and the loop would keep running on diverged state.
     #[test]
     fn run_live_loop_propagates_fatal_executor_error() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let block = executor_test_block(7, 0x77);
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1169,7 +1169,7 @@ mod tests {
             };
 
             // Engine rejects the finalized block -> handle_finalize_inner Err.
-            let engine_task = tokio::spawn(async move {
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
                 match engine_rx.recv().await {
                     Some(BeaconEngineMessage::NewPayload { tx, .. }) => {
                         tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Invalid {
@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn mailbox_updates_are_processed_before_ready_heartbeat() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let first = B256::repeat_byte(0x11);
             let second = B256::repeat_byte(0x22);
@@ -1236,7 +1236,7 @@ mod tests {
                     .expect("test mailbox send must succeed");
             }
 
-            let actor_task = tokio::spawn(async move {
+            let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
                 actor
                     .run_live_loop()
                     .await
@@ -1273,7 +1273,7 @@ mod tests {
 
     #[test]
     fn finalized_subscriber_completes_immediately_when_height_already_finalized() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let finalized = B256::repeat_byte(0x07);
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1291,7 +1291,7 @@ mod tests {
 
     #[test]
     fn ancestry_readiness_advances_from_executor_finalized_notifications() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
@@ -1310,7 +1310,7 @@ mod tests {
 
     #[test]
     fn finalized_subscriber_completes_when_later_height_is_notified() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
@@ -1472,7 +1472,7 @@ mod tests {
     /// (it never asks the network). The actor handle and the resolver handler
     /// keepalive are returned so the caller keeps them alive for the test.
     async fn start_empty_marshal(
-        context: commonware_runtime::tokio::Context,
+        context: commonware_runtime::deterministic::Context,
     ) -> (
         crate::marshal_types::MarshalMailbox,
         commonware_consensus::marshal::resolver::handler::Handler<Digest>,
@@ -1601,46 +1601,50 @@ mod tests {
     // "must return Err" assertion) — i.e. this test genuinely guards the fix.
     #[test]
     fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let genesis = B256::repeat_byte(0x01);
-            // Dummy engine: branch (A) returns before any engine call, so the
-            // receiver is simply never read.
-            let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
-            let engine = ConsensusEngineHandle::new(engine_tx);
+        // The `Runner::timed` wedge guard replaces the previous outer
+        // 20s wall-clock timeout safety net: `run()` must return promptly via
+        // the backfill fail-fast branch. A hang here means the missing-block branch
+        // fell through to `run_live_loop` (i.e. the F1 fix was reverted to
+        // warn! + skip); the wedge guard aborts the test in that case.
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60)).start(
+            |context| async move {
+                let genesis = B256::repeat_byte(0x01);
+                // Dummy engine: branch (A) returns before any engine call, so the
+                // receiver is simply never read.
+                let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
+                let engine = ConsensusEngineHandle::new(engine_tx);
 
-            // Executor at finalized height 0 (fresh bootstrap from genesis).
-            let (actor, _mailbox) =
-                super::ExecutorActor::new(context.child("exec"), engine, genesis, 0, genesis, None);
+                // Executor at finalized height 0 (fresh bootstrap from genesis).
+                let (actor, _mailbox) = super::ExecutorActor::new(
+                    context.child("exec"),
+                    engine,
+                    genesis,
+                    0,
+                    genesis,
+                    None,
+                );
 
-            // Empty marshal: get_block(h) -> None for every height.
-            let (marshal_mailbox, _resolver_keepalive, _marshal_handle) =
-                start_empty_marshal(context.child("marshal_node")).await;
+                // Empty marshal: get_block(h) -> None for every height.
+                let (marshal_mailbox, _resolver_keepalive, _marshal_handle) =
+                    start_empty_marshal(context.child("marshal_node")).await;
 
-            // Consensus reports finalized height 3, execution is at 0, so the
-            // backfill range is heights 1..=3. Height 1 misses -> fail fast.
-            let run_result = tokio::time::timeout(
-                std::time::Duration::from_secs(20),
-                actor.run(marshal_mailbox, Height::new(3)),
-            )
-            .await
-            .expect(
-                "run() must return promptly via the backfill fail-fast branch; \
-                 a hang here means the missing-block branch fell through to \
-                 run_live_loop (i.e. the F1 fix was reverted to warn! + skip)",
-            );
+                // Consensus reports finalized height 3, execution is at 0, so the
+                // backfill range is heights 1..=3. Height 1 misses -> fail fast.
+                let run_result = actor.run(marshal_mailbox, Height::new(3)).await;
 
-            assert!(
-                run_result.is_err(),
-                "an empty marshal that cannot serve a finalized block at/below its \
+                assert!(
+                    run_result.is_err(),
+                    "an empty marshal that cannot serve a finalized block at/below its \
                  reported finalized height must make run() fail fast, not silently \
                  skip and continue; got {run_result:?}"
-            );
-            let message = format!("{:#}", run_result.expect_err("checked is_err above"));
-            assert!(
-                message.contains("missing finalized block"),
-                "backfill fail-fast error must identify the missing finalized block; \
+                );
+                let message = format!("{:#}", run_result.expect_err("checked is_err above"));
+                assert!(
+                    message.contains("missing finalized block"),
+                    "backfill fail-fast error must identify the missing finalized block; \
                  got: {message}"
-            );
-        });
+                );
+            },
+        );
     }
 }
