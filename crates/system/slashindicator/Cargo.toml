@@ -37,3 +37,6 @@ commonware-consensus.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 rand.workspace = true
 rand_chacha = "0.3"
+
+[lints]
+workspace = true

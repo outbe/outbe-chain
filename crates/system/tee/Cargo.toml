@@ -30,3 +30,6 @@ dcap = ["dep:dcap-qvl"]
 k256.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true }
+
+[lints]
+workspace = true

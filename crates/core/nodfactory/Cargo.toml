@@ -26,3 +26,6 @@ test-utils = ["outbe-primitives/test-utils"]
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]
+
+[lints]
+workspace = true

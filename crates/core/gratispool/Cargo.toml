@@ -35,3 +35,6 @@ default = []
 # verifier. Intended for cross-crate test consumers (e.g. credisfactory
 # e2e tests); MUST NOT be enabled in production builds.
 test-helpers = []
+
+[lints]
+workspace = true
