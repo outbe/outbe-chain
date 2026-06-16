@@ -60,6 +60,20 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+# Workspace-wide lint levels. Members opt in with `[lints]\nworkspace = true`.
+# `unsafe_code = "deny"` makes every `unsafe` a hard error unless the site
+# carries an explicit, documented `#[allow(unsafe_code)]` (the one audited
+# exception lives in crates/blockchain/evm/src/precompiles.rs). `warnings =
+# "deny"` promotes every remaining rustc warning to an error — the "deny + fix"
+# posture, matching CI's `clippy -D warnings`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+warnings = "deny"
+
+[workspace.lints.clippy]
+# Any retained `unsafe` block must justify itself with a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "deny"
+
 [workspace.dependencies]
 # Internal — blockchain
 outbe-macros = { path = "crates/blockchain/macros" }

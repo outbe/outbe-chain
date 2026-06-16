@@ -55,3 +55,6 @@ reth-tasks.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

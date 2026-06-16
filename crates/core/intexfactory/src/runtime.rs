@@ -29,10 +29,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
-    // Floor and call trigger are oracle-scale COEN prices derived from the
-    // clearing price (floor = price * 1.08, trigger = floor * 1.64).
     let floor_price_minor = derived_floor(params.coen_price)?;
-    let call_price_minor = derived_call_price(floor_price_minor)?;
+    let call_price_minor = derived_call_price(params.coen_price)?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
@@ -129,7 +127,6 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     )
 }
 
-/// COEN price floor = clearing price * 1.08 (oracle scale, integer 108/100).
 pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
     coen_price
         .checked_mul(U256::from(FLOOR_PRICE_NUM))
@@ -137,12 +134,11 @@ pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))
 }
 
-/// Forced-call trigger = floor * 1.64 (oracle scale, integer 164/100).
-pub(crate) fn derived_call_price(floor: U256) -> Result<U256> {
-    floor
+pub(crate) fn derived_call_price(coen_price: U256) -> Result<U256> {
+    coen_price
         .checked_mul(U256::from(CALL_PRICE_NUM))
         .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("coen call trigger overflow".into()))
+        .ok_or_else(|| PrecompileError::Revert("coen call price overflow".into()))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.

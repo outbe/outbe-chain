@@ -24,3 +24,6 @@ commonware-parallel.workspace = true
 commonware-utils.workspace = true
 rand.workspace = true
 rand_chacha = "0.3"
+
+[lints]
+workspace = true

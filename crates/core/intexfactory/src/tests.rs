@@ -27,7 +27,7 @@ const CALL_PERIOD: u32 = 21 * 24 * 60 * 60;
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const COEN_PRICE: u64 = 1_000_000;
 const EXPECTED_FLOOR: u64 = 1_080_000; // COEN_PRICE * 108/100
-const EXPECTED_TRIGGER: u64 = 1_771_200; // EXPECTED_FLOOR * 164/100
+const EXPECTED_TRIGGER: u64 = 2_280_000; // COEN_PRICE * 228/100
 
 fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -54,7 +54,7 @@ fn sample(series_id: u32) -> IssuanceParams {
         coen_price: U256::from(COEN_PRICE),
         intex_call_period: CALL_PERIOD,
         call_window_days: 30,
-        call_threshold_days: 20,
+        call_threshold_days: 21,
         recipients: vec![],
         quantities: vec![],
     }
@@ -78,7 +78,7 @@ fn issue_creates_series_in_registry() {
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 20,
+                threshold_days: 21,
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
             }
         );
@@ -113,20 +113,20 @@ fn issue_enrolls_series_in_dense_enumeration() {
 }
 
 #[test]
-fn floor_and_trigger_derivation() {
-    // floor = price * 108/100, trigger = floor * 164/100 (oracle scale, U256).
+fn floor_and_call_derivation() {
     let floor = runtime::derived_floor(U256::from(COEN_PRICE)).unwrap();
-    let trigger = runtime::derived_call_price(floor).unwrap();
+    let call = runtime::derived_call_price(U256::from(COEN_PRICE)).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
-    assert_eq!(trigger, U256::from(EXPECTED_TRIGGER));
+    assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
-    // Holds at 1e18 oracle scale: 1e18 -> 1.08e18 -> 1.7712e18.
     let one = U256::from(1_000_000_000_000_000_000u64);
-    let floor_1e18 = runtime::derived_floor(one).unwrap();
-    assert_eq!(floor_1e18, U256::from(1_080_000_000_000_000_000u64));
     assert_eq!(
-        runtime::derived_call_price(floor_1e18).unwrap(),
-        U256::from(1_771_200_000_000_000_000u64)
+        runtime::derived_floor(one).unwrap(),
+        U256::from(1_080_000_000_000_000_000u64)
+    );
+    assert_eq!(
+        runtime::derived_call_price(one).unwrap(),
+        U256::from(2_280_000_000_000_000_000u64)
     );
 }
 
@@ -579,7 +579,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             intex_call_period: CALL_PERIOD,
             call_trigger: outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 20,
+                threshold_days: 21,
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
             },
             issued_at: ISSUED_AT,

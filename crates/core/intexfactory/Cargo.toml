@@ -17,3 +17,6 @@ alloy-sol-types.workspace = true
 ring.workspace = true
 hex.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

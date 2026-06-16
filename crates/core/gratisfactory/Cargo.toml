@@ -20,3 +20,6 @@ thiserror.workspace = true
 # Barretenberg-prover proof. Cargo unions features across `[dependencies]`
 # and `[dev-dependencies]` for test builds.
 outbe-gratispool = { workspace = true, features = ["test-helpers"] }
+
+[lints]
+workspace = true

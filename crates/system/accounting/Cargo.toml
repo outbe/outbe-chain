@@ -29,3 +29,6 @@ outbe-evm = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["alloy-sol-types"]
+
+[lints]
+workspace = true

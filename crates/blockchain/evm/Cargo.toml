@@ -82,3 +82,6 @@ rand_core.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]
+
+[lints]
+workspace = true

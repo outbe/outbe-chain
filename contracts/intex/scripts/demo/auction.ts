@@ -171,7 +171,7 @@ export function buildIssuanceConfig(): IssuanceConfig {
     intexCallPeriod: 0,
     settlementTokenAlias: 840,
     callWindowDays: 30,
-    callThresholdDays: 20,
+    callThresholdDays: 21,
   };
 }
 

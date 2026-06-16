@@ -317,6 +317,7 @@ where
             // The `DB` generic of this closure is the same `DB` of the
             // `Context<...>` the impl is specialised for (set at
             // `OutbeEvmFactory::create_evm<DB>` call site).
+            #[allow(unsafe_code)] // sole audited unsafe site; justified above.
             let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
             outbe_ctx_dispatch::<DB>(ctx, inputs, spec)
         },
