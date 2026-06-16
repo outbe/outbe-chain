@@ -49,7 +49,7 @@ everything from the current code (no point-in-time finding list).
 from the **sub-project that owns the target contract** — never from `contracts/` itself.
 
 - **Pure-Forge** (`intent`, `oft`, `vault`, `smart-account`, `precompiles`) — soldeer deps,
-  `forge`/`make` commands, layout `src/ test/ script/`.
+  `forge`/`mise` commands, layout `src/ test/ script/`.
 - **Hardhat-hybrid** (currently only `intex`) — `hardhat.config.ts` + `package.json` +
   `.solhint.json`, sources under `contracts/`, yarn + TypeChain. The Hardhat/yarn/slither/TS
   steps below apply **only** to this shape.
@@ -184,7 +184,7 @@ A changed event/error selector or shape ripples into tests (and off-chain consum
 rg -nw '<OldEventOrErrorName>' src test script tasks scripts config
 ```
 - Update Foundry assertions (`vm.expectRevert`/`vm.expectEmit`) to the new names/shapes.
-- **Pure-Forge:** `make export-abi` then `git diff -- abi-export`.
+- **Pure-Forge:** `mise run export-abi` then `git diff -- abi-export`.
 - **Hardhat-hybrid (intex):** also
   ```
   yarn compile          # Hardhat + TypeChain regen (must succeed)
@@ -211,7 +211,7 @@ rg -nw '<AnyOldName>' src test script tasks scripts config   # zero stale refere
 Then prove the ABI delta is **only** event/error declarations — no function
 selector, storage slot, or message-format change:
 ```
-make export-abi && git diff -- abi-export          # (intex: yarn cd:extract-abi && git diff -- abi-export)
+mise run export-abi && git diff -- abi-export      # (intex: yarn cd:extract-abi && git diff -- abi-export)
 ```
 Every function selector and storage slot must be unchanged; revert *conditions*
 and state writes identical. Any other diff means the gate is broken — revert and

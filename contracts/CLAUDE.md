@@ -27,7 +27,7 @@ methodologies including fuzz testing and invariant testing.
 - Follow proper naming conventions and code organization patterns
 - DO NOT write to or modify `foundry.toml` without asking. Explain which config property you are trying to add or change and why.
 - Use Solidity version: ^0.8.30
-- Perform `make fmt` after each change to keep codebase consistent.
+- Perform `mise run fmt` after each change to keep codebase consistent.
 - Always use selectors to reference interfaces i.e. `IERC20.transfer.selector` instead of hardcoded constant.
 - Try to reuse standard or dependent libraries code as much as possible. For example, 
  instead of implementing in place encoding/decoding use already implemented if any.

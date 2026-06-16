@@ -49,7 +49,7 @@ from the **sub-project that owns the target contract** — never from `contracts
 Two toolchain shapes:
 
 - **Pure-Forge** (the norm: `intent`, `oft`, `vault`, `smart-account`, `precompiles`) — deps via
-  **soldeer** (`dependencies/`), commands via `forge`/`make`. Layout: `src/ test/ script/`.
+  **soldeer** (`dependencies/`), commands via `forge`/`mise`. Layout: `src/ test/ script/`.
 - **Hardhat-hybrid** (currently only `intex`) — has `hardhat.config.ts` + `package.json` +
   `.solhint.json`; sources under `contracts/`, uses **yarn** scripts and TypeChain. The extra
   Hardhat/solhint/TS steps below apply **only** to this shape.
@@ -143,7 +143,7 @@ git status --short                  # start from a clean tree
 ```
 forge fmt <impl.sol> <interface.sol>
 ```
-Run on the whole sub-project at the end: `forge fmt` (or `make fmt`).
+Run on the whole sub-project at the end: `forge fmt` (or `mise run fmt`).
 
 ### 2. Interface-completeness sweep (AST-authoritative, never grep)
 Single-line `grep` misses multiline declarations (`function wire(` with `external` several
@@ -208,7 +208,7 @@ Refresh exported ABIs and check consumers — never silence failures.
 
 - **Pure-Forge:**
   ```
-  make export-abi                       # regenerate abi-export/
+  mise run export-abi                   # regenerate abi-export/
   git diff -- abi-export                # confirm only the intended interface delta
   ```
 - **Hardhat-hybrid (intex):** declarations also regenerate TypeChain types:
@@ -241,7 +241,7 @@ high/critical findings; pre-existing findings are out of scope.
 Then assert the **behavior-preserving** invariant: the only ABI delta this skill may produce
 is **added interface declarations** (step 2/6). Prove it, don't eyeball it:
 ```
-make export-abi && git diff -- abi-export          # (intex: yarn cd:extract-abi && git diff -- abi-export)
+mise run export-abi && git diff -- abi-export      # (intex: yarn cd:extract-abi && git diff -- abi-export)
 ```
 Every impl selector, storage slot, opcode, and constant must be unchanged. Any
 behavioral diff means the gate is broken — revert and re-scope.
