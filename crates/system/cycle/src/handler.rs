@@ -18,7 +18,7 @@ use outbe_emissionlimit::{
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    time::{date_key_to_timestamp, previous_date_key, timestamp_to_date_key},
+    time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key},
 };
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
@@ -162,7 +162,7 @@ pub fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
         .checked_add(validator_excess)
         .and_then(|v| v.checked_add(agent_excess))
         .ok_or_else(|| PrecompileError::Revert("metadosis terminal overflow".into()))?;
-    let prev_day_ts = date_key_to_timestamp(prev_day);
+    let prev_day_ts = date_key_to_utc_timestamp(prev_day);
     wrap(
         "dispatch_terminal_remainder_at",
         dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),

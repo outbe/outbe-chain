@@ -416,7 +416,7 @@ fn dispatch_stage_start_success_returns_true() {
     with_storage(|s| {
         let accepted = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
             U256::from(COEN_PRICE),
         )
         .unwrap();
@@ -447,13 +447,13 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
     let (first, second) = StorageHandle::enter(&mut storage, |s| {
         let first = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
             U256::from(COEN_PRICE),
         )
         .unwrap();
         let second = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
             U256::from(COEN_PRICE),
         )
         .unwrap();

@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::time::{date_key_to_timestamp, timestamp_to_date_key, UTC_PLUS_14_OFFSET};
+use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key, UTC_PLUS_14_OFFSET};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use time::{Date, Month};
@@ -46,12 +46,17 @@ impl WorldwideDay {
 
     /// Returns the forming-start timestamp for this worldwide day.
     pub fn start_timestamp(self) -> u64 {
-        date_key_to_timestamp(self.0).saturating_sub(UTC_PLUS_14_OFFSET)
+        date_key_to_utc_timestamp(self.0).saturating_sub(UTC_PLUS_14_OFFSET)
     }
 
     /// Returns the previous calendar day.
     pub fn previous_date_key(self) -> Self {
         Self(outbe_primitives::time::previous_date_key(self.0))
+    }
+
+    /// Returns the WWD in UNIX timestamp seconds.
+    pub fn to_timestamp_utc(self) -> u64 {
+        date_key_to_utc_timestamp(self.0)
     }
 }
 

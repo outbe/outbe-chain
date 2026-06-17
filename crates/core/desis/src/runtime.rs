@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::date_key_to_timestamp;
+use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::constants::{
@@ -70,7 +70,7 @@ pub fn start_auction(
 
     // Send AUCTION_STAGE_START to BNB.
     // revealEnd = noon of the series day; commitEnd/issuanceEnd are protocol offsets.
-    let noon = u32::try_from(date_key_to_timestamp(series_id) + 12 * 3600)
+    let noon = u32::try_from(date_key_to_utc_timestamp(series_id) + 12 * 3600)
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);

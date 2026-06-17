@@ -5,13 +5,13 @@ use outbe_primitives::storage::{
     types::{Mapping, Slot, Storable, StorageKey},
     StorageHandle,
 };
-use outbe_primitives::time::date_key_to_timestamp;
+use outbe_primitives::time::date_key_to_utc_timestamp;
 
 #[test]
 fn worldwide_day_to_utc_timestamp_roundtrip_known_midnight() {
     let wwd = WorldwideDay::new(20241220);
     // Midnight UTC of 2024-12-20
-    assert_eq!(date_key_to_timestamp(wwd.value()), 1_734_652_800);
+    assert_eq!(date_key_to_utc_timestamp(wwd.value()), 1_734_652_800);
 }
 
 #[test]

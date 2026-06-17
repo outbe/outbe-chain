@@ -7,7 +7,7 @@ use outbe_primitives::{
     error::Result,
     storage::StorageHandle,
     time::{
-        date_key_to_timestamp as primitives_date_key_to_timestamp,
+        date_key_to_utc_timestamp as primitives_date_key_to_timestamp,
         previous_date_key as primitives_previous_date_key, timestamp_to_date_key as utc_date_key,
     },
 };
@@ -83,7 +83,7 @@ pub fn timestamp_to_date_key(timestamp: u64) -> u32 {
 
 /// Returns the unix timestamp for midnight UTC of a yyyymmdd date key.
 ///
-/// Re-export of [`outbe_primitives::time::date_key_to_timestamp`] for
+/// Re-export of [`outbe_primitives::time::date_key_to_utc_timestamp`] for
 /// backward compatibility with existing call sites in this crate. New
 /// code should depend on `outbe_primitives::time` directly.
 pub fn date_key_to_timestamp(date_key: u32) -> u64 {
