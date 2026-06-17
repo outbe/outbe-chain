@@ -208,12 +208,6 @@ do_start() {
         # host loopback). One container per validator.
         local -a tee_args=()
         if [ -n "$tee_enclave_bin" ]; then
-            # Distinct DKG identity per validator (else the n enclaves would be
-            # the same DKG participant — a degenerate ceremony). Deterministic
-            # from the validator index; a validator-count/order change requires a
-            # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
-            local tee_dkg_seed
-            tee_dkg_seed=$(printf '%064x' "$((i + 1))")
             local tee_port=$((7000 + i))
             local tee_endpoint="127.0.0.1:$tee_port"
             local tee_ctr="outbe-tee-gramine-$i"
@@ -241,6 +235,16 @@ do_start() {
                 tee_seal_mount=(-v "$(readlink -f "$tee_data_dir"):/tee")
                 tee_seal_args=(--tee-dir /tee --chain-id "$tee_chain_hex")
             fi
+            # DKG identity. With sealing on, the enclave derives a distinct, stable
+            # identity from a random seed sealed to /tee on first boot — no injected
+            # seed needed (this is the honest production path). Without sealing there
+            # is no confidential at-rest store, so fall back to a deterministic dev
+            # seed per validator (index+1, never all-zero) so the n enclaves are still
+            # distinct DKG participants instead of a degenerate same-identity ceremony.
+            local -a tee_identity_args=()
+            if [ -z "${OUTBE_TEE_SEAL:-}" ]; then
+                tee_identity_args=(--dkg-seed "$(printf '%064x' "$((i + 1))")")
+            fi
             docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
             docker run -d --name "$tee_ctr" \
                 --security-opt seccomp=unconfined \
@@ -249,7 +253,7 @@ do_start() {
                 "${tee_seal_mount[@]}" \
                 -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
                 outbe-tee-enclave-gramine \
-                --socket "$tee_endpoint" --dkg-seed "$tee_dkg_seed" "${tee_seal_args[@]}" >/dev/null
+                --socket "$tee_endpoint" "${tee_identity_args[@]}" "${tee_seal_args[@]}" >/dev/null
             echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             local tee_up=""
             for _ in $(seq 1 200); do

@@ -58,11 +58,23 @@ impl EnclaveBootConfig {
     pub fn sealed_root_path(&self) -> PathBuf {
         self.tee_dir.join("sealed_root.bin")
     }
+
+    /// Path to the sealed DKG identity-seed blob under the tee dir
+    /// (`<tee-dir>/dkg_identity.bin`). This is the per-enclave DKG participant
+    /// identity (see [`DKG_IDENTITY_FORMAT`]); it is a distinct blob from
+    /// `sealed_root.bin` so the two never share an AES-GCM (key, nonce).
+    pub fn dkg_identity_path(&self) -> PathBuf {
+        self.tee_dir.join("dkg_identity.bin")
+    }
 }
 
 pub const SEAL_MAGIC: &[u8; 5] = b"TSEAL";
 /// Sealed payload format: offer secret + length-prefixed group threshold signature.
 pub const SEAL_FORMAT: u8 = 2;
+/// Sealed payload format for the per-enclave DKG identity seed (32 raw bytes).
+/// Distinct from [`SEAL_FORMAT`] so an identity blob can never be unsealed as an
+/// offer blob (or vice-versa): the format byte is part of the AEAD AAD.
+pub const DKG_IDENTITY_FORMAT: u8 = 0x10;
 /// header (excluding magic) byte length: 1 + 1 + 2 + 8 + 8 + 12.
 pub const HEADER_LEN: usize = 32;
 
@@ -286,6 +298,79 @@ pub fn unseal_tribute_offer_and_group_sig(
     ))
 }
 
+/// Seal a 32-byte DKG identity seed into a standalone blob. This is the
+/// per-enclave DKG participant secret: it must be STABLE across restart (so the
+/// enclave keeps the same DKG identity through a reshare) and DISTINCT per enclave
+/// (so `n` enclaves are not the same participant). `header.format_version` must be
+/// [`DKG_IDENTITY_FORMAT`] and `header.nonce` must be fresh-random (the same
+/// EGETKEY key also seals `sealed_root.bin`, so the two blobs must never reuse a
+/// nonce). Anti-rollback is intentionally not enforced for this blob (it is a
+/// write-once, non-rotating identity, unlike the epoch-rotating offer key); set
+/// `header.isv_svn = 0`.
+pub fn seal_dkg_identity_seed(
+    seed: &[u8; 32],
+    sealing_key: &[u8; 32],
+    chain_id: B256,
+    header: &SealHeader,
+) -> Result<Vec<u8>> {
+    if header.format_version != DKG_IDENTITY_FORMAT {
+        return Err(TeeError::SealedBlobBadVersion(header.format_version));
+    }
+    let header_bytes = header.encode();
+    let mut aad = Vec::with_capacity(HEADER_LEN + 32);
+    aad.extend_from_slice(&header_bytes);
+    aad.extend_from_slice(chain_id.as_slice());
+
+    let ciphertext = aes256gcm_encrypt(sealing_key, &header.nonce, &aad, seed)?;
+
+    let mut out = Vec::with_capacity(SEAL_MAGIC.len() + HEADER_LEN + ciphertext.len());
+    out.extend_from_slice(SEAL_MAGIC);
+    out.extend_from_slice(&header_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Unseal a DKG identity-seed blob back to `(seed, header)`. Any `format_version`
+/// other than [`DKG_IDENTITY_FORMAT`] is rejected before AEAD (so an offer blob
+/// cannot be mis-read here). `chain_id` is authenticated via the AAD. The seed is
+/// returned `Zeroizing`.
+pub fn unseal_dkg_identity_seed(
+    blob: &[u8],
+    sealing_key: &[u8; 32],
+    chain_id: B256,
+) -> Result<(Zeroizing<[u8; 32]>, SealHeader)> {
+    let prefix = SEAL_MAGIC.len();
+    if blob.len() < prefix + HEADER_LEN {
+        return Err(TeeError::SealedBlobTooShort);
+    }
+    if &blob[..prefix] != SEAL_MAGIC {
+        return Err(TeeError::SealedBlobBadMagic);
+    }
+    let header_bytes = &blob[prefix..prefix + HEADER_LEN];
+    let header = SealHeader::decode(header_bytes)?;
+    if header.format_version != DKG_IDENTITY_FORMAT {
+        return Err(TeeError::SealedBlobBadVersion(header.format_version));
+    }
+
+    let mut aad = Vec::with_capacity(HEADER_LEN + 32);
+    aad.extend_from_slice(header_bytes);
+    aad.extend_from_slice(chain_id.as_slice());
+
+    let ciphertext = &blob[prefix + HEADER_LEN..];
+    let plaintext = Zeroizing::new(aes256gcm_decrypt(
+        sealing_key,
+        &header.nonce,
+        &aad,
+        ciphertext,
+    )?);
+    if plaintext.len() != 32 {
+        return Err(TeeError::SealedBlobBadPayload(plaintext.len()));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&plaintext);
+    Ok((Zeroizing::new(seed), header))
+}
+
 /// Fixed mock sealing key — stable across rebuilds so it simulates MRSIGNER
 /// (a rebuilt mock enclave unseals an older mock blob). Gated so it never links
 /// into the production binary.
@@ -442,6 +527,76 @@ mod tests {
         assert!(matches!(
             unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, B256::repeat_byte(2), 1),
             Err(TeeError::SealedBlobUnsealFailed)
+        ));
+    }
+
+    fn id_header(nonce: u8) -> SealHeader {
+        SealHeader {
+            format_version: DKG_IDENTITY_FORMAT,
+            key_policy: KeyPolicy::Mock,
+            isv_svn: 0,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+            nonce: [nonce; 12],
+        }
+    }
+
+    #[test]
+    fn dkg_identity_seal_unseal_roundtrip() {
+        let seed = [0x9a; 32];
+        let cid = B256::repeat_byte(0x77);
+        let blob = seal_dkg_identity_seed(&seed, &MOCK_SEALING_KEY, cid, &id_header(0x01)).unwrap();
+        let (got, h) = unseal_dkg_identity_seed(&blob, &MOCK_SEALING_KEY, cid).unwrap();
+        assert_eq!(*got, seed);
+        assert_eq!(h.format_version, DKG_IDENTITY_FORMAT);
+    }
+
+    #[test]
+    fn dkg_identity_rejects_wrong_chain_id() {
+        let blob = seal_dkg_identity_seed(
+            &[0x9a; 32],
+            &MOCK_SEALING_KEY,
+            B256::repeat_byte(1),
+            &id_header(0x01),
+        )
+        .unwrap();
+        assert!(matches!(
+            unseal_dkg_identity_seed(&blob, &MOCK_SEALING_KEY, B256::repeat_byte(2)),
+            Err(TeeError::SealedBlobUnsealFailed)
+        ));
+    }
+
+    #[test]
+    fn dkg_identity_and_offer_blobs_are_not_interchangeable() {
+        let cid = B256::repeat_byte(0x77);
+        // An identity blob must not unseal as an offer blob (format byte differs,
+        // and it is in the AAD) and vice-versa.
+        let id_blob =
+            seal_dkg_identity_seed(&[0x9a; 32], &MOCK_SEALING_KEY, cid, &id_header(0x01)).unwrap();
+        assert!(matches!(
+            unseal_tribute_offer_and_group_sig(&id_blob, &MOCK_SEALING_KEY, cid, 0),
+            Err(TeeError::SealedBlobBadVersion(DKG_IDENTITY_FORMAT))
+        ));
+        let offer_blob = seal_tribute_offer_and_group_sig(
+            &[0x11; 32],
+            SAMPLE_SHARE,
+            &MOCK_SEALING_KEY,
+            cid,
+            &header(1),
+        )
+        .unwrap();
+        assert!(matches!(
+            unseal_dkg_identity_seed(&offer_blob, &MOCK_SEALING_KEY, cid),
+            Err(TeeError::SealedBlobBadVersion(SEAL_FORMAT))
+        ));
+    }
+
+    #[test]
+    fn seal_dkg_identity_rejects_wrong_format_header() {
+        // Guard: passing a non-identity header is rejected at seal time.
+        assert!(matches!(
+            seal_dkg_identity_seed(&[0x9a; 32], &MOCK_SEALING_KEY, B256::ZERO, &header(1)),
+            Err(TeeError::SealedBlobBadVersion(SEAL_FORMAT))
         ));
     }
 }

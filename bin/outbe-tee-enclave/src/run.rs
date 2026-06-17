@@ -87,29 +87,55 @@ pub fn run(opts: RunOpts) -> i32 {
     }
 
     let tribute_offer_secret = dev_bytes_from_env("TEE_DEV_OFFER_SECRET", [0x07; 32]);
-    // Distinct per-validator DKG identity seed. `--dkg-seed <hex32>` (or env
-    // `TEE_DEV_DKG_SEED`) makes this enclave a distinct DKG participant; absent,
-    // the DKG identity falls back to the (shared) offer secret — fine only for a
-    // single-enclave run, degenerate for a real multi-party ceremony.
-    let dkg_seed = arg_value(&args, "--dkg-seed")
+    // DKG participant identity seed. An explicit `--dkg-seed <hex32>` (or env
+    // `TEE_DEV_DKG_SEED`) is honored for dev/test. Otherwise the enclave derives a
+    // STABLE, DISTINCT identity from a random seed sealed under `--tee-dir` — so it
+    // is a real distinct DKG participant WITHOUT a manually injected seed. We never
+    // fall back to the shared dev offer secret (which makes all `n` enclaves the
+    // same participant and stalls the ceremony): with no `--dkg-seed` and no sealed
+    // identity we fail-fast rather than hang.
+    let explicit_seed = arg_value(&args, "--dkg-seed")
         .and_then(|hex| parse_hex32(&hex))
         .or_else(|| {
             std::env::var("TEE_DEV_DKG_SEED")
                 .ok()
                 .and_then(|h| parse_hex32(&h))
         });
-    let keys = match EnclaveKeys::new(tribute_offer_secret, dkg_seed) {
+    let (dkg_seed, dkg_id): (zeroize::Zeroizing<[u8; 32]>, &str) = match explicit_seed {
+        Some(seed) => (zeroize::Zeroizing::new(seed), "explicit --dkg-seed"),
+        None => {
+            let chain_id = arg_value(&args, "--chain-id")
+                .and_then(|h| parse_hex32(&h))
+                .unwrap_or([0u8; 32]);
+            match arg_value(&args, "--tee-dir") {
+                Some(dir) => match crate::transport::load_or_create_sealed_dkg_seed(
+                    std::path::Path::new(&dir),
+                    chain_id,
+                ) {
+                    Ok(seed) => (seed, "sealed auto-identity"),
+                    Err(err) => {
+                        eprintln!("outbe-tee-enclave: DKG identity setup failed: {err}");
+                        return 1;
+                    }
+                },
+                None => {
+                    eprintln!(
+                        "outbe-tee-enclave: refusing to start — no --dkg-seed and no --tee-dir. \
+                         Without a sealed identity every enclave shares the dev DKG seed and the \
+                         ceremony stalls. Run under gramine-sgx (or the mock build) with --tee-dir \
+                         for an automatic sealed identity, or pass --dkg-seed for a dev run."
+                    );
+                    return 1;
+                }
+            }
+        }
+    };
+    let keys = match EnclaveKeys::new(tribute_offer_secret, Some(*dkg_seed)) {
         Ok(keys) => keys,
         Err(err) => {
             eprintln!("outbe-tee-enclave: key init failed: {err}");
             return 1;
         }
-    };
-
-    let dkg_id = if dkg_seed.is_some() {
-        "distinct --dkg-seed"
-    } else {
-        "offer-secret fallback"
     };
 
     // Optional seal/unseal boot configuration. Present only when the

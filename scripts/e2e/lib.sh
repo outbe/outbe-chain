@@ -153,8 +153,15 @@ e2e_provision_joiner(){
   cast send $VS_ADDR "registerValidator(address,bytes,bytes)" "$V5_ADDR" "0x$V5_BLS" "0x$sig" --private-key "$V5_KEY" --rpc-url "$RPC0" $GAS >/dev/null 2>&1
   cast send $VS_ADDR "setP2pAddress(address,uint8,bytes)" "$V5_ADDR" 1 0x00047f00000176c4 --private-key "$V5_KEY" --rpc-url "$RPC0" $GAS >/dev/null 2>&1
   sudo docker rm -f outbe-tee-gramine-4 >/dev/null 2>&1
+  # Honest auto-identity: the joiner enclave derives a distinct, stable DKG
+  # identity from a random seed sealed to /tee (mock EGETKEY under gramine-direct),
+  # exactly like the committee — no injected --dkg-seed.
+  mkdir -p "$vd/tee"
+  local jchain; jchain=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$E2E_DIR/genesis.json'))['config']['chainId'])")")
   sudo docker run -d --name outbe-tee-gramine-4 --security-opt seccomp=unconfined --network host \
-    -v "$E2E_MOCK:/app/outbe-tee-enclave:ro" outbe-tee-enclave-gramine --socket 127.0.0.1:7004 --dkg-seed 5 >/dev/null 2>&1
+    -v "$(readlink -f "$vd/tee"):/tee" \
+    -v "$E2E_MOCK:/app/outbe-tee-enclave:ro" outbe-tee-enclave-gramine \
+    --socket 127.0.0.1:7004 --tee-dir /tee --chain-id "$jchain" >/dev/null 2>&1
   local _; for _ in $(seq 1 100); do (exec 3<>/dev/tcp/127.0.0.1/7004) 2>/dev/null && { exec 3>&-; break; }; sleep 0.1; done
   "$E2E_CLI" tee join --enclave-socket 127.0.0.1:7004 --rpc-url "$RPC0" --private-key "$V5_KEY" --timeout-secs 60 2>&1 | grep -E "installed|Error" | head -1
 }

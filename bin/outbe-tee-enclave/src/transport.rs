@@ -20,9 +20,11 @@ use crate::dkg::{build_ceremony_info, DkgSessionStore};
 use crate::keys::EnclaveKeys;
 use crate::process::process_tribute_offer_batch;
 use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    KeyPolicy, SealHeader, SEAL_FORMAT,
+    seal_dkg_identity_seed, seal_tribute_offer_and_group_sig, unseal_dkg_identity_seed,
+    unseal_tribute_offer_and_group_sig, EnclaveBootConfig, KeyPolicy, SealHeader,
+    DKG_IDENTITY_FORMAT, SEAL_FORMAT,
 };
+use alloy_primitives::B256;
 
 /// The tribute offer key derived once from the DKG group threshold signature
 /// (Seam F): the secret stays resident, clients encrypt to `public`. Written on
@@ -92,6 +94,70 @@ fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     {
         None
     }
+}
+
+/// Load the per-enclave DKG identity seed, generating + sealing a fresh random one
+/// on first boot. This is what makes the enclave a DISTINCT DKG participant WITHOUT
+/// an externally injected `--dkg-seed`: a 32-byte seed is drawn from the OS CSPRNG
+/// once, sealed under the EGETKEY MRSIGNER key (chain_id in the AAD), and restored
+/// verbatim on every subsequent boot — so the identity is distinct per enclave yet
+/// stable across restart (required to survive a reshare).
+///
+/// `OsRng`/CSPRNG here generates protocol-required cryptographic secret material
+/// (a DKG dealer identity); it never feeds VRF, leader election, or any
+/// deterministic consensus state.
+///
+/// Returns `Err` when no sealing key is available (no `--tee-dir` is reachable, or
+/// the platform is neither gramine-sgx nor a mock build): without confidential
+/// at-rest storage there is no honest stable identity, so the caller must fail-fast
+/// rather than silently fall back to a shared seed (which stalls the ceremony).
+pub fn load_or_create_sealed_dkg_seed(
+    tee_dir: &std::path::Path,
+    chain_id: [u8; 32],
+) -> std::result::Result<Zeroizing<[u8; 32]>, String> {
+    let (key, policy) = sealing_key().ok_or_else(|| {
+        "no sealing key (need gramine-sgx EGETKEY or a mock build) — cannot persist a \
+         stable DKG identity"
+            .to_string()
+    })?;
+    std::fs::create_dir_all(tee_dir).map_err(|e| format!("create tee dir: {e}"))?;
+    let path = tee_dir.join("dkg_identity.bin");
+    let cid = B256::from(chain_id);
+
+    if let Ok(blob) = std::fs::read(&path) {
+        let (seed, _h) = unseal_dkg_identity_seed(&blob, &key, cid)
+            .map_err(|e| format!("unseal DKG identity {}: {e}", path.display()))?;
+        eprintln!(
+            "outbe-tee-enclave: restored sealed DKG identity <- {} (stable across restart)",
+            path.display()
+        );
+        return Ok(seed);
+    }
+
+    let mut seed = Zeroizing::new([0u8; 32]);
+    let mut nonce = [0u8; 12];
+    let rng = ring::rand::SystemRandom::new();
+    if ring::rand::SecureRandom::fill(&rng, seed.as_mut()).is_err()
+        || ring::rand::SecureRandom::fill(&rng, &mut nonce).is_err()
+    {
+        return Err("DKG identity RNG failed".to_string());
+    }
+    let header = SealHeader {
+        format_version: DKG_IDENTITY_FORMAT,
+        key_policy: policy,
+        isv_svn: 0,
+        key_epoch: 0,
+        tribute_offer_epoch: 0,
+        nonce,
+    };
+    let blob = seal_dkg_identity_seed(&seed, &key, cid, &header)
+        .map_err(|e| format!("seal DKG identity: {e}"))?;
+    atomic_write_0600(&path, &blob).map_err(|e| format!("write {}: {e}", path.display()))?;
+    eprintln!(
+        "outbe-tee-enclave: generated + sealed a fresh DKG identity -> {}",
+        path.display()
+    );
+    Ok(seed)
 }
 
 /// Write `data` to `path` with mode 0600, atomically (temp file + rename).
@@ -1091,5 +1157,39 @@ mod tests {
         }
         // The newcomer must NOT have installed any key.
         assert!(newcomer.offer_key.get().is_none());
+    }
+
+    /// Auto DKG identity: the seed is generated + sealed on first boot and
+    /// restored verbatim on restart (same tee dir), so a restarted enclave keeps
+    /// the SAME DKG participant identity.
+    #[test]
+    fn dkg_identity_is_generated_then_stable_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain = [0xCD; 32];
+        let first = load_or_create_sealed_dkg_seed(dir.path(), chain).expect("first boot seeds");
+        assert!(dir.path().join("dkg_identity.bin").exists());
+        let second = load_or_create_sealed_dkg_seed(dir.path(), chain).expect("restart restores");
+        assert_eq!(*first, *second, "DKG identity stable across restart");
+    }
+
+    /// Two enclaves (distinct tee dirs) get DISTINCT auto identities — the whole
+    /// point: `n` enclaves are distinct DKG participants without `--dkg-seed`.
+    #[test]
+    fn dkg_identity_is_distinct_per_enclave() {
+        let d1 = tempfile::tempdir().unwrap();
+        let d2 = tempfile::tempdir().unwrap();
+        let a = load_or_create_sealed_dkg_seed(d1.path(), [0xCD; 32]).unwrap();
+        let b = load_or_create_sealed_dkg_seed(d2.path(), [0xCD; 32]).unwrap();
+        assert_ne!(*a, *b, "independent enclaves must not share a DKG identity");
+    }
+
+    /// A sealed identity bound to one chain does not restore under another chain_id
+    /// (chain_id is in the AEAD AAD).
+    #[test]
+    fn dkg_identity_rejects_wrong_chain_id_on_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = load_or_create_sealed_dkg_seed(dir.path(), [0x01; 32]).unwrap();
+        let err = load_or_create_sealed_dkg_seed(dir.path(), [0x02; 32]);
+        assert!(err.is_err(), "wrong chain_id must not unseal the identity");
     }
 }
