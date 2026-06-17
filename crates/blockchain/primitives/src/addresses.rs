@@ -191,6 +191,13 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// handler through `StorageHandle::contract`, not via the public ABI.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
+/// On-chain upgrade governance precompile address.
+///
+/// Hosts proposal/vote state and the active protocol version. Callable
+/// dispatch is registered in a later integration stage; stage 1 defines
+/// storage layout and ABI surface only.
+pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
+
 /// System address used for system-only calls (block hooks).
 pub const SYSTEM_ADDRESS: Address = Address::ZERO;
 
