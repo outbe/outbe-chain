@@ -80,7 +80,6 @@ const ARTIFACTS: Record<string, string> = {
   TargetMessenger: "artifacts/contracts/bnb/TargetMessenger.sol/TargetMessenger.json",
   EscrowAdapter: "artifacts/contracts/bnb/EscrowAdapter.sol/EscrowAdapter.json",
   IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
-  IntexSettlement: "artifacts/contracts/outbe/IntexSettlement.sol/IntexSettlement.json",
 };
 
 export function loadAbi(name: string): unknown[] {

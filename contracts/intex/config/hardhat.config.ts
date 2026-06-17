@@ -13,7 +13,6 @@ import { generateCommitHashTasks } from "../tasks/auction/generateCommitHash.js"
 import { intex1155IssuanceTasks } from "../tasks/intex/issuance.js";
 import { intexQualifyTasks } from "../tasks/intex/qualify.js";
 import { qualifiedFlowTasks } from "../tasks/intex/qualified.js";
-import { settlementTasks } from "../tasks/intex/settlement.js";
 import { lzBridgeUtilTasks } from "../tasks/layerzero/bridgeUtils.js";
 import { lzNonceClearTasks } from "../tasks/layerzero/nonceClear.js";
 import { onft1155Tasks } from "../tasks/layerzero/onft1155Transfer.js";
@@ -22,7 +21,7 @@ import { demoTasks } from "../tasks/demo/index.js";
 
 const config: HardhatUserConfig = {
   plugins: [hardhatToolboxViemPlugin, hardhatTypechain, hardhatVerify],
-  tasks: [...auctionFlowTasks, ...auctionStageTasks, ...auctionBidderTasks, ...crosschainTasks, ...generateCommitHashTasks, ...intex1155IssuanceTasks, ...intexQualifyTasks, ...qualifiedFlowTasks, ...settlementTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
+  tasks: [...auctionFlowTasks, ...auctionStageTasks, ...auctionBidderTasks, ...crosschainTasks, ...generateCommitHashTasks, ...intex1155IssuanceTasks, ...intexQualifyTasks, ...qualifiedFlowTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
   paths: {
     sources: ["./contracts", "./test/mocks"],
     tests: "./test/hardhat",

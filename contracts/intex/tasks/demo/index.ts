@@ -3,6 +3,5 @@
 
 import { selftestTasks } from "./selftest.js";
 import { auctionDemoTasks } from "./auction.js";
-import { settlementDemoTasks } from "./settlement.js";
 
-export const demoTasks = [...selftestTasks, ...auctionDemoTasks, ...settlementDemoTasks];
+export const demoTasks = [...selftestTasks, ...auctionDemoTasks];

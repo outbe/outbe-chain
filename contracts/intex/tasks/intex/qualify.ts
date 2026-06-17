@@ -6,7 +6,7 @@ import { task } from "hardhat/config";
 import type { Address } from "viem";
 
 import { markSeriesQualified, type QualifyClient } from "../../scripts/intex/qualify.js";
-import { createOutbeClients } from "../../scripts/intex/settle.js";
+import { createOutbeClients } from "../../scripts/shared/outbeClient.js";
 import { resolveSeriesId } from "../../scripts/shared/auctionId.js";
 import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 

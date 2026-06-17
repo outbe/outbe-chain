@@ -69,7 +69,6 @@ export interface DemoAddresses {
   intexAuction?: string;
   escrowAdapter?: string;
   intexNFT1155?: string;
-  intexSettlement?: string;
   promisLimit?: string;
   // External / pre-existing addresses (from DEMO_ADDR_* env overrides):
   paymentToken?: string;
@@ -87,7 +86,6 @@ type ContractKey =
   | "intexAuction"
   | "escrowAdapter"
   | "intexNFT1155"
-  | "intexSettlement"
   | "promisLimit";
 
 const PACKAGE_KEY: Record<ContractKey, string> = {
@@ -98,7 +96,6 @@ const PACKAGE_KEY: Record<ContractKey, string> = {
   intexAuction: "IntexAuction",
   escrowAdapter: "EscrowAdapter",
   intexNFT1155: "IntexNFT1155",
-  intexSettlement: "IntexSettlement",
   promisLimit: "MockPromisLimit",
 };
 
