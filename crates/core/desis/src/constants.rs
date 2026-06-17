@@ -8,6 +8,9 @@ pub const ORIGIN_MESSENGER_ADDRESS: Address =
 /// Reference-currency ISO for settlement (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
+/// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
+pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
+
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
