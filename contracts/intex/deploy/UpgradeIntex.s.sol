@@ -26,7 +26,8 @@ import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
 abstract contract UpgradeBase is BaseScript {
     /// @dev The CREATE3 factory at its deterministic address; reverts if not yet deployed.
     function resolveFactory() internal returns (Create3Factory) {
-        address f = vm.computeCreate2Address(FACTORY_SALT, keccak256(type(Create3Factory).creationCode), CREATE2_FACTORY);
+        address f =
+            vm.computeCreate2Address(FACTORY_SALT, keccak256(type(Create3Factory).creationCode), CREATE2_FACTORY);
         require(f.code.length != 0, "Create3Factory not deployed - run the deploy first");
         return Create3Factory(f);
     }

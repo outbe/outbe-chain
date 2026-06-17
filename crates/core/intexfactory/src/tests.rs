@@ -55,6 +55,8 @@ fn sample(series_id: u32) -> IssuanceParams {
         intex_call_period: CALL_PERIOD,
         call_window_days: 30,
         call_threshold_days: 21,
+        issuance_currency: 840,
+        reference_currency: 840,
         recipients: vec![],
         quantities: vec![],
     }
@@ -583,6 +585,8 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
             },
             issued_at: ISSUED_AT,
+            issuance_currency: 840,
+            reference_currency: 840,
         },
     )
     .unwrap();

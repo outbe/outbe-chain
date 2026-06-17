@@ -86,7 +86,7 @@ const INTEX_READ_DATA_ABI = [
           { name: "totalSupply", type: "uint32" },
           { name: "issuedIntexCount", type: "uint32" },
           { name: "mintedCount", type: "uint32" },
-          { name: "settlementTokenAlias", type: "uint16" },
+          { name: "referenceCurrency", type: "uint16" },
           { name: "status", type: "uint8" },
           { name: "state", type: "uint8" },
           {

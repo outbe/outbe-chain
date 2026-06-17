@@ -105,6 +105,9 @@ pub(crate) fn try_call(
     now_ts: u64,
 ) -> Result<bool> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
+    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
+        return Ok(false);
+    }
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }

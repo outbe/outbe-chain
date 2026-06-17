@@ -52,5 +52,7 @@ fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {
         issuedAt: r.issued_at,
         calledAt: r.called_at,
         intexCallPeriod: r.intex_call_period,
+        issuanceCurrency: r.issuance_currency,
+        referenceCurrency: r.reference_currency,
     }
 }

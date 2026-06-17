@@ -82,7 +82,7 @@ const INTEX_READ_ABI = [
           { name: "calledAt", type: "uint32" },
           { name: "intexCallPeriod", type: "uint32" },
           { name: "totalSupply", type: "uint32" },
-          { name: "settlementTokenAlias", type: "uint16" },
+          { name: "referenceCurrency", type: "uint16" },
           { name: "status", type: "uint8" },
           { name: "state", type: "uint8" },
           {

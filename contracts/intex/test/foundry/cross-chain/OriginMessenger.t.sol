@@ -113,7 +113,7 @@ contract OriginMessengerTest is TestHelperOz5 {
             costAmountMinor: 100e6,
             floorPriceMinor: 50e6,
             intexCallPeriod: 0,
-            settlementTokenAlias: 840,
+            referenceCurrency: 840,
             callWindowDays: 30,
             callThresholdDays: 5,
             callPriceMinor: 25e6,

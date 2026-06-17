@@ -102,7 +102,7 @@ function toRecipientsAndQuantities(entries: AllocationEntry[]): {
 }
 
 // ISO 4217 numeric alias of the settlement token (840 = USD).
-const DEFAULT_SETTLEMENT_TOKEN_ALIAS = 840;
+const DEFAULT_REFERENCE_CURRENCY = 840;
 // 0 falls back to the contract default call period (21 days).
 const DEFAULT_INTEX_CALL_PERIOD = 0;
 
@@ -112,7 +112,7 @@ export interface Intex1155IssuanceArgs {
   /** Duration in seconds between Called and the settlement deadline (0 = contract default). */
   intexCallPeriod?: number;
   /** ISO 4217 numeric alias of the settlement token. */
-  settlementTokenAlias?: number;
+  referenceCurrency?: number;
   /** Forced-call trigger parameters (defaults to a zeroed trigger). */
   callTrigger?: IntexCallTrigger;
   allocationsPath?: string; // JSON path: [{ address, quantity }] or { allocations }. Omit = use revealed bids
@@ -141,7 +141,7 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
   const floorPriceMinor = auctionData.params.floorPriceMinor;
 
   const intexCallPeriod = opts.intexCallPeriod ?? DEFAULT_INTEX_CALL_PERIOD;
-  const settlementTokenAlias = opts.settlementTokenAlias ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
+  const referenceCurrency = opts.referenceCurrency ?? DEFAULT_REFERENCE_CURRENCY;
   const callTrigger: IntexCallTrigger =
     opts.callTrigger ?? { windowDays: 0, thresholdDays: 0, callPriceMinor: 0n };
 
@@ -151,7 +151,7 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
     costAmountMinor: costAmountMinor.toString(),
     floorPriceMinor: floorPriceMinor.toString(),
     intexCallPeriod,
-    settlementTokenAlias,
+    referenceCurrency,
     issuedIntexCount: auctionData.result.issuedIntexCount.toString(),
   });
 
@@ -164,7 +164,7 @@ export async function runIntex1155IssuanceCore(opts: Intex1155IssuanceArgs): Pro
         costAmountMinor,
         floorPriceMinor,
         intexCallPeriod,
-        settlementTokenAlias,
+        referenceCurrency,
         callTrigger,
       ],
       { account: runtime.wallet.account },

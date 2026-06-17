@@ -16,7 +16,7 @@ describe("IntexSettlement", async function () {
   const PROMIS_LOAD_MINOR = 1000n;
   const STRIKE_PRICE = 100n * 10n ** 6n;
   const FLOOR_PRICE_MINOR = 40n * 10n ** 6n;
-  const SETTLEMENT_TOKEN_ALIAS = 840;
+  const REFERENCE_CURRENCY = 840;
   const CALL_TRIGGER = {
     windowDays: 0,
     thresholdDays: 0,

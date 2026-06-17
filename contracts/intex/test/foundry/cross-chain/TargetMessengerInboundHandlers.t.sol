@@ -36,7 +36,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
     uint64 internal constant STRIKE_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
-    uint16 internal constant SETTLEMENT_TOKEN_ALIAS = 840;
+    uint16 internal constant REFERENCE_CURRENCY = 840;
 
     TargetMessenger internal bnbMessenger;
     OriginMessenger internal outbeMessenger;
@@ -141,7 +141,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             costAmountMinor: STRIKE_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
-            settlementTokenAlias: SETTLEMENT_TOKEN_ALIAS,
+            referenceCurrency: REFERENCE_CURRENCY,
             callWindowDays: 30,
             callThresholdDays: 5,
             callPriceMinor: 25e6,

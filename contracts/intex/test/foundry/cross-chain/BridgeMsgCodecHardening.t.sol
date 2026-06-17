@@ -110,7 +110,7 @@ contract BridgeMsgCodecHardeningTest is Test {
             costAmountMinor: 1,
             floorPriceMinor: 1,
             intexCallPeriod: 0,
-            settlementTokenAlias: 840,
+            referenceCurrency: 840,
             callWindowDays: 0,
             callThresholdDays: 0,
             callPriceMinor: 0,

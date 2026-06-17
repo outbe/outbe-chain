@@ -21,6 +21,8 @@ interface IIntex {
         uint32 issuedAt;
         uint32 calledAt;
         uint32 intexCallPeriod;
+        uint16 issuanceCurrency;
+        uint16 referenceCurrency;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

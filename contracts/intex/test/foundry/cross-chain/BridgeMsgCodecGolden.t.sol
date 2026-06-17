@@ -192,7 +192,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.costAmountMinor = 0x1122334455667788;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.intexCallPeriod = 0xCAFEBABE;
-        p.settlementTokenAlias = 0x1234;
+        p.referenceCurrency = 0x1234;
         p.callWindowDays = 0x5678;
         p.callThresholdDays = 0x9ABC;
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
@@ -208,7 +208,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.costAmountMinor, 0x1122334455667788, "costAmountMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
-        assertEq(d.settlementTokenAlias, 0x1234, "settlementTokenAlias");
+        assertEq(d.referenceCurrency, 0x1234, "referenceCurrency");
         assertEq(d.callWindowDays, 0x5678, "callWindowDays");
         assertEq(d.callThresholdDays, 0x9ABC, "callThresholdDays");
         assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");

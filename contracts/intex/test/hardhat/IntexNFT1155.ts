@@ -27,7 +27,7 @@ describe("IntexNFT1155", async function () {
   const PROMIS_LOAD_MINOR = 100n * 10n ** 18n;
   const STRIKE_PRICE = 1500000n; // 1.50 with 6 decimals
   const PRICE_FLOOR = 1000000n; // 1.00 with 6 decimals
-  const SETTLEMENT_TOKEN_ALIAS = 840; // USD
+  const REFERENCE_CURRENCY = 840; // USD
   const DEFAULT_CALL_PERIOD = 21 * 24 * 60 * 60;
   // Sized well above any per-mint quantity in this suite so existing tests exercise
   // lifecycle behavior independently of the supply cap.
@@ -41,7 +41,7 @@ describe("IntexNFT1155", async function () {
   /**
    * createSeries args in the new ABI order:
    * (seriesId, issuedIntexCount, promisLoadMinor, costAmountMinor, floorPriceMinor,
-   *  intexCallPeriod, settlementTokenAlias, trigger)
+   *  intexCallPeriod, referenceCurrency, trigger)
    */
   function seriesArgs(
     seriesId: number,
@@ -51,7 +51,7 @@ describe("IntexNFT1155", async function () {
       strikePrice?: bigint;
       priceFloor?: bigint;
       callPeriod?: bigint;
-      settlementTokenAlias?: number;
+      referenceCurrency?: number;
       trigger?: typeof TRIGGER;
     } = {},
   ) {
@@ -62,7 +62,7 @@ describe("IntexNFT1155", async function () {
       overrides.strikePrice ?? STRIKE_PRICE,
       overrides.priceFloor ?? PRICE_FLOOR,
       overrides.callPeriod ?? 0n,
-      overrides.settlementTokenAlias ?? SETTLEMENT_TOKEN_ALIAS,
+      overrides.referenceCurrency ?? REFERENCE_CURRENCY,
       overrides.trigger ?? TRIGGER,
     ] as const;
   }
@@ -87,7 +87,7 @@ describe("IntexNFT1155", async function () {
       assert.equal(data.promisLoadMinor, PROMIS_LOAD_MINOR);
       assert.equal(data.costAmountMinor, STRIKE_PRICE);
       assert.equal(data.floorPriceMinor, PRICE_FLOOR);
-      assert.equal(data.settlementTokenAlias, SETTLEMENT_TOKEN_ALIAS);
+      assert.equal(data.referenceCurrency, REFERENCE_CURRENCY);
       assert(data.issuedAt > 0);
       assert.equal(data.calledAt, 0);
       assert.equal(data.intexCallPeriod, DEFAULT_CALL_PERIOD); // default 21 days

@@ -11,7 +11,7 @@ use outbe_promislimit::PromisLimitContract;
 use crate::constants::{
     BID_QUANTITY_FLOOR_BPS, DEFAULT_CALL_THRESHOLD_DAYS, DEFAULT_CALL_WINDOW_DAYS,
     DEFAULT_INTEX_CALL_PERIOD, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
-    REVEAL_WINDOW_SECONDS,
+    QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -369,6 +369,8 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
         intex_call_period: DEFAULT_INTEX_CALL_PERIOD,
         call_window_days: DEFAULT_CALL_WINDOW_DAYS,
         call_threshold_days: DEFAULT_CALL_THRESHOLD_DAYS,
+        issuance_currency: QUALIFIER_ISSUANCE_ISO,
+        reference_currency: QUALIFIER_REFERENCE_ISO,
         recipients: result.winners.clone(),
         quantities: result.winner_quantities.clone(),
     };

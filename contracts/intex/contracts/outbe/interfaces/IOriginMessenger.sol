@@ -121,7 +121,7 @@ interface IOriginMessenger {
         uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
         uint32 intexCallPeriod;
-        uint16 settlementTokenAlias;
+        uint16 referenceCurrency;
         uint16 callWindowDays;
         uint16 callThresholdDays;
         uint64 callPriceMinor;
