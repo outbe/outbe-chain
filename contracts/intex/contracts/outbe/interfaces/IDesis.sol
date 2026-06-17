@@ -31,6 +31,4 @@ interface IDesis {
 
     function getAuctionStage(uint32 seriesId) external view returns (AuctionStage);
     function getBidsCount(uint32 seriesId) external view returns (uint256);
-
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

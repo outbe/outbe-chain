@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {
     OAppUpgradeable,
     Origin,
@@ -148,7 +149,7 @@ contract OriginMessenger is
     ///      that would otherwise silently bind and brick every inbound BIDS_BATCH.
     function _assertDesisInterface(address _desis) private view {
         if (_desis.code.length == 0) revert InvalidDesisInterface(_desis);
-        try IDesis(_desis).supportsInterface(type(IDesis).interfaceId) returns (bool supported) {
+        try IERC165(_desis).supportsInterface(type(IDesis).interfaceId) returns (bool supported) {
             if (!supported) revert InvalidDesisInterface(_desis);
         } catch {
             revert InvalidDesisInterface(_desis);
