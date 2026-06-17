@@ -284,7 +284,7 @@ library BridgeMsgCodec {
         uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.
         uint32 intexCallPeriod;
-        uint16 settlementTokenAlias;
+        uint16 referenceCurrency;
         uint16 callWindowDays;
         uint16 callThresholdDays;
         uint64 callPriceMinor;

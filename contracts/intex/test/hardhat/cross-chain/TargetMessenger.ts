@@ -25,7 +25,7 @@ describe("TargetMessenger", async function () {
   const COST_AMOUNT_MINOR = 100n * 10n ** 6n;
   const FLOOR_PRICE_MINOR = 40n * 10n ** 6n;
   const MIN_BID_PRICE = 50n * 10n ** 6n;
-  const SETTLEMENT_TOKEN_ALIAS = 840; // ISO 4217 USD
+  const REFERENCE_CURRENCY = 840; // ISO 4217 USD
   const MIN_BID_QUANTITY = 1;
   const DEFAULT_CALL_PERIOD = 21 * 24 * 60 * 60; // 21 days, applied when createSeries gets 0
 

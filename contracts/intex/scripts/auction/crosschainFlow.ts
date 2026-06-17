@@ -53,7 +53,7 @@ export interface AuctionConfig {
   /** Call period in seconds; 0 ⇒ contract default of 21 days (used at issuance). */
   intexCallPeriod: number;
   /** ISO 4217 numeric alias of the settlement token (840 = USD). */
-  settlementTokenAlias: number;
+  referenceCurrency: number;
   /** Forced-call observation window length in days. */
   callWindowDays: number;
   /** Number of days within the window that breach the forced-call trigger. */
@@ -175,7 +175,7 @@ export interface CreateAuctionArgs {
   floorPriceMinor?: BigIntInput;
   minIntexBidQuantity?: BigIntInput;
   intexCallPeriod?: BigIntInput;
-  settlementTokenAlias?: BigIntInput;
+  referenceCurrency?: BigIntInput;
   callWindowDays?: BigIntInput;
   callThresholdDays?: BigIntInput;
   callPriceMinor?: BigIntInput;
@@ -225,7 +225,7 @@ const DEFAULT_COST_AMOUNT_MINOR = 1_000_000_000n;
 const DEFAULT_FLOOR_PRICE_MINOR = 80_000_000n;
 const DEFAULT_MIN_INTEX_BID_QUANTITY = 5;
 const DEFAULT_INTEX_CALL_PERIOD = 0; // 0 ⇒ contract default of 21 days
-const DEFAULT_SETTLEMENT_TOKEN_ALIAS = 840; // ISO 4217 numeric alias (840 = USD)
+const DEFAULT_REFERENCE_CURRENCY = 840; // ISO 4217 numeric alias (840 = USD)
 const DEFAULT_CALL_WINDOW_DAYS = 0;
 const DEFAULT_CALL_THRESHOLD_DAYS = 0;
 const DEFAULT_CALL_PRICE_MINOR = 0n;
@@ -385,8 +385,8 @@ export async function createAndStartAuction(
   const minIntexBidQuantity =
     toOptionalNumber(args.minIntexBidQuantity) ?? DEFAULT_MIN_INTEX_BID_QUANTITY;
   const intexCallPeriod = toOptionalNumber(args.intexCallPeriod) ?? DEFAULT_INTEX_CALL_PERIOD;
-  const settlementTokenAlias =
-    toOptionalNumber(args.settlementTokenAlias) ?? DEFAULT_SETTLEMENT_TOKEN_ALIAS;
+  const referenceCurrency =
+    toOptionalNumber(args.referenceCurrency) ?? DEFAULT_REFERENCE_CURRENCY;
   const callWindowDays = toOptionalNumber(args.callWindowDays) ?? DEFAULT_CALL_WINDOW_DAYS;
   const callThresholdDays = toOptionalNumber(args.callThresholdDays) ?? DEFAULT_CALL_THRESHOLD_DAYS;
   const callPriceMinor =
@@ -401,7 +401,7 @@ export async function createAndStartAuction(
     floorPriceMinor,
     minIntexBidQuantity,
     intexCallPeriod,
-    settlementTokenAlias,
+    referenceCurrency,
     callWindowDays,
     callThresholdDays,
     callPriceMinor,
@@ -610,7 +610,7 @@ export async function sendIssuanceInstructions(
           costAmountMinor: config.costAmountMinor,
           floorPriceMinor: config.floorPriceMinor,
           intexCallPeriod: config.intexCallPeriod,
-          settlementTokenAlias: config.settlementTokenAlias,
+          referenceCurrency: config.referenceCurrency,
           callWindowDays: config.callWindowDays,
           callThresholdDays: config.callThresholdDays,
           callPriceMinor: config.callPriceMinor,

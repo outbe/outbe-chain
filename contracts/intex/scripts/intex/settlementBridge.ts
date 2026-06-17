@@ -103,7 +103,7 @@ const INTEX_READ_ABI = [
           { name: "intexCallPeriod", type: "uint32" },
           { name: "totalSupply", type: "uint32" },
           { name: "issuedIntexCount", type: "uint32" },
-          { name: "settlementTokenAlias", type: "uint16" },
+          { name: "referenceCurrency", type: "uint16" },
           { name: "status", type: "uint8" },
           { name: "state", type: "uint8" },
           {
@@ -133,7 +133,7 @@ const INTEX_CREATE_SERIES_ABI = [
       { name: "costAmountMinor", type: "uint64" },
       { name: "floorPriceMinor", type: "uint64" },
       { name: "intexCallPeriod", type: "uint32" },
-      { name: "settlementTokenAlias", type: "uint16" },
+      { name: "referenceCurrency", type: "uint16" },
       {
         name: "trigger",
         type: "tuple",
@@ -203,7 +203,7 @@ const FEE_BUFFER_BPS = 50n; // 0.5%
 const EMPTY_EXTRA_OPTIONS = "0x" as Hex;
 const INTEX_STATE_NAMES = ["Issued", "Qualified", "Called"];
 // ISO 4217 numeric alias of the settlement token (840 = USD).
-const DEFAULT_SETTLEMENT_TOKEN_ALIAS = 840;
+const DEFAULT_REFERENCE_CURRENCY = 840;
 
 const FUND_THRESHOLD = parseEther("0.01");
 const FUND_AMOUNT = parseEther("0.05");
@@ -429,7 +429,7 @@ export async function createSeriesOnOutbe(
     floorPriceMinor: bigint;
     intexCallPeriod: number;
     issuedIntexCount: number;
-    settlementTokenAlias: number;
+    referenceCurrency: number;
     intexCallTrigger: { windowDays: number; thresholdDays: number; callPriceMinor: bigint };
   };
 
@@ -476,9 +476,9 @@ export async function createSeriesOnOutbe(
   console.log("[create-series-outbe] Creating series on Outbe IntexNFT1155...");
   // Mirror the BSC series params (intexCallPeriod 0 falls back to the contract default of 21 days).
   const intexCallPeriod = Number.isFinite(d.intexCallPeriod) ? d.intexCallPeriod : 0;
-  const settlementTokenAlias = Number.isFinite(d.settlementTokenAlias)
-    ? d.settlementTokenAlias
-    : DEFAULT_SETTLEMENT_TOKEN_ALIAS;
+  const referenceCurrency = Number.isFinite(d.referenceCurrency)
+    ? d.referenceCurrency
+    : DEFAULT_REFERENCE_CURRENCY;
   // BSC SeriesData carries the canonical issuedIntexCount set at the auction-cleared moment;
   // mirror it onto Outbe so the mint cap matches across chains.
   if (!Number.isFinite(d.issuedIntexCount) || d.issuedIntexCount <= 0) {
@@ -497,7 +497,7 @@ export async function createSeriesOnOutbe(
       d.costAmountMinor,
       d.floorPriceMinor,
       intexCallPeriod,
-      settlementTokenAlias,
+      referenceCurrency,
       d.intexCallTrigger,
     ],
     account,

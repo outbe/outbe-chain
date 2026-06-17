@@ -23,7 +23,7 @@ describe("ONFT1155Adapter", async function () {
   const PROMIS_LOAD_MINOR = 100n * 10n ** 18n;
   const COST_AMOUNT_MINOR = 1000n * 10n ** 6n;
   const FLOOR_PRICE_MINOR = 500n * 10n ** 6n;
-  const SETTLEMENT_TOKEN_ALIAS = 840;
+  const REFERENCE_CURRENCY = 840;
   const CALL_TRIGGER = {
     windowDays: 0,
     thresholdDays: 0,

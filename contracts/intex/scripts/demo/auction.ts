@@ -160,7 +160,7 @@ export function buildAuctionConfig(opts: { seriesId: number }): AuctionConfig {
 /** IssuanceConfig mirrors IDesis.IssuanceConfig. callPriceMinor is derived on-chain. */
 export interface IssuanceConfig {
   intexCallPeriod: number;
-  settlementTokenAlias: number;
+  referenceCurrency: number;
   callWindowDays: number;
   callThresholdDays: number;
 }
@@ -169,7 +169,7 @@ export interface IssuanceConfig {
 export function buildIssuanceConfig(): IssuanceConfig {
   return {
     intexCallPeriod: 0,
-    settlementTokenAlias: 840,
+    referenceCurrency: 840,
     callWindowDays: 30,
     callThresholdDays: 21,
   };

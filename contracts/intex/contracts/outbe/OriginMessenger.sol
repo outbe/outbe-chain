@@ -259,7 +259,7 @@ contract OriginMessenger is
             costAmountMinor: p.costAmountMinor,
             floorPriceMinor: p.floorPriceMinor,
             intexCallPeriod: p.intexCallPeriod,
-            settlementTokenAlias: p.settlementTokenAlias,
+            referenceCurrency: p.referenceCurrency,
             callWindowDays: p.callWindowDays,
             callThresholdDays: p.callThresholdDays,
             callPriceMinor: p.callPriceMinor,
