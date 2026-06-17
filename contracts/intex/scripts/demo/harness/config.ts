@@ -71,7 +71,7 @@ export interface DemoAddresses {
   intexNFT1155?: string;
   intexSettlement?: string;
   promisLimit?: string;
-  // External / pre-existing addresses (config/external-addresses.json):
+  // External / pre-existing addresses (from DEMO_ADDR_* env overrides):
   paymentToken?: string;
   vaultProvider?: string;
   metadosis?: string;
@@ -102,38 +102,13 @@ const PACKAGE_KEY: Record<ContractKey, string> = {
   promisLimit: "MockPromisLimit",
 };
 
-interface ExternalAddressesFile {
-  [network: string]: { tokens?: Record<string, string>; external?: Record<string, string> };
-}
-
-/** External / pre-existing addresses from config/external-addresses.json for `network`. */
-function loadExternalAddresses(
-  network: DemoNetwork,
-): Pick<DemoAddresses, "paymentToken" | "vaultProvider" | "metadosis" | "theCompact"> {
-  const p = "config/external-addresses.json";
-  if (!fs.existsSync(p)) return {};
-  try {
-    const data = JSON.parse(fs.readFileSync(p, "utf-8")) as ExternalAddressesFile;
-    const net = data[network] ?? {};
-    const nonEmpty = (v?: string): string | undefined => (v && v !== "" ? v : undefined);
-    return {
-      paymentToken: nonEmpty(net.tokens?.PaymentToken),
-      vaultProvider: nonEmpty(net.external?.VaultProvider),
-      metadosis: nonEmpty(net.external?.Metadosis),
-      theCompact: nonEmpty(net.external?.TheCompact),
-    };
-  } catch {
-    return {};
-  }
-}
-
 /**
  * Resolve addresses for `network`. Precedence: env override (`DEMO_ADDR_*`) > deployed package /
- * `deployed-addresses.json` (contracts) and `config/external-addresses.json` (external/tokens).
+ * `deployed-addresses.json` (contracts). External/token addresses come from `DEMO_ADDR_*` only.
  */
 export function resolveAddresses(network: DemoNetwork): DemoAddresses {
   const pkg = loadPackageAddresses(network);
-  const out: DemoAddresses = { ...loadExternalAddresses(network) };
+  const out: DemoAddresses = {};
   (Object.keys(PACKAGE_KEY) as (keyof typeof PACKAGE_KEY)[]).forEach((k) => {
     out[k] = envOverride(k) ?? pkg[PACKAGE_KEY[k]] ?? (k === "promisLimit" ? pkg.PromisLimit : undefined);
   });
