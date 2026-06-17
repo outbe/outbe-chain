@@ -26,9 +26,8 @@
     "abi-export"
   ],
   "scripts": {
-    "test:hardhat": "hardhat test --network hardhatMainnet",
     "test:forge": "forge test -vvv",
-    "test": "yarn test:hardhat && yarn test:forge",
+    "test": "yarn test:forge",
     "lz:wire": "hardhat lz:oapp:wire --oapp-config config/layerzero.config.ts",
     "lz:wire:batch": "hardhat lz:oapp:wire --oapp-config config/layerzero.batch.config.ts",
     "lz:wire:bridge": "hardhat lz:oapp:wire --oapp-config config/layerzero.bridge.config.ts",
@@ -44,7 +43,6 @@
     "format:fix": "forge fmt",
     "validate:upgrades": "forge clean && forge build && openzeppelin-upgrades-core validate out/build-info --exclude 'test/**' --unsafeAllow 'constructor,state-variable-immutable,missing-initializer-call,external-library-linking'",
     "coverage:foundry": "forge coverage --ir-minimum --report lcov --report-file lcov.info",
-    "coverage:hardhat": "hardhat test --coverage",
     "fix": "yarn lint:fix && yarn format:fix",
     "cd:extract-abi": "tsx scripts/cd/extract-abi.ts",
     "cd:save-addresses": "tsx scripts/cd/save-addresses.ts",
