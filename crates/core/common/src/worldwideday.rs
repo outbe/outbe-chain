@@ -54,7 +54,7 @@ impl WorldwideDay {
         Self(outbe_primitives::time::previous_date_key(self.0))
     }
 
-    /// Returns the previous calendar day.
+    /// Returns the WWD in UNIX timestamp seconds.
     pub fn to_timestamp_utc(self) -> u64 {
         date_key_to_utc_timestamp(self.0)
     }
