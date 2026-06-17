@@ -2,650 +2,650 @@
   "contractName": "ITargetMessenger",
   "abi": [
     {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        }
-      ],
-      "name": "AlreadyFlushed",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ArrayLengthMismatch",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "EmptyArray",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "msgValue",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "nativeFee",
-          "type": "uint256"
-        }
-      ],
-      "name": "MsgValueBelowFee",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "available",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "requested",
-          "type": "uint256"
-        }
-      ],
-      "name": "NativeBalanceInsufficient",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NativeSweepFailed",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        }
-      ],
-      "name": "NoSuchPendingBidsRelay",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        }
-      ],
-      "name": "NoSuchPendingHoldersRelay",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotSelf",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "RefundFailed",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "string",
-          "name": "field",
-          "type": "string"
-        }
-      ],
-      "name": "ZeroAddress",
-      "type": "error"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "issuedIntexCount",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "clearingPrice",
-          "type": "uint64"
-        }
-      ],
-      "name": "AuctionResultReceived",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint8",
-          "name": "stageType",
-          "type": "uint8"
-        }
-      ],
-      "name": "AuctionStageReceived",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "bidsCount",
-          "type": "uint256"
-        }
-      ],
-      "name": "BidsBatchSent",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "reason",
-          "type": "bytes"
-        }
-      ],
-      "name": "BidsRelayDeferred",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        }
-      ],
-      "name": "BidsRelayFlushed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "tokenId",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "holdersCount",
-          "type": "uint256"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "reason",
-          "type": "bytes"
-        }
-      ],
-      "name": "HoldersRelayDeferred",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "idx",
-          "type": "uint256"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint256",
-          "name": "tokenId",
-          "type": "uint256"
-        }
-      ],
-      "name": "HoldersRelayFlushed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "reason",
-          "type": "bytes"
-        }
-      ],
-      "name": "InboundMessageDropped",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "recipientsCount",
-          "type": "uint256"
-        }
-      ],
-      "name": "IssuanceInstructionsReceived",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        }
-      ],
-      "name": "MarkCalledReceived",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        }
-      ],
-      "name": "MarkQualifiedReceived",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "srcEid",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "instructionsCount",
-          "type": "uint256"
-        }
-      ],
-      "name": "RefundInstructionsReceived",
-      "type": "event"
-    },
-    {
-      "inputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint32",
-              "name": "seriesId",
-              "type": "uint32"
-            },
-            {
-              "internalType": "address[]",
-              "name": "bidderAddresses",
-              "type": "address[]"
-            },
-            {
-              "internalType": "uint16[]",
-              "name": "intexQuantities",
-              "type": "uint16[]"
-            },
-            {
-              "internalType": "uint64[]",
-              "name": "intexBidPrices",
-              "type": "uint64[]"
-            },
-            {
-              "internalType": "uint32[]",
-              "name": "timestamps",
-              "type": "uint32[]"
-            },
-            {
-              "internalType": "bytes",
-              "name": "extraOptions",
-              "type": "bytes"
-            },
-            {
-              "internalType": "address",
-              "name": "refundAddress",
-              "type": "address"
-            }
-          ],
-          "internalType": "struct ITargetMessenger.BidsBatchParams",
-          "name": "params",
-          "type": "tuple"
-        },
-        {
-          "internalType": "bool",
-          "name": "payInLzToken",
-          "type": "bool"
-        }
-      ],
+      "type": "function",
       "name": "quoteSendBidsBatch",
-      "outputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint256",
-              "name": "nativeFee",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "lzTokenFee",
-              "type": "uint256"
-            }
-          ],
-          "internalType": "struct MessagingFee",
-          "name": "fee",
-          "type": "tuple"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct ITargetMessenger.BidsBatchParams",
           "components": [
             {
-              "internalType": "uint32",
               "name": "seriesId",
-              "type": "uint32"
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "internalType": "address[]",
               "name": "bidderAddresses",
-              "type": "address[]"
+              "type": "address[]",
+              "internalType": "address[]"
             },
             {
-              "internalType": "uint16[]",
               "name": "intexQuantities",
-              "type": "uint16[]"
+              "type": "uint16[]",
+              "internalType": "uint16[]"
             },
             {
-              "internalType": "uint64[]",
               "name": "intexBidPrices",
-              "type": "uint64[]"
+              "type": "uint64[]",
+              "internalType": "uint64[]"
             },
             {
-              "internalType": "uint32[]",
               "name": "timestamps",
-              "type": "uint32[]"
+              "type": "uint32[]",
+              "internalType": "uint32[]"
             },
             {
-              "internalType": "bytes",
               "name": "extraOptions",
-              "type": "bytes"
+              "type": "bytes",
+              "internalType": "bytes"
             },
             {
-              "internalType": "address",
               "name": "refundAddress",
-              "type": "address"
+              "type": "address",
+              "internalType": "address"
             }
-          ],
-          "internalType": "struct ITargetMessenger.BidsBatchParams",
-          "name": "params",
-          "type": "tuple"
+          ]
         },
         {
-          "components": [
-            {
-              "internalType": "uint256",
-              "name": "nativeFee",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "lzTokenFee",
-              "type": "uint256"
-            }
-          ],
-          "internalType": "struct MessagingFee",
-          "name": "fee",
-          "type": "tuple"
+          "name": "payInLzToken",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
-      "name": "sendBidsBatch",
       "outputs": [
         {
+          "name": "fee",
+          "type": "tuple",
+          "internalType": "struct MessagingFee",
           "components": [
             {
-              "internalType": "bytes32",
+              "name": "nativeFee",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "lzTokenFee",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "sendBidsBatch",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct ITargetMessenger.BidsBatchParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "bidderAddresses",
+              "type": "address[]",
+              "internalType": "address[]"
+            },
+            {
+              "name": "intexQuantities",
+              "type": "uint16[]",
+              "internalType": "uint16[]"
+            },
+            {
+              "name": "intexBidPrices",
+              "type": "uint64[]",
+              "internalType": "uint64[]"
+            },
+            {
+              "name": "timestamps",
+              "type": "uint32[]",
+              "internalType": "uint32[]"
+            },
+            {
+              "name": "extraOptions",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "refundAddress",
+              "type": "address",
+              "internalType": "address"
+            }
+          ]
+        },
+        {
+          "name": "fee",
+          "type": "tuple",
+          "internalType": "struct MessagingFee",
+          "components": [
+            {
+              "name": "nativeFee",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "lzTokenFee",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "receipt",
+          "type": "tuple",
+          "internalType": "struct MessagingReceipt",
+          "components": [
+            {
               "name": "guid",
-              "type": "bytes32"
+              "type": "bytes32",
+              "internalType": "bytes32"
             },
             {
-              "internalType": "uint64",
               "name": "nonce",
-              "type": "uint64"
+              "type": "uint64",
+              "internalType": "uint64"
             },
             {
+              "name": "fee",
+              "type": "tuple",
+              "internalType": "struct MessagingFee",
               "components": [
                 {
-                  "internalType": "uint256",
                   "name": "nativeFee",
-                  "type": "uint256"
+                  "type": "uint256",
+                  "internalType": "uint256"
                 },
                 {
-                  "internalType": "uint256",
                   "name": "lzTokenFee",
-                  "type": "uint256"
+                  "type": "uint256",
+                  "internalType": "uint256"
                 }
-              ],
-              "internalType": "struct MessagingFee",
-              "name": "fee",
-              "type": "tuple"
+              ]
             }
-          ],
-          "internalType": "struct MessagingReceipt",
-          "name": "receipt",
-          "type": "tuple"
+          ]
         }
       ],
-      "stateMutability": "payable",
-      "type": "function"
+      "stateMutability": "payable"
     },
     {
-      "inputs": [
-        {
-          "internalType": "address payable",
-          "name": "to",
-          "type": "address"
-        },
-        {
-          "internalType": "uint256",
-          "name": "amount",
-          "type": "uint256"
-        }
-      ],
+      "type": "function",
       "name": "sweepNative",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "auction",
-          "type": "address"
+          "name": "to",
+          "type": "address",
+          "internalType": "address payable"
         },
         {
-          "internalType": "address",
-          "name": "intex",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "escrowAdapter",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "onftBatchAdapter",
-          "type": "address"
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
-      "name": "wire",
       "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "wire",
+      "inputs": [
+        {
+          "name": "auction",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "intex",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "escrowAdapter",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "onftBatchAdapter",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AuctionResultReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuedIntexCount",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "clearingPrice",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "AuctionStageReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "stageType",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidsBatchSent",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidsRelayDeferred",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidsRelayFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "HoldersRelayDeferred",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "holdersCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "HoldersRelayFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "InboundMessageDropped",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceInstructionsReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "recipientsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkCalledReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkQualifiedReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "RefundInstructionsReceived",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "srcEid",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "instructionsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "AlreadyFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ArrayLengthMismatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "EmptyArray",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "MsgValueBelowFee",
+      "inputs": [
+        {
+          "name": "msgValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "nativeFee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NativeBalanceInsufficient",
+      "inputs": [
+        {
+          "name": "available",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "requested",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NativeSweepFailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NoSuchPendingBidsRelay",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoSuchPendingHoldersRelay",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotSelf",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "RefundFailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroAddress",
+      "inputs": [
+        {
+          "name": "field",
+          "type": "string",
+          "internalType": "string"
+        }
+      ]
     }
   ]
 }

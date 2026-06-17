@@ -64,3 +64,6 @@ CONTEXT.md
 .claude/
 
 reports/
+
+# Forge broadcast logs (deploy output)
+/broadcast
