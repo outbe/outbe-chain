@@ -87,3 +87,21 @@ contract UpgradeOutbe is UpgradeBase {
         vm.stopBroadcast();
     }
 }
+
+/// @title UpgradeOriginMessenger
+/// @notice Upgrade only the OriginMessenger proxy in place (UUPS), leaving the other proxies untouched.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID.
+contract UpgradeOriginMessenger is UpgradeBase {
+    function run() external {
+        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer = vm.addr(pk);
+        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
+        uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
+
+        Create3Factory factory = resolveFactory();
+
+        vm.startBroadcast(pk);
+        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(lzEndpoint, bnbEid)));
+        vm.stopBroadcast();
+    }
+}
