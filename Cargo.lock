@@ -6995,6 +6995,7 @@ dependencies = [
  "outbe-teeregistry",
  "outbe-tribute",
  "outbe-tributefactory",
+ "outbe-update",
  "outbe-validatorset",
  "outbe-zerofee",
  "outbe-zkproof",
