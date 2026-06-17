@@ -189,6 +189,31 @@
   },
   {
     "type": "event",
+    "name": "AuctionDispatchFailed",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "stage",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BidsReceived",
     "inputs": [
       {

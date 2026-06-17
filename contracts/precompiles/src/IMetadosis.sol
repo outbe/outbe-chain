@@ -43,8 +43,6 @@ interface IMetadosis {
 
     event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint64 retentionDays);
 
-    event DesisDispatchFailed(uint32 indexed worldwideDay, string stage, string reason);
-
     function getWorldwideDay(uint32 wwd)
         external
         view

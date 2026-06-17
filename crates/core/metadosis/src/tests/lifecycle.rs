@@ -733,33 +733,45 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
 #[test]
 fn intex_reveal_dispatched_on_mid_offering_tick() {
     use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
     // Offering spans two daily ticks (48h). Reveal must dispatch on the second
     // (mid-offering) tick so it lands separately from clearing at READY; otherwise
     // reveal and clearing collide on one tick. Probed via the best-effort
-    // DesisDispatchFailed event: Desis has no code in tests, so every dispatch
-    // attempt fails and emits one.
+    // AuctionDispatchFailed event (now emitted by Desis): Desis has no code in tests,
+    // so every dispatch attempt fails and emits one.
     const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    let addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
-    let reveal_sig = IMetadosis::DesisDispatchFailed::SIGNATURE_HASH;
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
     let base_ts = crate::runtime::date_key_to_timestamp(20260601);
 
     // Track one wwd by its date key; many wwds dispatch each tick, so filter the
-    // event by its indexed worldwideDay to isolate this one.
+    // event by its indexed seriesId (the wwd's scheduled-process date) to isolate it.
     let wwd_key: u32 = 20260601;
     let mut stages: Vec<Option<String>> = Vec::new();
     for k in 0..7u64 {
-        storage.clear_events(addr);
+        storage.clear_events(desis_addr);
         let ts = base_ts + k * SECONDS_PER_DAY;
         StorageHandle::enter(&mut storage, |storage| {
             run_begin_block(storage.clone(), k + 1, ts);
         });
-        let stage = storage.get_events(addr).iter().find_map(|log| {
-            if log.topics().first() != Some(&reveal_sig) {
+        // Desis sees seriesId = timestamp_to_date_key(scheduled_process_time).
+        let target_series = StorageHandle::enter(&mut storage, |storage| {
+            let metadosis = MetadosisContract::new(storage);
+            let scheduled = metadosis
+                .worldwide_days
+                .entry(outbe_common::WorldwideDay::from(wwd_key))
+                .scheduled_process_time()
+                .read()
+                .unwrap_or(0);
+            timestamp_to_date_key(scheduled)
+        });
+        let stage = storage.get_events(desis_addr).iter().find_map(|log| {
+            if log.topics().first() != Some(&fail_sig) {
                 return None;
             }
-            let ev = IMetadosis::DesisDispatchFailed::decode_log_data(log).ok()?;
-            (ev.worldwideDay == wwd_key).then_some(ev.stage)
+            let ev = IDesis::AuctionDispatchFailed::decode_log_data(log).ok()?;
+            (ev.seriesId == target_series).then_some(ev.stage)
         });
         println!(
             "tick {k}: date={} stage={stage:?}",
@@ -779,19 +791,4 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
         Some("auction_stage_reveal"),
         "reveal must dispatch on the mid-offering tick, not bundled with clearing: {stages:?}"
     );
-}
-
-#[test]
-fn build_auction_config_rounds_cost_amount_up_to_100() {
-    use crate::runtime::build_auction_config;
-    let cfg = build_auction_config(U256::from(1_000_000_150_000_000u128));
-    assert_eq!(
-        cfg.cost_amount_minor % 100,
-        0,
-        "cost_amount must be a multiple of 100"
-    );
-    assert_eq!(cfg.cost_amount_minor, 100_000_100);
-
-    let exact = build_auction_config(U256::from(2_000_000_000_000_000u128));
-    assert_eq!(exact.cost_amount_minor, 200_000_000);
 }

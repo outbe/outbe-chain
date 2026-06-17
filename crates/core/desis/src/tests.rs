@@ -390,3 +390,88 @@ fn test_iface_id_matches_selector_xor() {
         "IDESIS_INTERFACE_ID is stale; update it to match the new selector XOR"
     );
 }
+
+// --- Config construction ---
+
+#[test]
+fn from_coen_price_rounds_cost_amount_up_to_100() {
+    let cfg = AuctionConfig::from_coen_price(U256::from(1_000_000_150_000_000u128));
+    assert_eq!(
+        cfg.cost_amount_minor % 100,
+        0,
+        "cost_amount must be a multiple of 100"
+    );
+    assert_eq!(cfg.cost_amount_minor, 100_000_100);
+
+    let exact = AuctionConfig::from_coen_price(U256::from(2_000_000_000_000_000u128));
+    assert_eq!(exact.cost_amount_minor, 200_000_000);
+}
+
+// --- Best-effort dispatch API ---
+
+const COEN_PRICE: u128 = 2_000_000_000_000_000; // 2e15 → cost_amount_minor = 200_000_000
+
+#[test]
+fn dispatch_stage_start_success_returns_true() {
+    with_storage(|s| {
+        let accepted = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            U256::from(COEN_PRICE),
+        )
+        .unwrap();
+        assert!(accepted, "valid start should be accepted");
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Started
+        );
+    });
+}
+
+#[test]
+fn dispatch_stage_start_failure_returns_false_and_emits_event() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 64]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+
+    // Second start hits the duplicate guard, so the best-effort wrapper swallows the
+    // error, returns false, and emits AuctionDispatchFailed instead of propagating.
+    let (first, second) = StorageHandle::enter(&mut storage, |s| {
+        let first = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            U256::from(COEN_PRICE),
+        )
+        .unwrap();
+        let second = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_timestamp(SERIES_ID),
+            U256::from(COEN_PRICE),
+        )
+        .unwrap();
+        (first, second)
+    });
+    assert!(first, "first dispatch should succeed");
+    assert!(!second, "duplicate dispatch should fail best-effort");
+
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
+    let found = storage.get_events(desis_addr).iter().any(|log| {
+        log.topics().first() == Some(&fail_sig)
+            && IDesis::AuctionDispatchFailed::decode_log_data(log)
+                .map(|ev| ev.seriesId == SERIES_ID && ev.stage == "auction_stage_start")
+                .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected AuctionDispatchFailed event on DESIS_ADDRESS"
+    );
+}
