@@ -12,7 +12,6 @@ import { getNetworkName } from "../../scripts/shared/taskUtils.js";
 
 const ARTIFACT_PATHS: Record<string, string> = {
   OriginMessenger: "artifacts/contracts/outbe/OriginMessenger.sol/OriginMessenger.json",
-  IntexSettlement: "artifacts/contracts/outbe/IntexSettlement.sol/IntexSettlement.json",
   IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
   Desis: "artifacts/contracts/outbe/Desis.sol/Desis.json",
   IntexFactory: "artifacts/contracts/outbe/IntexFactory.sol/IntexFactory.json",
@@ -617,101 +616,8 @@ const onftBatchAdapterWire = task("onft-batch-adapter-wire", "Grant SYSTEM_RELAY
   .setAction(lazy(onftBatchAdapterWireAction));
 
 // ============================================================================
-// IntexSettlement Wire (wire: intex + vaultProvider + paymentToken + promis)
-// ============================================================================
-
-interface SettlementWireArgs {
-  settlementContract: string;
-  intexContract: string;
-  vaultProvider: string;
-  paymentToken: string;
-  promisContract: string;
-}
-
-const settlementWireAction = async (args: SettlementWireArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Wiring IntexSettlement...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
-  console.log(`  IntexNFT1155: ${args.intexContract}`);
-  console.log(`  VaultProvider: ${args.vaultProvider}`);
-  console.log(`  PaymentToken: ${args.paymentToken}`);
-  console.log(`  Promis: ${args.promisContract}`);
-
-  const settlement = (await viem.getContractAt(
-    "IntexSettlement",
-    args.settlementContract as `0x${string}`
-  )) as {
-    read: {
-      intex: () => Promise<`0x${string}`>;
-      vaultProvider: () => Promise<`0x${string}`>;
-      paymentToken: () => Promise<`0x${string}`>;
-      promis: () => Promise<`0x${string}`>;
-    };
-    write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const currentVaultProvider = await settlement.read.vaultProvider();
-  if (currentVaultProvider !== "0x0000000000000000000000000000000000000000") {
-    const [currentIntex, currentPaymentToken, currentPromis] = await Promise.all([
-      settlement.read.intex(),
-      settlement.read.paymentToken(),
-      settlement.read.promis(),
-    ]);
-    console.log(`✅ Already wired:`);
-    console.log(`   intex:         ${currentIntex}`);
-    console.log(`   vaultProvider: ${currentVaultProvider}`);
-    console.log(`   paymentToken:  ${currentPaymentToken}`);
-    console.log(`   promis:        ${currentPromis}`);
-  } else {
-    const tx = await sendAndWait(viem, () =>
-      settlement.write.wire([
-        args.intexContract as `0x${string}`,
-        args.vaultProvider as `0x${string}`,
-        args.paymentToken as `0x${string}`,
-        args.promisContract as `0x${string}`,
-      ]),
-    );
-    console.log(`✅ wire() done. Tx: ${tx}`);
-  }
-};
-
-const settlementWire = task(
-  "settlement-wire",
-  "Wire IntexSettlement: wire(intex, vaultProvider, paymentToken, promis)",
-)
-  .addOption({
-    name: "settlementContract",
-    description: "IntexSettlement contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "intexContract",
-    description: "IntexNFT1155 contract address on Outbe",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "vaultProvider",
-    description: "outbe-vault VaultProvider address (router that IntexSettlement calls depositLiquidity on)",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "paymentToken",
-    description: "PaymentToken (stablecoin) address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "promisContract",
-    description: "Promis (mock or precompile) contract address",
-    defaultValue: "",
-  })
-  .setAction(lazy(settlementWireAction));
-
-// ============================================================================
-// IntexSettlement Grant Roles
-// Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexSettlement so it can call
+// IntexFactory Grant Roles
+// Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory so it can call
 // `intex.settle(...)` and burn Issued / mint Settled tokens.
 // ============================================================================
 
@@ -723,8 +629,8 @@ interface SettlementGrantRolesArgs {
 const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
-  console.log(`Granting roles for IntexSettlement...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
+  console.log(`Granting roles for IntexFactory...`);
+  console.log(`  IntexFactory: ${args.settlementContract}`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
 
   const intex = (await viem.getContractAt(
@@ -746,7 +652,7 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
     args.settlementContract as `0x${string}`,
   ]);
   if (hasIntexRole) {
-    console.log(`✅ IntexNFT1155: Settlement already has SETTLEMENT_ROLE`);
+    console.log(`✅ IntexNFT1155: IntexFactory already has SETTLEMENT_ROLE`);
   } else {
     const tx1 = await sendAndWait(viem, () =>
       intex.write.grantRole([
@@ -754,17 +660,17 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
         args.settlementContract as `0x${string}`,
       ]),
     );
-    console.log(`✅ IntexNFT1155: SETTLEMENT_ROLE granted to Settlement. Tx: ${tx1}`);
+    console.log(`✅ IntexNFT1155: SETTLEMENT_ROLE granted to IntexFactory. Tx: ${tx1}`);
   }
 };
 
 const settlementGrantRoles = task(
   "settlement-grant-roles",
-  "Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexSettlement"
+  "Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory"
 )
   .addOption({
     name: "settlementContract",
-    description: "IntexSettlement contract address",
+    description: "IntexFactory contract address",
     defaultValue: "",
   })
   .addOption({
@@ -887,8 +793,8 @@ const desisGrantMetadosisRole = task("desis-grant-metadosis-role", "Grant METADO
   .setAction(lazy(desisGrantMetadosisRoleAction));
 
 // ============================================================================
-// Promis-burner Wire (grant PROMIS_ROLE on IntexNFT1155 to IntexSettlement)
-// IntexSettlement.minePromis calls intex.burnSettled, which is gated by PROMIS_ROLE.
+// Promis-burner Wire (grant PROMIS_ROLE on IntexNFT1155 to IntexFactory)
+// IntexFactory.minePromis calls intex.burnSettled, which is gated by PROMIS_ROLE.
 // ============================================================================
 
 interface PromisWireArgs {
@@ -900,7 +806,7 @@ const promisWireAction = async (args: PromisWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
   console.log(`Granting PROMIS_ROLE on IntexNFT1155...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
+  console.log(`  IntexFactory: ${args.settlementContract}`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
 
   const intex = (await viem.getContractAt(
@@ -919,22 +825,22 @@ const promisWireAction = async (args: PromisWireArgs, hre: unknown) => {
   const role = await intex.read.PROMIS_ROLE();
   const hasPromisRole = await intex.read.hasRole([role, args.settlementContract as `0x${string}`]);
   if (hasPromisRole) {
-    console.log(`✅ IntexNFT1155: IntexSettlement already has PROMIS_ROLE`);
+    console.log(`✅ IntexNFT1155: IntexFactory already has PROMIS_ROLE`);
   } else {
     const tx = await sendAndWait(viem, () =>
       intex.write.grantRole([role, args.settlementContract as `0x${string}`]),
     );
-    console.log(`✅ IntexNFT1155: PROMIS_ROLE granted to IntexSettlement. Tx: ${tx}`);
+    console.log(`✅ IntexNFT1155: PROMIS_ROLE granted to IntexFactory. Tx: ${tx}`);
   }
 };
 
 const promisWire = task(
   "promis-wire",
-  "Grant PROMIS_ROLE on IntexNFT1155 to IntexSettlement (enables minePromis burn path)"
+  "Grant PROMIS_ROLE on IntexNFT1155 to IntexFactory (enables minePromis burn path)"
 )
   .addOption({
     name: "settlementContract",
-    description: "IntexSettlement contract address",
+    description: "IntexFactory contract address",
     defaultValue: "",
   })
   .addOption({
@@ -1178,7 +1084,6 @@ export const wireTasks = [
   intexFactoryGrantDesisRole.build(),
   intexFactoryGrantMetadosisRole.build(),
   intexFactoryAssertRelayerRole.build(),
-  settlementWire.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
 ];
