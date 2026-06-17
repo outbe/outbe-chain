@@ -2,7 +2,6 @@ use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
-use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -75,8 +74,8 @@ pub fn lysis(
         gratis_allocation,
     )?;
 
-    // 8. Resolve entry_price_minor
-    let entry_price_minor = resolve_entry_price_minor(storage.clone(), wwd)?;
+    // 8. Resolve entry_price_minor for default currency
+    let entry_price_minor_840 = resolve_entry_price_minor(storage.clone(), wwd, 840)?;
 
     // 9. Issue NODs for each tribute
     let mut nod_ids = Vec::with_capacity(tributes.len());
@@ -101,11 +100,16 @@ pub fn lysis(
 
         remaining -= gratis_load;
 
+        let entry_price_minor = match tribute.reference_currency {
+            840 => entry_price_minor_840,
+            _ => resolve_entry_price_minor(storage.clone(), wwd, tribute.reference_currency)?,
+        };
+
         // floor_price = max(tribute_price, entry_price) * (1 + floor_rate 8%)
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
 
-        // fidelity is capped to u32::MAX on write (see
+        // fidelity is capped to u32::MAX on writing (see
         // `outbe_fidelity::FidelityContract::set_fidelity_index`), so the
         // conversion cannot truncate. Guard remains for defense in depth.
         let league_id = u32::try_from(fi).map_err(|_| {
@@ -227,20 +231,20 @@ pub(crate) fn compute_fi_fraction_map(
     Ok(fi_fraction_map)
 }
 
-fn resolve_entry_price_minor(storage: StorageHandle, worldwide_day: WorldwideDay) -> Result<U256> {
-    let oracle = OracleContract::new(storage);
-    let pair_id = oracle.get_pair_id("COEN", "0xUSD")?;
-    if pair_id == 0 {
-        return Err(PrecompileError::Revert(
-            "oracle pair COEN/0xUSD not registered".into(),
-        ));
-    }
-
-    let vwap = oracle
-        .get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)?
-        .unwrap_or(U256::ZERO);
-    let scurve_timestamp = worldwide_day_to_utc_timestamp(worldwide_day);
-    let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)?;
+fn resolve_entry_price_minor(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    iso_code: u16,
+) -> Result<U256> {
+    let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), iso_code)?;
+    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair_id(
+        storage.clone(),
+        worldwide_day.clone(),
+        pair_id.clone(),
+    )?
+    .unwrap_or(U256::ZERO);
+    let max_scurve =
+        outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair_id)?;
     let nominal = vwap.max(max_scurve);
     if nominal.is_zero() {
         return Err(PrecompileError::Revert(
@@ -248,23 +252,4 @@ fn resolve_entry_price_minor(storage: StorageHandle, worldwide_day: WorldwideDay
         ));
     }
     Ok(nominal)
-}
-
-fn worldwide_day_to_utc_timestamp(worldwide_day: WorldwideDay) -> u64 {
-    let worldwide_day: u32 = worldwide_day.into();
-    let year = (worldwide_day / 10_000) as i64;
-    let month = ((worldwide_day / 100) % 100) as i64;
-    let day = (worldwide_day % 100) as i64;
-    let days = days_from_civil(year, month, day);
-    (days as u64) * 24 * 3600
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - if month <= 2 { 1 } else { 0 };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let mp = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
 }

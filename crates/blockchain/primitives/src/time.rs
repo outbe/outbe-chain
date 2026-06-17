@@ -55,7 +55,7 @@ pub fn worldwide_day_from_timestamp(timestamp: u64) -> u32 {
 }
 
 /// Returns the unix timestamp for midnight UTC of a yyyymmdd date key.
-pub fn date_key_to_timestamp(date_key: u32) -> u64 {
+pub fn date_key_to_utc_timestamp(date_key: u32) -> u64 {
     let year = (date_key / 10_000) as i64;
     let month = ((date_key / 100) % 100) as i64;
     let day = (date_key % 100) as i64;
@@ -65,7 +65,7 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
 
 /// Returns the previous calendar day key for a yyyymmdd date key.
 pub fn previous_date_key(date_key: u32) -> u32 {
-    let ts = date_key_to_timestamp(date_key).saturating_sub(SECONDS_PER_DAY);
+    let ts = date_key_to_utc_timestamp(date_key).saturating_sub(SECONDS_PER_DAY);
     timestamp_to_date_key(ts)
 }
 
@@ -75,7 +75,7 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// correct way to advance across month/year boundaries — direct `u32`
 /// arithmetic on `yyyymmdd` is wrong (e.g., `20251231 + 1 != 20260101`).
 pub fn next_date_key(date_key: u32) -> u32 {
-    let ts = date_key_to_timestamp(date_key).saturating_add(SECONDS_PER_DAY);
+    let ts = date_key_to_utc_timestamp(date_key).saturating_add(SECONDS_PER_DAY);
     timestamp_to_date_key(ts)
 }
 
@@ -90,8 +90,8 @@ pub fn next_date_key(date_key: u32) -> u32 {
 /// `u32` subtraction of `yyyymmdd` keys is wrong across month/year
 /// boundaries and must not be used.
 pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, TimeError> {
-    let g_ts = date_key_to_timestamp(genesis_utc_day);
-    let u_ts = date_key_to_timestamp(utc_day);
+    let g_ts = date_key_to_utc_timestamp(genesis_utc_day);
+    let u_ts = date_key_to_utc_timestamp(utc_day);
     let delta = u_ts.checked_sub(g_ts).ok_or(TimeError::PreGenesis {
         utc_day,
         genesis_utc_day,
@@ -146,14 +146,14 @@ mod tests {
     #[test]
     fn date_key_to_timestamp_roundtrip_at_midnight() {
         // Midnight UTC of 2024-01-01 = 1_704_067_200.
-        assert_eq!(date_key_to_timestamp(20240101), 1_704_067_200);
-        assert_eq!(date_key_to_timestamp(19700101), 0);
+        assert_eq!(date_key_to_utc_timestamp(20240101), 1_704_067_200);
+        assert_eq!(date_key_to_utc_timestamp(19700101), 0);
     }
 
     #[test]
     fn date_key_roundtrip_through_timestamp() {
         for k in [19700101u32, 20240101, 20240229, 20241231, 20251205] {
-            let ts = date_key_to_timestamp(k);
+            let ts = date_key_to_utc_timestamp(k);
             assert_eq!(timestamp_to_date_key(ts), k, "roundtrip failed for {k}");
         }
     }
