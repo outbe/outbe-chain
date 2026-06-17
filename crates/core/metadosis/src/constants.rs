@@ -36,8 +36,3 @@ pub const UTC_PLUS_14_OFFSET: u64 = 50_400;
 
 /// Seconds per hour.
 pub const SECONDS_PER_HOUR: u64 = 3600;
-
-// --- Intex auction parameters ---
-
-/// Promis load: 100k Promis per 1 Intex (scaled to 18-dec minor on the wire as `promis_load_minor`).
-pub const PROMIS_LOAD: u128 = 100_000;

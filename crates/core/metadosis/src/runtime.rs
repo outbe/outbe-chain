@@ -14,9 +14,6 @@ use outbe_primitives::{
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
-use outbe_desis::schema::AuctionConfig;
-use outbe_primitives::units::SCALE_1E18_U128;
-
 use crate::constants::*;
 use crate::errors::MetadosisError;
 use crate::precompile::IMetadosis;
@@ -266,7 +263,13 @@ fn update_wwd_status_machine(
     let new_status = metadosis.update_wwd_status(wwd, timestamp)?;
 
     if current_status == status::OFFERING && new_status == status::OFFERING {
-        dispatch_auction_stage_reveal(metadosis, ctx, wwd)?;
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()?;
+        let is_green_day = metadosis.get_day_type(wwd)? == day_type::GREEN;
+        outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), auction_ts, is_green_day)?;
         return Ok(());
     }
 
@@ -283,7 +286,13 @@ fn update_wwd_status_machine(
 
     if current_status < status::OFFERING && new_status == status::OFFERING {
         tribute.unseal_day(wwd)?;
-        dispatch_auction_stage_start(metadosis, ctx, wwd)?;
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()?;
+        let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
+        outbe_desis::api::dispatch_stage_start(ctx.storage.clone(), auction_ts, coen_price)?;
     }
     if current_status == status::OFFERING {
         tribute.seal_day(wwd)?;
@@ -432,7 +441,16 @@ fn process_metadosis(
             // Red day: auction was cancelled by the reveal(false) signal, remainder
             // always goes to PromisLimit.
             let to_promis_limit = if dtype == day_type::GREEN {
-                let delivered = dispatch_auction_stage_clearing(metadosis, ctx, wwd, remainder)?;
+                let auction_ts = metadosis
+                    .worldwide_days
+                    .entry(wwd)
+                    .scheduled_process_time()
+                    .read()?;
+                let delivered = outbe_desis::api::dispatch_stage_clearing(
+                    ctx.storage.clone(),
+                    auction_ts,
+                    remainder,
+                )?;
                 if delivered {
                     U256::ZERO
                 } else {
@@ -594,90 +612,4 @@ fn oracle_worldwide_day_vwap_snapshot_value(
         .ok()
         .flatten()
         .unwrap_or(U256::ZERO)
-}
-
-fn intex_auction_date(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<u32> {
-    let scheduled = metadosis
-        .worldwide_days
-        .entry(wwd)
-        .scheduled_process_time()
-        .read()?;
-    Ok(timestamp_to_date_key(scheduled))
-}
-
-fn dispatch_auction_stage_start(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
-) -> Result<()> {
-    let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-    let auction_date = intex_auction_date(metadosis, wwd)?;
-    let config = build_auction_config(coen_price);
-    desis_dispatch(metadosis, wwd, "auction_stage_start", || {
-        outbe_desis::api::start_auction(ctx.storage.clone(), auction_date, config).map(|_| true)
-    })
-    .map(|_| ())
-}
-
-fn dispatch_auction_stage_reveal(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
-) -> Result<()> {
-    let is_green_day = metadosis.get_day_type(wwd)? == day_type::GREEN;
-    let auction_date = intex_auction_date(metadosis, wwd)?;
-    desis_dispatch(metadosis, wwd, "auction_stage_reveal", || {
-        outbe_desis::api::reveal_auction(ctx.storage.clone(), auction_date, is_green_day)
-            .map(|_| true)
-    })
-    .map(|_| ())
-}
-
-// Returns `true` if Desis accepted the clearing signal; `false` lets the caller
-// route `supplyPromis` to PromisLimit as a fallback so no budget is lost.
-fn dispatch_auction_stage_clearing(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
-    supply_promis: U256,
-) -> Result<bool> {
-    let auction_date = intex_auction_date(metadosis, wwd)?;
-    desis_dispatch(metadosis, wwd, "auction_stage_clearing", || {
-        outbe_desis::api::begin_clearing(ctx.storage.clone(), auction_date, supply_promis)
-            .map(|_| true)
-    })
-}
-
-// Best-effort: a Desis error surfaces as `DesisDispatchFailed` instead of
-// halting the block hook.
-fn desis_dispatch(
-    metadosis: &mut MetadosisContract,
-    wwd: WorldwideDay,
-    stage: &'static str,
-    f: impl FnOnce() -> Result<bool>,
-) -> Result<bool> {
-    match f() {
-        Ok(v) => Ok(v),
-        Err(err) => {
-            metadosis.emit(IMetadosis::DesisDispatchFailed {
-                worldwideDay: wwd.into(),
-                stage: stage.into(),
-                reason: format!("{err:?}"),
-            })?;
-            Ok(false)
-        }
-    }
-}
-
-pub(crate) fn build_auction_config(coen_price: U256) -> AuctionConfig {
-    let cost_amount_u256 =
-        coen_price.saturating_mul(U256::from(PROMIS_LOAD)) / U256::from(10u128.pow(12));
-    let raw_cost_amount: u64 = cost_amount_u256.try_into().unwrap_or(u64::MAX);
-    let cost_amount_minor = raw_cost_amount.div_ceil(100).saturating_mul(100);
-    AuctionConfig {
-        promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
-        min_intex_bid_price: 0,
-        cost_amount_minor,
-        coen_price,
-    }
 }

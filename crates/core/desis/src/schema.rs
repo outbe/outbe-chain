@@ -3,6 +3,9 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
+use outbe_primitives::units::SCALE_1E18_U128;
+
+use crate::constants::PROMIS_LOAD;
 
 /// Auction lifecycle stage.
 ///
@@ -46,6 +49,27 @@ pub struct AuctionConfig {
     /// Live COEN/USD oracle price (1e18) captured at auction start; carried to
     /// IntexFactory.issue to derive floor_price_minor and call_price_minor.
     pub coen_price: U256,
+}
+
+impl AuctionConfig {
+    /// Build the demand-side config from the live COEN/USD price (1e18-scaled).
+    ///
+    /// `cost_amount_minor` is `coen_price * PROMIS_LOAD / 1e12` (payment-token
+    /// decimals), rounded up to the next multiple of 100. `promis_load_minor`
+    /// scales `PROMIS_LOAD` to 18-dec minor units; `min_intex_bid_price = 0`
+    /// means no bid floor.
+    pub fn from_coen_price(coen_price: U256) -> Self {
+        let cost_amount_u256 =
+            coen_price.saturating_mul(U256::from(PROMIS_LOAD)) / U256::from(10u128.pow(12));
+        let raw_cost_amount: u64 = cost_amount_u256.try_into().unwrap_or(u64::MAX);
+        let cost_amount_minor = raw_cost_amount.div_ceil(100).saturating_mul(100);
+        Self {
+            promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
+            min_intex_bid_price: 0,
+            cost_amount_minor,
+            coen_price,
+        }
+    }
 }
 
 /// One bid relayed from BNB.
