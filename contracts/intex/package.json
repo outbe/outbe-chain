@@ -45,8 +45,6 @@
     "coverage:foundry": "forge coverage --ir-minimum --report lcov --report-file lcov.info",
     "fix": "yarn lint:fix && yarn format:fix",
     "cd:extract-abi": "tsx scripts/cd/extract-abi.ts",
-    "cd:save-addresses": "tsx scripts/cd/save-addresses.ts",
-    "cd:resolve-params": "tsx scripts/cd/resolve-parameters.ts",
     "lz:set-peer": "hardhat lz:set-peer",
     "lz:set-uln-config": "hardhat lz:set-uln-config",
     "lz:set-enforced-options": "hardhat lz:set-enforced-options",

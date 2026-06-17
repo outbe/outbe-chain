@@ -10,7 +10,7 @@ import * as fs from "fs";
 
 export type DemoNetwork = "outbeTestnet" | "outbeTestnetNew" | "outbeDevnet" | "outbePrivnet" | "bscTestnet" | "bsc";
 
-/** LayerZero v2 endpoint IDs (mirror scripts/cd/resolve-parameters.ts). */
+/** LayerZero v2 endpoint IDs. */
 export const LZ_EIDS: Record<DemoNetwork, number> = {
   bscTestnet: 40102,
   bsc: 30102,
