@@ -48,6 +48,13 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Register ISO 840 (USD) → COEN/0xUSD pair so the runtime's
+        // `outbe_oracle::api::get_pair_id(_, 840)` lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -469,6 +476,12 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -744,6 +757,12 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     StorageHandle::enter(&mut storage, |s| {
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count

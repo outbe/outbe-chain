@@ -2114,4 +2114,38 @@ mod oracle_tests {
             );
         });
     }
+
+    /// Parity guard for the `settlement_iso_to_pair` base slot used by
+    /// `scripts/seed_genesis.py` (slot 42). Writes a distinctive marker, then
+    /// scans base slots 0..128 to recover the macro-assigned slot via the
+    /// known `keccak256(left_pad(key, 32) || be(base, 32))` derivation.
+    #[test]
+    fn test_settlement_iso_to_pair_slot_parity() {
+        use alloy_primitives::{keccak256, B256};
+        use outbe_primitives::addresses::ORACLE_ADDRESS;
+
+        with_storage(|storage| {
+            let oracle = OracleContract::new(storage.clone());
+            let iso: u16 = 840;
+            let marker = B256::repeat_byte(0xAB);
+            oracle.settlement_iso_to_pair.write(&iso, marker).unwrap();
+
+            for base in 0u64..128 {
+                let mut buf = [0u8; 64];
+                buf[30..32].copy_from_slice(&iso.to_be_bytes());
+                buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
+                let slot = U256::from_be_bytes(keccak256(buf).0);
+                let word = storage.sload(ORACLE_ADDRESS, slot).unwrap();
+                if word == U256::from_be_bytes(marker.0) {
+                    assert_eq!(
+                        base, 42,
+                        "macro-assigned settlement_iso_to_pair slot changed; \
+                         update scripts/seed_genesis.py"
+                    );
+                    return;
+                }
+            }
+            panic!("could not locate settlement_iso_to_pair base slot in 0..128");
+        });
+    }
 }
