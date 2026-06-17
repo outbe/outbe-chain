@@ -19,10 +19,10 @@ pub fn dispatch(
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(data, IFidelity::IFidelityCalls::abi_decode, |call| {
-        let gratis = FidelityContract::new(storage);
+        let contract = FidelityContract::new(storage);
         use IFidelity::IFidelityCalls::*;
         match call {
-            getFidelityIndex(c) => view(c, |c| gratis.get_fidelity_index(c.account)),
+            getFidelityIndex(c) => view(c, |c| contract.get_fidelity_index(c.account)),
         }
     })
 }
