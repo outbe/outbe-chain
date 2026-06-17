@@ -915,9 +915,15 @@ def seed_staking(
 def seed_rewards(storage: StorageBuilder, genesis_timestamp: int):
     """
     Rewards storage layout:
-      slot 1: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
+      slot 0: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
+
+    NOTE: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
+    `pending_rewards` field was removed (PR #12 / 941c4eb). The runtime also
+    lazily anchors this value at block 0 via `rewards::ensure_genesis_anchor`
+    (= timestamp_to_date_key(block0.timestamp)); seeding it here keeps genesis
+    state explicit and matches that block-0 value.
     """
-    storage.set_slot(1, timestamp_to_utc_date_key(genesis_timestamp))
+    storage.set_slot(0, timestamp_to_utc_date_key(genesis_timestamp))
 
 
 def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):

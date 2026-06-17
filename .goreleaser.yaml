@@ -5,8 +5,8 @@ project_name: outbe-chain
 
 before:
   hooks:
-    - rustup toolchain install 1.93
-    - rustup default 1.93
+    - rustup toolchain install 1.96
+    - rustup default 1.96
     - cargo fetch --locked
 
 # Actually builds the binaries.
@@ -53,6 +53,21 @@ builds:
       - --release
       - --locked
       - --package=outbe-feeder
+    targets:
+      - x86_64-unknown-linux-gnu
+  # Production TEE enclave binary (built WITHOUT the `mock` feature, so it links
+  # no mock key material). This is the bare ELF; running it under SGX still needs
+  # the Gramine manifest/signing step in bin/outbe-tee-enclave/gramine/, which is
+  # out of scope for goreleaser.
+  - builder: rust
+    id: outbe-tee-enclave
+    binary: outbe-tee-enclave
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-tee-enclave
     targets:
       - x86_64-unknown-linux-gnu
 
