@@ -66,7 +66,7 @@ pub struct CreateSeriesParams {
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,
-    /// Cost amount (payment-token decimals); "strike" is UI-only terminology.
+    /// Cost amount (payment-token decimals).
     pub cost_amount_minor: u64,
     /// COEN price floor (1e18, oracle scale).
     pub floor_price_minor: U256,
@@ -77,6 +77,8 @@ pub struct CreateSeriesParams {
     /// Creation timestamp (UNIX seconds), supplied by the caller from
     /// `BlockContext`. Must be non-zero — it doubles as the existence sentinel.
     pub issued_at: u32,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
 }
 
 /// Per-series identity + lifecycle record. Keyed by `series_id`.
@@ -127,6 +129,12 @@ pub struct SeriesRecord {
 
     #[attribute(order = 10)]
     pub intex_call_period: u32,
+
+    #[attribute(order = 11)]
+    pub issuance_currency: u16,
+
+    #[attribute(order = 12)]
+    pub reference_currency: u16,
 }
 
 impl SeriesRecord {

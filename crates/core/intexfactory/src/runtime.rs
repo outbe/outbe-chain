@@ -11,7 +11,7 @@ use outbe_intex::IntexState;
 
 use crate::constants::{
     CALL_PRICE_DEN, CALL_PRICE_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM, INTEX_NFT1155_ADDRESS,
-    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, QUALIFIER_REFERENCE_ISO, RESERVE_VAULT,
+    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -45,6 +45,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             call_price_minor,
         },
         issued_at,
+        issuance_currency: params.issuance_currency,
+        reference_currency: params.reference_currency,
     };
     outbe_intex::api::create_series(storage, record)?;
 
@@ -76,7 +78,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         costAmountMinor: params.cost_amount_minor,
         floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: params.intex_call_period,
-        settlementTokenAlias: QUALIFIER_REFERENCE_ISO,
+        settlementTokenAlias: params.reference_currency,
         callWindowDays: params.call_window_days,
         callThresholdDays: params.call_threshold_days,
         callPriceMinor: call_price_minor_u64,

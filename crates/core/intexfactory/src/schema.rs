@@ -16,6 +16,8 @@ pub struct IssuanceParams {
     pub intex_call_period: u32,
     pub call_window_days: u16,
     pub call_threshold_days: u16,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
     pub quantities: Vec<U256>,

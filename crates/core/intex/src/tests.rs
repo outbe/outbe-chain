@@ -32,6 +32,8 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
             call_price_minor: U256::from(900u64),
         },
         issued_at: ISSUED_AT,
+        issuance_currency: 840,
+        reference_currency: 840,
     }
 }
 
@@ -65,6 +67,8 @@ fn create_then_read_round_trip() {
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
         assert_eq!(r.intex_call_period, CALL_PERIOD);
+        assert_eq!(r.issuance_currency, 840);
+        assert_eq!(r.reference_currency, 840);
     });
 }
 

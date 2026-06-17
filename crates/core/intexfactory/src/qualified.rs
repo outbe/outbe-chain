@@ -88,6 +88,9 @@ pub(crate) fn try_qualify(
     rate: U256,
 ) -> Result<bool> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
+    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
+        return Ok(false);
+    }
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(false);
     }
