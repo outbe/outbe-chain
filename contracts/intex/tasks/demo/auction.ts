@@ -18,7 +18,7 @@ import {
   ERC20_ABI,
   AUCTION_STAGE,
 } from "../../scripts/demo/auction.js";
-import { createCommitHash, createRevealSignature } from "../../scripts/auction/bidders.js";
+import { createCommitHash, createRevealSignature } from "../../scripts/demo/bids.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const lazy = (fn: (args: any, hre: any) => Promise<void>) => async () => ({ default: fn });

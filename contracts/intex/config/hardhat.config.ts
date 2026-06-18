@@ -5,13 +5,7 @@ import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
 import hardhatVerify from "@nomicfoundation/hardhat-verify";
 import { configVariable } from "hardhat/config";
 import "dotenv/config";
-import { auctionFlowTasks } from "../tasks/auction/flow.js";
-import { auctionStageTasks } from "../tasks/auction/stageManagement.js";
-import { auctionBidderTasks } from "../tasks/auction/bidders.js";
-import { crosschainTasks } from "../tasks/auction/crosschainFlow.js";
 import { generateCommitHashTasks } from "../tasks/auction/generateCommitHash.js";
-import { intex1155IssuanceTasks } from "../tasks/intex/issuance.js";
-import { intexQualifyTasks } from "../tasks/intex/qualify.js";
 import { qualifiedFlowTasks } from "../tasks/intex/qualified.js";
 import { lzBridgeUtilTasks } from "../tasks/layerzero/bridgeUtils.js";
 import { lzNonceClearTasks } from "../tasks/layerzero/nonceClear.js";
@@ -21,7 +15,7 @@ import { demoTasks } from "../tasks/demo/index.js";
 
 const config: HardhatUserConfig = {
   plugins: [hardhatToolboxViemPlugin, hardhatTypechain, hardhatVerify],
-  tasks: [...auctionFlowTasks, ...auctionStageTasks, ...auctionBidderTasks, ...crosschainTasks, ...generateCommitHashTasks, ...intex1155IssuanceTasks, ...intexQualifyTasks, ...qualifiedFlowTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
+  tasks: [...generateCommitHashTasks, ...qualifiedFlowTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
   paths: {
     sources: ["./contracts", "./test/mocks"],
     tests: "./test/hardhat",
