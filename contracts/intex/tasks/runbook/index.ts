@@ -4,4 +4,4 @@
 import { selftestTasks } from "./selftest.js";
 import { auctionDemoTasks } from "./auction.js";
 
-export const demoTasks = [...selftestTasks, ...auctionDemoTasks];
+export const runbookTasks = [...selftestTasks, ...auctionDemoTasks];

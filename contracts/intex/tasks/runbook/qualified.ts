@@ -6,7 +6,7 @@ import { task } from "hardhat/config";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { bridgeIntexToOutbe } from "../../scripts/intex/bridgeToOutbe.js";
+import { bridgeIntexToOutbe } from "../../scripts/runbook/bridgeToOutbe.js";
 import { resolveSeriesId } from "../../scripts/shared/auctionId.js";
 import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
 import { getNetworkName, lazy, toOptional } from "../../scripts/shared/taskUtils.js";

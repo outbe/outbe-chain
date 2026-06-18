@@ -1,7 +1,7 @@
 import { task } from "hardhat/config";
 
-import { loadOrInitReport, appendStep } from "../../scripts/demo/harness/report.js";
-import { explorerTxUrl, resolveAddresses } from "../../scripts/demo/harness/config.js";
+import { loadOrInitReport, appendStep } from "../../scripts/runbook/harness/report.js";
+import { explorerTxUrl, resolveAddresses } from "../../scripts/runbook/harness/config.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const lazy = (fn: (args: any, hre: any) => Promise<void>) => async () => ({ default: fn });
@@ -41,7 +41,7 @@ const selftestAction = async () => {
   console.log("✅ Self-test report written to reports/selftest/report.md + report.json");
 };
 
-const selftest = task("demo:harness-selftest", "Self-test the demo harness: write a sample run report").setAction(
+const selftest = task("runbook:harness-selftest", "Self-test the demo harness: write a sample run report").setAction(
   lazy(selftestAction),
 );
 

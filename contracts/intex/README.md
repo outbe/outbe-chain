@@ -30,10 +30,10 @@ The demo tasks are the canonical way to drive a full cross-chain run end to end.
 ### Full cycle
 
 ```bash
-yarn hardhat demo:auction:all --series-id 20260526 --outbe-network outbeTestnetNew
+yarn hardhat runbook:auction:all --series-id 20260526 --outbe-network outbeTestnetNew
 ```
 
-`demo:auction:all` runs all seven auction phases in order, pausing for **Enter** between each (`--pause false` runs unattended). LayerZero fees are quoted on-chain per send (no `--value` flag). Common options (defaults shown):
+`runbook:auction:all` runs all seven auction phases in order, pausing for **Enter** between each (`--pause false` runs unattended). LayerZero fees are quoted on-chain per send (no `--value` flag). Common options (defaults shown):
 
 | Option | Default | Notes |
 |--------|---------|-------|
@@ -52,13 +52,13 @@ Each phase is its own task so a live run can pause for wall-clock time and LZ de
 
 | # | Task | What it does |
 |---|------|--------------|
-| 1 | `demo:auction:start` | Outbe → BNB: create the auction; BNB enters `CommittingBids` |
-| 2 | `demo:auction:commit` | BNB: commit a sealed bid |
-| 3 | `demo:auction:reveal` | Outbe → BNB: open the reveal stage; BNB enters `RevealingBids` |
-| 4 | `demo:auction:reveal-bid` | BNB: approve + reveal the bid, locking escrow |
-| 5 | `demo:auction:clearing` | Outbe → BNB: close reveals; Desis persists supply + issuance |
-| 6 | `demo:auction:relay` | BNB → Outbe: relay the bids. OriginMessenger auto-fires `clearAuction`, sending AUCTION_RESULT + issuance + refund back to BNB |
-| 7 | `demo:auction:verify` | BNB: confirm the series minted on `IntexNFT1155` |
+| 1 | `runbook:auction:start` | Outbe → BNB: create the auction; BNB enters `CommittingBids` |
+| 2 | `runbook:auction:commit` | BNB: commit a sealed bid |
+| 3 | `runbook:auction:reveal` | Outbe → BNB: open the reveal stage; BNB enters `RevealingBids` |
+| 4 | `runbook:auction:reveal-bid` | BNB: approve + reveal the bid, locking escrow |
+| 5 | `runbook:auction:clearing` | Outbe → BNB: close reveals; Desis persists supply + issuance |
+| 6 | `runbook:auction:relay` | BNB → Outbe: relay the bids. OriginMessenger auto-fires `clearAuction`, sending AUCTION_RESULT + issuance + refund back to BNB |
+| 7 | `runbook:auction:verify` | BNB: confirm the series minted on `IntexNFT1155` |
 
 Run `yarn hardhat <task> --help` for the full option list.
 
@@ -74,7 +74,7 @@ Run after a series is `Issued` (see [Settlement / Intex Lifecycle](#settlement--
 ### Harness self-test
 
 ```bash
-yarn hardhat demo:harness-selftest   # writes a sample run report (smoke test)
+yarn hardhat runbook:harness-selftest   # writes a sample run report (smoke test)
 ```
 
 ### Address resolution & keys

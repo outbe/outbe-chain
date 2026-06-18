@@ -5,10 +5,10 @@ import { task } from "hardhat/config";
 import * as readline from "node:readline";
 import { getContract, type Address } from "viem";
 
-import { loadOrInitReport } from "../../scripts/demo/harness/report.js";
-import { runStep, assertState } from "../../scripts/demo/harness/runner.js";
-import { assertCrossChainState, awaitLzDelivery } from "../../scripts/demo/harness/lz.js";
-import { resolveAddresses, requireAddress, type DemoNetwork } from "../../scripts/demo/harness/config.js";
+import { loadOrInitReport } from "../../scripts/runbook/harness/report.js";
+import { runStep, assertState } from "../../scripts/runbook/harness/runner.js";
+import { assertCrossChainState, awaitLzDelivery } from "../../scripts/runbook/harness/lz.js";
+import { resolveAddresses, requireAddress, type DemoNetwork } from "../../scripts/runbook/harness/config.js";
 import {
   getRunner,
   contractAt,
@@ -17,8 +17,8 @@ import {
   bnbChainId,
   ERC20_ABI,
   AUCTION_STAGE,
-} from "../../scripts/demo/auction.js";
-import { createCommitHash, createRevealSignature } from "../../scripts/demo/bids.js";
+} from "../../scripts/runbook/auction.js";
+import { createCommitHash, createRevealSignature } from "../../scripts/runbook/bids.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const lazy = (fn: (args: any, hre: any) => Promise<void>) => async () => ({ default: fn });
@@ -398,33 +398,33 @@ const allAction = async (args: AllArgs) => {
 // --------------------------------------------------------------------------
 // Task registration
 // --------------------------------------------------------------------------
-const start = commonOpts(task("demo:auction:start", "Auction demo phase 1/7: start on Outbe -> BNB")).setAction(
+const start = commonOpts(task("runbook:auction:start", "Auction demo phase 1/7: start on Outbe -> BNB")).setAction(
   lazy(startAction),
 );
-const commit = commonOpts(task("demo:auction:commit", "Auction demo phase 2/7: commit a sealed bid on BNB"))
+const commit = commonOpts(task("runbook:auction:commit", "Auction demo phase 2/7: commit a sealed bid on BNB"))
   .addOption(opt("quantity", "Bid quantity (Intex units)", "5"))
   .addOption(opt("bidPrice", "Bid price per Intex (payment-token minor units)", "60000000"))
   .setAction(lazy(commitAction));
-const reveal = commonOpts(task("demo:auction:reveal", "Auction demo phase 3/7: open the reveal stage -> BNB")).setAction(
+const reveal = commonOpts(task("runbook:auction:reveal", "Auction demo phase 3/7: open the reveal stage -> BNB")).setAction(
   lazy(revealAction),
 );
-const revealBid = commonOpts(task("demo:auction:reveal-bid", "Auction demo phase 4/7: reveal the committed bid on BNB"))
+const revealBid = commonOpts(task("runbook:auction:reveal-bid", "Auction demo phase 4/7: reveal the committed bid on BNB"))
   .addOption(opt("quantity", "Bid quantity (must match the commit)", "5"))
   .addOption(opt("bidPrice", "Bid price (must match the commit)", "60000000"))
   .setAction(lazy(revealBidAction));
 const clearing = commonOpts(
-  task("demo:auction:clearing", "Auction demo phase 5/7: signal clearing + persist supply/issuance"),
+  task("runbook:auction:clearing", "Auction demo phase 5/7: signal clearing + persist supply/issuance"),
 )
   .addOption(opt("supply", "Issued supply in Intex units (Desis multiplies by promisLoadMinor for Promis)", "100"))
   .addOption(opt("bidPrice", "Bid price reference (used by relay-phase reveal payload)", "60000000"))
   .setAction(lazy(clearingAction));
-const relay = commonOpts(task("demo:auction:relay", "Auction demo phase 6/7: wait for the auto-relayed bids batch (TargetMessenger fires it inside the clearing handler; OriginMessenger then auto-fires clearAuction)"))
+const relay = commonOpts(task("runbook:auction:relay", "Auction demo phase 6/7: wait for the auto-relayed bids batch (TargetMessenger fires it inside the clearing handler; OriginMessenger then auto-fires clearAuction)"))
   .setAction(lazy(relayAction));
-const verify = commonOpts(task("demo:auction:verify", "Auction demo phase 7/7: verify series + mint on BNB")).setAction(
+const verify = commonOpts(task("runbook:auction:verify", "Auction demo phase 7/7: verify series + mint on BNB")).setAction(
   lazy(verifyAction),
 );
 const all = commonOpts(
-  task("demo:auction:all", "Auction demo: run all seven phases in order, pausing for Enter between each"),
+  task("runbook:auction:all", "Auction demo: run all seven phases in order, pausing for Enter between each"),
 )
   .addOption(opt("quantity", "Bid quantity (Intex units)", "5"))
   .addOption(opt("bidPrice", "Bid price per Intex (payment-token minor units)", "60000000"))
