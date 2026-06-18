@@ -74,7 +74,6 @@ pub struct FidelityContract {
 }
 
 /// Domain-separated per-owner cohort slot key: `keccak(domain ++ owner ++ index)`.
-/// Mirrors `NodContract::owner_index_key` (`crates/core/nod/src/state.rs`).
 pub(crate) fn cohort_key(domain: u8, owner: Address, index: u32) -> B256 {
     let mut buf = [0u8; 1 + 20 + 4];
     buf[0] = domain;
