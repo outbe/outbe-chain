@@ -81,7 +81,7 @@ A series moves through `Issued → Qualified → Called → Settled`:
 - **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer crosschainMint/crosschainBurn and voluntary settle are rejected.
 - **Qualified** — `markQualified` flips the series once qualification conditions are met. Holders can bridge to Outbe and voluntarily `settle`.
 - **Called** — `markCalled` (cross-chain) sweeps holder balances to Outbe and arms a `callPeriod` deadline within which holders must settle.
-- **Settled** — `IntexNFT1155.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). The Outbe Promis precompile later burns Settled Intex (via `IntexNFT1155.burnSettled`) to mint Promis.
+- **Settled** — IntexFactory (granted `SETTLEMENT_ROLE` on IntexNFT1155 during wiring) calls `IntexNFT1155.settle`, burning Issued Intex and minting a soulbound `settledTokenId` (1:1). The Outbe Promis precompile later burns Settled Intex (via `IntexNFT1155.burnSettled`) to mint Promis.
 
 `expireSeries` is an action, not a state: it burns remaining Issued tokens and emits `SeriesExpired`; Settled tokens are unaffected.
 
