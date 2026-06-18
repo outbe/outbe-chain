@@ -1,4 +1,4 @@
-@contracts/=contracts/
+@contracts/=src/
 @test-mocks/=test/mocks/
 @layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/contracts/
 @layerzerolabs/oapp-evm-upgradeable/=node_modules/@layerzerolabs/oapp-evm-upgradeable/contracts/

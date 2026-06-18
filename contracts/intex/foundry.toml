@@ -3,7 +3,7 @@ solc_version = '0.8.30'
 evm_version = 'Prague'
 bytecode_hash = 'none'
 cbor_metadata = false
-src = 'contracts'
+src = 'src'
 out = 'out'
 test = 'test/foundry'
 script = 'deploy'
@@ -22,7 +22,7 @@ libs = [
 
 remappings = [
     # Contract imports from tests
-    '@contracts/=contracts/',
+    '@contracts/=src/',
     '@test-mocks/=test/mocks/',
     # LayerZero foundry toolbox remappings
     'ds-test/=node_modules/@layerzerolabs/toolbox-foundry/lib/ds-test/',

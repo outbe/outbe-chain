@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {BridgeMsgCodec} from "../../contracts/shared/libs/BridgeMsgCodec.sol";
+import {BridgeMsgCodec} from "../../src/shared/libs/BridgeMsgCodec.sol";
 
 /// @dev Test-only wrapper to expose internal BridgeMsgCodec functions.
 contract CodecHarness {
