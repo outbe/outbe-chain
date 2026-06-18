@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {IOriginMessenger} from "@contracts/outbe/interfaces/IOriginMessenger.sol";
+import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 

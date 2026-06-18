@@ -6,8 +6,8 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 
 /// @dev Verifies the CREATE3 proxy deployment path used by the deploy scripts: deterministic
 ///      addresses, correct implementation pointer, initialization, idempotency, and that the proxy

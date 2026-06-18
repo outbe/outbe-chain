@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 /// @dev Schedule snap on bridge signal: early reveal/clearing signal pulls the matching

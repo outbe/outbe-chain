@@ -5,11 +5,11 @@ import {console} from "forge-std/console.sol";
 import {BaseScript} from "./BaseScript.s.sol";
 import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 
 /// @title DeployBsc
 /// @author Outbe

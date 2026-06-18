@@ -7,7 +7,7 @@ import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 
 /// @title DeployOutbe
 /// @author Outbe

@@ -8,7 +8,7 @@ pragma solidity 0.8.30;
 ///      at commit `39b7494` (2026-05-18 sync). Re-sync this file when outbe-vault publishes
 ///      an npm package or updates the interface; single canonical copy lives here under
 ///      `contracts/vendor/outbe-vault/interfaces/` and is imported by both Outbe-side
-///      and BNB-side (`contracts/bnb/EscrowAdapter.sol`).
+///      and BNB-side (`contracts/target/EscrowAdapter.sol`).
 /// @dev Pre-added on 2026-05-18 ahead of the corresponding outbe-vault PR: `IntexBidPrice`
 ///      (appended after `CredisAnadosis`) is the slot the outbe-vault owner will register
 ///      `EscrowAdapter` under via `addLiquiditySource`. Andrey confirmed this name; it may

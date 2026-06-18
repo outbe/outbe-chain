@@ -3,13 +3,13 @@ pragma solidity 0.8.30;
 
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";

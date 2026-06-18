@@ -11,11 +11,11 @@ const OUTPUT_DIR = "abi-export";
 // Contracts to extract ABIs for
 const CONTRACTS = [
   // BNB-side
-  "bnb/IntexAuction",
-  "bnb/EscrowAdapter",
-  "bnb/TargetMessenger",
+  "target/IntexAuction",
+  "target/EscrowAdapter",
+  "target/TargetMessenger",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "outbe/OriginMessenger",
+  "origin/OriginMessenger",
   // Both chains
   "shared/IntexNFT1155",
   "shared/ONFT1155Adapter",
@@ -24,11 +24,11 @@ const CONTRACTS = [
 
 const INTERFACES = [
   // BNB-side
-  "bnb/interfaces/IIntexAuction",
-  "bnb/interfaces/IEscrowAdapter",
-  "bnb/interfaces/ITargetMessenger",
+  "target/interfaces/IIntexAuction",
+  "target/interfaces/IEscrowAdapter",
+  "target/interfaces/ITargetMessenger",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "outbe/interfaces/IOriginMessenger",
+  "origin/interfaces/IOriginMessenger",
   // Both chains
   "shared/interfaces/IIntexNFT1155",
   "shared/interfaces/IONFT1155Adapter",

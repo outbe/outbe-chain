@@ -40,7 +40,7 @@ export interface ViemClient {
 }
 
 // AuctionConfig for Telosis.createAndStartAuction
-// Mirrors the Solidity AuctionConfig struct in contracts/outbe/interfaces/IDesis.sol.
+// Mirrors the Solidity AuctionConfig struct in contracts/origin/interfaces/IDesis.sol.
 // Field order MUST match the struct — viem encodes by position when invoking the contract.
 export interface AuctionConfig {
   seriesId: number;

@@ -73,12 +73,12 @@ export function getRunner(network: DemoNetwork): Runner {
 }
 
 const ARTIFACTS: Record<string, string> = {
-  Desis: "artifacts/contracts/outbe/Desis.sol/Desis.json",
-  IntexFactory: "artifacts/contracts/outbe/IntexFactory.sol/IntexFactory.json",
-  OriginMessenger: "artifacts/contracts/outbe/OriginMessenger.sol/OriginMessenger.json",
-  IntexAuction: "artifacts/contracts/bnb/IntexAuction.sol/IntexAuction.json",
-  TargetMessenger: "artifacts/contracts/bnb/TargetMessenger.sol/TargetMessenger.json",
-  EscrowAdapter: "artifacts/contracts/bnb/EscrowAdapter.sol/EscrowAdapter.json",
+  Desis: "artifacts/contracts/origin/Desis.sol/Desis.json",
+  IntexFactory: "artifacts/contracts/origin/IntexFactory.sol/IntexFactory.json",
+  OriginMessenger: "artifacts/contracts/origin/OriginMessenger.sol/OriginMessenger.json",
+  IntexAuction: "artifacts/contracts/target/IntexAuction.sol/IntexAuction.json",
+  TargetMessenger: "artifacts/contracts/target/TargetMessenger.sol/TargetMessenger.json",
+  EscrowAdapter: "artifacts/contracts/target/EscrowAdapter.sol/EscrowAdapter.json",
   IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
 };
 

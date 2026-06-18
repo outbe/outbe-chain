@@ -11,10 +11,10 @@ import { OUTBE_CHAINS } from "../../scripts/shared/layerzero.js";
 import { getNetworkName } from "../../scripts/shared/taskUtils.js";
 
 const ARTIFACT_PATHS: Record<string, string> = {
-  OriginMessenger: "artifacts/contracts/outbe/OriginMessenger.sol/OriginMessenger.json",
+  OriginMessenger: "artifacts/contracts/origin/OriginMessenger.sol/OriginMessenger.json",
   IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
-  Desis: "artifacts/contracts/outbe/Desis.sol/Desis.json",
-  IntexFactory: "artifacts/contracts/outbe/IntexFactory.sol/IntexFactory.json",
+  Desis: "artifacts/contracts/origin/Desis.sol/Desis.json",
+  IntexFactory: "artifacts/contracts/origin/IntexFactory.sol/IntexFactory.json",
 };
 
 function loadOutbeArtifact(name: string): { abi: unknown[] } {
