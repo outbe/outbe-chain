@@ -1,10 +1,9 @@
-// LayerZero delivery-await + proof for the demo runbooks (QC-1261 / E0).
+// LayerZero delivery-await + proof for the runbooks.
 //
 // A cross-chain step is only "done" once the destination chain has actually processed the message.
 // We prove that the same way the protocol orders messages: poll the destination endpoint's
 // `lazyInboundNonce` until it reaches the source endpoint's `outboundNonce` for the (sender, dstEid,
-// receiver) channel. Ported from scripts/auction/crosschainFlow.ts `waitForLzDelivery`, made
-// self-contained (clients + addresses passed in) for reuse across the auction/settlement runbooks.
+// receiver) channel. Self-contained (clients + addresses passed in) for reuse across the runbooks.
 
 import { type Address, type PublicClient } from "viem";
 import { type DemoNetwork, LZ_EIDS } from "./config.js";

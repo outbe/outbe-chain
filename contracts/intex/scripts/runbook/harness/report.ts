@@ -1,6 +1,6 @@
-// Resumable, file-based run report for the demo runbooks (QC-1261 / E0).
+// Resumable, file-based run report for the runbooks.
 //
-// A demo flow runs across SEPARATE `hardhat` invocations (one per phase, with real wall-clock and
+// A runbook runs across SEPARATE `hardhat` invocations (one per phase, with real wall-clock and
 // LayerZero-delivery waits between them), so the report cannot live in process memory — it is
 // persisted to `reports/<runId>/` and appended on each phase. `runId` is the auction `seriesId`
 // (or any caller-chosen key), so re-running a phase or resuming later keeps one coherent report.

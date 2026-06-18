@@ -1,8 +1,6 @@
-// E1 — full cross-chain auction demo runbook: orchestrator (QC-1261).
-//
-// Shared runtime for the phase tasks in tasks/demo/auction.ts: dual-chain viem clients (one key per
-// chain from .env), artifact-ABI contract handles, the AuctionConfig builder, and the ERC20 approve
-// ABI for the escrow lock. The runner is the operator on Outbe and the bidder on BNB.
+// Cross-chain auction runbook: shared runtime for the phase tasks in tasks/runbook/auction.ts —
+// dual-chain viem clients (one key per chain from .env), contract handles, the AuctionConfig builder
+// and the ERC20 approve ABI. The runner is the operator on the origin chain and the bidder on target.
 
 import {
   createPublicClient,

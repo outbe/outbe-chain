@@ -1,4 +1,4 @@
-// Step-runner for the demo runbooks (QC-1261 / E0).
+// Step-runner for the runbooks.
 //
 // Wraps one logical step of a flow: run the action, capture the tx receipt (gas), build the
 // explorer link, and append the evidence to the resumable run report. A "step" returns whatever

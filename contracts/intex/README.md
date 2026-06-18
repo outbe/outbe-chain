@@ -62,15 +62,6 @@ Each phase is its own task so a live run can pause for wall-clock time and LZ de
 
 Run `yarn hardhat <task> --help` for the full option list.
 
-### Settlement lifecycle
-
-Run after a series is `Issued` (see [Settlement / Intex Lifecycle](#settlement--intex-lifecycle)). Same `--series-id` / `--outbe-network` (defaults to `outbeTestnetNew`) / `--bnb-network` options; LZ fees auto-quoted:
-
-- `demo:settlement:mark-qualified` — `Issued → Qualified`, signalled to BNB.
-- `demo:settlement:mark-called` — `Qualified → Called`, signalled to BNB.
-- `demo:settlement:settle` — authorize a settler and run `IntexSettlement.settle`; adds `--holder`, `--amount`, `--settler`.
-- `settlement-mine` — Phase 3: holder calls `IntexSettlement.minePromis(seriesId, amount)`, which atomically burns `amount` Settled Intex and mints `amount * promisLoadMinor` Promis to the caller.
-
 ### Harness self-test
 
 ```bash

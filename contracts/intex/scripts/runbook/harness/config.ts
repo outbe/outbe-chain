@@ -1,10 +1,7 @@
-// Demo-runbook network config + address resolution (QC-1261 / E0).
-//
-// Resolves block-explorer links (for evidence), LayerZero endpoint IDs (for delivery proofs), and
-// the deployed contract addresses the runbooks drive. Addresses are read from the published
-// `@outbe/intex-contracts` package (same source the post-deploy workflow uses), with a local
-// `deployed-addresses.json` and per-contract env overrides as fallbacks — so a demo can run against
-// a fresh deploy without hand-editing the scripts.
+// Runbook network config + address resolution: block-explorer links, LayerZero endpoint IDs and the
+// deployed contract addresses the runbooks drive. Addresses come from the published
+// @outbe/intex-contracts package, with a local deployed-addresses.json and per-contract env
+// overrides (DEMO_ADDR_*) as fallbacks.
 
 import * as fs from "fs";
 
