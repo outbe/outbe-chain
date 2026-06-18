@@ -69,8 +69,6 @@ export interface DemoAddresses {
   intexAuction?: string;
   escrowAdapter?: string;
   intexNFT1155?: string;
-  promisLimit?: string;
-  // External / pre-existing addresses (from DEMO_ADDR_* env overrides):
   paymentToken?: string;
   vaultProvider?: string;
   metadosis?: string;
@@ -85,8 +83,7 @@ type ContractKey =
   | "targetMessenger"
   | "intexAuction"
   | "escrowAdapter"
-  | "intexNFT1155"
-  | "promisLimit";
+  | "intexNFT1155";
 
 const PACKAGE_KEY: Record<ContractKey, string> = {
   desis: "Desis",
@@ -96,7 +93,6 @@ const PACKAGE_KEY: Record<ContractKey, string> = {
   intexAuction: "IntexAuction",
   escrowAdapter: "EscrowAdapter",
   intexNFT1155: "IntexNFT1155",
-  promisLimit: "MockPromisLimit",
 };
 
 /**
@@ -107,7 +103,7 @@ export function resolveAddresses(network: DemoNetwork): DemoAddresses {
   const pkg = loadPackageAddresses(network);
   const out: DemoAddresses = {};
   (Object.keys(PACKAGE_KEY) as (keyof typeof PACKAGE_KEY)[]).forEach((k) => {
-    out[k] = envOverride(k) ?? pkg[PACKAGE_KEY[k]] ?? (k === "promisLimit" ? pkg.PromisLimit : undefined);
+    out[k] = envOverride(k) ?? pkg[PACKAGE_KEY[k]];
   });
   (["paymentToken", "vaultProvider", "metadosis", "theCompact"] as const).forEach((k) => {
     out[k] = envOverride(k) ?? out[k];

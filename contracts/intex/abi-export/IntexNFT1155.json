@@ -2042,17 +2042,6 @@
     },
     {
       "type": "error",
-      "name": "UnknownSeriesId",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "ZeroAddress",
       "inputs": [
         {

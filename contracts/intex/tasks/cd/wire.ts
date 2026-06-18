@@ -15,8 +15,6 @@ const ARTIFACT_PATHS: Record<string, string> = {
   IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
   Desis: "artifacts/contracts/outbe/Desis.sol/Desis.json",
   IntexFactory: "artifacts/contracts/outbe/IntexFactory.sol/IntexFactory.json",
-  MockPromis: "artifacts/contracts/outbe/MockPromis.sol/MockPromis.json",
-  MockPromisLimit: "artifacts/contracts/outbe/MockPromisLimit.sol/MockPromisLimit.json",
 };
 
 function loadOutbeArtifact(name: string): { abi: unknown[] } {
@@ -549,7 +547,7 @@ const desisWire = task("desis-wire", "Wire Desis to OriginMessenger, PromisLimit
   })
   .addOption({
     name: "promisLimitContract",
-    description: "PromisLimit/MockPromisLimit contract address on Outbe",
+    description: "PromisLimit precompile address on Outbe",
     defaultValue: "",
   })
   .addOption({
@@ -679,62 +677,6 @@ const settlementGrantRoles = task(
     defaultValue: "",
   })
   .setAction(lazy(settlementGrantRolesAction));
-
-// ============================================================================
-// MockPromisLimit: Grant DESIS_ROLE to Desis
-// ============================================================================
-
-interface PromisLimitGrantDesisRoleArgs {
-  promisLimitContract: string;
-  desisContract: string;
-}
-
-const promisLimitGrantDesisRoleAction = async (args: PromisLimitGrantDesisRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Granting DESIS_ROLE on MockPromisLimit...`);
-  console.log(`  MockPromisLimit: ${args.promisLimitContract}`);
-  console.log(`  Desis: ${args.desisContract}`);
-
-  const promisLimit = (await viem.getContractAt(
-    "MockPromisLimit",
-    args.promisLimitContract as `0x${string}`
-  )) as {
-    read: {
-      DESIS_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await promisLimit.read.DESIS_ROLE();
-  const alreadyGranted = await promisLimit.read.hasRole([role, args.desisContract as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ DESIS_ROLE already granted to Desis`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    promisLimit.write.grantRole([role, args.desisContract as `0x${string}`]),
-  );
-  console.log(`✅ DESIS_ROLE granted on MockPromisLimit to Desis. Tx: ${txHash}`);
-};
-
-const promisLimitGrantDesisRole = task("promis-limit-grant-desis-role", "Grant DESIS_ROLE on MockPromisLimit to Desis")
-  .addOption({
-    name: "promisLimitContract",
-    description: "MockPromisLimit contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "desisContract",
-    description: "Desis contract address",
-    defaultValue: "",
-  })
-  .setAction(lazy(promisLimitGrantDesisRoleAction));
 
 // ============================================================================
 // Desis: Grant METADOSIS_ROLE
@@ -1079,7 +1021,6 @@ export const wireTasks = [
   outbeBridgeWire.build(),
   desisWire.build(),
   desisGrantMetadosisRole.build(),
-  promisLimitGrantDesisRole.build(),
   intexFactoryWire.build(),
   intexFactoryGrantDesisRole.build(),
   intexFactoryGrantMetadosisRole.build(),
