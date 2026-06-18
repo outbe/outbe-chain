@@ -4,7 +4,6 @@
 // chain from .env), artifact-ABI contract handles, the AuctionConfig builder, and the ERC20 approve
 // ABI for the escrow lock. The runner is the operator on Outbe and the bidder on BNB.
 
-import * as fs from "fs";
 import {
   createPublicClient,
   createWalletClient,
@@ -20,6 +19,7 @@ import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { bsc, bscTestnet } from "viem/chains";
 
 import { type DemoNetwork, isOutbe } from "./harness/config.js";
+import { loadAbi } from "../shared/abi.js";
 
 const OUTBE_CHAIN_IDS: Record<string, number> = {
   outbeTestnet: 512215,
@@ -70,22 +70,6 @@ export function getRunner(network: DemoNetwork): Runner {
   const publicClient = createPublicClient({ chain, transport }) as PublicClient;
   const walletClient = createWalletClient({ account, chain, transport });
   return { network, account, publicClient, walletClient, privateKey };
-}
-
-const ARTIFACTS: Record<string, string> = {
-  Desis: "artifacts/contracts/origin/Desis.sol/Desis.json",
-  IntexFactory: "artifacts/contracts/origin/IntexFactory.sol/IntexFactory.json",
-  OriginMessenger: "artifacts/contracts/origin/OriginMessenger.sol/OriginMessenger.json",
-  IntexAuction: "artifacts/contracts/target/IntexAuction.sol/IntexAuction.json",
-  TargetMessenger: "artifacts/contracts/target/TargetMessenger.sol/TargetMessenger.json",
-  EscrowAdapter: "artifacts/contracts/target/EscrowAdapter.sol/EscrowAdapter.json",
-  IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
-};
-
-export function loadAbi(name: string): unknown[] {
-  const p = ARTIFACTS[name];
-  if (!p || !fs.existsSync(p)) throw new Error(`Artifact not found: ${name}. Run 'yarn compile' first.`);
-  return (JSON.parse(fs.readFileSync(p, "utf-8")) as { abi: unknown[] }).abi;
 }
 
 /** A viem contract handle bound to the runner's public + wallet clients. Typed loosely (artifact ABI). */

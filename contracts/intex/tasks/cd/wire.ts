@@ -6,80 +6,34 @@ import {
   http,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import * as fs from "fs";
-import { OUTBE_CHAINS } from "../../scripts/shared/layerzero.js";
+import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
 import { getNetworkName } from "../../scripts/shared/taskUtils.js";
+import { loadAbi } from "../../scripts/shared/abi.js";
 
-const ARTIFACT_PATHS: Record<string, string> = {
-  OriginMessenger: "artifacts/contracts/origin/OriginMessenger.sol/OriginMessenger.json",
-  IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
-  Desis: "artifacts/contracts/origin/Desis.sol/Desis.json",
-  IntexFactory: "artifacts/contracts/origin/IntexFactory.sol/IntexFactory.json",
-};
-
-function loadOutbeArtifact(name: string): { abi: unknown[] } {
-  const p = ARTIFACT_PATHS[name];
-  if (!p || !fs.existsSync(p)) throw new Error(`Artifact not found: ${name}. Run yarn compile.`);
-  return JSON.parse(fs.readFileSync(p, "utf-8"));
-}
-
-/**
- * Wire-task viem facade.
- *
- * Both Outbe and non-Outbe paths expose the same minimum surface:
- *   - getContractAt(name, address) → contract instance with read/write
- *   - getPublicClient() → underlying viem PublicClient (used to wait for tx receipts)
- *
- * Waiting for receipts before issuing the next dependent call is mandatory:
- *   `escrow.write.wire(...)` returns a tx hash as soon as the tx hits the
- *   mempool — viem's simulation of the next call would otherwise read state
- *   that does not yet contain the previous tx, surfacing as `NotWired`,
- *   missing-role reverts, etc.
- */
 type WireViem = {
   getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getPublicClient: () => Promise<any>;
 };
 
-/** Outbe: viem + defineChain (hardhat-viem does not know 424242/512512). Others: network.connect() */
+/** viem read/write facade for the wire network, built from its RPC + key, with ABIs from abi-export. */
 async function getViemForWire(hre: unknown): Promise<WireViem> {
   const networkName = getNetworkName(hre);
-  const outbeNetworks = ["outbeTestnet", "outbeTestnetNew", "outbeDevnet", "outbePrivnet"] as const;
-  type OutbeNetwork = (typeof outbeNetworks)[number];
-  if (!outbeNetworks.includes(networkName as OutbeNetwork)) {
-    const { viem } = await (hre as Hre).network.connect();
-    return viem;
-  }
-  const chain = OUTBE_CHAINS[networkName as OutbeNetwork];
-  const defaultRpcs: Record<string, string> = {
-    outbeTestnet: "https://eth.testnet.outbe.net",
-    outbeTestnetNew: "https://rpc.testnet.outbe.net",
-    outbeDevnet: "https://eth.d.outbe.net",
-    outbePrivnet: "https://eth.p.outbe.net",
-  };
-  const rpc = process.env.OUTBE_RPC_URL || defaultRpcs[networkName];
-  const pk = process.env.OUTBE_PRIVATE_KEY;
-  if (!pk) throw new Error("OUTBE_PRIVATE_KEY required for Outbe networks");
+  const { rpc, pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const chain = makeChain(networkName, rpc);
   const account = privateKeyToAccount(pk as `0x${string}`);
   const transport = http(rpc);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
   return {
-    getContractAt: async (name: string, address: `0x${string}`) => {
-      const { abi } = loadOutbeArtifact(name);
-      return getContract({ address, abi: abi as unknown[], client: { public: publicClient, wallet: walletClient } });
-    },
+    getContractAt: async (name: string, address: `0x${string}`) =>
+      getContract({ address, abi: loadAbi(name), client: { public: publicClient, wallet: walletClient } }),
     getPublicClient: async () => publicClient,
   };
 }
 
-/**
- * Send a write tx and wait until it is mined.
- *
- * Use this for every `.write.*` call in this file. Returns the tx hash unchanged
- * so callers can keep logging it like before, but only after the receipt arrives.
- */
+/** Send a write tx and wait for its receipt before the next dependent call. */
 async function sendAndWait(
   viem: WireViem,
   writeFn: () => Promise<`0x${string}`>,
@@ -88,19 +42,6 @@ async function sendAndWait(
   const publicClient = await viem.getPublicClient();
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
-}
-
-interface Hre {
-  network: {
-    connect: () => Promise<{
-      viem: {
-        getWalletClients: () => Promise<Array<{ account: { address: `0x${string}` } }>>;
-        getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        getPublicClient: () => Promise<any>;
-      };
-    }>;
-  };
 }
 
 interface AuctionWireArgs {
@@ -139,7 +80,7 @@ const lazy = (fn: (args: any, hre: any) => Promise<void>) =>
 // ============================================================================
 
 const auctionWireAction = async (args: AuctionWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
   
   console.log(`Wiring Auction...`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
@@ -191,7 +132,7 @@ const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter")
 // ============================================================================
 
 const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
   
   console.log(`Wiring EscrowAdapter...`);
   console.log(`  Escrow: ${args.escrowContract}`);
@@ -304,7 +245,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
     );
   }
 
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
 
   console.log(`Wiring TargetMessenger...`);
   console.log(`  Bridge: ${args.bridgeContract}`);
@@ -567,7 +508,7 @@ interface ONFTBatchAdapterWireArgs {
 }
 
 const onftBatchAdapterWireAction = async (args: ONFTBatchAdapterWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
 
   console.log(`Wiring ONFT1155AdapterBatch (grant SYSTEM_RELAYER_ROLE)...`);
   console.log(`  BatchAdapter: ${args.batchAdapterContract}`);

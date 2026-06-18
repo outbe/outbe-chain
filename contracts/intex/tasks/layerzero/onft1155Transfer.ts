@@ -1,19 +1,10 @@
 import { task } from "hardhat/config";
 import { Options } from "@layerzerolabs/lz-v2-utilities";
-
-interface Hre {
-  network: {
-    connect: () => Promise<{
-      viem: {
-        getPublicClient: () => Promise<{
-          getBalance: (params: { address: `0x${string}` }) => Promise<bigint>;
-        }>;
-        getWalletClients: () => Promise<Array<{ account: { address: `0x${string}` } }>>;
-        getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
-      };
-    }>;
-  };
-}
+import { createPublicClient, createWalletClient, getContract, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
+import { getNetworkName } from "../../scripts/shared/taskUtils.js";
+import { loadAbi } from "../../scripts/shared/abi.js";
 
 // EID to network name mapping for common testnets/mainnets
 const EID_TO_NETWORK: Record<number, string> = {
@@ -68,7 +59,15 @@ const lazy =
   async () => ({ default: fn });
 
 const onft1155SendAction = async (args: ONFT1155SendArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const networkName = getNetworkName(hre);
+  const { rpc, pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const chain = makeChain(networkName, rpc);
+  const account = privateKeyToAccount(pk as `0x${string}`);
+  const transport = http(rpc);
+  const publicClient = createPublicClient({ chain, transport });
+  const walletClient = createWalletClient({ account, chain, transport });
+  const signer = account.address;
 
   const dstEid = parseInt(args.dstEid, 10);
   const tokenId = BigInt(args.tokenId);
@@ -85,10 +84,6 @@ const onft1155SendAction = async (args: ONFT1155SendArgs, hre: unknown) => {
   console.log(`Token ID: ${tokenId}, Amount: ${amount}`);
   console.log(`Destination EID: ${dstEid}`);
 
-  const publicClient = await viem.getPublicClient();
-  const [walletClient] = await viem.getWalletClients();
-  const signer = walletClient.account.address;
-
   console.log(`Using signer: ${signer}`);
 
   const recipient = (args.to || signer) as `0x${string}`;
@@ -98,30 +93,23 @@ const onft1155SendAction = async (args: ONFT1155SendArgs, hre: unknown) => {
   console.log(`ONFT1155Adapter: ${adapterAddress}`);
 
   // Get contracts using viem
-  const adapter = (await viem.getContractAt(
-    "ONFT1155Adapter",
-    adapterAddress
-  )) as {
-    read: {
-      token: () => Promise<`0x${string}`>;
-      quoteSend: (args: [unknown, boolean]) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
-    };
-    write: {
-      send: (args: [unknown, unknown, `0x${string}`], options: { value: bigint }) => Promise<`0x${string}`>;
-    };
-  };
+  const adapter = getContract({
+    address: adapterAddress,
+    abi: loadAbi("ONFT1155Adapter"),
+    client: { public: publicClient, wallet: walletClient },
+  });
 
-  const tokenAddress = await adapter.read.token();
+  const tokenAddress = (await adapter.read.token()) as `0x${string}`;
   console.log(`Token: ${tokenAddress}`);
 
-  const token = (await viem.getContractAt("IntexNFT1155", tokenAddress)) as {
-    read: {
-      balanceOf: (args: [`0x${string}`, bigint]) => Promise<bigint>;
-    };
-  };
+  const token = getContract({
+    address: tokenAddress,
+    abi: loadAbi("IntexNFT1155"),
+    client: { public: publicClient },
+  });
 
   // Check token balance
-  const balance = await token.read.balanceOf([signer, tokenId]);
+  const balance = (await token.read.balanceOf([signer, tokenId])) as bigint;
   if (balance < amount) {
     console.error(`❌ Insufficient balance. Have ${balance.toString()}, need ${amount}`);
     throw new Error("Insufficient token balance");
@@ -151,7 +139,7 @@ const onft1155SendAction = async (args: ONFT1155SendArgs, hre: unknown) => {
   console.log("Quoting gas cost for the send transaction...");
   let messagingFee: { nativeFee: bigint; lzTokenFee: bigint };
   try {
-    messagingFee = await adapter.read.quoteSend([sendParam, false]);
+    messagingFee = (await adapter.read.quoteSend([sendParam, false])) as { nativeFee: bigint; lzTokenFee: bigint };
     const nativeFeeEth = Number(messagingFee.nativeFee) / 1e18;
     console.log(`  Native fee: ${nativeFeeEth.toFixed(6)} ETH`);
     console.log(`  LZ token fee: ${messagingFee.lzTokenFee.toString()} LZ`);
@@ -177,9 +165,9 @@ const onft1155SendAction = async (args: ONFT1155SendArgs, hre: unknown) => {
   console.log("Sending the tokens transaction...");
   let txHash: `0x${string}`;
   try {
-    txHash = await adapter.write.send([sendParam, messagingFee, signer], {
+    txHash = (await adapter.write.send([sendParam, messagingFee, signer], {
       value: messagingFee.nativeFee,
-    });
+    })) as `0x${string}`;
     console.log(`  Transaction hash: ${txHash}`);
   } catch (error) {
     console.error(
