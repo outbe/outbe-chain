@@ -8,6 +8,6 @@ pub use errors::FidelityError;
 pub use schema::{ActiveCohort, FidelityContract, SoldCohort};
 
 #[cfg(test)]
-mod golden;
+mod reference_tests;
 #[cfg(test)]
 mod tests;
