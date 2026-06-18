@@ -24,7 +24,7 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
     /// @notice Bridge relayer role; gates series lifecycle, mint/mintBatch, expireSeries, and
-    ///         bridge crosschainBurn/crosschainMint. Granted to the bridger at initialization.
+    ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
@@ -92,17 +92,14 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @notice Initializes the proxy with its role holders.
     /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
-    /// @param bridger Receiver of `RELAYER_ROLE`.
-    function initialize(address defaultAdmin, address bridger) external initializer {
+    function initialize(address defaultAdmin) external initializer {
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin", defaultAdmin);
-        if (bridger == address(0)) revert ZeroAddress("bridger", bridger);
 
         __ERC1155_init("");
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
-        _grantRole(RELAYER_ROLE, bridger);
     }
 
     /// @dev Upgrades are gated by the admin role.

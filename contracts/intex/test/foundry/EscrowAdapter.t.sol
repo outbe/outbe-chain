@@ -81,13 +81,7 @@ contract EscrowAdapterTest is Test {
     function test_Constructor_ZeroAdmin() public {
         EscrowAdapter impl = new EscrowAdapter();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "defaultAdmin"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (address(0), bridger)));
-    }
-
-    function test_Constructor_ZeroBridger() public {
-        EscrowAdapter impl = new EscrowAdapter();
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bridger"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (admin, address(0))));
+        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (address(0))));
     }
 
     // --- Wire Tests ---

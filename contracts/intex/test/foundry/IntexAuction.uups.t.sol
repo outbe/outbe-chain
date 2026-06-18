@@ -42,19 +42,19 @@ contract IntexAuctionUupsTest is Test {
 
     function test_RevertWhen_InitializeCalledTwice() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        auction.initialize(stranger, stranger);
+        auction.initialize(stranger);
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
         IntexAuction impl = new IntexAuction();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(admin, bridger);
+        impl.initialize(admin);
     }
 
     function test_RevertWhen_InitializeZeroAdmin() public {
         IntexAuction impl = new IntexAuction();
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "defaultAdmin"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (address(0), bridger)));
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (address(0))));
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {

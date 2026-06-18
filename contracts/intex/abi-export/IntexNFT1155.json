@@ -627,11 +627,6 @@
           "name": "defaultAdmin",
           "type": "address",
           "internalType": "address"
-        },
-        {
-          "name": "bridger",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [],

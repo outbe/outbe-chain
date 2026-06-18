@@ -36,12 +36,7 @@ contract DeployFlowTest is TestHelperOz5 {
         address predicted = Create3Deploy.predictProxy(factory, address(this), "IntexNFT1155", VERSION);
         address impl = address(new IntexNFT1155());
         address proxy = Create3Deploy.deployProxy(
-            factory,
-            address(this),
-            "IntexNFT1155",
-            VERSION,
-            impl,
-            abi.encodeCall(IntexNFT1155.initialize, (admin, bridger))
+            factory, address(this), "IntexNFT1155", VERSION, impl, abi.encodeCall(IntexNFT1155.initialize, (admin))
         );
 
         assertEq(proxy, predicted, "predict != deploy");
@@ -69,7 +64,7 @@ contract DeployFlowTest is TestHelperOz5 {
 
     function test_Idempotent_SkipsRedeploy() public {
         address impl = address(new IntexNFT1155());
-        bytes memory initData = abi.encodeCall(IntexNFT1155.initialize, (admin, bridger));
+        bytes memory initData = abi.encodeCall(IntexNFT1155.initialize, (admin));
         address first = Create3Deploy.deployProxy(factory, address(this), "IntexNFT1155", VERSION, impl, initData);
         // A second call with a DIFFERENT impl must be a no-op: same proxy, original impl left untouched.
         address impl2 = address(new IntexNFT1155());

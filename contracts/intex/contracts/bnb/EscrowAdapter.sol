@@ -92,17 +92,14 @@ contract EscrowAdapter is
 
     /// @notice Initializes the proxy with its role holders.
     /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
-    /// @param bridger Receiver of `RELAYER_ROLE`.
-    function initialize(address defaultAdmin, address bridger) external initializer {
+    function initialize(address defaultAdmin) external initializer {
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
-        if (bridger == address(0)) revert ZeroAddress("bridger");
 
         __AccessControl_init();
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
-        _grantRole(RELAYER_ROLE, bridger);
     }
 
     /// @dev Upgrades are gated by the admin role.

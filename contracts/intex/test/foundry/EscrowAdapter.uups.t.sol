@@ -31,19 +31,19 @@ contract EscrowAdapterUupsTest is Test {
 
     function test_RevertWhen_InitializeCalledTwice() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        escrow.initialize(stranger, stranger);
+        escrow.initialize(stranger);
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
         EscrowAdapter impl = new EscrowAdapter();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(admin, bridger);
+        impl.initialize(admin);
     }
 
     function test_RevertWhen_InitializeZeroAdmin() public {
         EscrowAdapter impl = new EscrowAdapter();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "defaultAdmin"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (address(0), bridger)));
+        new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (address(0))));
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {
