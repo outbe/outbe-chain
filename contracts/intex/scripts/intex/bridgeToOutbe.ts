@@ -9,7 +9,7 @@
 // destination chain crosschain-mints the same `tokenId` to the same holder once the LZ
 // packet is delivered.
 
-import type { Address, Hex } from "viem";
+import type { Address, Hex, PublicClient, WalletClient } from "viem";
 
 const ONFT_ADAPTER_ABI = [
   {
@@ -106,26 +106,8 @@ export interface BridgeToOutbeArgs {
 }
 
 export interface BridgeClient {
-  publicClient: {
-    readContract<T = unknown>(args: {
-      address: Address;
-      abi: readonly unknown[];
-      functionName: string;
-      args?: unknown[];
-    }): Promise<T>;
-    waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>;
-  };
-  walletClient: {
-    writeContract<T = Hex>(args: {
-      address: Address;
-      abi: readonly unknown[];
-      functionName: string;
-      args: unknown[];
-      account: { address: Address };
-      value?: bigint;
-    }): Promise<T>;
-    account: { address: Address };
-  };
+  publicClient: PublicClient;
+  walletClient: WalletClient;
 }
 
 const EMPTY_EXTRA_OPTIONS = "0x" as Hex;
@@ -136,7 +118,9 @@ function addressToBytes32(addr: Address): Hex {
 }
 
 export async function bridgeIntexToOutbe(client: BridgeClient, args: BridgeToOutbeArgs): Promise<Hex> {
-  const recipient = args.recipient ?? client.walletClient.account.address;
+  const account = client.walletClient.account;
+  if (!account) throw new Error("walletClient has no account");
+  const recipient = args.recipient ?? account.address;
   const extraOptions = args.extraOptions ?? EMPTY_EXTRA_OPTIONS;
   const tokenId = BigInt(args.seriesId);
 
@@ -149,12 +133,12 @@ export async function bridgeIntexToOutbe(client: BridgeClient, args: BridgeToOut
     composeMsg: "0x" as Hex,
   } as const;
 
-  const quoted = await client.publicClient.readContract<{ nativeFee: bigint; lzTokenFee: bigint }>({
+  const quoted = (await client.publicClient.readContract({
     address: args.adapterAddress,
     abi: ONFT_ADAPTER_ABI,
     functionName: "quoteSend",
     args: [sendParam, false],
-  });
+  })) as { nativeFee: bigint; lzTokenFee: bigint };
   const buffer = args.feeBufferBps ?? DEFAULT_FEE_BUFFER_BPS;
   const value = quoted.nativeFee + (quoted.nativeFee * buffer) / 10000n;
 
@@ -168,12 +152,13 @@ export async function bridgeIntexToOutbe(client: BridgeClient, args: BridgeToOut
     valueWithBuffer: value.toString(),
   });
 
-  const tx = await client.walletClient.writeContract<Hex>({
+  const tx = await client.walletClient.writeContract({
     address: args.adapterAddress,
     abi: ONFT_ADAPTER_ABI,
     functionName: "send",
     args: [sendParam, quoted, recipient],
-    account: client.walletClient.account,
+    account,
+    chain: client.walletClient.chain,
     value,
   });
   await client.publicClient.waitForTransactionReceipt({ hash: tx });

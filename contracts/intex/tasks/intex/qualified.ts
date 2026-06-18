@@ -3,19 +3,13 @@
 // the series to be Qualified on the source chain (the bridge gate).
 
 import { task } from "hardhat/config";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 import { bridgeIntexToOutbe } from "../../scripts/intex/bridgeToOutbe.js";
 import { resolveSeriesId } from "../../scripts/shared/auctionId.js";
-import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
-
-interface ConnectableHre {
-  network: {
-    connect: () => Promise<{
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      viem: any;
-    }>;
-  };
-}
+import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
+import { getNetworkName, lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 
 function requireAddress(value: string | undefined, name: string): `0x${string}` {
   if (!value) throw new Error(`Missing required parameter: --${name}`);
@@ -41,11 +35,14 @@ const bridgeToOutbeAction = async (args: BridgeToOutbeTaskArgs, hre: unknown) =>
   if (!amountStr) throw new Error("Missing required parameter: --amount");
   const amount = BigInt(amountStr);
 
-  const { viem } = await (hre as ConnectableHre).network.connect();
-  const publicClient = await viem.getPublicClient();
-  const wallets = await viem.getWalletClients();
-  const wallet = wallets[0];
-  if (!wallet) throw new Error("No wallet client available — set the network's PRIVATE_KEY env var");
+  const networkName = getNetworkName(hre);
+  const { rpc, pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const chain = makeChain(networkName, rpc);
+  const account = privateKeyToAccount(pk as `0x${string}`);
+  const transport = http(rpc);
+  const publicClient = createPublicClient({ chain, transport });
+  const walletClient = createWalletClient({ account, chain, transport });
 
   const recipient = toOptional(args.recipient) as `0x${string}` | undefined;
 
@@ -54,10 +51,10 @@ const bridgeToOutbeAction = async (args: BridgeToOutbeTaskArgs, hre: unknown) =>
   console.log(`  Destination EID:    ${dstEid}`);
   console.log(`  Series ID:          ${seriesId}`);
   console.log(`  Amount:             ${amount.toString()}`);
-  console.log(`  Recipient:          ${recipient ?? wallet.account.address} (caller)`);
+  console.log(`  Recipient:          ${recipient ?? account.address} (caller)`);
 
   await bridgeIntexToOutbe(
-    { publicClient, walletClient: wallet },
+    { publicClient, walletClient },
     {
       adapterAddress,
       dstEid,

@@ -1,8 +1,5 @@
 import type { HardhatUserConfig } from "hardhat/config";
 
-import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
-import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
-import hardhatVerify from "@nomicfoundation/hardhat-verify";
 import { configVariable } from "hardhat/config";
 import "dotenv/config";
 import { generateCommitHashTasks } from "../tasks/auction/generateCommitHash.js";
@@ -14,44 +11,8 @@ import { wireTasks } from "../tasks/cd/wire.js";
 import { demoTasks } from "../tasks/demo/index.js";
 
 const config: HardhatUserConfig = {
-  plugins: [hardhatToolboxViemPlugin, hardhatTypechain, hardhatVerify],
+  plugins: [],
   tasks: [...generateCommitHashTasks, ...qualifiedFlowTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
-  paths: {
-    sources: ["./contracts", "./test/mocks"],
-    tests: "./test/hardhat",
-  },
-  solidity: {
-    npmFilesToBuild: ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"],
-    profiles: {
-      default: {
-        version: "0.8.30",
-        settings: {
-          evmVersion: "prague",
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          viaIR: true
-        }
-      },
-      production: {
-        version: "0.8.30",
-        settings: {
-          evmVersion: "prague",
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          viaIR: true
-        },
-      },
-    },
-  },
-  verify: {
-    etherscan: {
-      apiKey: configVariable("ETHERSCAN_API_KEY"),
-    }
-  },
   networks: {
     default: {
       type: "edr-simulated",
