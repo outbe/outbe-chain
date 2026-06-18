@@ -23,9 +23,9 @@ yarn hardhat                      # list all tasks
 yarn hardhat <task-name> --help   # options for any task
 ```
 
-## Demo Runbooks
+## Runbooks
 
-The demo tasks are the canonical way to drive a full cross-chain run end to end. Each run writes a resumable report to `reports/<series-id>/report.{md,json}` with per-step tx hashes, LayerZero delivery proofs, and state assertions — that report is the demo artifact.
+The `runbook:*` tasks are the canonical way to drive a full cross-chain run end to end. Each run writes a resumable report to `reports/<series-id>/report.{md,json}` with per-step tx hashes, LayerZero delivery proofs, and state assertions — that report is the run artifact.
 
 ### Full cycle
 
@@ -70,18 +70,18 @@ yarn hardhat runbook:harness-selftest   # writes a sample run report (smoke test
 
 ### Address resolution & keys
 
-The demo resolves contract addresses in this order: per-contract env overrides `DEMO_ADDR_<CONTRACT>` → `node_modules/@outbe/intex-contracts/dist/addresses/<network>.json` → local `deployed-addresses.json`. External addresses (PaymentToken, VaultProvider, Metadosis, TheCompact) come from `config/external-addresses.json`. So a demo can run against a fresh deploy without editing scripts.
+The runbook resolves contract addresses in this order: per-contract env overrides `DEMO_ADDR_<CONTRACT>` → `node_modules/@outbe/intex-contracts/dist/addresses/<network>.json` → local `deployed-addresses.json`. External addresses (PaymentToken, VaultProvider, Metadosis, TheCompact) come from `DEMO_ADDR_*` env overrides only. So a run can work against a fresh deploy without editing scripts.
 
 Runner keys are read from `.env`, one per chain: `OUTBE_PRIVATE_KEY` / `OUTBE_RPC_URL` on Outbe, `BSC_TESTNET_PRIVATE_KEY` / `BSC_TESTNET_RPC_URL` on BNB.
 
 ## Settlement / Intex Lifecycle
 
-A series moves through `Issued → Qualified → Called → Settled`. See [docs/nft/lifecycle.md](docs/nft/lifecycle.md) for the full state diagram and rationale.
+A series moves through `Issued → Qualified → Called → Settled`:
 
 - **Issued** — auction clearing creates the series and mints Issued Intex to bidders. Tokens are tradable/bridgeable; relayer crosschainMint/crosschainBurn and voluntary settle are rejected.
 - **Qualified** — `markQualified` flips the series once qualification conditions are met. Holders can bridge to Outbe and voluntarily `settle`.
 - **Called** — `markCalled` (cross-chain) sweeps holder balances to Outbe and arms a `callPeriod` deadline within which holders must settle.
-- **Settled** — `IntexSettlement.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). `Promis.minePromis` later burns Settled Intex to crosschainMint Promis.
+- **Settled** — `IntexNFT1155.settle` burns Issued Intex and mints a soulbound `settledTokenId` (1:1). The Outbe Promis precompile later burns Settled Intex (via `IntexNFT1155.burnSettled`) to mint Promis.
 
 `expireSeries` is an action, not a state: it burns remaining Issued tokens and emits `SeriesExpired`; Settled tokens are unaffected.
 
@@ -89,18 +89,18 @@ A series moves through `Issued → Qualified → Called → Settled`. See [docs/
 
 Settlement (Outbe) and post-finalization winner payouts (BNB) route stablecoins through the [outbe-vault](https://github.com/outbe/outbe-vault) `VaultProvider` layer — `VaultProvider.depositLiquidity(asset, amount)` is the single entry point on both chains. The underlying `VaultV2` is gated so only the `VaultProvider` can call it.
 
-- **Outbe-side** `IntexSettlement` deposits settler stablecoins through the provider at `settle()`.
+- **Outbe-side** `IntexNFT1155.settle` deposits settler stablecoins through the provider.
 - **BNB-side** `EscrowAdapter` deposits winner principal (the `paidAmount` split) through the provider inside `finalizeAuction()`; the refund path and the Compact lock / `forcedWithdrawal` reveal flow are unchanged.
 
 Neither contract deposits until the vault operator calls `VaultProvider.addVault(vaultV2)` **and** `addLiquiditySource(<contract>, <slot>)` on each chain — fail-loud reverts (`ReserveVaultNotConfigured` / `InvalidLiquiditySource`) surface a missing step.
 
-Rationale, alternatives, deployment-order requirements, and known limitations (e.g. fee-on-transfer stablecoins are unsupported through the provider) are in [`docs/adr/0003-vault-provider-integration.md`](docs/adr/0003-vault-provider-integration.md). The vendored interface is at [`contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol`](contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol).
+Fee-on-transfer stablecoins are unsupported through the provider. The vendored interface is at [`src/vendor/outbe-vault/interfaces/IVaultProvider.sol`](src/vendor/outbe-vault/interfaces/IVaultProvider.sol).
 
 ## Deployment
 
 Every implementation contract is a UUPS proxy. The implementation holds only logic and chain-fixed immutables (LayerZero endpoint, endpoint ids, bridged token); all state lives in the proxy under ERC-7201 namespaced storage, and upgrades go through `upgradeToAndCall` without moving the proxy address.
 
-Proxies are deployed through a CREATE3 factory ([`contracts/factory/Create3Factory.sol`](contracts/factory/Create3Factory.sol)), so a proxy address depends only on `(factory, deployer, salt)` and not on the implementation init code. Addresses therefore stay fixed across implementation iterations and full network wipes, and are identical across chains — including the LayerZero contracts, whose per-chain endpoint immutable would shift a CREATE2 address but not a CREATE3 one (this is why CREATE3 is used over plain CREATE2). The factory is deployed once per chain through the canonical CREATE2 deployer (`0x4e59…956C`) at a pinned salt, so it lands at the same address everywhere.
+Proxies are deployed through a CREATE3 factory ([`src/factory/Create3Factory.sol`](src/factory/Create3Factory.sol)), so a proxy address depends only on `(factory, deployer, salt)` and not on the implementation init code. Addresses therefore stay fixed across implementation iterations and full network wipes, and are identical across chains — including the LayerZero contracts, whose per-chain endpoint immutable would shift a CREATE2 address but not a CREATE3 one (this is why CREATE3 is used over plain CREATE2). The factory is deployed once per chain through the canonical CREATE2 deployer (`0x4e59…956C`) at a pinned salt, so it lands at the same address everywhere.
 
 Deploy with the Foundry scripts in [`deploy/`](deploy/):
 
@@ -109,7 +109,7 @@ forge script deploy/DeployBsc.s.sol --rpc-url <bsc-rpc> --broadcast
 forge script deploy/DeployOutbe.s.sol --rpc-url <outbe-rpc> --broadcast
 ```
 
-Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). The deployer is the admin (`DEFAULT_ADMIN_ROLE`), owner / LZ delegate, and initial bridger (`RELAYER_ROLE`), so no separate admin/delegate/bridger addresses are passed. Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
+Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_EID` for the BNB side, `BNB_EID` for the Outbe side). The deployer is the admin (`DEFAULT_ADMIN_ROLE`) and owner / LZ delegate, so no separate admin/delegate addresses are passed; `RELAYER_ROLE` is granted to the bridge adapters during wiring, not at init. Deploys are idempotent: a contract already present at its predicted address is skipped, so a re-run resumes. Wiring (peers, escrow/compact/vault, roles) is a separate step (see [Other Tasks](#other-tasks)). Bump `SALT_VERSION` in [`deploy/BaseScript.s.sol`](deploy/BaseScript.s.sol) to move every contract to a fresh address set.
 
 ### Upgrade safety
 
@@ -117,22 +117,22 @@ Env: `DEPLOYER_PRIVATE_KEY`, `LZ_ENDPOINT`, and the remote endpoint id (`OUTBE_E
 - `forge test --match-path "test/foundry/upgrade/*"` runs the upgrade rehearsal: deploy v1, populate state, `upgradeToAndCall` to a v1.1 stub, and assert all state survives.
 - For the LayerZero contracts (`TargetMessenger`, `OriginMessenger`, `ONFT1155AdapterBatch`) the upgrade authority (`DEFAULT_ADMIN_ROLE`) and the OApp config authority (`owner`, gating `setPeer` / `setDelegate` / `setEnforcedOptions`) are independent tracks, set to the same address at init. Keep them unified — do not rotate one without the other.
 
-> The production deployment workflow still uses the previous Hardhat mechanism; its migration to these Foundry scripts is tracked separately.
+> The production deployment runs these Foundry scripts via outbe-deploy's `deploy-intex.yml` (`deploy` = bootstrap + wire, `upgrade` = swap UUPS implementations in place).
 
 ## Other Tasks
 
-Beyond the demo runbooks, the repo registers several task families. Run `yarn hardhat <task> --help` for options.
+Beyond the runbooks, the repo registers several task families. Run `yarn hardhat <task> --help` for options.
 
-- **Wiring** (`tasks/cd/wire.ts`): `*-wire` and `*-grant-*-role` tasks (e.g. `desis-wire`, `outbe-bridge-wire`) used by the post-deploy workflow.
-- **LayerZero** (`lz:*`): `lz:set-peer`, `lz:set-uln-config`, `lz:set-enforced-options`, `lz:grant-bridge-role`, `lz:quote-send`, `lz:manual-deliver`, `lz:clear-stuck-nonces`, `onft1155:send`. ULN config / enforced options use `config/layerzero*.config.ts`.
-- **Auction / settlement** (legacy single-chain helpers): `auction-*`, `bidders-*`, `intex1155-issuance`, `settlement-*`, `qualified-full-flow`, `settlement-full-flow`.
-- **Utilities**: `generate-commit-hash` (prefer `--series` so the derived `auctionId` matches what Desis stamps on chain), and `scripts/utils/deployCompact.ts` (deterministic CREATE2 deploy of The Compact).
+- **Wiring** (`tasks/cd/wire.ts`): `auction-wire`, `escrow-wire`, `bnb-bridge-wire`, `outbe-bridge-wire`, `onft-batch-adapter-wire`, `intex-factory-assert-relayer-role` — the post-deploy wiring sequence.
+- **LayerZero** (`lz:*`): `lz:set-peer`, `lz:set-uln-config`, `lz:set-enforced-options`, `lz:grant-bridge-role`, `lz:check-peer`, `lz:quote-send`, `lz:manual-deliver`, `lz:clear-stuck-nonces`, `lz:onft1155:send`. ULN config / enforced options use `config/layerzero*.config.ts`.
+- **Helpers**: `generate-commit-hash` (prefer `--series` so the derived `auctionId` matches what Desis stamps on chain) and `intex-bridge-to-outbe` (user-driven bridge of Issued Intex from BSC to Outbe).
 
 ## CI & Coverage
 
-- **CI** ([`.github/workflows/ci-intex.yml`](../../.github/workflows/ci-intex.yml)): Solhint lint, Forge format check, compile, Foundry tests, Hardhat tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
-- **Coverage**: local scripts are still available via `yarn coverage:foundry` / `yarn coverage:hardhat`; the separate manual coverage workflow from `outbe-intex` has not been migrated into `outbe-chain` yet.
-- **Dependency patch** (`.yarn/patches/@layerzerolabs-oapp-evm-*.patch`): `@layerzerolabs/oapp-evm-upgradeable` imports `@layerzerolabs/oapp-evm/contracts/*` transitively, but `oapp-evm`'s `package.json` `exports` omits `./contracts/*`, which Hardhat 3 rejects. The patch adds that export so `yarn compile` can resolve the upgradeable OApp bases. Forge is unaffected (it resolves via remappings).
+- **CI** ([`.github/workflows/ci-intex.yml`](../../.github/workflows/ci-intex.yml)): Solhint lint, Forge format check, Forge build, Foundry tests, Slither, Aderyn. Runs only when `contracts/intex/**` changes.
+- **Coverage**: `yarn coverage:foundry` (local).
+
+Forge is the sole Solidity compiler (`yarn compile` runs `forge build`); Hardhat is a task runner only and compiles nothing, so no dependency patch is needed.
 
 ## Static Analysis
 
@@ -160,65 +160,29 @@ const { contracts } = await loadAddresses('bscTestnet');
 // contracts.IntexAuction, contracts.EscrowAdapter, contracts.IntexNFT1155, ...
 
 const { contracts: outbe } = await loadAddresses('outbeTestnet');
-// outbe.Desis, outbe.IntexFactory, outbe.IntexSettlement, outbe.IntexNFT1155, ...
+// outbe.Desis, outbe.IntexFactory, outbe.IntexNFT1155, ...
 ```
 
 Versioning: if `publish_version` is empty the latest published patch is incremented; set it to pin a version (auto-increments patch if it already exists). Addresses from multiple networks accumulate in the same package. To start fresh, run `publish.yml` manually with **clean: true** first.
 
 ## CD (Continuous Deployment)
 
-### Release Flow
+Production deploy + wiring runs from outbe-deploy's `deploy-intex.yml` workflow against this repo. Inputs: `environment`, `USDT0_OFT_TOKEN` (payment-token wiring), `mode`.
 
-| Step | Workflow | Inputs |
-|------|----------|--------|
-| 1 | `deploy.yml` | scope: **bscCore**, publish: yes |
-| 2 | `deploy.yml` | scope: **bscBridge**, publish: yes |
-| 3 | `deploy.yml` | scope: **outbeMocks**, publish: yes |
-| 4 | `deploy.yml` | scope: **outbeCore**, publish: yes |
-| 5 | `deploy.yml` | scope: **outbeBridge**, publish: yes |
-| 6 | `post-deploy.yml` | action: **all** |
-| 7 | `lz-onft-peers.yml` | contract_type: **all** |
-| 8 | `lz-adapters-peers.yml` | |
+- **`mode: deploy`** — checks out this repo, runs `forge script deploy/DeployBsc.s.sol` then `deploy/DeployOutbe.s.sol` (idempotent CREATE3 — addresses already present are skipped), regenerates `abi-export`, then runs the wiring sequence below.
+- **`mode: upgrade`** — swaps UUPS implementations in place via `deploy/UpgradeIntex.s.sol`, keeping proxy addresses.
 
-> 1→2 (BSC) and 3→4→5 (Outbe) are sequential within each chain; both chains can run in parallel. Step 6 only after all deploys complete. Steps 7, 8 at the very end (parallel with each other). Each `deploy.yml` step publishes `@outbe/intex-contracts` with updated addresses; `post-deploy.yml` loads from the latest published package, so always publish before wiring.
+### Wiring sequence
 
-### Deploy Scopes
+Run after deploy and idempotent (each task reads current state and skips if already wired):
 
-`.github/workflows/deploy.yml` (**Contracts Deployment**). Inputs: `environment` (target network), `scope`, `selected_contracts` (for the selective scope), and `target_chain` (bridge cross-chain EID).
+- **auction-wire** / **escrow-wire** — wire IntexAuction ↔ EscrowAdapter (+ TheCompact, Vault, payment token) on BNB.
+- **bnb-bridge-wire** — wire TargetMessenger → IntexAuction, IntexNFT1155, EscrowAdapter, ONFT1155AdapterBatch.
+- **outbe-bridge-wire** — wire OriginMessenger → Desis + IntexFactory (Outbe precompiles).
+- **onft-batch-adapter-wire** + **lz:grant-bridge-role** — grant RELAYER_ROLE / SYSTEM_RELAYER_ROLE to the messengers and ONFT adapters; **intex-factory-assert-relayer-role** asserts IntexFactory holds RELAYER_ROLE on IntexNFT1155.
+- **lz:set-peer** (bidirectional), **lz:set-uln-config**, **lz:set-enforced-options** — configure cross-chain peers between TargetMessenger (BNB) ↔ OriginMessenger (Outbe) and the ONFT adapters. ULN config / enforced options use `config/layerzero*.config.ts`.
 
-- **bscCore**: IntexNFT1155, EscrowAdapter, IntexAuction (BNB side)
-- **outbeCore**: IntexNFT1155, IntexSettlement, Desis, IntexFactory (Outbe side)
-- **bscBridge**: ONFT1155Adapter, ONFT1155AdapterBatch, TargetMessenger (BNB side)
-- **outbeBridge**: ONFT1155Adapter, ONFT1155AdapterBatch, OriginMessenger (Outbe side)
-- **outbeMocks**: MockPromis, MockPromisLimit (stand-ins for the Cosmos `x/promis`/`x/promislimit` precompiles)
-- **selective**: pick from `intexAuction`, `escrowAdapter`, `intexNFT1155`, `intexSettlement`, `desis`, `intexFactory`, `onft1155Adapter`, `onft1155AdapterBatch`, `targetMessenger`, `originMessenger`, `mockPromis`, `mockPromisLimit`
-
-`environment` options: `bscTestnet`, `bsc`, `outbeTestnet`, `outbeTestnetNew`, `outbeDevnet`, `outbePrivnet`. Contract addresses are resolved dynamically from GitHub Environment vars (`DEPLOYER_ADDRESS`, `BRIDGER_ADDRESS`), the latest published package, and per-network LayerZero endpoints.
-
-### Post-Deploy Configuration (Wiring)
-
-`.github/workflows/post-deploy.yml` (**Contracts Wiring**). The **all** action runs every job; each targets its selected environment. All contract and external addresses are loaded from the published package automatically.
-
-- **wire-bnb-core**: wire IntexAuction ↔ EscrowAdapter (+ TheCompact, Vault, StableToken).
-- **wire-target-messenger**: wire TargetMessenger → IntexAuction, IntexNFT1155, EscrowAdapter, ONFT1155AdapterBatch; grant the relayer/system-relayer roles to TargetMessenger and the ONFT adapters.
-- **wire-origin-messenger**: wire OriginMessenger → Desis + IntexFactory; wire Desis → OriginMessenger, PromisLimit, IntexFactory; grant RELAYER_ROLE to the ONFT adapters and IntexFactory on IntexNFT1155, and SYSTEM_RELAYER_ROLE to ONFT1155AdapterBatch.
-- **wire-outbe-settlement**: `IntexSettlement.wire(intex, vault)`; grant SETTLEMENT_ROLE on IntexNFT1155 so it can burn Issued and mint Settled token IDs.
-- **wire-outbe-promis**: wire MockPromis to IntexNFT1155 and grant PROMIS_ROLE so `Promis.minePromis` can burn Settled Intex.
-
-Inputs: `action` (which wiring job to run, or **all**), `bnb_environment` (default `bscTestnet`), `outbe_environment` (default `outbeTestnet`).
-
-**Note**: most wire functions support rewiring. Exception: `IntexSettlement.wire()` is one-time — reverts with `AlreadyWired`.
-
-### LayerZero Configuration
-
-After deploying adapters on multiple chains, configure cross-chain peers:
-
-- `lz-onft-peers.yml` (**ONFT Adapter Peers**) — sets ONFT1155Adapter / ONFT1155AdapterBatch peers between any two chains.
-- `lz-adapters-peers.yml` (**BSC-Outbe Messenger Peers**) — sets TargetMessenger (BNB) ↔ OriginMessenger (Outbe) peers.
-
-Both run `lz:set-peer` (bidirectional), `lz:set-uln-config` (SendUln302 DVN + Executor, ReceiveUln302 DVN on the Endpoint), and `lz:set-enforced-options` (gas limits).
-
-#### LayerZero EIDs
+### LayerZero EIDs
 
 | Network | Endpoint ID |
 |---------|-------------|
@@ -242,7 +206,7 @@ Create these under GitHub Settings → Environments:
 | outbeDevnet | 424242 | `DEPLOYER_PRIVATE_KEY`, `RPC_URL` |
 | outbePrivnet | 512512 | `DEPLOYER_PRIVATE_KEY`, `RPC_URL` |
 
-Required variables per environment: `DEPLOYER_ADDRESS` (derived from `DEPLOYER_PRIVATE_KEY`) and `BRIDGER_ADDRESS` (bridge permissions; defaults to the zero address).
+Required variable per environment: `DEPLOYER_ADDRESS` (derived from `DEPLOYER_PRIVATE_KEY`). Bridge `RELAYER_ROLE` is granted to the adapters during wiring, so no separate bridger address is configured.
 
 ## Networks
 
@@ -267,54 +231,47 @@ BSC_TESTNET_PRIVATE_KEY=0x...
 BSC_MAINNET_RPC_URL=https://bsc-dataseed1.binance.org
 BSC_MAINNET_PRIVATE_KEY=0x...
 ETHERSCAN_API_KEY=...
-COMPACT_FACTORY_DATA=0x...   # for scripts/utils/deployCompact.ts
 ```
 
-`OUTBE_RPC_URL` selects the Outbe RPC for scripts/tasks that read `process.env` directly (the demo runbooks and helpers). Per-contract demo address overrides use `DEMO_ADDR_<CONTRACT>`.
+`OUTBE_RPC_URL` selects the Outbe RPC for scripts/tasks that read `process.env` directly (the runbooks and helpers). Per-contract address overrides use `DEMO_ADDR_<CONTRACT>`.
 
 ## Project Structure
 
-Contracts are split by deployment target (Outbe / BNB / both):
+Contracts are split by deployment side (`origin` = Outbe, `target` = BNB, `shared` = both):
 
 ```
-contracts/
-├── outbe/            # Deployed on Outbe Chain
-│   ├── Desis.sol, IntexFactory.sol, IntexSettlement.sol, OriginMessenger.sol
-│   ├── MockPromis.sol, MockPromisLimit.sol   # x/promis(limit) precompile stand-ins
-│   └── interfaces/   # IDesis, IIntexFactory, IIntexSettlement, IOriginMessenger, IPromis, IPromisLimit
-├── bnb/              # Deployed on BNB Chain
+src/
+├── origin/           # Deployed on Outbe Chain
+│   ├── OriginMessenger.sol
+│   └── interfaces/   # IDesis, IOriginMessenger   (Desis / IntexFactory are Outbe precompiles)
+├── target/           # Deployed on BNB Chain
 │   ├── IntexAuction.sol, EscrowAdapter.sol, TargetMessenger.sol
-│   └── interfaces/
+│   └── interfaces/   # IEscrowAdapter, IIntexAuction, ITargetMessenger
 ├── shared/           # Same source deployed on both chains
 │   ├── IntexNFT1155.sol, ONFT1155Adapter.sol, ONFT1155AdapterBatch.sol
-│   ├── interfaces/
-│   └── libs/         # BridgeMsgCodec, IntexMetadata, LzGasEstimator, ONFT1155BatchMsgCodec, ONFT1155MsgCodec
-└── vendor/           # Third-party: outbe-vault (IVaultProvider), the-compact
+│   ├── interfaces/   # IERC1155Bridgeable, IIntexNFT1155, IONFT1155Adapter, IONFT1155AdapterBatch
+│   └── libs/         # BridgeMsgCodec, LzGasEstimator, ONFT1155BatchMsgCodec, ONFT1155MsgCodec
+├── factory/          # Create3Factory.sol
+└── vendor/           # Third-party: outbe-vault (IVaultProvider), the-compact, solady (CREATE3)
 
 scripts/
-├── demo/             # Demo-runbook helpers + harness (report, runner, lz, config)
-├── auction/          # Auction lifecycle, bidders, cross-chain flow, commit-hash
-├── intex/            # issuance, qualify, bridgeToOutbe, settle, mine, settlementBridge
-├── cd/               # CI/CD: ABI extraction, address resolution, save-addresses
-├── shared/           # auctionId, runtime, LZ helpers, wallets, parseArgs
-└── utils/            # balance checks, deployCompact, sendCoen, sendOpTx
+├── runbook/          # Runbook helpers: auction runtime, bids, generateCommitHash, bridgeToOutbe, harness/
+├── shared/           # auctionId, layerzero, taskUtils, types, parseArgs, abi
+└── cd/               # extract-abi (forge out/ → abi-export)
 
 tasks/
-├── demo/             # Demo runbooks: auction, settlement, harness self-test
-├── auction/          # flow, stage management, bidders, cross-chain, commit-hash
-├── intex/            # issuance, qualify, qualified, settlement
+├── runbook/          # auction phases, qualified (bridge), generateCommitHash, harness self-test
 ├── layerzero/        # bridge utils, nonce clear, ONFT1155 transfer
-└── cd/               # contract wiring
+└── cd/               # contract wiring (wire.ts)
 
 test/
-├── foundry/          # Forge tests (+ cross-chain/)
-├── hardhat/          # Hardhat tests (+ cross-chain/)
+├── foundry/          # Forge tests (+ upgrade/, cross-chain/)
 └── mocks/            # Test-only Solidity fixtures
 ```
 
 ## Notes
 
-- **Series format**: `yyyymmdd` (e.g. `20260526`); lex-sortable equals chronological. The series id is also the report run id for demo runbooks.
-- **Auction schedule**: `Desis.sendAuctionStageStart` takes `clearingTimestamp` + `revealWindow` + `issuanceWindow` in the `AuctionConfig`; `commitEnd`/`revealEnd`/`issuanceEnd` are derived from them. The demo defaults clearing to ~2h out; the legacy `auction-*` flow anchors it to noon UTC of the series date.
+- **Series format**: `yyyymmdd` (e.g. `20260526`); lex-sortable equals chronological. The series id is also the report run id for runbooks.
+- **Auction schedule**: `Desis.sendAuctionStageStart` takes `clearingTimestamp` + `revealWindow` + `issuanceWindow` in the `AuctionConfig`; `commitEnd`/`revealEnd`/`issuanceEnd` are derived from them. The runbook defaults clearing to ~2h out.
 - **Escrow**: bidders must approve EscrowAdapter before revealing; escrow is locked at reveal and finalized at clearing.
-- **LZ fees**: demo sends pass `--value` as `msg.value` directly (no on-chain quote). Set it generously — excess on the messenger sends is refunded to the runner; excess retained on Desis is sweepable.
+- **LZ fees**: runbook sends quote the fee on-chain per send (no `--value` flag); excess on the messenger sends is refunded to the runner, and excess retained on Desis is sweepable.
