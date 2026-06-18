@@ -23,6 +23,7 @@ pub fn dispatch(
         use IFidelity::IFidelityCalls::*;
         match call {
             getFidelityIndex(c) => view(c, |c| contract.get_fidelity_index(c.account)),
+            getRcfi(c) => view(c, |c| contract.get_rcfi(c.account)),
         }
     })
 }
