@@ -6,7 +6,7 @@
 //! float-vs-fixed-point agreement (≈0.035 days / 3e-5). Regenerate the fixture
 //! with `python3 reference/decay.py --emit-golden > tests/fixtures/rcfi_golden.json`.
 
-use crate::FidelityContract;
+use crate::schema::FidelityContract;
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;

@@ -3,8 +3,8 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::math::SCALE;
+use crate::schema::FidelityContract;
 use crate::schema::{cohort_key, ActiveCohort, SoldCohort, DOMAIN_ACTIVE, DOMAIN_SOLD};
-use crate::FidelityContract;
 
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const DAY: u64 = 86_400;

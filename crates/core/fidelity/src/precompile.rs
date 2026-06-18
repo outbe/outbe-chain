@@ -5,10 +5,7 @@ use outbe_primitives::error::Result;
 
 use crate::schema::FidelityContract;
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IFidelity.sol"
-);
+sol!("../../../contracts/precompiles/src/IFidelity.sol");
 
 /// Dispatches an ABI-encoded call to the Fidelity precompile.
 pub fn dispatch(
