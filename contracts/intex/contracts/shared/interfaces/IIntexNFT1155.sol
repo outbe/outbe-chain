@@ -100,12 +100,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 callDeadlineAt
     );
 
-    /// @notice Emitted when a series call period is updated.
-    /// @param operator Caller that updated the call period (`RELAYER_ROLE`).
-    /// @param tokenId Issued token id (= `uint256(seriesId)`).
-    /// @param newIntexCallPeriod New duration in seconds between `calledAt` and the settlement deadline.
-    event CallPeriodUpdated(address indexed operator, uint256 indexed tokenId, uint32 newIntexCallPeriod);
-
     /// @notice Emitted when token metadata is updated (ERC-4906).
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 indexed tokenId);
@@ -148,8 +142,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error InvalidState(uint8 expected, uint8 actual);
     /// @notice Token id does not exist.
     error NonexistentToken(uint256 tokenId);
-    /// @notice An updated call period would set the derived deadline at or before the current time.
-    error InvalidDeadline(uint32 deadline, uint32 nowTs);
     /// @notice `expireSeries` was called before the series passed its call deadline (or was never called).
     error SeriesNotYetExpired(uint32 deadline, uint32 nowTs);
     /// @notice `expireSeries` has nothing to expire — the series supply is already zero (swept).
@@ -219,11 +211,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
     function markCalled(uint32 seriesId) external;
-
-    /// @notice Update the call period for a Called series.
-    /// @param seriesId Series identifier.
-    /// @param newIntexCallPeriod New duration in seconds between `calledAt` and the settlement deadline.
-    function updateCallPeriod(uint32 seriesId, uint32 newIntexCallPeriod) external;
 
     /// @notice Signal that a Called series has passed its settlement deadline without full settlement.
     /// @dev Gated by `RELAYER_ROLE` — mass-burning balances is a privileged operation and

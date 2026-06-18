@@ -348,30 +348,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function updateCallPeriod(uint32 seriesId, uint32 newIntexCallPeriod) external onlyRole(RELAYER_ROLE) {
-        uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.issuedAt == 0) {
-            revert NonexistentToken(tokenId);
-        }
-        if (data.state != IIntexNFT1155.IntexState.Called) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Called), uint8(data.state));
-        }
-        if (newIntexCallPeriod == 0 || newIntexCallPeriod > MAX_INTEX_CALL_PERIOD) {
-            revert InvalidCallPeriod(newIntexCallPeriod);
-        }
-
-        uint32 newDerivedDeadline = data.calledAt + newIntexCallPeriod;
-        if (newDerivedDeadline <= block.timestamp) {
-            revert InvalidDeadline(newDerivedDeadline, uint32(block.timestamp));
-        }
-
-        data.intexCallPeriod = newIntexCallPeriod;
-
-        emit CallPeriodUpdated(msg.sender, tokenId, newIntexCallPeriod);
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function expireSeries(uint32 seriesId, uint256 limit) external onlyRole(RELAYER_ROLE) {
         if (limit == 0) revert ZeroLimit();
 
