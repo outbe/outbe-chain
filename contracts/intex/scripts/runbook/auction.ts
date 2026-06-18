@@ -9,7 +9,6 @@ import {
   getContract,
   http,
   type Address,
-  type GetContractReturnType,
   type PublicClient,
   type WalletClient,
 } from "viem";
@@ -70,12 +69,11 @@ export function getRunner(network: DemoNetwork): Runner {
   return { network, account, publicClient, walletClient, privateKey };
 }
 
-/** A viem contract handle bound to the runner's public + wallet clients. Typed loosely (artifact ABI). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function contractAt(runner: Runner, name: string, address: Address): GetContractReturnType<any, any> {
+/** A viem contract handle bound to the runner's public + wallet clients (ABI loaded at runtime). */
+export function contractAt(runner: Runner, name: string, address: Address) {
   return getContract({
     address,
-    abi: loadAbi(name) as never,
+    abi: loadAbi(name),
     client: { public: runner.publicClient, wallet: runner.walletClient },
   });
 }

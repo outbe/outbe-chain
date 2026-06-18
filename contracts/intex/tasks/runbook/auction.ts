@@ -13,10 +13,11 @@ import {
   getRunner,
   contractAt,
   buildAuctionConfig,
-  buildIssuanceConfig,
+  auctionStageStartParams,
   bnbChainId,
   ERC20_ABI,
   AUCTION_STAGE,
+  type MessagingFee,
 } from "../../scripts/runbook/auction.js";
 import { createCommitHash, createRevealSignature } from "../../scripts/runbook/bids.js";
 
@@ -49,17 +50,21 @@ const startAction = async (args: CommonArgs) => {
   const aO = resolveAddresses(outbeNet);
   const aB = resolveAddresses(bnbNet);
   const desis = contractAt(outbe, "Desis", requireAddress(aO, "desis", outbeNet) as Address);
+  const messenger = contractAt(outbe, "OriginMessenger", requireAddress(aO, "originMessenger", outbeNet) as Address);
   const auction = contractAt(bnb, "IntexAuction", requireAddress(aB, "intexAuction", bnbNet) as Address);
   const report = loadOrInitReport(args.seriesId, reportTitle(args.seriesId));
 
   await runStep(
     { report, network: outbeNet, phase: "auction", publicClient: outbe.publicClient },
-    "Desis.sendAuctionStageStart",
+    "OriginMessenger.sendAuctionStageStart",
     `Start series ${seriesId} on Outbe and bridge AUCTION_STAGE_START to BNB.`,
     async () => {
-      const config = buildAuctionConfig({ seriesId });
-      // Prefunded float: send with value=0; OriginMessenger pays the LZ fee from its native balance.
-      const txHash = (await desis.write.sendAuctionStageStart([config, "0x"])) as `0x${string}`;
+      const params = auctionStageStartParams(buildAuctionConfig({ seriesId }));
+      const fee = (await messenger.read.quoteSendAuctionStageStart([params, "0x", false])) as MessagingFee;
+      const txHash = (await messenger.write.sendAuctionStageStart(
+        [params, "0x", fee, outbe.account.address],
+        { value: fee.nativeFee },
+      )) as `0x${string}`;
       const lz = await awaitLzDelivery({
         srcNetwork: outbeNet,
         dstNetwork: bnbNet,
@@ -137,16 +142,20 @@ const revealAction = async (args: CommonArgs) => {
   const aO = resolveAddresses(outbeNet);
   const aB = resolveAddresses(bnbNet);
   const desis = contractAt(outbe, "Desis", requireAddress(aO, "desis", outbeNet) as Address);
+  const messenger = contractAt(outbe, "OriginMessenger", requireAddress(aO, "originMessenger", outbeNet) as Address);
   const auction = contractAt(bnb, "IntexAuction", requireAddress(aB, "intexAuction", bnbNet) as Address);
   const report = loadOrInitReport(args.seriesId, reportTitle(args.seriesId));
 
   await runStep(
     { report, network: outbeNet, phase: "auction", publicClient: outbe.publicClient },
-    "Desis.sendAuctionStageReveal",
+    "OriginMessenger.sendAuctionStageReveal",
     `Open the reveal stage (green day) for series ${seriesId} and bridge it to BNB.`,
     async () => {
-      // Prefunded float: OriginMessenger pays the LZ fee from its native balance.
-      const txHash = (await desis.write.sendAuctionStageReveal([seriesId, true, "0x"])) as `0x${string}`;
+      const fee = (await messenger.read.quoteSendAuctionStageReveal([seriesId, true, "0x", false])) as MessagingFee;
+      const txHash = (await messenger.write.sendAuctionStageReveal(
+        [seriesId, true, "0x", fee, outbe.account.address],
+        { value: fee.nativeFee },
+      )) as `0x${string}`;
       const lz = await awaitLzDelivery({
         srcNetwork: outbeNet,
         dstNetwork: bnbNet,
@@ -228,20 +237,18 @@ const clearingAction = async (args: ClearingArgs) => {
   const bnb = getRunner(bnbNet);
   const aO = resolveAddresses(outbeNet);
   const aB = resolveAddresses(bnbNet);
-  const desis = contractAt(outbe, "Desis", requireAddress(aO, "desis", outbeNet) as Address);
-  const config = buildAuctionConfig({ seriesId });
-  const issuance = buildIssuanceConfig();
-  const supplyPromis = BigInt(supplyIntex) * config.promisLoadMinor;
+  const messenger = contractAt(outbe, "OriginMessenger", requireAddress(aO, "originMessenger", outbeNet) as Address);
   const report = loadOrInitReport(args.seriesId, reportTitle(args.seriesId));
 
   await runStep(
     { report, network: outbeNet, phase: "auction", publicClient: outbe.publicClient },
-    "Desis.sendAuctionStageClearing",
-    `Signal clearing for series ${seriesId}; persist supply=${supplyIntex} Intex (${supplyPromis} Promis) and issuance config.`,
+    "OriginMessenger.sendAuctionStageClearing",
+    `Signal clearing for series ${seriesId} (target ${supplyIntex} Intex; supply comes from Metadosis, issuance flows Desis -> IntexFactory -> OriginMessenger on-chain).`,
     async () => {
-      // Prefunded float: OriginMessenger pays the LZ fee from its native balance.
-      const txHash = (await desis.write.sendAuctionStageClearing(
-        [seriesId, supplyPromis, issuance, "0x"],
+      const fee = (await messenger.read.quoteSendAuctionStageClearing([seriesId, "0x", false])) as MessagingFee;
+      const txHash = (await messenger.write.sendAuctionStageClearing(
+        [seriesId, "0x", fee, outbe.account.address],
+        { value: fee.nativeFee },
       )) as `0x${string}`;
       const lz = await awaitLzDelivery({
         srcNetwork: outbeNet,
