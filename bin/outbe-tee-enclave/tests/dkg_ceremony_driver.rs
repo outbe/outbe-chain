@@ -103,7 +103,7 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         // Spawn one driver task per node. `receivers.remove(0)` consumes the inboxes
         // in order, so node i gets receiver i.
         let mut tasks = Vec::new();
-        for ((bls, _), mut client) in identities.iter().cloned().zip(clients.into_iter()) {
+        for ((bls, _), mut client) in identities.iter().cloned().zip(clients) {
             let coord = CeremonyCoordinator::new(ceremony_id, 0, bls.clone(), identities.clone());
             let mut gossip = InMemoryGossip {
                 my_bls: bls,

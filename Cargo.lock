@@ -6992,7 +6992,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-common",
- "outbe-gemfactory",
  "outbe-macros",
  "outbe-primitives",
 ]
@@ -7013,7 +7012,6 @@ dependencies = [
  "outbe-node",
  "outbe-primitives",
  "outbe-rpc",
- "outbe-tee",
  "outbe-tributefactory",
  "outbe-zkproof",
  "reqwest 0.12.28",
@@ -7181,7 +7179,6 @@ dependencies = [
  "alloy-sol-types",
  "outbe-intexfactory",
  "outbe-macros",
- "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
  "thiserror 2.0.18",
@@ -7210,7 +7207,6 @@ name = "outbe-emissionlimit"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "outbe-agentreward",
  "outbe-metadosis",
  "outbe-primitives",
  "tracing",
@@ -7407,7 +7403,6 @@ dependencies = [
  "alloy-sol-types",
  "outbe-gratis",
  "outbe-gratispool",
- "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
 ]
@@ -7425,7 +7420,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-zk-canonical",
  "outbe-zk-circuit-noir",
- "outbe-zkproof",
  "thiserror 2.0.18",
 ]
 
@@ -7790,7 +7784,6 @@ dependencies = [
  "hex",
  "outbe-poseidon",
  "outbe-tee",
- "outbe-tributefactory",
  "rand_core 0.6.4",
  "ring",
  "serde",

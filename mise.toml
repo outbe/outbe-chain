@@ -12,7 +12,7 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 
 # ── Cargo tools ─────────────────────────────────────────────────────── #
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain
-# (machete, udeps, geiger, bloat, llvm-lines, llvm-cov) is installed on
+# (machete, udeps, bloat, llvm-lines, llvm-cov) is installed on
 # demand by `mise run audit-tools-install` to mirror the old Makefile.
 "cargo:cargo-binstall"  = "latest"
 "cargo:cargo-nextest"   = "latest"
@@ -98,7 +98,6 @@ description = "Install full cargo audit toolchain + nightly + miri/llvm componen
 run = [
   "cargo install --locked cargo-nextest cargo-machete cargo-deny cargo-audit cargo-llvm-cov cargo-llvm-lines cargo-bloat",
   "cargo install --locked cargo-udeps",
-  "cargo install cargo-geiger",
   "rustup toolchain install nightly",
   "rustup +nightly component add miri rust-src",
   "rustup component add llvm-tools-preview clippy rustfmt",
@@ -134,10 +133,6 @@ run = "cargo +nightly udeps --workspace --all-targets"
 [tasks.audit-miri]
 description = "cargo +nightly miri test --lib (UB / unsafe surface)"
 run = "cargo +nightly miri test --lib"
-
-[tasks.audit-geiger]
-description = "cargo geiger (unsafe surface count per crate)"
-run = "cargo geiger"
 
 [tasks.audit-bloat]
 description = "cargo bloat --release --crates -n 30"

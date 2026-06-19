@@ -11,30 +11,30 @@ interface ICredisFactory {
     event CredisRequested(address indexed bundleAccount, uint256 amount);
 
     /// @notice Arguments for a shielded `requestCredis` spend. Shape matches
-    ///         `IGratisPool.SpendArgs` plus the `reclaimCommitment` the user
-    ///         pre-computes so the factory can re-insert it into the pool
-    ///         when the position completes via `anadosis`.
+    /// `IGratisPool.SpendArgs` plus the `reclaimCommitment` the user
+    /// pre-computes so the factory can re-insert it into the pool
+    /// when the position completes via `anadosis`.
     ///
-    ///         `proof` is the **bare UltraHonk proof body** — i.e. the
-    ///         `bb prove` output with the leading
-    ///         `[uint32-BE num_public_inputs | N×32B public inputs]` prefix
-    ///         stripped. The runtime prepends a fresh prefix built from
-    ///         `(merkleRoot, nullifierHash, denomId, receiverBinding)` (in
-    ///         circuit declaration order) before calling
-    ///         `verify_ultra_honk_keccak`, so the proof is bound atomically
-    ///         to the args the runtime is gating — a valid-for-some-other-
-    ///         inputs proof cannot be recycled against this call.
+    /// `proof` is the **bare UltraHonk proof body** — i.e. the
+    /// `bb prove` output with the leading
+    /// `[uint32-BE num_public_inputs | N×32B public inputs]` prefix
+    /// stripped. The runtime prepends a fresh prefix built from
+    /// `(merkleRoot, nullifierHash, denomId, receiverBinding)` (in
+    /// circuit declaration order) before calling
+    /// `verify_ultra_honk_keccak`, so the proof is bound atomically
+    /// to the args the runtime is gating — a valid-for-some-other-
+    /// inputs proof cannot be recycled against this call.
     ///
-    ///         `receiverBinding` MUST bind `reclaimCommitment` into the
-    ///         nonce slot:
-    ///         `poseidon(TAG_BINDING, ACTION_REQUEST_CREDIS, bundleAccount,
-    ///         chainId, reclaimCommitment)`. The runtime recomputes the
-    ///         binding from `args.reclaimCommitment` and rejects with
-    ///         `ReceiverBindingMismatch` if it diverges. This closes the
-    ///         reclaim-swap front-running attack where a mempool observer
-    ///         copies the proof bytes and substitutes their own
-    ///         `reclaimCommitment` to capture the eventual
-    ///         `unpledgeGratis`.
+    /// `receiverBinding` MUST bind `reclaimCommitment` into the
+    /// nonce slot:
+    /// `poseidon(TAG_BINDING, ACTION_REQUEST_CREDIS, bundleAccount,
+    /// chainId, reclaimCommitment)`. The runtime recomputes the
+    /// binding from `args.reclaimCommitment` and rejects with
+    /// `ReceiverBindingMismatch` if it diverges. This closes the
+    /// reclaim-swap front-running attack where a mempool observer
+    /// copies the proof bytes and substitutes their own
+    /// `reclaimCommitment` to capture the eventual
+    /// `unpledgeGratis`.
     struct RequestArgs {
         uint256 merkleRoot;
         uint256 nullifierHash;

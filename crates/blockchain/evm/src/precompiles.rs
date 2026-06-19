@@ -311,13 +311,13 @@ where
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
+            #[allow(unsafe_code)] // sole audited unsafe site; justified below.
             // SAFETY: alloy-evm fork's `PrecompileProvider::run` for
             // PrecompilesMap (specialised at impl site for our `Context<DB>`)
             // casts `&mut Context<...>` to `*mut c_void` and feeds it here.
             // The `DB` generic of this closure is the same `DB` of the
             // `Context<...>` the impl is specialised for (set at
             // `OutbeEvmFactory::create_evm<DB>` call site).
-            #[allow(unsafe_code)] // sole audited unsafe site; justified above.
             let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
             outbe_ctx_dispatch::<DB>(ctx, inputs, spec)
         },

@@ -22,7 +22,6 @@ outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
 outbe-tributefactory.workspace = true
-outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli"] }

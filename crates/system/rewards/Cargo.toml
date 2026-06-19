@@ -18,6 +18,11 @@ outbe-emissionlimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
+[package.metadata.cargo-machete]
+# Used only through sol!-generated code in schema.rs; cargo-machete cannot see
+# macro-expanded paths.
+ignored = ["alloy-sol-types"]
+
 [dev-dependencies]
 outbe-metadosis.workspace = true
 outbe-oracle.workspace = true

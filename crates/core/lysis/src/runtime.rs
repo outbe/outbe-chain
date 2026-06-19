@@ -239,8 +239,8 @@ fn resolve_entry_price_minor(
     let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), iso_code)?;
     let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair_id(
         storage.clone(),
-        worldwide_day.clone(),
-        pair_id.clone(),
+        worldwide_day,
+        pair_id,
     )?
     .unwrap_or(U256::ZERO);
     let max_scurve =

@@ -2,15 +2,49 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# All entries are transitive deps pulled in by reth v2.2.0 / commonware and
+# cannot be upgraded away without upstream changes. Unmaintained advisories are
+# informational. The two hickory-dns vulnerabilities are NOT on our attack
+# surface: outbe-chain does not perform recursive DNS resolution of untrusted
+# zones (consensus p2p uses static/operator-provided peer addresses), so the
+# NSEC3 unbounded-loop and name-compression CPU-exhaustion paths are unreachable.
+# Revisit when reth bumps the hickory-dns / bincode / paste dependencies.
+ignore = [
+    "RUSTSEC-2023-0089", # atomic-polyfill unmaintained
+    "RUSTSEC-2024-0436", # paste unmaintained
+    "RUSTSEC-2025-0055", # transitive, unmaintained/informational
+    "RUSTSEC-2025-0141", # bincode unmaintained
+    "RUSTSEC-2026-0118", # hickory-dns NSEC3 loop — not on our attack surface
+    "RUSTSEC-2026-0119", # hickory-dns name-compression CPU — not on our attack surface
+    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
+]
 
 [licenses]
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-DFS-2016", "CC0-1.0"]
+# Permissive / file-level-copyleft licenses present in the reth v2.2.0 dep tree.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "0BSD",
+    "Zlib",
+    "Unlicense",
+    "MPL-2.0",
+]
 confidence-threshold = 0.95
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace-internal crates are declared as path deps without a version, which
+# cargo-deny otherwise flags as wildcards.
+allow-wildcard-paths = true
 deny = []
 
 [sources]

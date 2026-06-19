@@ -1,6 +1,8 @@
 use alloy_primitives::U256;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key, UTC_PLUS_14_OFFSET};
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, timestamp_to_date_key, UTC_PLUS_14_OFFSET,
+};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use time::{Date, Month};

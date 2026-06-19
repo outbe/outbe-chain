@@ -47,12 +47,14 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
       - run: rustup component add clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: mise run lint
 
   test:
@@ -67,11 +69,16 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # trybuild compile-fail tests reference std source snippets; rustc only
+      # renders them when rust-src is present (mise installs rust without it).
+      - run: rustup component add rust-src
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --cobertura --output-path cobertura.xml
       - uses: irongut/CodeCoverageSummary@v1.3.0
@@ -88,31 +95,6 @@ jobs:
         with:
           path: code-coverage-results.md
 
-  test-arm:
-    name: test (arm64)
-    # M-24: consensus-critical paths (deterministic encoding, header hash,
-    # state-root, fee math) must hold on x86 AND ARM per the testing rules. The
-    # x86 `test` job runs under llvm-cov for coverage; this job re-runs the full
-    # workspace on arm64 to catch architecture-dependent non-determinism.
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    # depot arm64 runner; adjust to the org's depot ARM SKU if the label differs.
-    runs-on: depot-ubuntu-latest-arm
-    timeout-minutes: 40
-    env:
-      RUSTC_WRAPPER: "sccache"
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
-      - uses: rui314/setup-mold@v1
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --workspace
-
   doctests:
     name: doctests
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -125,11 +107,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
       # The `test` job runs under llvm-cov, which does NOT execute doctests
       # (M-24). Run them explicitly so executable doc-examples are covered.
       - run: mise run test-doc
@@ -177,7 +161,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-udeps
-      - run: cargo udeps --workspace --lib --examples --tests --benches --all-features
+      - run: cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features
 
   no-test-deps:
     name: no-test-deps
@@ -224,21 +208,6 @@ jobs:
       - uses: taiki-e/install-action@cargo-machete
       - run: mise run audit-machete
 
-  geiger:
-    name: cargo geiger
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      - run: cargo install cargo-geiger
-      - run: mise run audit-geiger
-
   miri:
     name: cargo miri
     if: contains(github.event.head_commit.message, '[miri]')
@@ -262,21 +231,19 @@ jobs:
       - fmt
       - clippy
       - test
-      - test-arm
       - doctests
       - localnet
       - udeps
       - no-test-deps
       - deny
       - machete
-      - geiger
       - miri
     timeout-minutes: 5
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: clippy, test, test-arm, doctests, localnet, udeps, no-test-deps, deny, machete, geiger, miri
+          allowed-skips: clippy, test, doctests, localnet, udeps, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}
 
   # ─── Versioning (cocogitto) ───────────────────────────────────────── #

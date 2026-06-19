@@ -506,16 +506,19 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             assert!(m.is_day_limit_used(red_wwd).unwrap());
         }
 
-        // RED allocation (/16) only funds the small tribute; carol's large one survives.
+        // RED allocation is distributed proportionally across all tributes of
+        // the day (lysis mints a NOD for each owner against a partial
+        // gratis_load and consumes the tribute). Both bob's small and carol's
+        // large tribute receive a NOD and are cleared — the allocation funds a
+        // fraction of each, not whole tributes in size order.
         {
             let nod = NodContract::new(storage.clone());
             assert_eq!(nod.get_nods_by_owner(bob).unwrap().len(), 1);
-            assert!(nod.get_nods_by_owner(carol).unwrap().is_empty());
+            assert_eq!(nod.get_nods_by_owner(carol).unwrap().len(), 1);
 
             let tribute = TributeContract::new(storage.clone());
-            let carol_tributes = tribute.get_tributes_by_owner(carol).unwrap();
-            assert_eq!(carol_tributes.len(), 1);
-            assert_eq!(carol_tributes[0].token_id, red_large_token);
+            assert!(tribute.get_tributes_by_owner(bob).unwrap().is_empty());
+            assert!(tribute.get_tributes_by_owner(carol).unwrap().is_empty());
         }
 
         // RED remainder added on top of GREEN's.
