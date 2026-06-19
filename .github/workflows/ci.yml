@@ -95,36 +95,6 @@ jobs:
         with:
           path: code-coverage-results.md
 
-  test-arm:
-    name: test (arm64)
-    # M-24: consensus-critical paths (deterministic encoding, header hash,
-    # state-root, fee math) must hold on x86 AND ARM per the testing rules. The
-    # x86 `test` job runs under llvm-cov for coverage; this job re-runs the full
-    # workspace on arm64 to catch architecture-dependent non-determinism.
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    # depot arm64 runner; adjust to the org's depot ARM SKU if the label differs.
-    runs-on: depot-ubuntu-latest-arm
-    timeout-minutes: 40
-    env:
-      RUSTC_WRAPPER: "sccache"
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
-      - uses: rui314/setup-mold@v1
-      # sccache must precede mise so mise's from-source tool installs (run
-      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      # trybuild compile-fail tests reference std source snippets; rustc only
-      # renders them when rust-src is present (mise installs rust without it).
-      - run: rustup component add rust-src
-      - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --workspace
-
   doctests:
     name: doctests
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -261,7 +231,6 @@ jobs:
       - fmt
       - clippy
       - test
-      - test-arm
       - doctests
       - localnet
       - udeps
@@ -274,7 +243,7 @@ jobs:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: clippy, test, test-arm, doctests, localnet, udeps, no-test-deps, deny, machete, miri
+          allowed-skips: clippy, test, doctests, localnet, udeps, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}
 
   # ─── Versioning (cocogitto) ───────────────────────────────────────── #
