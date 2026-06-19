@@ -6,8 +6,8 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 
 /// @dev Verifies the CREATE3 proxy deployment path used by the deploy scripts: deterministic
 ///      addresses, correct implementation pointer, initialization, idempotency, and that the proxy
@@ -36,12 +36,7 @@ contract DeployFlowTest is TestHelperOz5 {
         address predicted = Create3Deploy.predictProxy(factory, address(this), "IntexNFT1155", VERSION);
         address impl = address(new IntexNFT1155());
         address proxy = Create3Deploy.deployProxy(
-            factory,
-            address(this),
-            "IntexNFT1155",
-            VERSION,
-            impl,
-            abi.encodeCall(IntexNFT1155.initialize, (admin, bridger))
+            factory, address(this), "IntexNFT1155", VERSION, impl, abi.encodeCall(IntexNFT1155.initialize, (admin))
         );
 
         assertEq(proxy, predicted, "predict != deploy");
@@ -69,7 +64,7 @@ contract DeployFlowTest is TestHelperOz5 {
 
     function test_Idempotent_SkipsRedeploy() public {
         address impl = address(new IntexNFT1155());
-        bytes memory initData = abi.encodeCall(IntexNFT1155.initialize, (admin, bridger));
+        bytes memory initData = abi.encodeCall(IntexNFT1155.initialize, (admin));
         address first = Create3Deploy.deployProxy(factory, address(this), "IntexNFT1155", VERSION, impl, initData);
         // A second call with a DIFFERENT impl must be a no-op: same proxy, original impl left untouched.
         address impl2 = address(new IntexNFT1155());

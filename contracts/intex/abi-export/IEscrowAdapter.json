@@ -2,734 +2,734 @@
   "contractName": "IEscrowAdapter",
   "abi": [
     {
-      "inputs": [],
-      "name": "AlreadyFinalized",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint64",
-          "name": "locked",
-          "type": "uint64"
-        },
-        {
-          "internalType": "uint64",
-          "name": "requested",
-          "type": "uint64"
-        }
-      ],
-      "name": "AmountMismatch",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "BidAlreadyLocked",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ClaimAuthorizationUnsupported",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "ForcedWithdrawalFailed",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "outstanding",
-          "type": "uint256"
-        }
-      ],
-      "name": "LiveLocksOutstanding",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "LockNotActive",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NoDeposits",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        }
-      ],
-      "name": "NoPendingVaultOwed",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        }
-      ],
-      "name": "NotFinalizedYet",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NotSelf",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "claimableAt",
-          "type": "uint32"
-        },
-        {
-          "internalType": "uint32",
-          "name": "now_",
-          "type": "uint32"
-        }
-      ],
-      "name": "RefundNotYetClaimable",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        }
-      ],
-      "name": "SplitNotRecorded",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint256",
-          "name": "id",
-          "type": "uint256"
-        }
-      ],
-      "name": "UnexpectedLockId",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "string",
-          "name": "f",
-          "type": "string"
-        }
-      ],
-      "name": "ZeroAddress",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "string",
-          "name": "f",
-          "type": "string"
-        }
-      ],
-      "name": "ZeroValue",
-      "type": "error"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "totalRefunded",
-          "type": "uint64"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "totalPaid",
-          "type": "uint64"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "bidsProcessed",
-          "type": "uint32"
-        }
-      ],
-      "name": "AuctionEscrowFinalized",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "bytes",
-          "name": "reason",
-          "type": "bytes"
-        }
-      ],
-      "name": "BidderRefundFailed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "refundedAmount",
-          "type": "uint64"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "paidAmount",
-          "type": "uint64"
-        }
-      ],
-      "name": "BidderRetried",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint32",
-          "name": "bidsProcessed",
-          "type": "uint32"
-        }
-      ],
-      "name": "FinalizationNoOp",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "amount",
-          "type": "uint64"
-        }
-      ],
-      "name": "FundsClaimed",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "amount",
-          "type": "uint64"
-        }
-      ],
-      "name": "FundsLocked",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "amount",
-          "type": "uint64"
-        }
-      ],
-      "name": "FundsRefunded",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "vaultOwed",
-          "type": "uint64"
-        }
-      ],
-      "name": "VaultOwedSettled",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": true,
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "indexed": true,
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "uint64",
-          "name": "vaultOwed",
-          "type": "uint64"
-        }
-      ],
-      "name": "VaultOwedUnsettled",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "intexAuctionOld",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "intexAuctionNew",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "compactOld",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "compactNew",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "vaultProviderOld",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "vaultProviderNew",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "paymentTokenOld",
-          "type": "address"
-        },
-        {
-          "indexed": false,
-          "internalType": "address",
-          "name": "paymentTokenNew",
-          "type": "address"
-        }
-      ],
-      "name": "Wired",
-      "type": "event"
-    },
-    {
-      "inputs": [],
+      "type": "function",
       "name": "PAYMENT_TOKEN_ALIAS",
+      "inputs": [],
       "outputs": [
         {
-          "internalType": "uint16",
           "name": "",
-          "type": "uint16"
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ],
-      "stateMutability": "view",
-      "type": "function"
+      "stateMutability": "view"
     },
     {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        }
-      ],
+      "type": "function",
       "name": "claimRefund",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "uint32",
           "name": "seriesId",
-          "type": "uint32"
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
-          "internalType": "bytes32",
-          "name": "guid",
-          "type": "bytes32"
-        },
-        {
-          "components": [
-            {
-              "internalType": "address",
-              "name": "bidder",
-              "type": "address"
-            },
-            {
-              "internalType": "uint64",
-              "name": "refundedAmount",
-              "type": "uint64"
-            },
-            {
-              "internalType": "uint64",
-              "name": "paidAmount",
-              "type": "uint64"
-            }
-          ],
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction[]",
-          "name": "instructions",
-          "type": "tuple[]"
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "finalizeAuction",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "uint32",
           "name": "seriesId",
-          "type": "uint32"
-        }
-      ],
-      "name": "getAuctionStatus",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "hasLocks",
-          "type": "bool"
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
-          "internalType": "bool",
-          "name": "isFinalized",
-          "type": "bool"
-        },
-        {
-          "internalType": "uint64",
-          "name": "totalLocked",
-          "type": "uint64"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        }
-      ],
-      "name": "getBidLock",
-      "outputs": [
-        {
-          "components": [
-            {
-              "internalType": "uint64",
-              "name": "lockedAmount",
-              "type": "uint64"
-            },
-            {
-              "internalType": "uint32",
-              "name": "lockedAt",
-              "type": "uint32"
-            },
-            {
-              "internalType": "enum IEscrowAdapter.LockStatus",
-              "name": "status",
-              "type": "uint8"
-            },
-            {
-              "internalType": "uint64",
-              "name": "failedRefund",
-              "type": "uint64"
-            },
-            {
-              "internalType": "bool",
-              "name": "splitRecorded",
-              "type": "bool"
-            }
-          ],
-          "internalType": "struct IEscrowAdapter.BidLock",
-          "name": "lock",
-          "type": "tuple"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
-        },
-        {
-          "internalType": "uint64",
-          "name": "amount",
-          "type": "uint64"
-        }
-      ],
-      "name": "lockFunds",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "uint32",
-          "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "bytes32",
           "name": "guid",
-          "type": "bytes32"
+          "type": "bytes32",
+          "internalType": "bytes32"
         },
         {
+          "name": "instructions",
+          "type": "tuple[]",
+          "internalType": "struct IEscrowAdapter.FinalizationInstruction[]",
           "components": [
             {
-              "internalType": "address",
               "name": "bidder",
-              "type": "address"
+              "type": "address",
+              "internalType": "address"
             },
             {
-              "internalType": "uint64",
               "name": "refundedAmount",
-              "type": "uint64"
+              "type": "uint64",
+              "internalType": "uint64"
             },
             {
-              "internalType": "uint64",
               "name": "paidAmount",
-              "type": "uint64"
+              "type": "uint64",
+              "internalType": "uint64"
             }
-          ],
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction",
-          "name": "inst",
-          "type": "tuple"
+          ]
         }
       ],
-      "name": "retryFinalize",
       "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "stateMutability": "nonpayable"
     },
     {
+      "type": "function",
+      "name": "getAuctionStatus",
       "inputs": [
         {
-          "internalType": "uint32",
           "name": "seriesId",
-          "type": "uint32"
-        },
-        {
-          "internalType": "address",
-          "name": "bidder",
-          "type": "address"
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
-      "name": "settleVaultOwed",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "outputs": [
+        {
+          "name": "hasLocks",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "isFinalized",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "totalLocked",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
+      "type": "function",
+      "name": "getBidLock",
       "inputs": [
         {
-          "internalType": "address",
-          "name": "_intexAuction",
-          "type": "address"
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
-          "internalType": "address",
-          "name": "_compact",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "_vaultProvider",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "_paymentToken",
-          "type": "address"
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
-      "name": "wire",
+      "outputs": [
+        {
+          "name": "lock",
+          "type": "tuple",
+          "internalType": "struct IEscrowAdapter.BidLock",
+          "components": [
+            {
+              "name": "lockedAmount",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "lockedAt",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "status",
+              "type": "uint8",
+              "internalType": "enum IEscrowAdapter.LockStatus"
+            },
+            {
+              "name": "failedRefund",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "splitRecorded",
+              "type": "bool",
+              "internalType": "bool"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "lockFunds",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
       "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "retryFinalize",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "inst",
+          "type": "tuple",
+          "internalType": "struct IEscrowAdapter.FinalizationInstruction",
+          "components": [
+            {
+              "name": "bidder",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "refundedAmount",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "paidAmount",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "settleVaultOwed",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "wire",
+      "inputs": [
+        {
+          "name": "_intexAuction",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_compact",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_vaultProvider",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_paymentToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AuctionEscrowFinalized",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "totalRefunded",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "totalPaid",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "bidsProcessed",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidderRefundFailed",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidderRetried",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "refundedAmount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "paidAmount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FinalizationNoOp",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidsProcessed",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FundsClaimed",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FundsLocked",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FundsRefunded",
+      "inputs": [
+        {
+          "name": "guid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "VaultOwedSettled",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "vaultOwed",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "VaultOwedUnsettled",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "vaultOwed",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Wired",
+      "inputs": [
+        {
+          "name": "intexAuctionOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "intexAuctionNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "compactOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "compactNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "vaultProviderOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "vaultProviderNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "paymentTokenOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "paymentTokenNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "AlreadyFinalized",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "AmountMismatch",
+      "inputs": [
+        {
+          "name": "locked",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "requested",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BidAlreadyLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ClaimAuthorizationUnsupported",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ForcedWithdrawalFailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "LiveLocksOutstanding",
+      "inputs": [
+        {
+          "name": "outstanding",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "LockNotActive",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NoDeposits",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NoPendingVaultOwed",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotFinalizedYet",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotSelf",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "RefundNotYetClaimable",
+      "inputs": [
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "now_",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SplitNotRecorded",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "UnexpectedLockId",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ZeroAddress",
+      "inputs": [
+        {
+          "name": "f",
+          "type": "string",
+          "internalType": "string"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ZeroValue",
+      "inputs": [
+        {
+          "name": "f",
+          "type": "string",
+          "internalType": "string"
+        }
+      ]
     }
   ]
 }

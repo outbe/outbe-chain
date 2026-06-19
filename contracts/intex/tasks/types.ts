@@ -123,35 +123,6 @@ export interface Intex1155IssuanceTaskArgs extends TaskArgs {
 }
 
 // =============================================================================
-// Settlement Tasks
-// =============================================================================
-
-export interface SettlementInteractiveTaskArgs extends TaskArgs {
-  desisContract?: string;
-  intexBscContract?: string;
-  intexOutbeContract?: string;
-  targetMessengerContract?: string;
-  series?: string;
-  bscNetwork?: string;
-  msgValue?: string;
-  skipFund?: string | boolean;
-}
-
-export interface SettlementSettleTaskArgs extends TaskArgs {
-  settlementContract?: string;
-  intexContract?: string;
-  promisContract?: string;
-  series?: string;
-  intexHolder?: string;
-}
-
-export interface SettlementFullFlowTaskArgs extends SettlementInteractiveTaskArgs {
-  settlementContract?: string;
-  promisContract?: string;
-  intexHolder?: string;
-}
-
-// =============================================================================
 // Outbe Mock Tasks
 // =============================================================================
 

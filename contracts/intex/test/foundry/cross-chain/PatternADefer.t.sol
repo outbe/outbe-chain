@@ -9,9 +9,9 @@ import {EnforcedOptionParam} from "@layerzerolabs/oapp-evm/oapp/interfaces/IOApp
 
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/bnb/interfaces/ITargetMessenger.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {
     IONFT1155AdapterBatch,
     BatchSendParam,

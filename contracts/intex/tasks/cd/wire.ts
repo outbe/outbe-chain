@@ -6,83 +6,34 @@ import {
   http,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import * as fs from "fs";
-import { OUTBE_CHAINS } from "../../scripts/shared/layerzero.js";
+import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
 import { getNetworkName } from "../../scripts/shared/taskUtils.js";
+import { loadAbi } from "../../scripts/shared/abi.js";
 
-const ARTIFACT_PATHS: Record<string, string> = {
-  OriginMessenger: "artifacts/contracts/outbe/OriginMessenger.sol/OriginMessenger.json",
-  IntexSettlement: "artifacts/contracts/outbe/IntexSettlement.sol/IntexSettlement.json",
-  IntexNFT1155: "artifacts/contracts/shared/IntexNFT1155.sol/IntexNFT1155.json",
-  Desis: "artifacts/contracts/outbe/Desis.sol/Desis.json",
-  IntexFactory: "artifacts/contracts/outbe/IntexFactory.sol/IntexFactory.json",
-  MockPromis: "artifacts/contracts/outbe/MockPromis.sol/MockPromis.json",
-  MockPromisLimit: "artifacts/contracts/outbe/MockPromisLimit.sol/MockPromisLimit.json",
-};
-
-function loadOutbeArtifact(name: string): { abi: unknown[] } {
-  const p = ARTIFACT_PATHS[name];
-  if (!p || !fs.existsSync(p)) throw new Error(`Artifact not found: ${name}. Run yarn compile.`);
-  return JSON.parse(fs.readFileSync(p, "utf-8"));
-}
-
-/**
- * Wire-task viem facade.
- *
- * Both Outbe and non-Outbe paths expose the same minimum surface:
- *   - getContractAt(name, address) → contract instance with read/write
- *   - getPublicClient() → underlying viem PublicClient (used to wait for tx receipts)
- *
- * Waiting for receipts before issuing the next dependent call is mandatory:
- *   `escrow.write.wire(...)` returns a tx hash as soon as the tx hits the
- *   mempool — viem's simulation of the next call would otherwise read state
- *   that does not yet contain the previous tx, surfacing as `NotWired`,
- *   missing-role reverts, etc.
- */
 type WireViem = {
   getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getPublicClient: () => Promise<any>;
 };
 
-/** Outbe: viem + defineChain (hardhat-viem does not know 424242/512512). Others: network.connect() */
+/** viem read/write facade for the wire network, built from its RPC + key, with ABIs from abi-export. */
 async function getViemForWire(hre: unknown): Promise<WireViem> {
   const networkName = getNetworkName(hre);
-  const outbeNetworks = ["outbeTestnet", "outbeTestnetNew", "outbeDevnet", "outbePrivnet"] as const;
-  type OutbeNetwork = (typeof outbeNetworks)[number];
-  if (!outbeNetworks.includes(networkName as OutbeNetwork)) {
-    const { viem } = await (hre as Hre).network.connect();
-    return viem;
-  }
-  const chain = OUTBE_CHAINS[networkName as OutbeNetwork];
-  const defaultRpcs: Record<string, string> = {
-    outbeTestnet: "https://eth.testnet.outbe.net",
-    outbeTestnetNew: "https://rpc.testnet.outbe.net",
-    outbeDevnet: "https://eth.d.outbe.net",
-    outbePrivnet: "https://eth.p.outbe.net",
-  };
-  const rpc = process.env.OUTBE_RPC_URL || defaultRpcs[networkName];
-  const pk = process.env.OUTBE_PRIVATE_KEY;
-  if (!pk) throw new Error("OUTBE_PRIVATE_KEY required for Outbe networks");
+  const { rpc, pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const chain = makeChain(networkName, rpc);
   const account = privateKeyToAccount(pk as `0x${string}`);
   const transport = http(rpc);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
   return {
-    getContractAt: async (name: string, address: `0x${string}`) => {
-      const { abi } = loadOutbeArtifact(name);
-      return getContract({ address, abi: abi as unknown[], client: { public: publicClient, wallet: walletClient } });
-    },
+    getContractAt: async (name: string, address: `0x${string}`) =>
+      getContract({ address, abi: loadAbi(name), client: { public: publicClient, wallet: walletClient } }),
     getPublicClient: async () => publicClient,
   };
 }
 
-/**
- * Send a write tx and wait until it is mined.
- *
- * Use this for every `.write.*` call in this file. Returns the tx hash unchanged
- * so callers can keep logging it like before, but only after the receipt arrives.
- */
+/** Send a write tx and wait for its receipt before the next dependent call. */
 async function sendAndWait(
   viem: WireViem,
   writeFn: () => Promise<`0x${string}`>,
@@ -91,19 +42,6 @@ async function sendAndWait(
   const publicClient = await viem.getPublicClient();
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
-}
-
-interface Hre {
-  network: {
-    connect: () => Promise<{
-      viem: {
-        getWalletClients: () => Promise<Array<{ account: { address: `0x${string}` } }>>;
-        getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        getPublicClient: () => Promise<any>;
-      };
-    }>;
-  };
 }
 
 interface AuctionWireArgs {
@@ -142,7 +80,7 @@ const lazy = (fn: (args: any, hre: any) => Promise<void>) =>
 // ============================================================================
 
 const auctionWireAction = async (args: AuctionWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
   
   console.log(`Wiring Auction...`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
@@ -194,7 +132,7 @@ const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter")
 // ============================================================================
 
 const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
   
   console.log(`Wiring EscrowAdapter...`);
   console.log(`  Escrow: ${args.escrowContract}`);
@@ -307,7 +245,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
     );
   }
 
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
 
   console.log(`Wiring TargetMessenger...`);
   console.log(`  Bridge: ${args.bridgeContract}`);
@@ -471,96 +409,6 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginMessenger to Desis
   .setAction(lazy(outbeBridgeWireAction));
 
 // ============================================================================
-// Desis Wire
-// ============================================================================
-
-interface DesisWireArgs {
-  desisContract: string;
-  bridgeAdapter: string;
-  promisLimitContract: string;
-  intexFactoryContract: string;
-}
-
-const desisWireAction = async (args: DesisWireArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-  
-  console.log(`Wiring Desis...`);
-  console.log(`  Desis: ${args.desisContract}`);
-  console.log(`  OriginMessenger: ${args.bridgeAdapter}`);
-  console.log(`  PromisLimit: ${args.promisLimitContract}`);
-  console.log(`  IntexFactory: ${args.intexFactoryContract}`);
-
-  const desis = (await viem.getContractAt(
-    "Desis",
-    args.desisContract as `0x${string}`
-  )) as {
-    read: {
-      messengerAdapter: () => Promise<`0x${string}`>;
-      promisLimit: () => Promise<`0x${string}`>;
-      intexFactory: () => Promise<`0x${string}`>;
-    };
-    write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const ZERO = "0x0000000000000000000000000000000000000000";
-  const [currentAdapter, currentPromisLimit, currentIntexFactory] = await Promise.all([
-    desis.read.messengerAdapter(),
-    desis.read.promisLimit(),
-    desis.read.intexFactory(),
-  ]);
-
-  const adapterMatch = currentAdapter.toLowerCase() === args.bridgeAdapter.toLowerCase();
-  const promisLimitMatch = currentPromisLimit.toLowerCase() === args.promisLimitContract.toLowerCase();
-  const intexFactoryMatch = currentIntexFactory.toLowerCase() === args.intexFactoryContract.toLowerCase();
-
-  if (adapterMatch && promisLimitMatch && intexFactoryMatch) {
-    console.log(`✅ Desis already wired to all dependencies`);
-    return;
-  }
-
-  if (currentAdapter !== ZERO) {
-    console.log(`🔄 Rewiring Desis`);
-    if (!adapterMatch) console.log(`   messengerAdapter: ${currentAdapter} -> ${args.bridgeAdapter}`);
-    if (!promisLimitMatch) console.log(`   promisLimit: ${currentPromisLimit} -> ${args.promisLimitContract}`);
-    if (!intexFactoryMatch) console.log(`   intexFactory: ${currentIntexFactory} -> ${args.intexFactoryContract}`);
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    desis.write.wire([
-      args.bridgeAdapter as `0x${string}`,
-      args.promisLimitContract as `0x${string}`,
-      args.intexFactoryContract as `0x${string}`,
-    ]),
-  );
-  console.log(`✅ Desis wired. Tx: ${txHash}`);
-};
-
-const desisWire = task("desis-wire", "Wire Desis to OriginMessenger, PromisLimit, and IntexFactory")
-  .addOption({
-    name: "desisContract",
-    description: "Desis contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "bridgeAdapter",
-    description: "OriginMessenger contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "promisLimitContract",
-    description: "PromisLimit/MockPromisLimit contract address on Outbe",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "intexFactoryContract",
-    description: "IntexFactory contract address on Outbe",
-    defaultValue: "",
-  })
-  .setAction(lazy(desisWireAction));
-
-// ============================================================================
 // ONFT1155AdapterBatch Wire (grant SYSTEM_RELAYER_ROLE)
 // ============================================================================
 
@@ -570,7 +418,7 @@ interface ONFTBatchAdapterWireArgs {
 }
 
 const onftBatchAdapterWireAction = async (args: ONFTBatchAdapterWireArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
+  const viem = await getViemForWire(hre);
 
   console.log(`Wiring ONFT1155AdapterBatch (grant SYSTEM_RELAYER_ROLE)...`);
   console.log(`  BatchAdapter: ${args.batchAdapterContract}`);
@@ -617,101 +465,8 @@ const onftBatchAdapterWire = task("onft-batch-adapter-wire", "Grant SYSTEM_RELAY
   .setAction(lazy(onftBatchAdapterWireAction));
 
 // ============================================================================
-// IntexSettlement Wire (wire: intex + vaultProvider + paymentToken + promis)
-// ============================================================================
-
-interface SettlementWireArgs {
-  settlementContract: string;
-  intexContract: string;
-  vaultProvider: string;
-  paymentToken: string;
-  promisContract: string;
-}
-
-const settlementWireAction = async (args: SettlementWireArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Wiring IntexSettlement...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
-  console.log(`  IntexNFT1155: ${args.intexContract}`);
-  console.log(`  VaultProvider: ${args.vaultProvider}`);
-  console.log(`  PaymentToken: ${args.paymentToken}`);
-  console.log(`  Promis: ${args.promisContract}`);
-
-  const settlement = (await viem.getContractAt(
-    "IntexSettlement",
-    args.settlementContract as `0x${string}`
-  )) as {
-    read: {
-      intex: () => Promise<`0x${string}`>;
-      vaultProvider: () => Promise<`0x${string}`>;
-      paymentToken: () => Promise<`0x${string}`>;
-      promis: () => Promise<`0x${string}`>;
-    };
-    write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const currentVaultProvider = await settlement.read.vaultProvider();
-  if (currentVaultProvider !== "0x0000000000000000000000000000000000000000") {
-    const [currentIntex, currentPaymentToken, currentPromis] = await Promise.all([
-      settlement.read.intex(),
-      settlement.read.paymentToken(),
-      settlement.read.promis(),
-    ]);
-    console.log(`✅ Already wired:`);
-    console.log(`   intex:         ${currentIntex}`);
-    console.log(`   vaultProvider: ${currentVaultProvider}`);
-    console.log(`   paymentToken:  ${currentPaymentToken}`);
-    console.log(`   promis:        ${currentPromis}`);
-  } else {
-    const tx = await sendAndWait(viem, () =>
-      settlement.write.wire([
-        args.intexContract as `0x${string}`,
-        args.vaultProvider as `0x${string}`,
-        args.paymentToken as `0x${string}`,
-        args.promisContract as `0x${string}`,
-      ]),
-    );
-    console.log(`✅ wire() done. Tx: ${tx}`);
-  }
-};
-
-const settlementWire = task(
-  "settlement-wire",
-  "Wire IntexSettlement: wire(intex, vaultProvider, paymentToken, promis)",
-)
-  .addOption({
-    name: "settlementContract",
-    description: "IntexSettlement contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "intexContract",
-    description: "IntexNFT1155 contract address on Outbe",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "vaultProvider",
-    description: "outbe-vault VaultProvider address (router that IntexSettlement calls depositLiquidity on)",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "paymentToken",
-    description: "PaymentToken (stablecoin) address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "promisContract",
-    description: "Promis (mock or precompile) contract address",
-    defaultValue: "",
-  })
-  .setAction(lazy(settlementWireAction));
-
-// ============================================================================
-// IntexSettlement Grant Roles
-// Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexSettlement so it can call
+// IntexFactory Grant Roles
+// Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory so it can call
 // `intex.settle(...)` and burn Issued / mint Settled tokens.
 // ============================================================================
 
@@ -723,8 +478,8 @@ interface SettlementGrantRolesArgs {
 const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
-  console.log(`Granting roles for IntexSettlement...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
+  console.log(`Granting roles for IntexFactory...`);
+  console.log(`  IntexFactory: ${args.settlementContract}`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
 
   const intex = (await viem.getContractAt(
@@ -746,7 +501,7 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
     args.settlementContract as `0x${string}`,
   ]);
   if (hasIntexRole) {
-    console.log(`✅ IntexNFT1155: Settlement already has SETTLEMENT_ROLE`);
+    console.log(`✅ IntexNFT1155: IntexFactory already has SETTLEMENT_ROLE`);
   } else {
     const tx1 = await sendAndWait(viem, () =>
       intex.write.grantRole([
@@ -754,17 +509,17 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
         args.settlementContract as `0x${string}`,
       ]),
     );
-    console.log(`✅ IntexNFT1155: SETTLEMENT_ROLE granted to Settlement. Tx: ${tx1}`);
+    console.log(`✅ IntexNFT1155: SETTLEMENT_ROLE granted to IntexFactory. Tx: ${tx1}`);
   }
 };
 
 const settlementGrantRoles = task(
   "settlement-grant-roles",
-  "Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexSettlement"
+  "Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory"
 )
   .addOption({
     name: "settlementContract",
-    description: "IntexSettlement contract address",
+    description: "IntexFactory contract address",
     defaultValue: "",
   })
   .addOption({
@@ -775,120 +530,8 @@ const settlementGrantRoles = task(
   .setAction(lazy(settlementGrantRolesAction));
 
 // ============================================================================
-// MockPromisLimit: Grant DESIS_ROLE to Desis
-// ============================================================================
-
-interface PromisLimitGrantDesisRoleArgs {
-  promisLimitContract: string;
-  desisContract: string;
-}
-
-const promisLimitGrantDesisRoleAction = async (args: PromisLimitGrantDesisRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Granting DESIS_ROLE on MockPromisLimit...`);
-  console.log(`  MockPromisLimit: ${args.promisLimitContract}`);
-  console.log(`  Desis: ${args.desisContract}`);
-
-  const promisLimit = (await viem.getContractAt(
-    "MockPromisLimit",
-    args.promisLimitContract as `0x${string}`
-  )) as {
-    read: {
-      DESIS_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await promisLimit.read.DESIS_ROLE();
-  const alreadyGranted = await promisLimit.read.hasRole([role, args.desisContract as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ DESIS_ROLE already granted to Desis`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    promisLimit.write.grantRole([role, args.desisContract as `0x${string}`]),
-  );
-  console.log(`✅ DESIS_ROLE granted on MockPromisLimit to Desis. Tx: ${txHash}`);
-};
-
-const promisLimitGrantDesisRole = task("promis-limit-grant-desis-role", "Grant DESIS_ROLE on MockPromisLimit to Desis")
-  .addOption({
-    name: "promisLimitContract",
-    description: "MockPromisLimit contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "desisContract",
-    description: "Desis contract address",
-    defaultValue: "",
-  })
-  .setAction(lazy(promisLimitGrantDesisRoleAction));
-
-// ============================================================================
-// Desis: Grant METADOSIS_ROLE
-// ============================================================================
-
-interface DesisGrantMetadosisRoleArgs {
-  desisContract: string;
-  metadosisAddress: string;
-}
-
-const desisGrantMetadosisRoleAction = async (args: DesisGrantMetadosisRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Granting METADOSIS_ROLE on Desis...`);
-  console.log(`  Desis: ${args.desisContract}`);
-  console.log(`  Metadosis: ${args.metadosisAddress}`);
-
-  const desis = (await viem.getContractAt(
-    "Desis",
-    args.desisContract as `0x${string}`
-  )) as {
-    read: {
-      METADOSIS_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await desis.read.METADOSIS_ROLE();
-  const alreadyGranted = await desis.read.hasRole([role, args.metadosisAddress as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ METADOSIS_ROLE already granted`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    desis.write.grantRole([role, args.metadosisAddress as `0x${string}`]),
-  );
-  console.log(`✅ METADOSIS_ROLE granted on Desis. Tx: ${txHash}`);
-};
-
-const desisGrantMetadosisRole = task("desis-grant-metadosis-role", "Grant METADOSIS_ROLE on Desis to a given address")
-  .addOption({
-    name: "desisContract",
-    description: "Desis contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "metadosisAddress",
-    description: "Address to grant METADOSIS_ROLE to",
-    defaultValue: "",
-  })
-  .setAction(lazy(desisGrantMetadosisRoleAction));
-
-// ============================================================================
-// Promis-burner Wire (grant PROMIS_ROLE on IntexNFT1155 to IntexSettlement)
-// IntexSettlement.minePromis calls intex.burnSettled, which is gated by PROMIS_ROLE.
+// Promis-burner Wire (grant PROMIS_ROLE on IntexNFT1155 to IntexFactory)
+// IntexFactory.minePromis calls intex.burnSettled, which is gated by PROMIS_ROLE.
 // ============================================================================
 
 interface PromisWireArgs {
@@ -900,7 +543,7 @@ const promisWireAction = async (args: PromisWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
   console.log(`Granting PROMIS_ROLE on IntexNFT1155...`);
-  console.log(`  Settlement: ${args.settlementContract}`);
+  console.log(`  IntexFactory: ${args.settlementContract}`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
 
   const intex = (await viem.getContractAt(
@@ -919,22 +562,22 @@ const promisWireAction = async (args: PromisWireArgs, hre: unknown) => {
   const role = await intex.read.PROMIS_ROLE();
   const hasPromisRole = await intex.read.hasRole([role, args.settlementContract as `0x${string}`]);
   if (hasPromisRole) {
-    console.log(`✅ IntexNFT1155: IntexSettlement already has PROMIS_ROLE`);
+    console.log(`✅ IntexNFT1155: IntexFactory already has PROMIS_ROLE`);
   } else {
     const tx = await sendAndWait(viem, () =>
       intex.write.grantRole([role, args.settlementContract as `0x${string}`]),
     );
-    console.log(`✅ IntexNFT1155: PROMIS_ROLE granted to IntexSettlement. Tx: ${tx}`);
+    console.log(`✅ IntexNFT1155: PROMIS_ROLE granted to IntexFactory. Tx: ${tx}`);
   }
 };
 
 const promisWire = task(
   "promis-wire",
-  "Grant PROMIS_ROLE on IntexNFT1155 to IntexSettlement (enables minePromis burn path)"
+  "Grant PROMIS_ROLE on IntexNFT1155 to IntexFactory (enables minePromis burn path)"
 )
   .addOption({
     name: "settlementContract",
-    description: "IntexSettlement contract address",
+    description: "IntexFactory contract address",
     defaultValue: "",
   })
   .addOption({
@@ -943,168 +586,6 @@ const promisWire = task(
     defaultValue: "",
   })
   .setAction(lazy(promisWireAction));
-
-// ============================================================================
-// IntexFactory Wire (wire: messengerAdapter + intex)
-// ============================================================================
-
-interface IntexFactoryWireArgs {
-  intexFactoryContract: string;
-  bridgeAdapter: string;
-  intexContract: string;
-}
-
-const intexFactoryWireAction = async (args: IntexFactoryWireArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Wiring IntexFactory...`);
-  console.log(`  IntexFactory: ${args.intexFactoryContract}`);
-  console.log(`  OriginMessenger: ${args.bridgeAdapter}`);
-  console.log(`  IntexNFT1155: ${args.intexContract}`);
-
-  const factory = (await viem.getContractAt(
-    "IntexFactory",
-    args.intexFactoryContract as `0x${string}`
-  )) as {
-    read: {
-      messengerAdapter: () => Promise<`0x${string}`>;
-      intex: () => Promise<`0x${string}`>;
-    };
-    write: {
-      wire: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const ZERO = "0x0000000000000000000000000000000000000000";
-  const [currentAdapter, currentIntex] = await Promise.all([
-    factory.read.messengerAdapter(),
-    factory.read.intex(),
-  ]);
-
-  const adapterMatch = currentAdapter.toLowerCase() === args.bridgeAdapter.toLowerCase();
-  const intexMatch = currentIntex.toLowerCase() === args.intexContract.toLowerCase();
-
-  if (adapterMatch && intexMatch) {
-    console.log(`✅ IntexFactory already wired to all dependencies`);
-    return;
-  }
-
-  if (currentAdapter !== ZERO) {
-    console.log(`🔄 Rewiring IntexFactory`);
-    if (!adapterMatch) console.log(`   messengerAdapter: ${currentAdapter} -> ${args.bridgeAdapter}`);
-    if (!intexMatch) console.log(`   intex: ${currentIntex} -> ${args.intexContract}`);
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    factory.write.wire([
-      args.bridgeAdapter as `0x${string}`,
-      args.intexContract as `0x${string}`,
-    ]),
-  );
-  console.log(`✅ IntexFactory wired. Tx: ${txHash}`);
-};
-
-const intexFactoryWire = task("intex-factory-wire", "Wire IntexFactory to OriginMessenger + IntexNFT1155")
-  .addOption({ name: "intexFactoryContract", description: "IntexFactory contract address", defaultValue: "" })
-  .addOption({ name: "bridgeAdapter", description: "OriginMessenger contract address", defaultValue: "" })
-  .addOption({ name: "intexContract", description: "IntexNFT1155 contract address on Outbe", defaultValue: "" })
-  .setAction(lazy(intexFactoryWireAction));
-
-// ============================================================================
-// IntexFactory: Grant DESIS_ROLE to Desis (clearAuction -> IntexFactory.issue)
-// ============================================================================
-
-interface IntexFactoryGrantDesisRoleArgs {
-  intexFactoryContract: string;
-  desisContract: string;
-}
-
-const intexFactoryGrantDesisRoleAction = async (args: IntexFactoryGrantDesisRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Granting DESIS_ROLE on IntexFactory...`);
-  console.log(`  IntexFactory: ${args.intexFactoryContract}`);
-  console.log(`  Desis: ${args.desisContract}`);
-
-  const factory = (await viem.getContractAt(
-    "IntexFactory",
-    args.intexFactoryContract as `0x${string}`
-  )) as {
-    read: {
-      DESIS_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await factory.read.DESIS_ROLE();
-  const alreadyGranted = await factory.read.hasRole([role, args.desisContract as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ DESIS_ROLE already granted to Desis`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    factory.write.grantRole([role, args.desisContract as `0x${string}`]),
-  );
-  console.log(`✅ DESIS_ROLE granted on IntexFactory to Desis. Tx: ${txHash}`);
-};
-
-const intexFactoryGrantDesisRole = task("intex-factory-grant-desis-role", "Grant DESIS_ROLE on IntexFactory to Desis")
-  .addOption({ name: "intexFactoryContract", description: "IntexFactory contract address", defaultValue: "" })
-  .addOption({ name: "desisContract", description: "Desis contract address", defaultValue: "" })
-  .setAction(lazy(intexFactoryGrantDesisRoleAction));
-
-// ============================================================================
-// IntexFactory: Grant METADOSIS_ROLE (markSeriesQualified / markSeriesCalled)
-// ============================================================================
-
-interface IntexFactoryGrantMetadosisRoleArgs {
-  intexFactoryContract: string;
-  metadosisAddress: string;
-}
-
-const intexFactoryGrantMetadosisRoleAction = async (args: IntexFactoryGrantMetadosisRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Granting METADOSIS_ROLE on IntexFactory...`);
-  console.log(`  IntexFactory: ${args.intexFactoryContract}`);
-  console.log(`  Metadosis: ${args.metadosisAddress}`);
-
-  const factory = (await viem.getContractAt(
-    "IntexFactory",
-    args.intexFactoryContract as `0x${string}`
-  )) as {
-    read: {
-      METADOSIS_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await factory.read.METADOSIS_ROLE();
-  const alreadyGranted = await factory.read.hasRole([role, args.metadosisAddress as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ METADOSIS_ROLE already granted`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    factory.write.grantRole([role, args.metadosisAddress as `0x${string}`]),
-  );
-  console.log(`✅ METADOSIS_ROLE granted on IntexFactory. Tx: ${txHash}`);
-};
-
-const intexFactoryGrantMetadosisRole = task("intex-factory-grant-metadosis-role", "Grant METADOSIS_ROLE on IntexFactory to a given address")
-  .addOption({ name: "intexFactoryContract", description: "IntexFactory contract address", defaultValue: "" })
-  .addOption({ name: "metadosisAddress", description: "Address to grant METADOSIS_ROLE to", defaultValue: "" })
-  .setAction(lazy(intexFactoryGrantMetadosisRoleAction));
 
 // ============================================================================
 // IntexFactory: Assert RELAYER_ROLE on IntexNFT1155 (deploy-time invariant)
@@ -1171,14 +652,7 @@ export const wireTasks = [
   bnbBridgeWire.build(),
   onftBatchAdapterWire.build(),
   outbeBridgeWire.build(),
-  desisWire.build(),
-  desisGrantMetadosisRole.build(),
-  promisLimitGrantDesisRole.build(),
-  intexFactoryWire.build(),
-  intexFactoryGrantDesisRole.build(),
-  intexFactoryGrantMetadosisRole.build(),
   intexFactoryAssertRelayerRole.build(),
-  settlementWire.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
 ];

@@ -2,9 +2,9 @@
 pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ITheCompact} from "../../contracts/vendor/the-compact/interfaces/ITheCompact.sol";
-import {Scope} from "../../contracts/vendor/the-compact/types/Scope.sol";
-import {ResetPeriod} from "../../contracts/vendor/the-compact/types/ResetPeriod.sol";
+import {ITheCompact} from "../../src/vendor/the-compact/interfaces/ITheCompact.sol";
+import {Scope} from "../../src/vendor/the-compact/types/Scope.sol";
+import {ResetPeriod} from "../../src/vendor/the-compact/types/ResetPeriod.sol";
 
 /**
  * @title MockTheCompact

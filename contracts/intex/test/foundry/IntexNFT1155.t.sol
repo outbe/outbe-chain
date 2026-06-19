@@ -356,41 +356,6 @@ contract IntexNFT1155Test is Test {
         nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, tooLong);
     }
 
-    function test_UpdateCallPeriod() public {
-        uint32 newCallPeriod = uint32(30 days);
-
-        _createSeries(SERIES_ID_1, 0);
-        vm.startPrank(bridger);
-        nft.markCalled(SERIES_ID_1);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.updateCallPeriod(SERIES_ID_1, newCallPeriod);
-        vm.stopPrank();
-
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
-        assertEq(data.intexCallPeriod, newCallPeriod);
-        assertEq(data.calledAt + data.intexCallPeriod, calledAt + newCallPeriod);
-    }
-
-    function test_OnlyBridgeCanUpdateCallPeriod() public {
-        _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        nft.markCalled(SERIES_ID_1);
-
-        vm.prank(user);
-        vm.expectRevert();
-        nft.updateCallPeriod(SERIES_ID_1, uint32(30 days));
-    }
-
-    function test_UpdateCallPeriodInvalidPeriod() public {
-        _createSeries(SERIES_ID_1, 0);
-        vm.startPrank(bridger);
-        nft.markCalled(SERIES_ID_1);
-        // Period of 0 is rejected outright.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, uint32(0)));
-        nft.updateCallPeriod(SERIES_ID_1, 0);
-        vm.stopPrank();
-    }
-
     function test_CrosschainBurnNonexistentToken() public {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
