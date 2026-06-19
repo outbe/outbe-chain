@@ -10,7 +10,7 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  *   hash     = SHA256(utf8(preimage) ++ nonce_be8)
  *   valid    = first POW_DIFFICULTY bytes of hash are zero
  * `seq` is the per-(series, holder) mine counter — read it as the count of past
- * PromisMined(series, holder) events. promisAmount = series.intexSize * amount.
+ * PromisMined(series, holder) events. promisAmount = series.promisLoadMinor * amount.
  */
 
 export const POW_DIFFICULTY = 1; // crates/core/intexfactory/src/constants.rs

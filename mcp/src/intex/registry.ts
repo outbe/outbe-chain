@@ -5,7 +5,7 @@ import { type Abi, type Address, getAddress, parseAbi } from "viem";
  * series registry, cross-chain bridge, settlement/Promis).
  *
  * Intex is cross-chain: the auction + escrow + NFT run on target chains (BSC
- * today, more later); the series ledger (IntexRegistry), settlement
+ * today, more later); the series ledger (Intex), settlement
  * (IntexFactory) and Promis live on outbe as runtime precompiles. Addresses are
  * embedded constants, keyed by network so a new target chain is an added branch,
  * not a rewrite. The MCP never reads JSON at runtime.
@@ -33,7 +33,7 @@ export interface IntexAddresses {
   paymentToken?: Address;
   nft?: Address;
   bridgeAdapter?: Address;
-  registry?: Address;
+  intex?: Address;
   factory?: Address;
   promis?: Address;
 }
@@ -52,7 +52,7 @@ export const INTEX: Record<string, IntexAddresses> = {
     nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
     bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
     // outbe runtime precompiles (addresses.rs):
-    registry: a("0x0000000000000000000000000000000000001014"),
+    intex: a("0x0000000000000000000000000000000000001014"),
     factory: a("0x0000000000000000000000000000000000001015"),
     promis: a("0x0000000000000000000000000000000000001337"),
   },
@@ -65,6 +65,21 @@ export function intexAddress(network: string, key: keyof IntexAddresses): Addres
     throw new Error(`Intex "${key}" is not configured on "${network}"`);
   }
   return addr;
+}
+
+/** LayerZero EID of each network's bridge counterpart (NFT destination). */
+export const BRIDGE_DST_EID: Record<string, number> = {
+  "bsc-testnet": 40912, // -> outbe-testnet
+  "outbe-testnet": 40102, // -> bsc-testnet
+};
+
+/** Destination EID for bridging an NFT out of a network, or throw. */
+export function bridgeDstEid(network: string): number {
+  const eid = BRIDGE_DST_EID[network];
+  if (eid === undefined) {
+    throw new Error(`Intex bridge destination EID is not configured on "${network}"`);
+  }
+  return eid;
 }
 
 // --- ABIs ------------------------------------------------------------------
@@ -94,17 +109,16 @@ export const NFT_ABI: Abi = parseAbi([
   "function setApprovalForAll(address operator, bool approved)",
 ]);
 
-/** IntexRegistry (outbe precompile): canonical cross-chain series ledger. */
-export const REGISTRY_ABI: Abi = parseAbi([
-  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 intexSize, uint64 intexStrikePrice, uint256 coenPriceFloor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint256 coenPriceCallTrigger, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod) data)",
+/** Intex (outbe precompile): canonical cross-chain series ledger. */
+export const INTEX_ABI: Abi = parseAbi([
+  "function seriesData(uint32 seriesId) view returns ((uint32 seriesId, uint256 promisLoadMinor, uint64 costAmountMinor, uint256 floorPriceMinor, uint32 issuedIntexCount, uint16 callWindowDays, uint16 callThresholdDays, uint256 callPriceMinor, uint8 state, uint32 issuedAt, uint32 calledAt, uint32 intexCallPeriod, uint16 issuanceCurrency, uint16 referenceCurrency) data)",
   "function seriesExists(uint32 seriesId) view returns (bool)",
   "function totalSeries() view returns (uint64)",
   "function seriesAt(uint64 index) view returns (uint32)",
 ]);
 
-/** ONFT1155Adapter: the BSC->outbe NFT bridge. */
+/** ONFT1155Adapter: the cross-chain NFT bridge (BSC <-> outbe). */
 export const ONFT_ABI: Abi = parseAbi([
-  "function OUTBE_EID() view returns (uint32)",
   "function quoteSend((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, bool payInLzToken) view returns ((uint256 nativeFee, uint256 lzTokenFee) fee)",
   "function send((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable returns ((bytes32 guid, uint64 nonce, (uint256 nativeFee, uint256 lzTokenFee) fee) receipt)",
 ]);

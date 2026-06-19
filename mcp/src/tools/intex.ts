@@ -25,7 +25,8 @@ import {
   NETWORKS,
   NFT_ABI,
   ONFT_ABI,
-  REGISTRY_ABI,
+  INTEX_ABI,
+  bridgeDstEid,
   intexAddress,
 } from "../intex/registry.js";
 import { auctionStage, epochIso, intexState, intexStatus, isActiveStage } from "../intex/format.js";
@@ -179,17 +180,17 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
   const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
 
-  // --- Series ledger (outbe IntexRegistry) -----------------------------------
+  // --- Series ledger (outbe Intex) -----------------------------------
   server.tool(
     "intex_series_info",
-    "Canonical series record from the outbe IntexRegistry: size, strike, price floors, " +
+    "Canonical series record from the outbe Intex: size, strike, price floors, " +
       "lifecycle state (Issued/Qualified/Called), and issued/called timestamps.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const d = (await n.client.readContract({
-        address: addr(n, "registry"),
-        abi: REGISTRY_ABI,
+        address: addr(n, "intex"),
+        abi: INTEX_ABI,
         functionName: "seriesData",
         args: [series],
       })) as Record<string, bigint | number>;
@@ -197,15 +198,17 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       return ok({
         network: n.name,
         seriesId: Number(d.seriesId),
-        // scales per crates/core/intexregistry/src/schema.rs:
-        intexSize: { raw: d.intexSize.toString(), value: formatUnits(u256(d.intexSize), 18) }, // Promis per intex, 18 dec
-        intexStrikePrice: { raw: d.intexStrikePrice.toString(), scale: "payment-token decimals" },
-        coenPriceFloor: { raw: d.coenPriceFloor.toString(), value: formatUnits(u256(d.coenPriceFloor), 18), scale: "1e18 oracle" },
-        coenPriceCallTrigger: { raw: d.coenPriceCallTrigger.toString(), value: formatUnits(u256(d.coenPriceCallTrigger), 18), scale: "1e18 oracle" },
+        // scales per crates/core/intex/src/schema.rs (SeriesRecord):
+        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 18) }, // Promis per intex, 18 dec
+        costAmount: { raw: d.costAmountMinor.toString(), scale: "payment-token decimals" },
+        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
+        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
         issuedIntexCount: Number(d.issuedIntexCount),
         callWindowDays: Number(d.callWindowDays),
         callThresholdDays: Number(d.callThresholdDays),
         intexCallPeriod: Number(d.intexCallPeriod),
+        issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
+        referenceCurrency: Number(d.referenceCurrency),
         state: intexState(d.state),
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
@@ -215,22 +218,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_series_list",
-    "Enumerate series ids that exist in the outbe IntexRegistry (dense enumeration).",
+    "Enumerate series ids that exist in the outbe Intex (dense enumeration).",
     { network: networkArg.optional() },
     handler(async ({ network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const total = Number(
         (await n.client.readContract({
-          address: addr(n, "registry"),
-          abi: REGISTRY_ABI,
+          address: addr(n, "intex"),
+          abi: INTEX_ABI,
           functionName: "totalSeries",
         })) as bigint,
       );
       const ids: number[] = [];
       for (let i = 0; i < total; i++) {
         const id = (await n.client.readContract({
-          address: addr(n, "registry"),
-          abi: REGISTRY_ABI,
+          address: addr(n, "intex"),
+          abi: INTEX_ABI,
           functionName: "seriesAt",
           args: [BigInt(i)],
         })) as number;
@@ -583,13 +586,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   // --- Bridge BSC -> outbe (ONFT1155Adapter, signed) -------------------------
 
   async function buildSendParam(n: Network, series: number, amount: bigint, recipient: Address) {
-    const adapter = addr(n, "bridgeAdapter");
-    const [dstEid, ids] = (await Promise.all([
-      n.client.readContract({ address: adapter, abi: ONFT_ABI, functionName: "OUTBE_EID" }),
-      n.client.readContract({ address: addr(n, "nft"), abi: NFT_ABI, functionName: "tokenIds", args: [series] }),
-    ])) as [number, [bigint, bigint]];
+    const ids = (await n.client.readContract({
+      address: addr(n, "nft"),
+      abi: NFT_ABI,
+      functionName: "tokenIds",
+      args: [series],
+    })) as [bigint, bigint];
     return {
-      dstEid: Number(dstEid),
+      dstEid: bridgeDstEid(n.name),
       to: pad(recipient, { size: 32 }),
       tokenId: ids[0], // issued token id
       amount,
@@ -724,12 +728,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const holder = account.address;
       const amt = BigInt(amount);
       const sd = (await n.client.readContract({
-        address: addr(n, "registry"),
-        abi: REGISTRY_ABI,
+        address: addr(n, "intex"),
+        abi: INTEX_ABI,
         functionName: "seriesData",
         args: [series],
-      })) as { intexSize: bigint };
-      const promisAmount = sd.intexSize * amt;
+      })) as { promisLoadMinor: bigint };
+      const promisAmount = sd.promisLoadMinor * amt;
       // seq = this holder's prior mints for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
