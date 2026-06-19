@@ -10,8 +10,9 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    CALL_PRICE_DEN, CALL_PRICE_NUM, FLOOR_PRICE_DEN, FLOOR_PRICE_NUM, INTEX_NFT1155_ADDRESS,
-    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, RESERVE_VAULT,
+    CALL_PRICE_DEN, CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, FLOOR_PRICE_DEN,
+    FLOOR_PRICE_NUM, INTEX_CALL_PERIOD_SECONDS, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
+    POW_DIFFICULTY, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -38,10 +39,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         promis_load_minor: params.promis_load_minor,
         cost_amount_minor: params.cost_amount_minor,
         floor_price_minor,
-        intex_call_period: params.intex_call_period,
+        intex_call_period: INTEX_CALL_PERIOD_SECONDS,
         call_trigger: outbe_intex::IntexCallTrigger {
-            window_days: params.call_window_days,
-            threshold_days: params.call_threshold_days,
+            window_days: CALL_WINDOW_DAYS,
+            threshold_days: CALL_THRESHOLD_DAYS,
             call_price_minor,
         },
         issued_at,
@@ -58,7 +59,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         IIntexNFT1155::createSeriesCall {
             seriesId: params.series_id,
             issuedIntexCount: params.issued_intex_count,
-            intexCallPeriod: params.intex_call_period,
+            intexCallPeriod: INTEX_CALL_PERIOD_SECONDS,
         }
         .abi_encode()
         .into(),
@@ -77,10 +78,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         promisLoadMinor: params.promis_load_minor,
         costAmountMinor: params.cost_amount_minor,
         floorPriceMinor: floor_price_minor_u64,
-        intexCallPeriod: params.intex_call_period,
+        intexCallPeriod: INTEX_CALL_PERIOD_SECONDS,
         settlementTokenAlias: params.reference_currency,
-        callWindowDays: params.call_window_days,
-        callThresholdDays: params.call_threshold_days,
+        callWindowDays: CALL_WINDOW_DAYS,
+        callThresholdDays: CALL_THRESHOLD_DAYS,
         callPriceMinor: call_price_minor_u64,
         recipients: params.recipients,
         quantities: params.quantities,

@@ -13,9 +13,6 @@ pub struct IssuanceParams {
     pub promis_load_minor: u128,
     pub cost_amount_minor: u64,
     pub coen_price: U256,
-    pub intex_call_period: u32,
-    pub call_window_days: u16,
-    pub call_threshold_days: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.

@@ -40,3 +40,11 @@ pub const FLOOR_PRICE_DEN: u64 = 100;
 /// Call price = COEN/0xUSD price * 2.28; integer ratio 228/100.
 pub const CALL_PRICE_NUM: u64 = 228;
 pub const CALL_PRICE_DEN: u64 = 100;
+
+/// Forced-settlement deadline after a series is Called, in seconds.
+pub const INTEX_CALL_PERIOD_SECONDS: u32 = 21 * 24 * 3600;
+
+/// Call-trigger evaluation window: most recent completed days scanned for breaches.
+pub const CALL_WINDOW_DAYS: u16 = 30;
+/// Call-trigger threshold: breach-days within the window required to force-call.
+pub const CALL_THRESHOLD_DAYS: u16 = 20;

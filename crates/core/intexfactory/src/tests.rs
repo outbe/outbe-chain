@@ -52,9 +52,6 @@ fn sample(series_id: u32) -> IssuanceParams {
         promis_load_minor: PROMIS_LOAD_MINOR,
         cost_amount_minor: 2_000,
         coen_price: U256::from(COEN_PRICE),
-        intex_call_period: CALL_PERIOD,
-        call_window_days: 30,
-        call_threshold_days: 21,
         issuance_currency: 840,
         reference_currency: 840,
         recipients: vec![],
@@ -76,11 +73,12 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
         assert_eq!(r.intex_call_period, CALL_PERIOD);
+        // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 21,
+                threshold_days: 20,
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
             }
         );
@@ -540,9 +538,31 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        let mut p = sample(8);
-        p.call_threshold_days = 27;
-        let mut f = qualify_series(&s, 8, p);
+        // Seed the series directly with threshold 27 (above the 21d maturity),
+        // since the protocol default (20) is below maturity and a qualified
+        // series would always have >= 21 completed post-issuance days.
+        outbe_intex::api::create_series(
+            &s,
+            outbe_intex::CreateSeriesParams {
+                series_id: 8,
+                issued_intex_count: 100,
+                promis_load_minor: PROMIS_LOAD_MINOR,
+                cost_amount_minor: 2_000,
+                floor_price_minor: U256::from(EXPECTED_FLOOR),
+                intex_call_period: CALL_PERIOD,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    window_days: 30,
+                    threshold_days: 27,
+                    call_price_minor: U256::from(EXPECTED_TRIGGER),
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+        outbe_intex::api::mark_qualified(&s, 8).unwrap();
+        let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as

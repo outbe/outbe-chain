@@ -21,8 +21,3 @@ pub const PROMIS_LOAD: u128 = 100_000;
 pub const REVEAL_WINDOW_SECONDS: u32 = 12 * 3600;
 /// BNB-side auction phase timing: issuance window after noon of the series day.
 pub const ISSUANCE_WINDOW_SECONDS: u32 = 24 * 3600;
-
-/// Issuance config defaults forwarded to IntexFactory at clearing.
-pub const DEFAULT_INTEX_CALL_PERIOD: u32 = 21 * 24 * 3600;
-pub const DEFAULT_CALL_WINDOW_DAYS: u16 = 30;
-pub const DEFAULT_CALL_THRESHOLD_DAYS: u16 = 20;
