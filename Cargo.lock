@@ -7207,7 +7207,6 @@ name = "outbe-emissionlimit"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "outbe-agentreward",
  "outbe-metadosis",
  "outbe-primitives",
  "tracing",
@@ -7785,7 +7784,6 @@ dependencies = [
  "hex",
  "outbe-poseidon",
  "outbe-tee",
- "outbe-tributefactory",
  "rand_core 0.6.4",
  "ring",
  "serde",

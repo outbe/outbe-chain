@@ -60,7 +60,6 @@ rand_core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-outbe-tributefactory.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }
 commonware-runtime.workspace = true

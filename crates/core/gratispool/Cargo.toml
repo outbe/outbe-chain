@@ -27,6 +27,13 @@ ark-ff.workspace = true
 outbe-zk-canonical.workspace = true
 outbe-zk-circuit-noir.workspace = true
 
+# Used by the real Barretenberg verifier path in `verifier.rs`. Under
+# `--all-features` the `test-helpers` feature replaces that path with a
+# thread-local override, so cargo-udeps (run with --all-features) sees these as
+# unused; they are required by the default/production build.
+[package.metadata.cargo-udeps.ignore]
+normal = ["outbe-zk-canonical", "outbe-zk-circuit-noir"]
+
 [features]
 default = []
 # Exposes `verifier::with_verifier_outcome` and forces `verifier::verify` to
