@@ -3,8 +3,8 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::math::SCALE;
-use crate::schema::FidelityContract;
-use crate::schema::{cohort_key, ActiveCohort, SoldCohort, DOMAIN_ACTIVE, DOMAIN_SOLD};
+use crate::schema::{active_cohort_key, sold_cohort_key, FidelityContract};
+use crate::schema::{ActiveCohort, SoldCohort};
 
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const DAY: u64 = 86_400;
@@ -19,15 +19,11 @@ fn with_contract<R>(f: impl FnOnce(&mut FidelityContract) -> R) -> R {
 }
 
 fn active(c: &FidelityContract, owner: Address, i: u32) -> Option<ActiveCohort> {
-    c.active_cohorts
-        .get(cohort_key(DOMAIN_ACTIVE, owner, i))
-        .unwrap()
+    c.active_cohorts.get(active_cohort_key(owner, i)).unwrap()
 }
 
 fn sold(c: &FidelityContract, owner: Address, i: u32) -> Option<SoldCohort> {
-    c.sold_cohorts
-        .get(cohort_key(DOMAIN_SOLD, owner, i))
-        .unwrap()
+    c.sold_cohorts.get(sold_cohort_key(owner, i)).unwrap()
 }
 
 fn u(v: u64) -> U256 {

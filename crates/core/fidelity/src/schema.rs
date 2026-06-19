@@ -5,8 +5,8 @@ use outbe_primitives::addresses::FIDELITY_ADDRESS;
 /// Domain tags for per-owner cohort slot keys, keeping the active and sold index
 /// spaces disjoint (defence in depth — the two maps already have distinct base
 /// slots).
-pub(crate) const DOMAIN_ACTIVE: u8 = 1;
-pub(crate) const DOMAIN_SOLD: u8 = 2;
+const DOMAIN_ACTIVE: u8 = 1;
+const DOMAIN_SOLD: u8 = 2;
 
 /// A live (unsold) holding. Contributes `size · T_dec(now − acquired_at)` to both
 /// the efficiency numerator and denominator. Exists while `size > 0`.
@@ -74,10 +74,18 @@ pub struct FidelityContract {
 }
 
 /// Domain-separated per-owner cohort slot key: `keccak(domain ++ owner ++ index)`.
-pub(crate) fn cohort_key(domain: u8, owner: Address, index: u32) -> B256 {
+fn cohort_key(domain: u8, owner: Address, index: u32) -> B256 {
     let mut buf = [0u8; 1 + 20 + 4];
     buf[0] = domain;
     buf[1..21].copy_from_slice(owner.as_slice());
     buf[21..25].copy_from_slice(&index.to_be_bytes());
     keccak256(buf)
+}
+
+pub(crate) fn sold_cohort_key(owner: Address, index: u32) -> B256 {
+    cohort_key(DOMAIN_SOLD, owner, index)
+}
+
+pub(crate) fn active_cohort_key(owner: Address, index: u32) -> B256 {
+    cohort_key(DOMAIN_ACTIVE, owner, index)
 }

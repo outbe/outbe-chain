@@ -1,7 +1,7 @@
 use crate::errors::FidelityError;
 use crate::math::{t_dec, SCALE};
 use crate::schema::{
-    cohort_key, ActiveCohort, FidelityContract, SoldCohort, DOMAIN_ACTIVE, DOMAIN_SOLD,
+    active_cohort_key, sold_cohort_key, ActiveCohort, FidelityContract, SoldCohort,
 };
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
@@ -47,7 +47,7 @@ impl FidelityContract<'_> {
         }
         let idx = self.active_count.read(&account)?;
         self.active_cohorts.create(&ActiveCohort {
-            slot_key: cohort_key(DOMAIN_ACTIVE, account, idx),
+            slot_key: active_cohort_key(account, idx),
             size: amount,
             acquired_at: now,
         })?;
@@ -70,7 +70,7 @@ impl FidelityContract<'_> {
         let mut count = self.active_count.read(&account)?;
         while !remaining.is_zero() && count > 0 {
             let idx = count - 1;
-            let key = cohort_key(DOMAIN_ACTIVE, account, idx);
+            let key = active_cohort_key(account, idx);
             let cohort = match self.active_cohorts.get(key)? {
                 Some(c) => c,
                 None => break, // defensive: missing tail slot → stop (clamp)
@@ -107,7 +107,7 @@ impl FidelityContract<'_> {
     ) -> Result<()> {
         let sidx = self.sold_count.read(&account)?;
         self.sold_cohorts.create(&SoldCohort {
-            slot_key: cohort_key(DOMAIN_SOLD, account, sidx),
+            slot_key: sold_cohort_key(account, sidx),
             size,
             acquired_at,
             sold_at,
@@ -142,10 +142,7 @@ impl FidelityContract<'_> {
         // Active cohorts: full decayed age, counted in numerator and denominator.
         let active = self.active_count.read(&account)?;
         for i in 0..active {
-            if let Some(c) = self
-                .active_cohorts
-                .get(cohort_key(DOMAIN_ACTIVE, account, i))?
-            {
+            if let Some(c) = self.active_cohorts.get(active_cohort_key(account, i))? {
                 let contribution = c.size * t_dec(now.saturating_sub(c.acquired_at));
                 num += contribution;
                 den += contribution;
@@ -155,7 +152,7 @@ impl FidelityContract<'_> {
         // Sold cohorts: decayed holding duration, denominator only.
         let sold = self.sold_count.read(&account)?;
         for i in 0..sold {
-            if let Some(c) = self.sold_cohorts.get(cohort_key(DOMAIN_SOLD, account, i))? {
+            if let Some(c) = self.sold_cohorts.get(sold_cohort_key(account, i))? {
                 let buy = t_dec(now.saturating_sub(c.acquired_at));
                 let sell = t_dec(now.saturating_sub(c.sold_at));
                 // buy ≥ sell since acquired_at ≤ sold_at; saturating guards skew.
