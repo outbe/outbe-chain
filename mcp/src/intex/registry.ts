@@ -42,15 +42,15 @@ const a = (s: string): Address => getAddress(s);
 
 export const INTEX: Record<string, IntexAddresses> = {
   "bsc-testnet": {
-    auction: a("0x912E4b32b38cc2c4D80047cB476599102c676896"),
-    escrow: a("0x47E9e7be5a45B296036b196C0cC8B371A8AB9D83"),
+    auction: a("0x60195ce77E6848483d7d42AAA30ce23E3B0e53de"),
+    escrow: a("0xA3bdFbB87951C993D08271e6f221CB49cC774B1b"),
     paymentToken: a("0x78366397b72D0c283658DA5A38C450455A97e595"),
-    nft: a("0xc9735138d43CDc740d8aF43cB6597Ee040Bb1D2d"),
-    bridgeAdapter: a("0x5EF48bBD34e2eBcB51E459faCCb90E16BD7BF9aB"),
+    nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
+    bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
   },
   "outbe-testnet": {
-    nft: a("0xbB9493451F46e0b984B839f182624F2da1e9821c"),
-    bridgeAdapter: a("0xA1DBb77fDF66bdDC26ae6925B1E775ac70452851"),
+    nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
+    bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
     // outbe runtime precompiles (addresses.rs):
     registry: a("0x0000000000000000000000000000000000001014"),
     factory: a("0x0000000000000000000000000000000000001015"),
