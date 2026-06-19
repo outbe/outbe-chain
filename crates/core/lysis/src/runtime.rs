@@ -113,9 +113,8 @@ pub fn lysis(
         // RCFI is bounded by the decay saturation limit L (≈ 526 decayed days,
         // see `outbe_fidelity`), so it always fits in u32 and the conversion
         // cannot truncate. Guard remains for defense in depth.
-        let league_id = u32::try_from(fi).map_err(|_| {
-            PrecompileError::Revert(format!("lysis: RCFI {fi} exceeds u32::MAX"))
-        })?;
+        let league_id = u32::try_from(fi)
+            .map_err(|_| PrecompileError::Revert(format!("lysis: RCFI {fi} exceeds u32::MAX")))?;
 
         // cost_amount = cost_of_gratis * gratis_load / SCALE — both inputs are
         // 10^18-scaled (oracle price × minor units); divide once to land in

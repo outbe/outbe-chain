@@ -66,12 +66,7 @@ impl FidelityContract<'_> {
         Ok(())
     }
 
-    fn push_active(
-        &mut self,
-        account: Address,
-        amount: U256,
-        acquired_at: u64,
-    ) -> Result<()> {
+    fn push_active(&mut self, account: Address, amount: U256, acquired_at: u64) -> Result<()> {
         let idx = self.active_count.read(&account)?;
         self.active_cohorts.create(&ActiveCohort {
             slot_key: active_cohort_key(account, idx),
