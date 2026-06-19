@@ -177,7 +177,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-udeps
-      - run: cargo udeps --workspace --lib --examples --tests --benches --all-features
+      - run: cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features
 
   no-test-deps:
     name: no-test-deps

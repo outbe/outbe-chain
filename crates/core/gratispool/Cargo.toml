@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-zkproof.workspace = true
 
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
