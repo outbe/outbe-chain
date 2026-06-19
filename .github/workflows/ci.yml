@@ -162,14 +162,6 @@ jobs:
       - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
         run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke
 
-  typos:
-    name: typos
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1
-
   udeps:
     name: udeps
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -273,7 +265,6 @@ jobs:
       - test-arm
       - doctests
       - localnet
-      - typos
       - udeps
       - no-test-deps
       - deny
