@@ -47,12 +47,14 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
       - run: rustup component add clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: mise run lint
 
   test:
@@ -67,11 +69,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
       # trybuild compile-fail tests reference std source snippets; rustc only
       # renders them when rust-src is present (mise installs rust without it).
       - run: rustup component add rust-src
@@ -108,11 +112,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
       # trybuild compile-fail tests reference std source snippets; rustc only
       # renders them when rust-src is present (mise installs rust without it).
       - run: rustup component add rust-src
@@ -131,11 +137,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
       # The `test` job runs under llvm-cov, which does NOT execute doctests
       # (M-24). Run them explicitly so executable doc-examples are covered.
       - run: mise run test-doc
