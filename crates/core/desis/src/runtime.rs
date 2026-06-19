@@ -248,12 +248,14 @@ pub fn begin_clearing(
 /// transitions to `BidsReceived` if any bids exist, else to `Cancelled`.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
+    caller: Address,
     series_id: u32,
     src_eid: u32,
     is_last: bool,
     generation: u32,
     bids: Vec<BidData>,
 ) -> Result<()> {
+    require_origin_messenger(caller)?;
     require_nonzero_series_id(series_id)?;
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, series_id, AuctionStage::Revealing)?;
@@ -308,7 +310,12 @@ pub fn process_bids_batch(
 ///
 /// Returns the `ClearingResult` so the caller (precompile) can dispatch
 /// AUCTION_RESULT and REFUND_INSTRUCTIONS messages.
-pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<ClearingResult> {
+pub fn clear_auction(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    series_id: u32,
+) -> Result<ClearingResult> {
+    require_origin_messenger(caller)?;
     require_nonzero_series_id(series_id)?;
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, series_id, AuctionStage::BidsReceived)?;
@@ -546,6 +553,13 @@ fn calculate_clearing(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn require_origin_messenger(caller: Address) -> Result<()> {
+    if caller != ORIGIN_MESSENGER_ADDRESS {
+        return Err(DesisError::UnauthorizedOrigin(caller).into());
+    }
+    Ok(())
+}
 
 fn require_nonzero_series_id(series_id: u32) -> Result<()> {
     if series_id == 0 {

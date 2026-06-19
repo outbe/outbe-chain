@@ -111,6 +111,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         runtime::begin_clearing(s.clone(), SERIES_ID, 100 * PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
             s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
             true,
@@ -125,7 +126,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
                 .collect(),
         )
         .unwrap();
-        runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
 
         // Second auction for a different series_id: min_bid_qty must be 4% of 100 = 4.
         runtime::start_auction(s.clone(), SERIES_ID + 1, default_config()).unwrap();
@@ -143,8 +144,65 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         // Stage is Started, not Revealing — must be rejected.
-        assert!(
-            runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(2, 200)).is_err()
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(2, 200)
+        )
+        .is_err());
+    });
+}
+
+// --- Origin gate (OriginMessenger-only entries) ---
+
+#[test]
+fn process_bids_rejects_non_origin_caller() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        // Series is in Revealing, so the only admission gate left is the caller check.
+        let attacker = bidder(99);
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            attacker,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200)
+        )
+        .is_err());
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.bid_count.read(&SERIES_ID).unwrap(), 0);
+    });
+}
+
+#[test]
+fn clear_auction_rejects_non_origin_caller() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        // Series is in BidsReceived, so the only admission gate left is the caller check.
+        let attacker = bidder(99);
+        assert!(runtime::clear_auction(s.clone(), attacker, SERIES_ID).is_err());
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::BidsReceived
         );
     });
 }
@@ -169,8 +227,26 @@ fn process_bids_accumulate_then_finalize() {
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         // Two partial batches; only last=true finalizes.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(3, 200)).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(2, 150)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(2, 150),
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 5);
@@ -187,9 +263,27 @@ fn higher_generation_replaces_bids() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(5, 200)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(5, 200),
+        )
+        .unwrap();
         // Gen 2 replaces.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 2, bids(2, 150)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            2,
+            bids(2, 150),
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 2);
@@ -202,10 +296,26 @@ fn stale_generation_is_rejected() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 2, bids(1, 200)).unwrap();
-        assert!(
-            runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(1, 200)).is_err()
-        );
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            2,
+            bids(1, 200),
+        )
+        .unwrap();
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(1, 200)
+        )
+        .is_err());
     });
 }
 
@@ -214,7 +324,16 @@ fn no_bids_last_batch_cancels() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, vec![]).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            vec![],
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -234,8 +353,18 @@ fn clear_auction_allocates_up_to_supply() {
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // 5 bidders competing for 3 supply units.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(5, 200)).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(5, 200),
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
@@ -247,8 +376,17 @@ fn clear_auction_transitions_to_cleared() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(1, 200)).unwrap();
-        runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(SERIES_ID).unwrap(),
@@ -285,8 +423,18 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, three_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            three_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         // Supply 2 → top 2 bids win (300 and 200); clearing price = 200.
         assert_eq!(result.clearing_price, 200);
         assert_eq!(result.issued_intex_count, 2);
@@ -313,8 +461,18 @@ fn clear_bids_below_min_price_skipped() {
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, low_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            low_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -342,8 +500,18 @@ fn clear_refunds_equal_locked_minus_paid() {
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, two_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            two_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         // Winner (bid 300): locked=300, paid=300 (clearing price), refund=0
         // Loser (bid 200): locked=200, refund=200
         let w_idx = result
