@@ -459,6 +459,8 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::upgrade_handlers::registry())?;
+
         if args.is_validator {
             info!("outbe node launched in VALIDATOR mode");
 
