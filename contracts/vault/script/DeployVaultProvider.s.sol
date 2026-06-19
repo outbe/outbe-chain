@@ -23,6 +23,7 @@ contract DeployVaultProvider is BaseScript {
         address reserveVault = vm.envAddress("VAULT_ADDRESS");
         address credisFactory = vm.envAddress("CREDIS_FACTORY_ADDRESS");
         address gemFactory = vm.envAddress("GEM_FACTORY_ADDRESS");
+        address intexFactory = vm.envAddress("INTEX_FACTORY_ADDRESS");
 
         bytes32 saltImpl = generateSalt("VaultProvider");
         bytes32 saltProxy = generateSalt("IVaultProvider");
@@ -55,6 +56,7 @@ contract DeployVaultProvider is BaseScript {
         provider.addLiquiditySource(credisFactory, IVaultProvider.LiquiditySource.CredisAnadosis);
         provider.addLiquidityTarget(credisFactory, IVaultProvider.LiquidityTarget.Credis);
         provider.addLiquiditySource(gemFactory, IVaultProvider.LiquiditySource.GemSettle);
+        provider.addLiquiditySource(intexFactory, IVaultProvider.LiquiditySource.IntexStrikePrice);
 
         vm.stopBroadcast();
 
