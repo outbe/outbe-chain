@@ -1,4 +1,3 @@
-use crate::errors::FidelityError;
 use crate::math::{t_dec, SCALE};
 use crate::schema::{
     active_cohort_key, sold_cohort_key, ActiveCohort, FidelityContract, SoldCohort,
@@ -6,31 +5,7 @@ use crate::schema::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-const DEFAULT_FIDELITY_INDEX: u64 = 1;
-
 impl FidelityContract<'_> {
-    // --- Legacy mock index (consumed by lysis/credisfactory) --------------
-
-    pub fn get_fidelity_index(&self, address: Address) -> Result<u64> {
-        let val = self.fidelity_indices.read(&address)?;
-        if val == 0 {
-            Ok(DEFAULT_FIDELITY_INDEX)
-        } else {
-            Ok(val)
-        }
-    }
-
-    // reject values exceeding u32::MAX — downstream lysis casts the
-    // index to u32 for `league_id`; a larger value would truncate silently.
-    pub fn set_fidelity_index(&mut self, address: Address, index: u64) -> Result<()> {
-        if index > u32::MAX as u64 {
-            return Err(FidelityError::IndexOutOfRange { address, index }.into());
-        }
-        self.fidelity_indices.write(&address, index)
-    }
-
-    // --- RCFI cohort engine -----------------------------------------------
-
     /// ACQUISITION hook ("mine Gratis from nod"): records a new active cohort.
     ///
     /// `now` is the block timestamp in seconds, passed by the caller. No-op on a
@@ -45,13 +20,7 @@ impl FidelityContract<'_> {
         if self.qualified_start.read(&account)? == 0 {
             self.qualified_start.write(&account, now)?;
         }
-        let idx = self.active_count.read(&account)?;
-        self.active_cohorts.create(&ActiveCohort {
-            slot_key: active_cohort_key(account, idx),
-            size: amount,
-            acquired_at: now,
-        })?;
-        self.active_count.write(&account, idx + 1)?;
+        self.push_active(account, amount, now)?;
         Ok(())
     }
 
@@ -97,7 +66,22 @@ impl FidelityContract<'_> {
         Ok(())
     }
 
-    /// Appends a sold slice to the per-owner append-only sold log.
+    fn push_active(
+        &mut self,
+        account: Address,
+        amount: U256,
+        acquired_at: u64,
+    ) -> Result<()> {
+        let idx = self.active_count.read(&account)?;
+        self.active_cohorts.create(&ActiveCohort {
+            slot_key: active_cohort_key(account, idx),
+            size: amount,
+            acquired_at,
+        })?;
+        self.active_count.write(&account, idx + 1)?;
+        Ok(())
+    }
+
     fn push_sold(
         &mut self,
         account: Address,

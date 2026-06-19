@@ -126,7 +126,9 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
                 .expect("GAS-08 issued NOD must be readable");
             assert_eq!(item.owner, owners[idx]);
             assert_eq!(item.worldwide_day, wwd);
-            assert_eq!(item.league_id, 1);
+            // league_id derives from the owner's RCFI, which is 0 here: these
+            // tribute owners have no gratis cohort history.
+            assert_eq!(item.league_id, 0);
             assert!(
                 !item.gratis_load_minor.is_zero(),
                 "GAS-08: issued dense NOD must carry positive gratis load"
@@ -498,8 +500,9 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             .write(&0u32, cost_of_gratis)
             .unwrap();
 
-        // 2. Open the day and issue a single tribute. Fidelity defaults to 1
-        //    when unset (see `FidelityContract::get_fidelity_index`).
+        // 2. Open the day and issue a single tribute. RCFI is 0 with no cohort
+        //    history (see `FidelityContract::get_rcfi`); the single-FI fast path
+        //    is independent of the index value.
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
         tribute

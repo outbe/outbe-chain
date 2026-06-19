@@ -37,10 +37,6 @@ use crate::precompile::ICredisFactory;
 use crate::schema::CredisFactoryContract;
 use crate::sol_ext::{IVaultProvider, IERC20};
 
-/// Required fidelity index for `requestCredis` to succeed.
-/// TODO hardcode; implement fidelity.
-const REQUIRED_FIDELITY_INDEX: u64 = 1;
-
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
 pub const NATIVE_TOKEN: &str = "COEN";
 
@@ -119,11 +115,12 @@ pub fn request_credis(
     // Fidelity gate now operates on `bundleAccount` — the shielded pool no
     // longer surfaces the pledger's address. PoC limitation; the stricter
     // form (in-circuit attestation-tree-membership) lives in the architecture
-    // spec and is out of scope here.
+    // spec and is out of scope here. Eligibility requires a positive RCFI: the
+    // account must have retained (not fully-sold) gratis history.
     {
         let fidelity = FidelityContract::new(storage.clone());
-        let idx = fidelity.get_fidelity_index(bundle_account)?;
-        if idx != REQUIRED_FIDELITY_INDEX {
+        let rcfi = fidelity.get_rcfi(bundle_account)?;
+        if rcfi == 0 {
             return Err(CredisFactoryError::FidelityNotEligible.into());
         }
     }

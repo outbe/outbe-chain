@@ -40,36 +40,31 @@ pub struct SoldCohort {
 
 /// EVM storage layout for the Fidelity (RCFI) module.
 ///
-/// `fidelity_indices` (slot 0) is the legacy per-address index still consumed by
-/// `lysis`/`credisfactory` (mock `league_id`); it is preserved unchanged. The
-/// RCFI engine adds a per-owner cohort ledger: an active LIFO stack and an
-/// append-only sold log, each a `count` + a `keccak(domain ++ owner ++ index)`
-/// keyed record map (the `nod` enumeration pattern).
+/// RCFI is computed on demand from a per-owner cohort ledger: an active LIFO
+/// stack and an append-only sold log, each a `count` + a
+/// `keccak(domain ++ owner ++ index)` keyed record map (the `nod` enumeration
+/// pattern).
 #[storage_schema]
 #[contract(addr = FIDELITY_ADDRESS)]
 pub struct FidelityContract {
-    // slot 0: legacy mock index (default 1), consumed by lysis/credisfactory.
+    // slot 0: first qualified acquisition time (seconds); 0 = no history.
     #[attribute(order = 0)]
-    pub fidelity_indices: outbe_primitives::storage::dsl::Map<Address, u64>,
-
-    // slot 1: first qualified acquisition time (seconds); 0 = no history.
-    #[attribute(order = 1)]
     pub qualified_start: outbe_primitives::storage::dsl::Map<Address, u64>,
 
     // --- active cohort LIFO stack ---
-    // slot 2: per-owner active stack depth.
-    #[attribute(order = 2)]
+    // slot 1: per-owner active stack depth.
+    #[attribute(order = 1)]
     pub active_count: outbe_primitives::storage::dsl::Map<Address, u32>,
-    // slots 3-4: active cohort record keyed by cohort_key(ACTIVE, owner, index).
-    #[attribute(order = 3)]
+    // slots 2-3: active cohort record keyed by cohort_key(ACTIVE, owner, index).
+    #[attribute(order = 2)]
     pub active_cohorts: outbe_primitives::storage::dsl::Map<B256, ActiveCohort>,
 
     // --- sold cohort append-only log ---
-    // slot 5: per-owner sold log length.
-    #[attribute(order = 4)]
+    // slot 4: per-owner sold log length.
+    #[attribute(order = 3)]
     pub sold_count: outbe_primitives::storage::dsl::Map<Address, u32>,
-    // slots 6-8: sold cohort record keyed by cohort_key(SOLD, owner, index).
-    #[attribute(order = 5)]
+    // slots 5-7: sold cohort record keyed by cohort_key(SOLD, owner, index).
+    #[attribute(order = 4)]
     pub sold_cohorts: outbe_primitives::storage::dsl::Map<B256, SoldCohort>,
 }
 

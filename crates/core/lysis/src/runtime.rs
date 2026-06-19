@@ -47,12 +47,12 @@ pub fn lysis(
         });
     }
 
-    // 2. Collect fidelity indices and compute total nominal interest
+    // 2. Collect each owner's RCFI (the fidelity index) and total nominal interest
     let mut tribute_fis: Vec<u64> = Vec::with_capacity(tributes.len());
     let mut total_interest = U256::ZERO;
 
     for tribute in &tributes {
-        let fi = fidelity.get_fidelity_index(tribute.owner)?;
+        let fi = fidelity.get_rcfi(tribute.owner)?;
         tribute_fis.push(fi);
         total_interest += tribute.nominal_amount_minor;
     }
@@ -110,11 +110,11 @@ pub fn lysis(
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
 
-        // fidelity is capped to u32::MAX on writing (see
-        // `outbe_fidelity::FidelityContract::set_fidelity_index`), so the
-        // conversion cannot truncate. Guard remains for defense in depth.
+        // RCFI is bounded by the decay saturation limit L (≈ 526 decayed days,
+        // see `outbe_fidelity`), so it always fits in u32 and the conversion
+        // cannot truncate. Guard remains for defense in depth.
         let league_id = u32::try_from(fi).map_err(|_| {
-            PrecompileError::Revert(format!("lysis: fidelity index {fi} exceeds u32::MAX"))
+            PrecompileError::Revert(format!("lysis: RCFI {fi} exceeds u32::MAX"))
         })?;
 
         // cost_amount = cost_of_gratis * gratis_load / SCALE — both inputs are
