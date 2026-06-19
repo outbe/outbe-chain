@@ -40,7 +40,7 @@ import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
  * NETWORKS table; a resolved network reuses the connected `ctx` when chain ids
  * match, else opens a fresh client via createCtx — same shape as src/tools/intent.ts.
  *
- * This file currently registers the read-only surface; signing tools land next.
+ * Read tools work without a key; signing tools require OUTBE_PRIVATE_KEY.
  */
 
 interface Network {
@@ -730,6 +730,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as { intexSize: bigint };
       const promisAmount = sd.intexSize * amt;
+      // seq = this holder's prior mints for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
         event: PROMIS_MINED_EVENT,
