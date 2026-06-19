@@ -167,15 +167,24 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return raw;
   }
 
+  // --- shared argument schemas ---
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
-  const ownerArg = z.string().optional().describe("0x address (default: the configured signer)");
+  const accountArg = z.string().optional().describe("0x address to query (default: the configured signer)");
+  const seriesArg = z.number().int().describe("series id");
+  const quantityArg = z.number().int().describe("bid quantity (uint16)");
+  const priceArg = z
+    .string()
+    .describe('bid price per intex in payment-token units, e.g. "1.5" (scaled by the token decimals; min from intex_auction_info)');
+  const amountArg = z.string().describe("amount as the raw on-chain integer");
+  const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
+  const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
 
   // --- Series ledger (outbe IntexRegistry) -----------------------------------
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe IntexRegistry: size, strike, price floors, " +
       "lifecycle state (Issued/Qualified/Called), and issued/called timestamps.",
-    { series: z.number().int().describe("series id"), network: networkArg.optional() },
+    { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const d = (await n.client.readContract({
@@ -236,10 +245,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_my_holdings",
     "Intex NFT holdings for an address: owned token ids, balances, and decoded status " +
       "(Issued/Settled). Defaults to bsc-testnet (where won NFTs land); pass network to read outbe.",
-    { owner: ownerArg, network: networkArg.optional() },
-    handler(async ({ owner, network }) => {
+    { account: accountArg, network: networkArg.optional() },
+    handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
-      const who = whoever(owner);
+      const who = whoever(account);
       const [tokenIds, balances] = (await n.client.readContract({
         address: addr(n, "nft"),
         abi: NFT_ABI,
@@ -257,17 +266,17 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           return { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
         }),
       );
-      return ok({ network: n.name, owner: who, count: holdings.length, holdings });
+      return ok({ network: n.name, account: who, count: holdings.length, holdings });
     }),
   );
 
   server.tool(
     "intex_series_balance",
     "An address's Intex NFT balance for one series, split into issued and settled token ids.",
-    { series: z.number().int().describe("series id"), owner: ownerArg, network: networkArg.optional() },
-    handler(async ({ series, owner, network }) => {
+    { series: seriesArg, account: accountArg, network: networkArg.optional() },
+    handler(async ({ series, account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
-      const who = whoever(owner);
+      const who = whoever(account);
       const [issued, settled] = (await n.client.readContract({
         address: addr(n, "nft"),
         abi: NFT_ABI,
@@ -281,7 +290,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       return ok({
         network: n.name,
         series,
-        owner: who,
+        account: who,
         issued: { tokenId: issued.toString(), balance: issuedBal.toString() },
         settled: { tokenId: settled.toString(), balance: settledBal.toString() },
       });
@@ -339,7 +348,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (sizes, min bid " +
       "price/quantity, strike, floor) in the payment token. Bids are sealed: the bid counts and clearing " +
       "result stay 0 until clearing runs after reveal, so 0 here does NOT mean there are no participants.",
-    { series: z.number().int().describe("series id"), network: networkArg.optional() },
+    { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const [stage, info, meta] = await Promise.all([
@@ -389,10 +398,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_my_bids",
     "Your commit/reveal status across active auctions: for each active series, whether you have a " +
       "committed bid and whether it has been revealed. Pass series to check just one.",
-    { owner: ownerArg, series: z.number().int().optional(), network: networkArg.optional() },
-    handler(async ({ owner, series, network }) => {
+    { account: accountArg, series: seriesArg.optional(), network: networkArg.optional() },
+    handler(async ({ account, series, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
-      const who = whoever(owner);
+      const who = whoever(account);
       let targets: number[];
       if (series !== undefined) {
         targets = [series];
@@ -417,13 +426,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- Bid commit / reveal (BSC IntexAuction, signed) ------------------------
-  const seriesArg = z.number().int().describe("series id");
-  const quantityArg = z.number().int().describe("bid quantity (uint16)");
-  const priceArg = z
-    .string()
-    .describe('bid price per intex in payment-token units, e.g. "1.5" (scaled by the token decimals; min from intex_auction_info)');
-  const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
-
   async function signReveal(n: Network, account: Account, series: number, quantity: number, bidPrice: bigint): Promise<Hex> {
     const typedData = revealBidTypedData({
       chainId: n.chainId,
@@ -442,7 +444,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
       "hash (no separate salt). No token approval needed — the escrow is funded only at reveal. IMPORTANT: " +
       "save your (series, quantity, price); you must repeat them to reveal, they can't be recovered on-chain, " +
-      "and are only remembered this session. Needs OUTBE_PRIVATE_KEY.",
+      "and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, quantity: quantityArg, price: priceArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, quantity, price, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -471,7 +473,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_reveal_bid",
     "Reveal a committed Intex bid: re-derives the same signature from (series, quantity, price) and submits " +
       "revealBid; the escrow then pulls quantity*price of the payment token. Auto-approves the escrow first " +
-      "if the allowance is short (no separate approve step). Needs OUTBE_PRIVATE_KEY.",
+      "if the allowance is short (no separate approve step). Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, quantity: quantityArg, price: priceArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, quantity, price, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -530,11 +532,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   // --- Bid funding (BSC payment token -> EscrowAdapter) ----------------------
   server.tool(
     "intex_payment_allowance",
-    "Payment-token allowance granted to the EscrowAdapter and the owner's balance, with token decimals/symbol.",
-    { owner: ownerArg, network: networkArg.optional() },
-    handler(async ({ owner, network }) => {
+    "Payment-token allowance granted to the EscrowAdapter and the account's balance, with token decimals/symbol.",
+    { account: accountArg, network: networkArg.optional() },
+    handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
-      const who = whoever(owner);
+      const who = whoever(account);
       const token = addr(n, "paymentToken");
       const escrow = addr(n, "escrow");
       const [allowance, balance, decimals, symbol] = (await Promise.all([
@@ -546,7 +548,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const d = Number(decimals);
       return ok({
         network: n.name,
-        owner: who,
+        account: who,
         token: { address: token, symbol, decimals: d },
         escrow,
         allowance: { raw: allowance.toString(), value: formatUnits(allowance, d) },
@@ -579,7 +581,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- Bridge BSC -> outbe (ONFT1155Adapter, signed) -------------------------
-  const amountArg = z.string().describe("amount as the raw on-chain integer");
 
   async function buildSendParam(n: Network, series: number, amount: bigint, recipient: Address) {
     const adapter = addr(n, "bridgeAdapter");
@@ -597,7 +598,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     };
   }
 
-  const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
 
   server.tool(
     "intex_bridge_quote",
@@ -628,7 +628,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_bridge_approve",
     "One-time approval for the bridge adapter to move your Intex NFTs (setApprovalForAll), needed before " +
-      "intex_bridge_nft. Needs OUTBE_PRIVATE_KEY.",
+      "intex_bridge_nft. Requires OUTBE_PRIVATE_KEY.",
     { network: networkArg.optional(), wait: waitArg },
     handler(async ({ network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -645,7 +645,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Bridge a Qualified Intex NFT from BSC to outbe (voluntary, holder-initiated) to settle there. Only " +
       "works once the series is Qualified — Issued cannot bridge, and Called is auto-bridged by the system, " +
       "not via this tool. Auto-quotes the LayerZero fee (paid as native value) and needs intex_bridge_approve " +
-      "first. Needs OUTBE_PRIVATE_KEY.",
+      "first. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, recipient, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -687,8 +687,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "intex_set_authorized_settler. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
-      "settle/mine itself — Issued is freely transferable on BSC, so move it there first. Needs OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, amount: amountArg, holder: ownerArg, network: networkArg.optional(), wait: waitArg },
+      "settle/mine itself — Issued is freely transferable on BSC, so move it there first. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, amount: amountArg, holder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, holder, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
@@ -716,7 +716,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_mine_promis",
     "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run intex_settle " +
-      "first). The proof-of-work nonce is computed locally; you give only series and amount. Needs OUTBE_PRIVATE_KEY.",
+      "first). The proof-of-work nonce is computed locally; you give only series and amount. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -755,7 +755,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_promis_balance",
     "Promis balance for an address on outbe.",
-    { account: ownerArg, network: networkArg.optional() },
+    { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const who = whoever(account);
