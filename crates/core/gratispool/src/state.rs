@@ -98,6 +98,9 @@ fn merkle_zeros() -> Result<Vec<U256>> {
 /// addition. Any deviation (different arity, tag as a separate input, etc.)
 /// produces a different Merkle root for the same `(left, right)` pair and
 /// breaks proof / runtime parity.
+///
+/// Precondition: both `left` and `right` MUST already be in canonical form
+/// (`< p`, the BN254 scalar field modulus).
 pub fn merkle_node(left: U256, right: U256) -> Result<U256> {
     let tagged_left = u64_to_fr(TAG_MERKLE_GRATIS) + u256_to_fr(left).unwrap();
     let mut hasher = Poseidon::<Fr>::new_circom(2)
@@ -125,6 +128,9 @@ impl GratisPoolContract<'_> {
     ///
     /// Returns the new tree root and the new leaf's index.
     pub(crate) fn append_leaf(&mut self, denom_id: u8, commitment: U256) -> Result<(U256, u32)> {
+        u256_to_fr(commitment)
+            .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("commitment".to_string()))?;
+
         // Atomic check-and-insert: `Set::insert` returns `true` iff the value
         // was newly added; `false` means the commitment was already present
         // and the call is a duplicate. No subsequent `commitment_exists`
