@@ -318,7 +318,9 @@ pub trait OutbeApi {
 
     /// Returns the active on-chain protocol version.
     #[method(name = "getUpdateActiveVersion")]
-    async fn get_update_active_version(&self) -> jsonrpsee::core::RpcResult<UpdateActiveVersionInfo>;
+    async fn get_update_active_version(
+        &self,
+    ) -> jsonrpsee::core::RpcResult<UpdateActiveVersionInfo>;
 
     /// Returns upgrade proposal details, or `null` when the id was never allocated.
     #[method(name = "getUpdateProposal")]
