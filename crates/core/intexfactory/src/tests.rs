@@ -601,6 +601,10 @@ fn qualify_survives_lz_messenger_failure() {
     // The Issued -> Qualified transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
@@ -629,6 +633,10 @@ fn call_survives_lz_messenger_failure() {
     // The Qualified -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
         outbe_intex::api::mark_qualified(&s, 7).unwrap();

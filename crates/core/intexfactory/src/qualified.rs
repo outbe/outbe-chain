@@ -15,10 +15,11 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO,
+    INTEX_NFT1155_ADDRESS, MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS,
+    QUALIFIER_REFERENCE_ISO,
 };
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IOriginMessenger, MessagingFee};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee};
 
 pub struct IntexLifecycle;
 
@@ -103,6 +104,7 @@ pub(crate) fn try_qualify(
         return Ok(false);
     }
     outbe_intex::api::mark_qualified(storage, series_id)?;
+    mark_nft_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
     factory.insert_qualified(series_id, series.call_price_minor)?;
 
@@ -144,6 +146,19 @@ fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()
                 lzTokenFee: fee.lzTokenFee,
             },
             refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    Ok(())
+}
+
+fn mark_nft_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::markQualifiedCall {
+            seriesId: series_id,
         }
         .abi_encode()
         .into(),
