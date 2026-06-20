@@ -18,6 +18,6 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 pub const PROMIS_LOAD: u128 = 100_000;
 
 /// BNB-side auction phase timing: bid-reveal window before noon of the series day.
-pub const REVEAL_WINDOW_SECONDS: u32 = 12 * 3600;
+pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
 /// BNB-side auction phase timing: issuance window after noon of the series day.
-pub const ISSUANCE_WINDOW_SECONDS: u32 = 24 * 3600;
+pub const ISSUANCE_WINDOW_SECONDS: u32 = 12 * 3600;
