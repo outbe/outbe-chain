@@ -16,13 +16,13 @@ pub mod digest;
 pub mod dkg;
 pub mod dkg_actor;
 pub mod dkg_manager;
+pub mod epoch_registry;
 pub mod epoch_subchannels;
 pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
 pub mod participation;
 pub mod proof;
-pub mod scheme_provider;
 pub mod timing;
 pub mod vrf_safety;
 
