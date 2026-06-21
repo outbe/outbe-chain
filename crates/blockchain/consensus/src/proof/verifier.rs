@@ -157,82 +157,14 @@ pub fn verify_v2_proof_low_level(
     binding: &VoteBinding<'_>,
     proof_bytes: &[u8],
 ) -> Result<VerifiedProof, V2VerifyError> {
-    let participants_len = snapshot.participants.len();
     let cert = HybridCertificate::<MinSig>::decode_cfg(
         Bytes::copy_from_slice(proof_bytes),
-        &participants_len,
+        &snapshot.participants.len(),
     )
     .map_err(V2VerifyError::Decode)?;
-
-    // Structural: bitmap length must equal the committee size.
-    if cert.signers.len() != participants_len {
-        return Err(V2VerifyError::BitmapMismatch {
-            reason: "bitmap length does not match committee size",
-        });
-    }
-
-    // Quorum: N3f1 quorum = floor(2N/3) + 1.
-    let quorum = simplex_n3f1_quorum(participants_len);
-    let signer_count = cert.signers.count();
-    if signer_count < quorum {
-        return Err(V2VerifyError::BelowQuorum {
-            signers: signer_count,
-            quorum,
-        });
-    }
-
-    // BLS MinPk aggregate vote verification.
-    let signer_pubkeys: Vec<&<MinPk as Variant>::Public> = cert
-        .signers
-        .iter()
-        .filter_map(|signer: Participant| {
-            let idx = signer.get() as usize;
-            snapshot.participants.get(idx).map(AsRef::as_ref)
-        })
-        .collect();
-    if signer_pubkeys.len() != signer_count {
-        return Err(V2VerifyError::SignerIndexOutOfRange {
-            index: 0,
-            committee_size: participants_len,
-        });
-    }
-    let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
-    aggregate::verify_same_message::<MinPk>(
-        &aggregate_pk,
-        binding.namespace,
-        binding.message,
-        &cert.bls_aggregated_vote,
-    )
-    .map_err(|_| V2VerifyError::BlsAggregateInvalid)?;
-
-    // V2: mandatory threshold-VRF proof.
-    let proof = cert
-        .vrf_proof
-        .as_ref()
-        .ok_or(V2VerifyError::MissingVrfProof)?;
-    verify_threshold_vrf_proof(&snapshot.vrf_group_public_key, binding.seed_message, proof)?;
-
-    // Build the dense signer bitmap (one byte per participant).
-    let mut signer_bitmap = vec![0u8; participants_len];
-    for signer in cert.signers.iter() {
-        let signer: Participant = signer;
-        let idx = signer.get() as usize;
-        if idx >= participants_len {
-            return Err(V2VerifyError::SignerIndexOutOfRange {
-                index: idx as u32,
-                committee_size: participants_len,
-            });
-        }
-        signer_bitmap[idx] = 1;
-    }
-
-    let vrf_proof_hash = crate::proof::canonical_vrf_proof_hash_v2(proof);
-
-    Ok(VerifiedProof {
-        signer_bitmap,
-        vrf_proof_hash,
-        vrf_material_version: proof.material_version,
-    })
+    // The structural + crypto checks are shared with the metadata-bound path
+    // through the private checker; this public entry adds only the wire decode.
+    verify_v2_certificate_low_level(snapshot, binding, &cert)
 }
 
 fn verify_v2_certificate_low_level(

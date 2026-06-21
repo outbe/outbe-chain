@@ -22,7 +22,6 @@ pub mod hybrid;
 pub mod metrics;
 pub mod participation;
 pub mod proof;
-pub mod scheme_provider;
 pub mod timing;
 pub mod vrf_safety;
 
