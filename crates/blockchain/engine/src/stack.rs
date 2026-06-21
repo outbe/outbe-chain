@@ -71,7 +71,7 @@ use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
     application::{
         actor::OutbeApplication,
-        handler::{ApplicationEpochFence, ApplicationHandler},
+        handler::{ApplicationDeps, ApplicationEpochFence, ApplicationHandler},
     },
     bls,
     committee_provider::CommitteeProvider,
@@ -2875,35 +2875,34 @@ where
     );
 
     // Create application handler with marshal mailbox and shared finalization state.
-    let application_handler = ApplicationHandler::new(
-        application_rx,
-        engine_handle,
+    let application_handler = ApplicationHandler::new(ApplicationDeps {
+        rx: application_rx,
+        engine: engine_handle,
         payload_builder,
         executor_mailbox,
         genesis_hash,
-        validator_set.clone(),
-        node.chain_spec().chain().id(),
-        broadcast_mailbox,
-        marshal_mailbox.clone(),
-        certificate_scheme_provider.clone(),
-        elector_config_provider.clone(),
-        committee_provider.clone(),
-        dkg_manager.clone(),
-        vrf_safety.clone(),
-        application_epoch_fence.clone(),
-        ancestry_readiness.clone(),
-        finalization_view.clone(),
-        finalization_block_cache.clone(),
-        outbe_consensus::finalization::selection::ParentProofSelector::new(
+        validators: validator_set.clone(),
+        chain_id: node.chain_spec().chain().id(),
+        marshal_mailbox: marshal_mailbox.clone(),
+        certificate_scheme_provider: certificate_scheme_provider.clone(),
+        elector_config_provider: elector_config_provider.clone(),
+        committee_provider: committee_provider.clone(),
+        dkg_manager: dkg_manager.clone(),
+        vrf_safety: vrf_safety.clone(),
+        epoch_fence: application_epoch_fence.clone(),
+        ancestry_readiness: ancestry_readiness.clone(),
+        finalization_view: finalization_view.clone(),
+        block_cache: finalization_block_cache.clone(),
+        finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
         ),
-        std::time::Duration::from_millis(args.payload_resolve_time_ms),
-        std::time::Duration::from_millis(args.payload_return_time_ms),
-        bt.min_block_time,
+        payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
+        payload_return_time: std::time::Duration::from_millis(args.payload_return_time_ms),
+        min_block_time: bt.min_block_time,
         proposer_evm_address,
-        args.trust_el_head,
-        late_sig_store.clone(),
-    );
+        trust_el_head: args.trust_el_head,
+        late_sig_store: late_sig_store.clone(),
+    });
 
     info!(
         last_execution_height,
