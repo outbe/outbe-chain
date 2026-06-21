@@ -15,7 +15,9 @@
 //! deterministic verifier (this crate, run in the EVM executor — same process,
 //! same chain) can never drift.
 
+use commonware_codec::Encode;
 use commonware_consensus::simplex::scheme::Namespace;
+use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use std::sync::OnceLock;
@@ -142,6 +144,25 @@ pub fn hybrid_seed_namespace() -> Vec<u8> {
     sub_namespace(b"_SEED")
 }
 
+/// The canonical `(namespace, message)` pair for verifying a threshold-VRF seed
+/// signature at `(round_epoch, round_view)`: the chain-bound seed namespace
+/// ([`hybrid_seed_namespace`]) and the `Round::encode()` seed message.
+///
+/// This is the single derivation shared by the consensus verify paths
+/// (`HybridScheme::verified_vrf_seed_for_round` / `verify_vrf_partial`) and the
+/// proof-side plain verifiers (`seed_partial`, `verifier`), so they cannot
+/// derive different bytes for the same seed round. `hybrid_seed_namespace()` is
+/// asserted byte-equal to commonware's `Namespace::new(..).seed` by
+/// [`tests::hybrid_seed_namespace_equals_commonware_seed_namespace`]; the seed
+/// round's offset (e.g. the elector's `view().previous()`) is the caller's
+/// responsibility — this helper is offset-agnostic.
+pub fn seed_namespace_and_message(round_epoch: u64, round_view: u64) -> (Vec<u8>, Vec<u8>) {
+    let message = Round::new(Epoch::new(round_epoch), View::new(round_view))
+        .encode()
+        .to_vec();
+    (hybrid_seed_namespace(), message)
+}
+
 /// Seed-partial identity-attestation sub-namespace:
 /// `outbe_app_namespace() || b"_SEEDATTEST"`. Chain-only (the VRF partial it
 /// attributes is already committee-bound via the threshold polynomial).
@@ -166,4 +187,40 @@ pub fn seed_attest_namespace() -> Vec<u8> {
 pub fn simplex_namespace() -> &'static Namespace {
     static NAMESPACE_CELL: OnceLock<Namespace> = OnceLock::new();
     NAMESPACE_CELL.get_or_init(|| Namespace::new(&outbe_app_namespace()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The proof-side seed verifiers use [`hybrid_seed_namespace`] (our explicit
+    /// `b"_SEED"` suffix), while the consensus signer/verifier derive the seed
+    /// namespace from commonware's `Namespace::new(..).seed` (`base ||
+    /// SEED_SUFFIX`). These MUST be byte-identical or seed verification on the
+    /// slashing and next-height-gate paths rejects valid signatures. This is the
+    /// cross-path equality that was previously asserted only in a doc comment;
+    /// pinning it as a test catches a commonware `SEED_SUFFIX` change (a reviewed
+    /// dependency bump) at CI rather than silently at runtime.
+    #[test]
+    fn hybrid_seed_namespace_equals_commonware_seed_namespace() {
+        assert_eq!(
+            hybrid_seed_namespace().as_slice(),
+            simplex_namespace().seed.as_slice(),
+            "proof-side hybrid_seed_namespace() must equal commonware Namespace seed"
+        );
+    }
+
+    /// The seed message is `Round::encode()`, and the recipe helper must produce
+    /// exactly the bytes a directly-encoded `Round` does, for any round.
+    #[test]
+    fn seed_namespace_and_message_matches_direct_round_encode() {
+        for (epoch, view) in [(0u64, 1u64), (12, 61), (7, 0), (u64::MAX, u64::MAX)] {
+            let (namespace, message) = seed_namespace_and_message(epoch, view);
+            assert_eq!(namespace, hybrid_seed_namespace());
+            let expected = Round::new(Epoch::new(epoch), View::new(view))
+                .encode()
+                .to_vec();
+            assert_eq!(message, expected, "seed message must equal Round::encode()");
+        }
+    }
 }

@@ -31,7 +31,7 @@ pub use committee::{
 pub use constants::{
     consensus_chain_id, finalize_namespace, hybrid_seed_namespace, init_consensus_chain_id,
     notarize_namespace, nullify_namespace, outbe_app_namespace, participant_set_commitment,
-    seed_attest_namespace, simplex_namespace,
+    seed_attest_namespace, seed_namespace_and_message, simplex_namespace,
 };
 pub use error::V2VerifyError;
 pub use fingerprint::{
@@ -42,7 +42,7 @@ pub use hybrid_wire::{HybridCertificate, VrfProof};
 pub use late_finalize::verify_late_finalize_proof;
 pub use seed_partial::{
     seed_partial_attest_message, verify_seed_partial_against_commitment,
-    verify_seed_partial_attest, verify_seed_partial_attest_bytes,
+    verify_seed_partial_attest, verify_seed_partial_attest_bytes, verify_seed_signature_plain,
 };
 pub use verifier::{
     verify_v2_proof, verify_v2_proof_low_level, CommitteeSnapshotView, VerifiedProof, VoteBinding,

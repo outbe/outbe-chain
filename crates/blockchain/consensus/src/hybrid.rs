@@ -521,6 +521,11 @@ impl<V: Variant> HybridScheme<V> {
         R: CryptoRngCore,
     {
         let proof = certificate.vrf_proof.as_ref()?;
+        // The consensus seed namespace is scheme-relative: it MUST match the
+        // namespace this scheme's signer used (`namespace_ref().seed`), which
+        // equals the global `hybrid_seed_namespace()` only when the scheme is
+        // built with `outbe_app_namespace()` (production). The proof-side global
+        // verifiers (`seed_partial`, `verifier`) use the constant instead.
         let namespace = self.namespace_ref();
         let seed_message = seed_round.encode();
         if self.vrf_materials().verify_proof(
@@ -550,6 +555,8 @@ impl<V: Variant> HybridScheme<V> {
         let Some(signature) = attestation.signature.get() else {
             return false;
         };
+        // Scheme-relative namespace (see `verified_vrf_seed_for_round`): match
+        // this scheme's signer, not the global proof constant.
         let namespace = self.namespace_ref();
         let seed_message = seed_message_from_subject(&subject);
         self.vrf_materials().verify_partial(

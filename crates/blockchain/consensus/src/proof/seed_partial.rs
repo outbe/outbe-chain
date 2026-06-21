@@ -33,7 +33,9 @@ use commonware_cryptography::bls12381::primitives::{
 use commonware_cryptography::{bls12381, Verifier as _};
 use commonware_utils::Participant;
 
-use crate::proof::constants::{hybrid_seed_namespace, seed_attest_namespace};
+use crate::proof::constants::{
+    hybrid_seed_namespace, seed_attest_namespace, seed_namespace_and_message,
+};
 
 /// Canonical message bound by a seed-partial identity signature.
 ///
@@ -106,6 +108,23 @@ pub fn verify_seed_partial_attest_bytes(
     )
 }
 
+/// The single plain-pairing core for threshold-VRF seed signatures.
+///
+/// Returns `true` iff `signature` is a valid MinSig signature by `pk` over
+/// `seed_message` under [`hybrid_seed_namespace`]. No RNG — a deterministic
+/// pairing check, so every node reaches the same verdict, which is required on
+/// the slashing path ([`verify_seed_partial_against_commitment`], `pk` = the
+/// signer's `PK_i`) and the next-height execution gate (`crate::proof::verifier`,
+/// `pk` = the committee group key). The BLS-batch path with random scalar
+/// weights is intentionally avoided here.
+pub fn verify_seed_signature_plain(
+    pk: &<MinSig as Variant>::Public,
+    seed_message: &[u8],
+    signature: &<MinSig as Variant>::Signature,
+) -> bool {
+    verify_message::<MinSig>(pk, &hybrid_seed_namespace(), seed_message, signature).is_ok()
+}
+
 /// Deterministically decide whether a threshold-VRF seed partial is VALID
 /// against the committee's full public polynomial commitment.
 ///
@@ -147,14 +166,6 @@ pub fn verify_seed_partial_against_commitment(
         Bytes::copy_from_slice(partial_bytes),
     )
     .ok()?;
-    let seed_message = Round::new(Epoch::new(round_epoch), View::new(round_view)).encode();
-    Some(
-        verify_message::<MinSig>(
-            &pk_i,
-            &hybrid_seed_namespace(),
-            seed_message.as_ref(),
-            &partial,
-        )
-        .is_ok(),
-    )
+    let (_, seed_message) = seed_namespace_and_message(round_epoch, round_view);
+    Some(verify_seed_signature_plain(&pk_i, &seed_message, &partial))
 }
