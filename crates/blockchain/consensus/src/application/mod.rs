@@ -7,5 +7,5 @@ pub mod actor;
 pub mod handler;
 pub mod ingress;
 
-pub use handler::ApplicationHandler;
+pub use handler::{ApplicationDeps, ApplicationHandler};
 pub use ingress::Mailbox;
