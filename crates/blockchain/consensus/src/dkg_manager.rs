@@ -740,6 +740,34 @@ pub fn dkg_output_hash(output: &Output<MinSig, bls12381::PublicKey>) -> B256 {
     alloy_primitives::keccak256(commonware_codec::Encode::encode(output))
 }
 
+/// Enforce the consensus-critical invariant that a locally-computed DKG `local`
+/// output matches the chain-`canonical` output (the one the chain reconstructs
+/// from finalized dealer logs).
+///
+/// The DKG actor's output is advisory; the authority is the canonical output.
+/// Activating a VRF key from a local output that disagrees with canonical would
+/// diverge this node's randomness from the network, so a mismatch is fatal. This
+/// is the single definition of the check shared by every activation and recovery
+/// path: callers resolve `canonical` from their own authoritative source (the
+/// live manager via [`Mailbox::canonical_output`] vs a decoded boundary
+/// artifact) and pass both outputs in; `context` names the call site for the
+/// error.
+pub fn assert_canonical_output(
+    local: &Output<MinSig, bls12381::PublicKey>,
+    canonical: &Output<MinSig, bls12381::PublicKey>,
+    context: &str,
+) -> eyre::Result<()> {
+    if local != canonical {
+        return Err(eyre::eyre!(
+            "local DKG output does not match canonical finalized-log output ({context}): \
+             local {}, canonical {}",
+            dkg_output_hash(local),
+            dkg_output_hash(canonical),
+        ));
+    }
+    Ok(())
+}
+
 pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
     alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial))
 }
@@ -1054,6 +1082,30 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a.vrf_group_public_key, B256::ZERO);
         assert_ne!(a.reshare.active_set_hash, B256::ZERO);
+    }
+
+    #[test]
+    fn assert_canonical_output_accepts_equal_and_rejects_divergent() {
+        let (_keys, _participants, output, _polynomial, _log) = run_test_dkg_complete();
+
+        // Equal local/canonical outputs pass — the activation/recovery happy path.
+        assert_canonical_output(&output, &output, "equal").expect("equal outputs must match");
+
+        // A genuinely different output is rejected, and the error carries both
+        // output hashes plus the call-site context so a divergence is diagnosable.
+        let (_k2, _p2, other, _poly2, _log2) = run_test_dkg_complete();
+        assert_ne!(output, other, "two independent DKG runs differ");
+        let err = assert_canonical_output(&output, &other, "divergent-site")
+            .expect_err("divergent outputs must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("divergent-site"),
+            "error names the context: {msg}"
+        );
+        assert!(
+            msg.contains(&dkg_output_hash(&output).to_string()),
+            "error carries the local output hash: {msg}"
+        );
     }
 
     /// R5.3: the producer threads `tee_reshare_registrations` from the input into
