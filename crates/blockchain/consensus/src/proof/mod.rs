@@ -24,8 +24,9 @@ pub mod seed_partial;
 pub mod verifier;
 
 pub use committee::{
-    CommitteeEntry, CommitteeSnapshot, OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN,
-    OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN, VRF_MATERIAL_VERSION_GENESIS,
+    build_committee_snapshot, CommitteeEntry, CommitteeSnapshot, SnapshotBuildError,
+    OUTBE_COMMITTEE_SET_HASH_V2_DOMAIN, OUTBE_COMMITTEE_SNAPSHOT_KEY_V2_DOMAIN,
+    VRF_MATERIAL_VERSION_GENESIS,
 };
 pub use constants::{
     consensus_chain_id, finalize_namespace, hybrid_seed_namespace, init_consensus_chain_id,
