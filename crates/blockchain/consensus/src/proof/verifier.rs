@@ -41,7 +41,7 @@ use commonware_consensus::simplex::types::{Finalization, Notarization};
 use commonware_cryptography::bls12381::{
     self,
     primitives::{
-        ops::{aggregate, verify_message},
+        ops::aggregate,
         variant::{MinPk, MinSig, Variant},
     },
 };
@@ -51,7 +51,7 @@ use outbe_primitives::consensus_metadata::{
 };
 use std::collections::BTreeSet;
 
-use super::constants::{finalize_namespace, hybrid_seed_namespace, notarize_namespace};
+use super::constants::{finalize_namespace, notarize_namespace};
 use super::error::V2VerifyError;
 use super::hybrid_wire::{HybridCertificate, VrfProof};
 
@@ -319,13 +319,14 @@ fn verify_threshold_vrf_proof(
     seed_message: &[u8],
     proof: &VrfProof<MinSig>,
 ) -> Result<(), V2VerifyError> {
-    verify_message::<MinSig>(
-        group_pk,
-        &hybrid_seed_namespace(),
-        seed_message,
-        &proof.threshold_signature,
-    )
-    .map_err(|_| V2VerifyError::InvalidVrfSignature)
+    // Plain-pairing core shared with the slashing path (`seed_partial`); no RNG,
+    // so the gate's Result is byte-deterministic across every validator.
+    if crate::proof::verify_seed_signature_plain(group_pk, seed_message, &proof.threshold_signature)
+    {
+        Ok(())
+    } else {
+        Err(V2VerifyError::InvalidVrfSignature)
+    }
 }
 
 // =============================================================================
