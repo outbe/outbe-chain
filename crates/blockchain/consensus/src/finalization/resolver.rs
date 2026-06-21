@@ -26,18 +26,14 @@
 
 use std::{future::Future, time::Duration};
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::proof::{build_committee_snapshot, committee_set_hash_v2, SnapshotBuildError};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
     simplex::types::Notarization, types::Round, Epochable as _, Viewable as _,
 };
-use commonware_cryptography::{
-    bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
-};
+use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::Set as OrderedSet;
 use outbe_primitives::{
     consensus_metadata::ParentParticipationProof, protocol_schedule::OutbeProtocolSchedule,
 };
@@ -86,6 +82,9 @@ pub enum ProofFetchOutcome {
     /// Persistence to the certified-parent proof store failed; the underlying
     /// error is reported for caller diagnostics.
     StoreError(ParentProofStoreError),
+    /// The canonical committee snapshot could not be built (an encode-invariant
+    /// violation); no record is produced and none is written.
+    SnapshotBuildFailed(SnapshotBuildError),
 }
 
 /// Errors that a [`ParentProofTransport`] implementation may surface.
@@ -253,12 +252,26 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 .identity()
                 .map(|pk| pk.encode().as_ref().to_vec())
                 .unwrap_or_default();
-            let snapshot = build_committee_snapshot_from_scheme(
+            let encoded_pubkeys: Vec<Vec<u8>> = self
+                .verifier_scheme
+                .participants()
+                .iter()
+                .map(|pubkey| pubkey.encode().as_ref().to_vec())
+                .collect();
+            // Defence-in-depth recovery path: a build failure is an
+            // encode-invariant violation; surface it as a deterministic non-Hit
+            // outcome rather than writing a record whose committee_set_hash
+            // would diverge from the writer's.
+            let snapshot = match build_committee_snapshot(
                 &self.validator_addresses,
-                self.verifier_scheme.participants(),
+                &encoded_pubkeys,
                 vrf_material_version,
                 vrf_group_public_key_bytes,
-            );
+                B256::ZERO,
+            ) {
+                Ok(snapshot) => snapshot,
+                Err(error) => return ProofFetchOutcome::SnapshotBuildFailed(error),
+            };
             let committee_set_hash = committee_set_hash_v2(notarization.epoch().get(), &snapshot);
             let encoded_proof: Bytes = notarization.encode().into();
             let view = notarization.view().get();
@@ -321,7 +334,7 @@ pub(crate) fn build_finalization_record_from_recovered(
     certificate: &HybridCertificate<MinSig>,
     encoded_certificate: Bytes,
     scheme: &HybridScheme<MinSig>,
-) -> CertifiedParentProofRecord {
+) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
     let vrf_material_version = scheme.active_vrf_material_version();
     let vrf_group_public_key_bytes: Vec<u8> = scheme
         .identity()
@@ -332,14 +345,20 @@ pub(crate) fn build_finalization_record_from_recovered(
     } else {
         keccak256(&vrf_group_public_key_bytes)
     };
-    let snapshot = build_committee_snapshot_from_scheme(
+    let encoded_pubkeys: Vec<Vec<u8>> = scheme
+        .participants()
+        .iter()
+        .map(|pubkey| pubkey.encode().as_ref().to_vec())
+        .collect();
+    let snapshot = build_committee_snapshot(
         ordered_committee,
-        scheme.participants(),
+        &encoded_pubkeys,
         vrf_material_version,
         vrf_group_public_key_bytes,
-    );
+        B256::ZERO,
+    )?;
     let committee_set_hash = committee_set_hash_v2(finalized_epoch, &snapshot);
-    CertifiedParentProofRecord {
+    Ok(CertifiedParentProofRecord {
         format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         proof_type: ParentParticipationProof::Finalization,
         finalized_block_number,
@@ -358,7 +377,7 @@ pub(crate) fn build_finalization_record_from_recovered(
         missed_proposers: Vec::new(),
         stored_at_height: finalized_block_number,
         ..CertifiedParentProofRecord::default()
-    }
+    })
 }
 
 /// Mirror of `OutbeReporter::build_signer_bitmap` for resolver use. Held
@@ -382,54 +401,23 @@ fn build_signer_bitmap(
     signed
 }
 
-/// Same as `reporter::build_committee_snapshot`: zips an ordered address list
-/// with the scheme's Commonware-ordered participant pubkeys into a canonical
-/// snapshot for [`committee_set_hash_v2`].
-///
-/// Duplicated here (rather than re-exported from the reporter module) to keep
-/// `resolver.rs` self-contained inside `finalization/`; the implementation is
-/// trivial and the byte-layout contract lives in
-/// `outbe-consensus-proof::committee`.
-fn build_committee_snapshot_from_scheme(
-    addresses: &[Address],
-    participants: &OrderedSet<bls12381::PublicKey>,
-    vrf_material_version: u64,
-    vrf_group_public_key_bytes: Vec<u8>,
-) -> CommitteeSnapshot {
-    let committee = addresses
-        .iter()
-        .zip(participants.iter())
-        .map(|(address, pubkey)| {
-            let bytes = pubkey.encode();
-            let mut consensus_pubkey = [0u8; 48];
-            let len = bytes.as_ref().len().min(48);
-            consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-            CommitteeEntry {
-                address: *address,
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version,
-        vrf_group_public_key_bytes,
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bls::bootstrap_dkg;
     use crate::digest::Digest as OutbeDigest;
+    use crate::proof::{CommitteeEntry, CommitteeSnapshot};
     use alloy_primitives::address;
     use commonware_consensus::{
         simplex::types::{Finalization, Proposal, Subject},
         types::{Epoch, View},
     };
+    use commonware_cryptography::bls12381;
     use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
-    use commonware_utils::{ordered::Quorum as _, N3f1, TryCollect as _};
+    use commonware_utils::{
+        ordered::{Quorum as _, Set as OrderedSet},
+        N3f1, TryCollect as _,
+    };
 
     fn participants(n: u8) -> (Vec<bls12381::PrivateKey>, OrderedSet<bls12381::PublicKey>) {
         let keys: Vec<bls12381::PrivateKey> = (0..n)
@@ -523,7 +511,8 @@ mod tests {
             &finalization.certificate,
             encoded.clone(),
             &verifier,
-        );
+        )
+        .expect("recovered record builds from valid 48-byte MinPk pubkeys");
 
         // Field mapping mirrors the finalization + the V2 contract.
         assert_eq!(record.proof_type, ParentParticipationProof::Finalization);

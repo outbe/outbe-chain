@@ -15,7 +15,7 @@
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
@@ -27,12 +27,10 @@ use commonware_consensus::{
     Epochable as _, Reporter, Viewable,
 };
 use commonware_cryptography::{
-    bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
-    Hasher, Sha256,
+    bls12381::primitives::variant::MinSig, certificate::Scheme as _, Hasher, Sha256,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::{Quorum as _, Set as OrderedSet};
+use commonware_utils::ordered::Quorum as _;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
@@ -551,12 +549,35 @@ impl OutbeReporter {
         } else {
             keccak256(&vrf_group_public_key_bytes)
         };
-        let snapshot = build_committee_snapshot(
+        let encoded_pubkeys: Vec<Vec<u8>> = self
+            .verifier_scheme
+            .participants()
+            .iter()
+            .map(|pubkey| pubkey.encode().as_ref().to_vec())
+            .collect();
+        // Defence-in-depth path: a snapshot build failure is an encode-invariant
+        // violation; drop the certification deterministically (metered, never
+        // panic) rather than write a record whose committee_set_hash would
+        // diverge from the writer's.
+        let snapshot = match build_committee_snapshot(
             &self.validator_addresses,
-            self.verifier_scheme.participants(),
+            &encoded_pubkeys,
             vrf_material_version,
             vrf_group_public_key_bytes,
-        );
+            alloy_primitives::B256::ZERO,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                crate::metrics::record_certification_dropped("snapshot_build_failed");
+                warn!(
+                    target: "outbe::reporter",
+                    epoch = notarization.proposal.round.epoch().get(),
+                    %error,
+                    "Activity::Certification dropped: committee snapshot build failed"
+                );
+                return;
+            }
+        };
         let committee_set_hash =
             committee_set_hash_v2(notarization.proposal.round.epoch().get(), &snapshot);
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
@@ -734,48 +755,6 @@ impl OutbeReporter {
         }
 
         missed
-    }
-}
-
-/// Zips an ordered address list with the verifier scheme's ordered participant
-/// public keys (both in Commonware `ordered::Set` order — see
-/// `stack::ordered_validator_addresses`) into a canonical [`CommitteeSnapshot`]
-/// for V2 [`committee_set_hash_v2`].
-///
-/// Both vectors MUST have equal length and matching Commonware order; the
-/// caller (`stack.rs::epoch_validation_inputs`) constructs them together.
-/// Length mismatch falls back to truncating to the shorter of the two —
-/// this can only happen on a programmer error in the surrounding wiring and
-/// is logged at debug level; the resulting hash will not match the writer's,
-/// which fails verification deterministically rather than producing a wrong
-/// proof.
-fn build_committee_snapshot(
-    addresses: &[Address],
-    participants: &OrderedSet<bls12381::PublicKey>,
-    vrf_material_version: u64,
-    vrf_group_public_key_bytes: Vec<u8>,
-) -> CommitteeSnapshot {
-    let committee = addresses
-        .iter()
-        .zip(participants.iter())
-        .map(|(address, pubkey)| {
-            let bytes = pubkey.encode();
-            let mut consensus_pubkey = [0u8; 48];
-            // BLS MinPk pubkey is exactly 48 bytes; copy up to that to be
-            // defensive against any future encode-size drift in Commonware.
-            let len = bytes.as_ref().len().min(48);
-            consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-            CommitteeEntry {
-                address: *address,
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version,
-        vrf_group_public_key_bytes,
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 

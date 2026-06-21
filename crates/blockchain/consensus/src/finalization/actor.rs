@@ -21,7 +21,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
 };
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::keccak256;
 use commonware_codec::Encode;
 use commonware_cryptography::certificate::{Provider as _, Scheme as _};
@@ -502,19 +502,9 @@ impl FinalizationActor {
         {
             Some(scheme) => {
                 let participants = scheme.participants();
-                let committee: Vec<CommitteeEntry> = ordered_committee
+                let encoded_pubkeys: Vec<Vec<u8>> = participants
                     .iter()
-                    .zip(participants.iter())
-                    .map(|(address, pubkey)| {
-                        let bytes = pubkey.encode();
-                        let mut consensus_pubkey = [0u8; 48];
-                        let len = bytes.as_ref().len().min(48);
-                        consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-                        CommitteeEntry {
-                            address: *address,
-                            consensus_pubkey,
-                        }
-                    })
+                    .map(|pubkey| pubkey.encode().as_ref().to_vec())
                     .collect();
                 let vrf_group_public_key_bytes: Vec<u8> = scheme
                     .identity()
@@ -526,14 +516,26 @@ impl FinalizationActor {
                     keccak256(&vrf_group_public_key_bytes)
                 };
                 let vrf_material_version = scheme.active_vrf_material_version();
-                let snapshot = CommitteeSnapshot {
-                    committee,
+                // Single canonical builder (shared with the resolver, reporter,
+                // and DKG proposer). Reconstructed from finalized metadata, so no
+                // full polynomial is available; `B256::ZERO` is the unused
+                // `vrf_public_polynomial_hash` (excluded from committee_set_hash_v2).
+                // A build failure here is an encode-invariant violation: fail the
+                // finalization deterministically rather than write a record whose
+                // committee_set_hash would silently diverge from the writer's.
+                let snapshot = build_committee_snapshot(
+                    &ordered_committee,
+                    &encoded_pubkeys,
                     vrf_material_version,
                     vrf_group_public_key_bytes,
-                    // Reconstructed from finalized metadata (no full polynomial);
-                    // unused by committee_set_hash_v2.
-                    vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-                };
+                    alloy_primitives::B256::ZERO,
+                )
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "finalization committee snapshot build failed at epoch \
+                         {finalized_epoch}: {e}"
+                    )
+                })?;
                 let committee_set_hash = committee_set_hash_v2(finalized_epoch, &snapshot);
                 (
                     committee_set_hash,
