@@ -22,9 +22,9 @@ pub fn pledge_gratis(
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
     {
-        let rcfi = outbe_fidelity::api::get_rcfi(storage.clone(), caller)?;
+        let league = outbe_fidelity::api::league(storage.clone(), caller)?;
         // todo implement correct fidelity check
-        if rcfi == u64::MAX {
+        if league == u16::MAX {
             return Err(GratisFactoryError::FidelityNotEligible.into());
         }
     }
