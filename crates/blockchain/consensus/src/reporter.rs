@@ -15,7 +15,7 @@
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
@@ -27,12 +27,10 @@ use commonware_consensus::{
     Epochable as _, Reporter, Viewable,
 };
 use commonware_cryptography::{
-    bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
-    Hasher, Sha256,
+    bls12381::primitives::variant::MinSig, certificate::Scheme as _, Hasher, Sha256,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::{Quorum as _, Set as OrderedSet};
+use commonware_utils::ordered::Quorum as _;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
@@ -82,19 +80,14 @@ pub struct OutbeReporter {
     elector: HybridRandomElector<MinSig>,
     /// Current consensus epoch.
     epoch: Epoch,
-    /// Last finalized view — used for view-gap detection.
-    last_finalized_view: u64,
-    /// Certificate from the last finalization — used as input for leader election
-    /// when computing missed proposers for skipped views.
-    last_certificate: Option<HybridCertificate<MinSig>>,
+    /// Mutable per-view tracking (finalization cursor + byzantine-evidence
+    /// buffer), separated from the immutable epoch wiring.
+    view_state: ReporterViewState,
     /// Off-thread finalize-vote verifier. `handle_finalize_vote`
     /// enqueues raw votes here instead of verifying `O(committee)` BLS pairings
     /// inline on the Simplex voter task; the actor verifies and admits the
     /// verified votes to `late_sig_store`.
     finalize_verify_mailbox: FinalizeVerifyMailbox,
-    /// Byzantine validators detected since last finalization.
-    /// Drained into ConsensusData on next finalization for on-chain slashing.
-    pending_byzantine: Vec<Address>,
     /// Durable certified-parent proof store. wires
     /// `Activity::Certification(notarization)` directly into this store with
     /// the `local_certification_witness` flag set, so the proposer
@@ -102,6 +95,48 @@ pub struct OutbeReporter {
     /// [`CertifiedParentProofStore::get_best_parent_proof`] when finalization
     /// is pending.
     proof_store: FinalizedParentCertStore,
+}
+
+/// Mutable per-view state owned by a single `OutbeReporter` instance, separated
+/// from the immutable epoch wiring. Holds the finalization cursor (the lower
+/// bound for view-gap missed-proposer attribution) and the byzantine-evidence
+/// buffer drained on each finalization. Its operations are unit-tested in
+/// isolation, so byzantine buffering and the finalization cursor are no longer
+/// loose fields threaded through the handlers.
+#[derive(Clone, Default)]
+struct ReporterViewState {
+    last_finalized_view: u64,
+    last_certificate: Option<HybridCertificate<MinSig>>,
+    pending_byzantine: Vec<Address>,
+}
+
+impl ReporterViewState {
+    fn last_finalized_view(&self) -> u64 {
+        self.last_finalized_view
+    }
+
+    fn last_certificate(&self) -> Option<&HybridCertificate<MinSig>> {
+        self.last_certificate.as_ref()
+    }
+
+    /// Buffer a byzantine validator address until the next finalization drains it.
+    fn buffer_byzantine(&mut self, addr: Address) {
+        self.pending_byzantine.push(addr);
+    }
+
+    /// Drain the buffered byzantine addresses, sorted and deduplicated.
+    fn drain_byzantine_sorted(&mut self) -> Vec<Address> {
+        let mut drained = std::mem::take(&mut self.pending_byzantine);
+        drained.sort_unstable();
+        drained.dedup();
+        drained
+    }
+
+    /// Advance the finalization cursor used by view-gap missed-proposer detection.
+    fn record_finalization(&mut self, view: u64, certificate: HybridCertificate<MinSig>) {
+        self.last_finalized_view = view;
+        self.last_certificate = Some(certificate);
+    }
 }
 
 #[derive(Clone, Default)]
@@ -166,10 +201,12 @@ impl OutbeReporter {
             verifier_scheme,
             elector,
             epoch,
-            last_finalized_view: persisted.last_finalized_view,
-            last_certificate: persisted.last_certificate,
             finalize_verify_mailbox,
-            pending_byzantine: Vec::new(),
+            view_state: ReporterViewState {
+                last_finalized_view: persisted.last_finalized_view,
+                last_certificate: persisted.last_certificate,
+                pending_byzantine: Vec::new(),
+            },
             proof_store,
         }
     }
@@ -344,7 +381,7 @@ impl OutbeReporter {
                 view = view.get(),
                 "BYZANTINE: consensus equivocation detected — slashable; external watcher should submit the two conflicting votes"
             );
-            self.pending_byzantine.push(addr);
+            self.view_state.buffer_byzantine(addr);
             crate::metrics::record_byzantine_evidence(evidence_type);
         } else {
             warn!(
@@ -442,9 +479,7 @@ impl OutbeReporter {
         let missed_proposers = self.detect_missed_proposers(view);
 
         // 4. Drain pending byzantine evidence (dedup by address).
-        let mut deferred_byzantine = std::mem::take(&mut self.pending_byzantine);
-        deferred_byzantine.sort_unstable();
-        deferred_byzantine.dedup();
+        let deferred_byzantine = self.view_state.drain_byzantine_sorted();
 
         if !deferred_byzantine.is_empty() {
             warn!(
@@ -492,11 +527,10 @@ impl OutbeReporter {
             };
 
         // Update tracking state.
-        self.last_finalized_view = view;
-        self.last_certificate = Some(certificate);
+        self.view_state.record_finalization(view, certificate);
         self.continuity.update(
-            self.last_finalized_view,
-            self.last_certificate.clone(),
+            self.view_state.last_finalized_view(),
+            self.view_state.last_certificate().cloned(),
             seed_bytes,
         );
 
@@ -551,12 +585,35 @@ impl OutbeReporter {
         } else {
             keccak256(&vrf_group_public_key_bytes)
         };
-        let snapshot = build_committee_snapshot(
+        let encoded_pubkeys: Vec<Vec<u8>> = self
+            .verifier_scheme
+            .participants()
+            .iter()
+            .map(|pubkey| pubkey.encode().as_ref().to_vec())
+            .collect();
+        // Defence-in-depth path: a snapshot build failure is an encode-invariant
+        // violation; drop the certification deterministically (metered, never
+        // panic) rather than write a record whose committee_set_hash would
+        // diverge from the writer's.
+        let snapshot = match build_committee_snapshot(
             &self.validator_addresses,
-            self.verifier_scheme.participants(),
+            &encoded_pubkeys,
             vrf_material_version,
             vrf_group_public_key_bytes,
-        );
+            alloy_primitives::B256::ZERO,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                crate::metrics::record_certification_dropped("snapshot_build_failed");
+                warn!(
+                    target: "outbe::reporter",
+                    epoch = notarization.proposal.round.epoch().get(),
+                    %error,
+                    "Activity::Certification dropped: committee snapshot build failed"
+                );
+                return;
+            }
+        };
         let committee_set_hash =
             committee_set_hash_v2(notarization.proposal.round.epoch().get(), &snapshot);
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
@@ -672,23 +729,26 @@ impl OutbeReporter {
     /// multiple distinct views in a row, and post-execution slashing should
     /// account for each missed view separately.
     fn detect_missed_proposers(&self, current_view: u64) -> Vec<Address> {
-        if self.last_finalized_view == 0 || current_view <= self.last_finalized_view + 1 {
+        let last_finalized_view = self.view_state.last_finalized_view();
+        if last_finalized_view == 0 || current_view <= last_finalized_view + 1 {
             return Vec::new();
         }
 
-        let gap = current_view - self.last_finalized_view - 1;
+        let gap = current_view - last_finalized_view - 1;
         let cap = gap.min(MAX_MISSED_PROPOSERS as u64) as usize;
         let mut missed = Vec::with_capacity(cap);
         let mut dropped = 0u64;
 
-        for v in (self.last_finalized_view + 1)..current_view {
+        for v in (last_finalized_view + 1)..current_view {
             if missed.len() >= MAX_MISSED_PROPOSERS {
                 dropped = current_view - v;
                 break;
             }
 
             let round = Round::new(self.epoch, View::new(v));
-            let leader = self.elector.elect(round, self.last_certificate.as_ref());
+            let leader = self
+                .elector
+                .elect(round, self.view_state.last_certificate());
             let leader_idx = leader.get() as usize;
 
             if leader_idx < self.validator_addresses.len() {
@@ -715,7 +775,7 @@ impl OutbeReporter {
                 gap,
                 missed_count = missed.len(),
                 dropped_count = dropped,
-                from = self.last_finalized_view + 1,
+                from = self.view_state.last_finalized_view() + 1,
                 to = current_view - 1,
                 "view gap — missed proposers detected"
             );
@@ -734,48 +794,6 @@ impl OutbeReporter {
         }
 
         missed
-    }
-}
-
-/// Zips an ordered address list with the verifier scheme's ordered participant
-/// public keys (both in Commonware `ordered::Set` order — see
-/// `stack::ordered_validator_addresses`) into a canonical [`CommitteeSnapshot`]
-/// for V2 [`committee_set_hash_v2`].
-///
-/// Both vectors MUST have equal length and matching Commonware order; the
-/// caller (`stack.rs::epoch_validation_inputs`) constructs them together.
-/// Length mismatch falls back to truncating to the shorter of the two —
-/// this can only happen on a programmer error in the surrounding wiring and
-/// is logged at debug level; the resulting hash will not match the writer's,
-/// which fails verification deterministically rather than producing a wrong
-/// proof.
-fn build_committee_snapshot(
-    addresses: &[Address],
-    participants: &OrderedSet<bls12381::PublicKey>,
-    vrf_material_version: u64,
-    vrf_group_public_key_bytes: Vec<u8>,
-) -> CommitteeSnapshot {
-    let committee = addresses
-        .iter()
-        .zip(participants.iter())
-        .map(|(address, pubkey)| {
-            let bytes = pubkey.encode();
-            let mut consensus_pubkey = [0u8; 48];
-            // BLS MinPk pubkey is exactly 48 bytes; copy up to that to be
-            // defensive against any future encode-size drift in Commonware.
-            let len = bytes.as_ref().len().min(48);
-            consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-            CommitteeEntry {
-                address: *address,
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version,
-        vrf_group_public_key_bytes,
-        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     }
 }
 
@@ -993,8 +1011,37 @@ mod tests {
             FinalizeVerifyMailbox::disconnected(),
         );
 
-        assert_eq!(reporter.last_finalized_view, 17);
-        assert_eq!(reporter.last_certificate, Some(certificate));
+        assert_eq!(reporter.view_state.last_finalized_view, 17);
+        assert_eq!(reporter.view_state.last_certificate, Some(certificate));
+    }
+
+    #[test]
+    fn view_state_buffers_drains_dedup_and_records_cursor() {
+        let mut state = super::ReporterViewState::default();
+        assert_eq!(state.last_finalized_view(), 0);
+        assert!(state.last_certificate().is_none());
+
+        let a = address!("0x0000000000000000000000000000000000000011");
+        let b = address!("0x0000000000000000000000000000000000000022");
+        state.buffer_byzantine(b);
+        state.buffer_byzantine(a);
+        state.buffer_byzantine(a); // duplicate
+
+        let drained = state.drain_byzantine_sorted();
+        assert_eq!(
+            drained,
+            vec![a, b],
+            "drained evidence is sorted and deduplicated"
+        );
+        assert!(
+            state.drain_byzantine_sorted().is_empty(),
+            "the buffer is emptied by drain"
+        );
+
+        let cert = sample_certificate();
+        state.record_finalization(17, cert.clone());
+        assert_eq!(state.last_finalized_view(), 17);
+        assert_eq!(state.last_certificate(), Some(&cert));
     }
 
     #[test]

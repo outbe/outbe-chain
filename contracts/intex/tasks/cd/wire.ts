@@ -588,12 +588,139 @@ const promisWire = task(
   .setAction(lazy(promisWireAction));
 
 // ============================================================================
+// Precompile-caller Wire — grant roles to the EVM frames that initiate the
+// gated calls: the begin-block system caller (auction stage sends + qualify/call
+// mark sends) and the Desis precompile (inbound clearAuction issuance, where
+// createSeries + issuance-instructions run in-process).
+// ============================================================================
+
+interface SystemGrantRolesArgs {
+  bridgeContract: string;
+  intexContract: string;
+  systemAddress: string;
+  desisContract: string;
+}
+
+const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+
+  if (!args.bridgeContract || args.bridgeContract === "null") {
+    throw new Error("bridgeContract (OriginMessenger) is required");
+  }
+  if (!args.intexContract || args.intexContract === "null") {
+    throw new Error("intexContract (IntexNFT1155) is required");
+  }
+  if (!args.systemAddress || args.systemAddress === "null") {
+    throw new Error("systemAddress (OUTBE_SYSTEM_TX_ADDRESS) is required");
+  }
+  if (!args.desisContract || args.desisContract === "null") {
+    throw new Error("desisContract (Desis precompile) is required");
+  }
+  const systemAddress = args.systemAddress as `0x${string}`;
+  const desisAddress = args.desisContract as `0x${string}`;
+
+  console.log(`Granting precompile-caller roles...`);
+  console.log(`  SystemCaller:    ${systemAddress}`);
+  console.log(`  Desis:           ${desisAddress}`);
+  console.log(`  OriginMessenger: ${args.bridgeContract}`);
+  console.log(`  IntexNFT1155:    ${args.intexContract}`);
+
+  const messenger = (await viem.getContractAt(
+    "OriginMessenger",
+    args.bridgeContract as `0x${string}`
+  )) as {
+    read: {
+      DESIS_ROLE: () => Promise<`0x${string}`>;
+      INTEX_FACTORY_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const intex = (await viem.getContractAt(
+    "IntexNFT1155",
+    args.intexContract as `0x${string}`
+  )) as {
+    read: {
+      RELAYER_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const grantOnMessenger = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
+    if (await messenger.read.hasRole([role, addr])) {
+      console.log(`✅ OriginMessenger: ${addr} already has ${label}`);
+    } else {
+      const tx = await sendAndWait(viem, () => messenger.write.grantRole([role, addr]));
+      console.log(`✅ OriginMessenger: ${label} -> ${addr}. Tx: ${tx}`);
+    }
+  };
+
+  const grantOnIntex = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
+    if (await intex.read.hasRole([role, addr])) {
+      console.log(`✅ IntexNFT1155: ${addr} already has ${label}`);
+    } else {
+      const tx = await sendAndWait(viem, () => intex.write.grantRole([role, addr]));
+      console.log(`✅ IntexNFT1155: ${label} -> ${addr}. Tx: ${tx}`);
+    }
+  };
+
+  const desisRole = await messenger.read.DESIS_ROLE();
+  const intexFactoryRole = await messenger.read.INTEX_FACTORY_ROLE();
+  const relayerRole = await intex.read.RELAYER_ROLE();
+
+  // Begin-block caller: auction stage sends (DESIS_ROLE), qualify/call mark
+  // sends to BNB (INTEX_FACTORY_ROLE on OriginMessenger), and the local NFT
+  // markQualified / markCalled (RELAYER_ROLE) — all run from begin-block.
+  await grantOnMessenger("DESIS_ROLE", desisRole, systemAddress);
+  await grantOnMessenger("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
+  await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
+
+  // Desis precompile frame (inbound clearAuction): issuance-instructions
+  // (INTEX_FACTORY_ROLE) + createSeries (RELAYER_ROLE) run in-process here.
+  await grantOnMessenger("INTEX_FACTORY_ROLE", intexFactoryRole, desisAddress);
+  await grantOnIntex("RELAYER_ROLE", relayerRole, desisAddress);
+};
+
+const systemGrantRoles = task(
+  "outbe-system-grant-roles",
+  "Grant precompile-caller roles: DESIS_ROLE + INTEX_FACTORY_ROLE to the begin-block system caller; INTEX_FACTORY_ROLE + RELAYER_ROLE to the Desis precompile"
+)
+  .addOption({
+    name: "bridgeContract",
+    description: "OriginMessenger contract address",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "intexContract",
+    description: "IntexNFT1155 contract address on Outbe",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "systemAddress",
+    description: "Outbe begin-block system caller (OUTBE_SYSTEM_TX_ADDRESS)",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "desisContract",
+    description: "Desis precompile address (inbound clearAuction issuance frame)",
+    defaultValue: "",
+  })
+  .setAction(lazy(systemGrantRolesAction));
+
+// ============================================================================
 // IntexFactory: Assert RELAYER_ROLE on IntexNFT1155 (deploy-time invariant)
 // ============================================================================
 
 interface IntexFactoryAssertRelayerRoleArgs {
   intexContract: string;
-  intexFactoryContract: string;
+  desisContract: string;
+  systemAddress: string;
 }
 
 const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelayerRoleArgs, hre: unknown) => {
@@ -602,13 +729,19 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
   if (!args.intexContract || args.intexContract === "null") {
     throw new Error("intexContract (IntexNFT1155) is required to assert RELAYER_ROLE");
   }
-  if (!args.intexFactoryContract || args.intexFactoryContract === "null") {
-    throw new Error("intexFactoryContract is required to assert RELAYER_ROLE");
+  if (!args.desisContract || args.desisContract === "null") {
+    throw new Error("desisContract (Desis precompile) is required to assert RELAYER_ROLE");
   }
+  if (!args.systemAddress || args.systemAddress === "null") {
+    throw new Error("systemAddress (OUTBE_SYSTEM_TX_ADDRESS) is required to assert RELAYER_ROLE");
+  }
+  const desisAddress = args.desisContract as `0x${string}`;
+  const systemAddress = args.systemAddress as `0x${string}`;
 
-  console.log(`Asserting IntexFactory holds RELAYER_ROLE on IntexNFT1155...`);
+  console.log(`Asserting RELAYER_ROLE on IntexNFT1155 for the issuance + mark callers...`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
-  console.log(`  IntexFactory: ${args.intexFactoryContract}`);
+  console.log(`  Desis:        ${desisAddress} (createSeries)`);
+  console.log(`  SystemCaller: ${systemAddress} (markQualified / markCalled)`);
 
   const intex = (await viem.getContractAt(
     "IntexNFT1155",
@@ -620,26 +753,30 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
     };
   };
 
+  // createSeries runs in the inbound clearAuction frame (Desis precompile);
+  // markQualified / markCalled run from begin-block (the system caller). Both
+  // need RELAYER_ROLE.
   const role = await intex.read.RELAYER_ROLE();
-  const granted = await intex.read.hasRole([role, args.intexFactoryContract as `0x${string}`]);
-
-  if (!granted) {
-    throw new Error(
-      `IntexFactory ${args.intexFactoryContract} does NOT hold RELAYER_ROLE on IntexNFT1155 ${args.intexContract}. ` +
-        `issue / markSeriesQualified / markSeriesCalled (and Desis.clearAuction auto-continuation) will revert. ` +
-        `Grant it first: lz:grant-bridge-role --token <intex> --adapter <factory>.`,
-    );
+  for (const addr of [desisAddress, systemAddress]) {
+    if (!(await intex.read.hasRole([role, addr]))) {
+      throw new Error(
+        `${addr} does NOT hold RELAYER_ROLE on IntexNFT1155 ${args.intexContract}. ` +
+          `Issuance (createSeries) or qualify / call (markQualified / markCalled) will revert. ` +
+          `Grant it first: outbe-system-grant-roles --bridge-contract <messenger> --intex-contract <intex> --system-address <system> --desis-contract <desis>.`,
+      );
+    }
   }
 
-  console.log(`✅ IntexFactory holds RELAYER_ROLE on IntexNFT1155`);
+  console.log(`✅ Desis precompile and system caller hold RELAYER_ROLE on IntexNFT1155`);
 };
 
 const intexFactoryAssertRelayerRole = task(
   "intex-factory-assert-relayer-role",
-  "Assert IntexFactory holds RELAYER_ROLE on IntexNFT1155 (fails the deploy if missing)",
+  "Assert the Desis precompile and the begin-block system caller hold RELAYER_ROLE on IntexNFT1155 (fails the deploy if missing)",
 )
   .addOption({ name: "intexContract", description: "IntexNFT1155 contract address on Outbe", defaultValue: "" })
-  .addOption({ name: "intexFactoryContract", description: "IntexFactory contract address", defaultValue: "" })
+  .addOption({ name: "desisContract", description: "Desis precompile address (createSeries caller)", defaultValue: "" })
+  .addOption({ name: "systemAddress", description: "Outbe begin-block system caller (markQualified / markCalled)", defaultValue: "" })
   .setAction(lazy(intexFactoryAssertRelayerRoleAction));
 
 // ============================================================================
@@ -652,6 +789,7 @@ export const wireTasks = [
   bnbBridgeWire.build(),
   onftBatchAdapterWire.build(),
   outbeBridgeWire.build(),
+  systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
   promisWire.build(),

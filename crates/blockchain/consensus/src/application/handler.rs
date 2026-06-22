@@ -944,10 +944,6 @@ pub struct ApplicationHandler {
     rx: futures::channel::mpsc::Receiver<Message>,
 
     pub(crate) shared: ApplicationShared,
-
-    /// Signer bitmap from the last finalization certificate.
-    #[allow(dead_code)]
-    last_signers: Option<Vec<bool>>,
 }
 
 #[derive(Clone)]
@@ -1056,6 +1052,39 @@ pub(crate) struct ApplicationShared {
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
 }
 
+/// Named dependencies for [`ApplicationHandler::new`].
+///
+/// Replaces a 25-positional-argument constructor (mirrors `FinalizationActorDeps`,
+/// used a few lines later in `stack.rs`), so the single production caller and the
+/// test fixtures cannot transpose arguments — the wiring order lives in the type
+/// system rather than in a call-site convention.
+pub struct ApplicationDeps {
+    pub rx: futures::channel::mpsc::Receiver<Message>,
+    pub engine: EngineHandle,
+    pub payload_builder: PayloadBuilder,
+    pub executor_mailbox: executor::Mailbox,
+    pub genesis_hash: B256,
+    pub validators: ValidatorSet,
+    pub chain_id: u64,
+    pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
+    pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
+    pub elector_config_provider: HybridElectorConfigProvider<MinSig>,
+    pub committee_provider: CommitteeProvider,
+    pub dkg_manager: crate::dkg_manager::Mailbox,
+    pub vrf_safety: VrfSafetyGate,
+    pub epoch_fence: ApplicationEpochFence,
+    pub ancestry_readiness: AncestryReadiness,
+    pub finalization_view: FinalizationViewHandle,
+    pub block_cache: BlockCacheHandle,
+    pub finalization_selector: crate::finalization::selection::ParentProofSelector,
+    pub payload_resolve_time: std::time::Duration,
+    pub payload_return_time: std::time::Duration,
+    pub min_block_time: std::time::Duration,
+    pub proposer_evm_address: Option<Address>,
+    pub trust_el_head: bool,
+    pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+}
+
 impl ApplicationHandler {
     /// Create a new handler.
     ///
@@ -1066,34 +1095,33 @@ impl ApplicationHandler {
     /// Recovery is performed by `new_finalization_view(...)` at the call
     /// site (`stack.rs`); this constructor takes the already-initialized
     /// handle.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        rx: futures::channel::mpsc::Receiver<Message>,
-        engine: EngineHandle,
-        payload_builder: PayloadBuilder,
-        executor_mailbox: executor::Mailbox,
-        genesis_hash: B256,
-        validators: ValidatorSet,
-        chain_id: u64,
-        _broadcast_mailbox: crate::marshal_types::BroadcastMailbox,
-        marshal_mailbox: crate::marshal_types::MarshalMailbox,
-        certificate_scheme_provider: HybridSchemeProvider<MinSig>,
-        elector_config_provider: HybridElectorConfigProvider<MinSig>,
-        committee_provider: CommitteeProvider,
-        dkg_manager: crate::dkg_manager::Mailbox,
-        vrf_safety: VrfSafetyGate,
-        epoch_fence: ApplicationEpochFence,
-        ancestry_readiness: AncestryReadiness,
-        finalization_view: FinalizationViewHandle,
-        block_cache: BlockCacheHandle,
-        finalization_selector: crate::finalization::selection::ParentProofSelector,
-        payload_resolve_time: std::time::Duration,
-        payload_return_time: std::time::Duration,
-        min_block_time: std::time::Duration,
-        proposer_evm_address: Option<Address>,
-        trust_el_head: bool,
-        late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
-    ) -> Self {
+    pub fn new(deps: ApplicationDeps) -> Self {
+        let ApplicationDeps {
+            rx,
+            engine,
+            payload_builder,
+            executor_mailbox,
+            genesis_hash,
+            validators,
+            chain_id,
+            marshal_mailbox,
+            certificate_scheme_provider,
+            elector_config_provider,
+            committee_provider,
+            dkg_manager,
+            vrf_safety,
+            epoch_fence,
+            ancestry_readiness,
+            finalization_view,
+            block_cache,
+            finalization_selector,
+            payload_resolve_time,
+            payload_return_time,
+            min_block_time,
+            proposer_evm_address,
+            trust_el_head,
+            late_sig_store,
+        } = deps;
         Self {
             rx,
             shared: ApplicationShared {
@@ -1124,7 +1152,6 @@ impl ApplicationHandler {
                 trust_el_head,
                 late_sig_store,
             },
-            last_signers: None,
         }
     }
 
@@ -1691,19 +1718,33 @@ impl ApplicationShared {
         let scheme = self.certificate_scheme_provider.scoped(epoch)?;
         let ordered = self.committee_provider.ordered_committee(epoch)?;
         let encoded: alloy_primitives::Bytes = finalization.encode().into();
-        Some(
-            crate::finalization::resolver::build_finalization_record_from_recovered(
-                epoch.get(),
-                finalization.proposal.round.view().get(),
-                finalization.proposal.parent.get(),
-                parent_height,
-                finalization.proposal.payload.0,
-                ordered.as_ref(),
-                &finalization.certificate,
-                encoded,
-                scheme.as_ref(),
-            ),
-        )
+        match crate::finalization::resolver::build_finalization_record_from_recovered(
+            epoch.get(),
+            finalization.proposal.round.view().get(),
+            finalization.proposal.parent.get(),
+            parent_height,
+            finalization.proposal.payload.0,
+            ordered.as_ref(),
+            &finalization.certificate,
+            encoded,
+            scheme.as_ref(),
+        ) {
+            Ok(record) => Some(record),
+            Err(error) => {
+                // Encode-invariant violation on the marshal-recovery path: no
+                // canonical record can be produced, so recovery is unavailable
+                // (deterministic; never a wrong proof). Logged, not fatal.
+                tracing::warn!(
+                    target: "outbe::application",
+                    epoch = epoch.get(),
+                    parent_height,
+                    %error,
+                    "marshal-recovered finalization record build failed; \
+                     no Phase 1 recovery record available"
+                );
+                None
+            }
+        }
     }
 
     async fn select_parent_proof_for_proposal(
@@ -2560,13 +2601,6 @@ impl ApplicationShared {
                 Err(VerifyResolveError::Timeout)
             }
         }
-    }
-}
-
-impl ApplicationHandler {
-    /// Store the last certificate's signer bitmap for participation encoding.
-    pub fn set_last_signers(&mut self, signers: Vec<bool>) {
-        self.last_signers = Some(signers);
     }
 }
 

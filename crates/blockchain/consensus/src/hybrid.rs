@@ -52,7 +52,7 @@ use commonware_utils::{
 };
 use rand_core::{CryptoRngCore, OsRng};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -521,6 +521,11 @@ impl<V: Variant> HybridScheme<V> {
         R: CryptoRngCore,
     {
         let proof = certificate.vrf_proof.as_ref()?;
+        // The consensus seed namespace is scheme-relative: it MUST match the
+        // namespace this scheme's signer used (`namespace_ref().seed`), which
+        // equals the global `hybrid_seed_namespace()` only when the scheme is
+        // built with `outbe_app_namespace()` (production). The proof-side global
+        // verifiers (`seed_partial`, `verifier`) use the constant instead.
         let namespace = self.namespace_ref();
         let seed_message = seed_round.encode();
         if self.vrf_materials().verify_proof(
@@ -550,6 +555,8 @@ impl<V: Variant> HybridScheme<V> {
         let Some(signature) = attestation.signature.get() else {
             return false;
         };
+        // Scheme-relative namespace (see `verified_vrf_seed_for_round`): match
+        // this scheme's signer, not the global proof constant.
         let namespace = self.namespace_ref();
         let seed_message = seed_message_from_subject(&subject);
         self.vrf_materials().verify_partial(
@@ -1206,45 +1213,30 @@ impl<V: Variant> HybridRandomElector<V> {
 // SchemeProvider for HybridScheme
 // ---------------------------------------------------------------------------
 
-/// Epoch-scoped provider of hybrid schemes.
+/// Epoch-scoped provider of hybrid schemes. Thin typed wrapper over a shared
+/// [`EpochRegistry`](crate::epoch_registry::EpochRegistry); it keeps the
+/// `certificate::Provider` impl, which the generic registry cannot carry.
 #[derive(Clone, Debug)]
 pub struct HybridSchemeProvider<V: Variant> {
-    inner: Arc<Mutex<HashMap<Epoch, Arc<HybridScheme<V>>>>>,
+    inner: crate::epoch_registry::EpochRegistry<HybridScheme<V>>,
 }
 
 impl<V: Variant> HybridSchemeProvider<V> {
     /// Create an empty provider.
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
+            inner: crate::epoch_registry::EpochRegistry::new(),
         }
     }
 
-    /// Register a scheme for the given epoch.
+    /// Register a scheme for the given epoch (insert-once).
     pub fn register(&self, epoch: Epoch, scheme: HybridScheme<V>) -> bool {
-        let mut schemes = self.inner.lock().unwrap_or_else(|poisoned| {
-            tracing::error!("HybridSchemeProvider mutex poisoned in register(), recovering");
-            poisoned.into_inner()
-        });
-        match schemes.entry(epoch) {
-            Entry::Vacant(entry) => {
-                entry.insert(Arc::new(scheme));
-                true
-            }
-            Entry::Occupied(_) => false,
-        }
+        self.inner.register(epoch, scheme)
     }
 
     /// Remove the scheme for the given epoch.
     pub fn remove(&self, epoch: &Epoch) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                tracing::error!("HybridSchemeProvider mutex poisoned in remove(), recovering");
-                poisoned.into_inner()
-            })
-            .remove(epoch)
-            .is_some()
+        self.inner.remove(epoch)
     }
 }
 
@@ -1259,14 +1251,7 @@ impl<V: Variant> certificate::Provider for HybridSchemeProvider<V> {
     type Scheme = HybridScheme<V>;
 
     fn scoped(&self, scope: Self::Scope) -> Option<Arc<Self::Scheme>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                tracing::error!("HybridSchemeProvider mutex poisoned in scoped(), recovering");
-                poisoned.into_inner()
-            })
-            .get(&scope)
-            .cloned()
+        self.inner.get(&scope)
     }
 }
 
@@ -1277,58 +1262,30 @@ impl<V: Variant> certificate::Provider for HybridSchemeProvider<V> {
 /// the same deterministic inputs as the reporter path.
 #[derive(Clone, Debug)]
 pub struct HybridElectorConfigProvider<V: Variant> {
-    inner: Arc<Mutex<HashMap<Epoch, Arc<HybridRandom<V>>>>>,
+    inner: crate::epoch_registry::EpochRegistry<HybridRandom<V>>,
 }
 
 impl<V: Variant> HybridElectorConfigProvider<V> {
     /// Create an empty provider.
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
+            inner: crate::epoch_registry::EpochRegistry::new(),
         }
     }
 
-    /// Register the elector config for the given epoch.
+    /// Register the elector config for the given epoch (insert-once).
     pub fn register(&self, epoch: Epoch, config: HybridRandom<V>) -> bool {
-        let mut configs = self.inner.lock().unwrap_or_else(|poisoned| {
-            tracing::error!("HybridElectorConfigProvider mutex poisoned in register(), recovering");
-            poisoned.into_inner()
-        });
-        match configs.entry(epoch) {
-            Entry::Vacant(entry) => {
-                entry.insert(Arc::new(config));
-                true
-            }
-            Entry::Occupied(_) => false,
-        }
+        self.inner.register(epoch, config)
     }
 
     /// Remove the config for the given epoch.
     pub fn remove(&self, epoch: &Epoch) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                tracing::error!(
-                    "HybridElectorConfigProvider mutex poisoned in remove(), recovering"
-                );
-                poisoned.into_inner()
-            })
-            .remove(epoch)
-            .is_some()
+        self.inner.remove(epoch)
     }
 
     /// Return the registered config for an epoch.
     pub fn scoped(&self, epoch: Epoch) -> Option<Arc<HybridRandom<V>>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                tracing::error!(
-                    "HybridElectorConfigProvider mutex poisoned in scoped(), recovering"
-                );
-                poisoned.into_inner()
-            })
-            .get(&epoch)
-            .cloned()
+        self.inner.get(&epoch)
     }
 }
 
@@ -2423,64 +2380,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_hybrid_scheme_provider_recovers_from_poisoned_mutex() {
-        let (_, participants) = test_participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-
-        let provider = HybridSchemeProvider::<MinSig>::new();
-
-        let verifier = HybridScheme::<MinSig>::verifier(
-            NAMESPACE,
-            participants.clone(),
-            dkg.polynomial.clone(),
-        )
-        .unwrap();
-
-        let epoch = Epoch::new(1);
-        provider.register(epoch, verifier);
-
-        let replacement = HybridScheme::<MinSig>::verifier(
-            NAMESPACE,
-            participants.clone(),
-            bootstrap_dkg(3).unwrap().polynomial.clone(),
-        )
-        .unwrap();
-        assert!(
-            !provider.register(epoch, replacement),
-            "duplicate epoch registration must not replace existing scheme"
-        );
-
-        // Poison the mutex.
-        let provider_clone = provider.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = provider_clone.inner.lock().unwrap();
-            panic!("intentional poison");
-        }));
-        assert!(result.is_err());
-
-        // After poisoning, all operations must still work.
-        let dkg2 = bootstrap_dkg(3).unwrap();
-        let verifier2 = HybridScheme::<MinSig>::verifier(
-            NAMESPACE,
-            participants.clone(),
-            dkg2.polynomial.clone(),
-        )
-        .unwrap();
-
-        assert!(
-            provider.register(Epoch::new(2), verifier2),
-            "register must work after poison"
-        );
-        assert!(
-            certificate::Provider::scoped(&provider, Epoch::new(2)).is_some(),
-            "scoped must work after poison"
-        );
-        assert!(
-            provider.remove(&Epoch::new(2)),
-            "remove must work after poison"
-        );
-    }
+    // Insert-once and poisoned-mutex recovery for the providers' shared storage
+    // mechanism are tested directly on `EpochRegistry` (crate::epoch_registry).
 
     // -----------------------------------------------------------------------
     // signer() rejects share.index != participant index

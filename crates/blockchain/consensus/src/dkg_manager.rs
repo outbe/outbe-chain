@@ -652,29 +652,24 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
     // the same Commonware participant-index order as `new_active_set` (we built
     // `new_active_set` by iterating `participants` above). Length must be 48
     // bytes — `bls12381::PublicKey` is MinPk-compressed.
-    let mut committee_entries = Vec::with_capacity(participants.len());
-    for (idx, bls_pk) in participants.iter().enumerate() {
-        let encoded = commonware_codec::Encode::encode(bls_pk).to_vec();
-        let pubkey_bytes: [u8; 48] = encoded.as_slice().try_into().map_err(|_| {
-            eyre::eyre!(
-                "encoded MinPk consensus pubkey has unexpected length: expected 48, got {}",
-                encoded.len()
-            )
-        })?;
-        committee_entries.push(crate::proof::CommitteeEntry {
-            address: new_active_set[idx],
-            consensus_pubkey: pubkey_bytes,
-        });
-    }
-    let committee_snapshot = crate::proof::CommitteeSnapshot {
-        committee: committee_entries,
+    let encoded_pubkeys: Vec<Vec<u8>> = participants
+        .iter()
+        .map(|bls_pk| commonware_codec::Encode::encode(bls_pk).to_vec())
+        .collect();
+    // Single canonical builder (shared with the finalization actor/resolver and
+    // the reporter). `new_active_set[i]` was built by iterating `participants`
+    // above, so it is in the same order as `encoded_pubkeys[i]`. The proposer
+    // carries the full polynomial commitment hash; it is not folded into
+    // committee_set_hash_v2 (the executor re-derives it from the boundary
+    // `outcome`).
+    let committee_snapshot = crate::proof::build_committee_snapshot(
+        &new_active_set,
+        &encoded_pubkeys,
         vrf_material_version,
-        vrf_group_public_key_bytes: group_pk_bytes_vec.clone(),
-        // Full polynomial commitment hash (not folded into committee_set_hash_v2,
-        // so it does not affect the artifact's committee_set_hash; the executor
-        // re-derives the same value from the boundary `outcome`).
-        vrf_public_polynomial_hash: public_polynomial_hash(output.public()),
-    };
+        group_pk_bytes_vec.clone(),
+        public_polynomial_hash(output.public()),
+    )
+    .map_err(|e| eyre::eyre!("DKG boundary committee snapshot build failed: {e}"))?;
     let committee_set_hash = crate::proof::committee_set_hash_v2(epoch.get(), &committee_snapshot);
 
     Ok(DkgBoundaryArtifact {
