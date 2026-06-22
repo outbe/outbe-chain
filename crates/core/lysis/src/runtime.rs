@@ -108,11 +108,10 @@ pub fn lysis(
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
 
-        // RCFI is bounded by the decay saturation limit L (≈ 526 decayed days,
-        // see `outbe_fidelity`), so it always fits in u32 and the conversion
-        // cannot truncate. Guard remains for defense in depth.
-        let league_id = u32::try_from(fi)
-            .map_err(|_| PrecompileError::Revert(format!("lysis: RCFI {fi} exceeds u32::MAX")))?;
+        // League tier (in `[minLeague, maxLeague]`) from the Fidelity module:
+        // the owner's RCFI bucketed against the global synthetic-max ceiling at
+        // the current block time. Replaces the former floor(RCFI-in-days) value.
+        let league_id = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
 
         // cost_amount = cost_of_gratis * gratis_load / SCALE — both inputs are
         // 10^18-scaled (oracle price × minor units); divide once to land in

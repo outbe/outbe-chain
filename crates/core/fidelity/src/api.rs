@@ -40,3 +40,9 @@ pub fn get_rcfi(storage: StorageHandle<'_>, account: Address) -> Result<u64> {
 pub fn compute_rcfi(storage: StorageHandle<'_>, account: Address, timestamp: u64) -> Result<u64> {
     FidelityContract::new(storage).compute_rcfi(account, timestamp)
 }
+
+/// Fidelity league for `account` at the current block time, a tier in
+/// `[MIN_LEAGUE, MAX_LEAGUE]`. See [`FidelityContract::league`].
+pub fn league(storage: StorageHandle<'_>, account: Address) -> Result<u16> {
+    FidelityContract::new(storage).league(account)
+}

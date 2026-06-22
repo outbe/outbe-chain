@@ -126,9 +126,11 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
                 .expect("GAS-08 issued NOD must be readable");
             assert_eq!(item.owner, owners[idx]);
             assert_eq!(item.worldwide_day, wwd);
-            // league_id derives from the owner's RCFI, which is 0 here: these
-            // tribute owners have no gratis cohort history.
-            assert_eq!(item.league_id, 0);
+            // league_id now comes from the Fidelity league. These owners have no
+            // gratis cohort history, so no account has qualified (the global
+            // synthetic-max ceiling is zero) → everyone lands in the minimum
+            // league (MIN_LEAGUE == 1).
+            assert_eq!(item.league_id, 1);
             assert!(
                 !item.gratis_load_minor.is_zero(),
                 "GAS-08: issued dense NOD must carry positive gratis load"
