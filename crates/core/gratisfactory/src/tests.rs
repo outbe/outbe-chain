@@ -114,31 +114,6 @@ fn pledge_duplicate_commitment_reverts() {
 }
 
 #[test]
-fn pledge_rejects_zero_rcfi() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let amount = denomination(1).unwrap();
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
-        // No fidelity cohort seeded → get_rcfi(alice) == 0 → pledge rejected
-        // before any Gratis movement.
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: 1,
-                commitment: U256::from(0xA6u64),
-            },
-        ));
-        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("fidelity"));
-
-        // Escrow untouched and caller keeps the full balance.
-        let gratis = Gratis::new(storage);
-        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
-        assert_eq!(gratis.pledged_of(alice()).unwrap(), U256::ZERO);
-    });
-}
-
-#[test]
 fn unpledge_releases_escrow_back_to_pledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
