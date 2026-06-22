@@ -2501,10 +2501,7 @@ where
         if let (Some(output), Some(boundary)) = (&last_dkg_output, recovered_boundary_artifact) {
             let canonical_output = decode_boundary_output(boundary)
                 .wrap_err("failed to decode recovered DKG boundary output")?;
-            ensure!(
-                output == &canonical_output,
-                "saved DKG output does not match recovered canonical DKG boundary output"
-            );
+            dkg_manager::assert_canonical_output(output, &canonical_output, "restart recovery")?;
         }
     } else if let Some(boundary) = recovered_boundary_artifact {
         // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
@@ -3865,19 +3862,14 @@ where
                                 };
                             let target = pending.target;
                             let dkg_complete = pending.complete;
-                            if dkg_complete.output != canonical_output {
-                                let local_output_hash =
-                                    dkg_manager::dkg_output_hash(&dkg_complete.output);
-                                let canonical_output_hash =
-                                    dkg_manager::dkg_output_hash(&canonical_output);
+                            if let Err(error) = dkg_manager::assert_canonical_output(
+                                &dkg_complete.output,
+                                &canonical_output,
+                                &format!("cycle {}", target.dkg_cycle),
+                            ) {
                                 vrf_safety.mark_expired(activation_height);
                                 publish_randomness_status(&bridge, &vrf_safety);
-                                return Err(eyre::eyre!(
-                                    "local DKG output does not match canonical finalized-log output: cycle {}, local {}, canonical {}",
-                                    target.dkg_cycle,
-                                    local_output_hash,
-                                    canonical_output_hash
-                                ));
+                                return Err(error);
                             }
 
                             let activated_validator_set = validator_set_for_dkg_output_players(
@@ -5033,10 +5025,11 @@ fn validate_pending_boundary_snapshot(
 ) -> Result<()> {
     let boundary_output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG boundary output")?;
-    ensure!(
-        &boundary_output == local_output,
-        "pending DKG boundary output does not match local persisted DKG output"
-    );
+    dkg_manager::assert_canonical_output(
+        local_output,
+        &boundary_output,
+        "pending boundary snapshot",
+    )?;
     let frozen = match refresh_validator_set_at_height(provider, snapshot.artifact.freeze_height)? {
         FrozenValidatorSetRefresh::Ready { validator_set, .. } => validator_set,
         FrozenValidatorSetRefresh::PendingBlockHash => {
@@ -5375,16 +5368,11 @@ where
 
     let canonical_output = decode_boundary_output(&activated_boundary)
         .wrap_err("failed to decode startup live-join activation boundary output")?;
-    if complete.output != canonical_output {
-        let local_output_hash = dkg_manager::dkg_output_hash(&complete.output);
-        let canonical_output_hash = dkg_manager::dkg_output_hash(&canonical_output);
-        return Err(eyre::eyre!(
-            "startup live-join local DKG output does not match canonical boundary output: cycle {}, local {}, canonical {}",
-            dkg_round,
-            local_output_hash,
-            canonical_output_hash
-        ));
-    }
+    dkg_manager::assert_canonical_output(
+        &complete.output,
+        &canonical_output,
+        &format!("startup live-join cycle {dkg_round}"),
+    )?;
     let canonical_polynomial = canonical_output.public().clone();
 
     if let Some(ref keys_dir) = args.keys_dir {
