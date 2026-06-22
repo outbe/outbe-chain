@@ -76,9 +76,9 @@ fn golden_matches_decay_py_reference() {
             for tx in &txs {
                 if tx.ts <= sample.ts {
                     if tx.deposit {
-                        c.on_gratis_mined(ALICE, tx.amount, tx.ts).unwrap();
+                        c.cohort_in(ALICE, tx.amount, tx.ts).unwrap();
                     } else {
-                        c.on_coen_mined(ALICE, tx.amount, tx.ts).unwrap();
+                        c.cohort_out(ALICE, tx.amount, tx.ts).unwrap();
                     }
                 }
             }

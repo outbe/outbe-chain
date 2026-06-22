@@ -28,7 +28,7 @@ fn alice() -> Address {
 /// so `get_rcfi` reads a non-zero `now`).
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    outbe_fidelity::api::on_gratis_mined(
+    outbe_fidelity::api::cohort_in(
         storage,
         account,
         U256::from(100u64),

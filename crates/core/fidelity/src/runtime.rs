@@ -8,19 +8,18 @@ use outbe_primitives::error::Result;
 impl FidelityContract<'_> {
     /// ACQUISITION hook ("mine Gratis from nod"): records a new active cohort.
     ///
-    /// `now` is the block timestamp in seconds, passed by the caller. No-op on a
-    /// zero amount. Never reverts for cohort-accounting reasons (it will later
-    /// run inside the gratis mint flow); only fatal storage errors propagate.
-    pub fn on_gratis_mined(&mut self, account: Address, amount: U256, now: u64) -> Result<()> {
+    /// `timestamp` is the block timestamp in seconds, passed by the caller. No-op on a
+    /// zero amount.
+    pub fn cohort_in(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
         if amount.is_zero() {
             return Ok(());
         }
         // First acquisition establishes the qualified start date (proof-of-life
         // v1). A real chain timestamp is never 0, so 0 is a safe "unset" sentinel.
         if self.qualified_start.read(&account)? == 0 {
-            self.qualified_start.write(&account, now)?;
+            self.qualified_start.write(&account, timestamp)?;
         }
-        self.push_active(account, amount, now)?;
+        self.push_active(account, amount, timestamp)?;
         Ok(())
     }
 
@@ -28,10 +27,8 @@ impl FidelityContract<'_> {
     ///
     /// Youngest active cohort (the stack tail) is sold first; the boundary cohort
     /// is split proportionally — the sold slice keeps the ORIGINAL `acquired_at`
-    /// and the remainder stays active. If the sale exceeds the recorded active
-    /// cohorts the excess is clamped (silently ignored): the ledger can legitimately
-    /// under-count true gratis balance, and this hook must never revert mine_coen.
-    pub fn on_coen_mined(&mut self, account: Address, amount: U256, now: u64) -> Result<()> {
+    /// and the remainder stays active.
+    pub fn cohort_out(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
         if amount.is_zero() {
             return Ok(());
         }
@@ -46,7 +43,7 @@ impl FidelityContract<'_> {
             };
             if cohort.size <= remaining {
                 // Full consume: move the whole cohort to the sold log, pop the stack.
-                self.push_sold(account, cohort.size, cohort.acquired_at, now)?;
+                self.push_sold(account, cohort.size, cohort.acquired_at, timestamp)?;
                 self.active_cohorts.delete(key)?;
                 count = idx;
                 self.active_count.write(&account, count)?;
@@ -54,7 +51,7 @@ impl FidelityContract<'_> {
             } else {
                 // Partial: record the sold slice, shrink the active remainder in
                 // place (same index/acquired_at → stays the youngest tail).
-                self.push_sold(account, remaining, cohort.acquired_at, now)?;
+                self.push_sold(account, remaining, cohort.acquired_at, timestamp)?;
                 self.active_cohorts.update(&ActiveCohort {
                     slot_key: key,
                     size: cohort.size - remaining,
@@ -97,8 +94,8 @@ impl FidelityContract<'_> {
 
     /// RCFI for `account` at block time `now` (seconds), in decayed days (0..L).
     /// Floor of the fixed-point result from [`Self::compute_rcfi_fp`].
-    pub fn compute_rcfi(&self, account: Address, now: u64) -> Result<u64> {
-        let (rcfi_fp, _, _) = self.compute_rcfi_fp(account, now)?;
+    pub fn compute_rcfi(&self, account: Address, timestamp: u64) -> Result<u64> {
+        let (rcfi_fp, _, _) = self.compute_rcfi_fp(account, timestamp)?;
         Ok((rcfi_fp / SCALE).to::<u64>())
     }
 

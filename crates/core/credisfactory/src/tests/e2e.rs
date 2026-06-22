@@ -49,7 +49,7 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
 /// (`pledge_rejects_zero_rcfi`).
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    outbe_fidelity::api::on_gratis_mined(
+    outbe_fidelity::api::cohort_in(
         storage,
         account,
         U256::from(100u64),
