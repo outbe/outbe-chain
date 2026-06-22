@@ -71,7 +71,8 @@ use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
     application::{
         actor::OutbeApplication,
-        handler::{ApplicationDeps, ApplicationEpochFence, ApplicationHandler},
+        handler::{ApplicationDeps, ApplicationHandler},
+        ApplicationEpochFence,
     },
     bls,
     committee_provider::CommitteeProvider,

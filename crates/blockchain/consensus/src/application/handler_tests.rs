@@ -48,7 +48,10 @@ use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
-use super::{ApplicationEpochFence, ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use crate::application::epoch_boundary::{
+    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+};
 
 static MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -715,11 +718,17 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let anchor = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await
-                .unwrap()
-                .unwrap();
+            let anchor = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             let expected_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
                 finalized_round.epoch().get(),
                 finalized_round.view().get(),
@@ -779,9 +788,15 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let outcome = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await;
+            let outcome = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await;
 
             drop(resolver_keepalive);
             actor_handle.abort();
@@ -795,7 +810,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
     assert!(
         matches!(
             outcome,
-            Err(super::EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
+            Err(EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
         ),
         "epoch-boundary anchor miss must forfeit via MissingMarshalBlock; got {outcome:?}"
     );
