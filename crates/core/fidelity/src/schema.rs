@@ -66,6 +66,12 @@ pub struct FidelityContract {
     // slots 5-7: sold cohort record keyed by cohort_key(SOLD, owner, index).
     #[attribute(order = 4)]
     pub sold_cohorts: outbe_primitives::storage::dsl::Map<B256, SoldCohort>,
+
+    // slot 8: earliest qualified_start across all accounts; anchors the global
+    // synthetic-max RCFI ceiling for leagues. 0 = no account has qualified yet.
+    // Timestamps are monotonic, so the first write is the chain-wide minimum.
+    #[attribute(order = 5)]
+    pub first_qualified_start: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 /// Domain-separated per-owner cohort slot key: `keccak(domain ++ owner ++ index)`.

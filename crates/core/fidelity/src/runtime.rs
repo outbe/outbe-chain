@@ -5,6 +5,14 @@ use crate::schema::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
+/// Number of league tiers the `[0, synthetic_max]` RCFI range is split into.
+pub(crate) const LEAGUE_COUNT: u16 = 4096;
+/// Lowest league id (1-based). Assigned to the bottom slot and to accounts with
+/// no retention / before any account has qualified.
+pub(crate) const MIN_LEAGUE: u16 = 1;
+/// Highest league id, assigned to the top slot. `4096` leagues span `1..=4096`.
+pub(crate) const MAX_LEAGUE: u16 = MIN_LEAGUE + LEAGUE_COUNT - 1;
+
 impl FidelityContract<'_> {
     /// ACQUISITION hook ("mine Gratis from nod"): records a new active cohort.
     ///
@@ -18,6 +26,12 @@ impl FidelityContract<'_> {
         // v1). A real chain timestamp is never 0, so 0 is a safe "unset" sentinel.
         if self.qualified_start.read(&account)? == 0 {
             self.qualified_start.write(&account, timestamp)?;
+        }
+        // First-ever acquisition across all accounts anchors the global synthetic
+        // RCFI ceiling for leagues. Block timestamps are monotonic, so the first
+        // write is the chain-wide minimum qualified_start.
+        if self.first_qualified_start.read()? == 0 {
+            self.first_qualified_start.write(timestamp)?;
         }
         self.push_active(account, amount, timestamp)?;
         Ok(())
@@ -165,5 +179,46 @@ impl FidelityContract<'_> {
     pub fn get_rcfi_scaled(&self, account: Address) -> Result<U256> {
         let now = self.storage.timestamp()?.to::<u64>();
         self.compute_rcfi_scaled(account, now)
+    }
+
+    /// Synthetic maximum (saturating) RCFI at `timestamp`: the decayed age of
+    /// the earliest-qualified account on the chain,
+    /// `t_dec(timestamp − first_qualified_start)`, as a `10^DECIMALS`-scaled
+    /// value. Since no account can have an earlier `qualified_start` and `t_dec`
+    /// is monotonic, this is an upper bound on every account's RCFI at that time
+    /// (and itself saturates toward `L`). Zero before any account has qualified.
+    pub fn max_rcfi_at(&self, timestamp: u64) -> Result<U256> {
+        let first = self.first_qualified_start.read()?;
+        if first == 0 {
+            return Ok(U256::ZERO);
+        }
+        Ok(t_dec(timestamp.saturating_sub(first)))
+    }
+
+    /// League for `account` at `timestamp`: the `[0, max_rcfi_at(timestamp)]`
+    /// range split into [`LEAGUE_COUNT`] equal slots, returning the 1-based slot
+    /// (`[MIN_LEAGUE, MAX_LEAGUE]`) the account's RCFI lands in. The account's
+    /// RCFI never exceeds the synthetic max, so the top slot is reached only by
+    /// the global-oldest 100%-holder; the clamp guards equality/skew. Returns
+    /// [`MIN_LEAGUE`] when no account has qualified yet (max is zero).
+    pub fn league_at(&self, account: Address, timestamp: u64) -> Result<u16> {
+        let max = self.max_rcfi_at(timestamp)?;
+        if max.is_zero() {
+            return Ok(MIN_LEAGUE);
+        }
+        let rcfi = self.compute_rcfi_scaled(account, timestamp)?;
+        // slot = floor(rcfi / (max / LEAGUE_COUNT)) = floor(rcfi · LEAGUE_COUNT / max).
+        // The 10^18 scale cancels, so this is an exact floor. `rcfi ≤ max` keeps
+        // the result in 0..=LEAGUE_COUNT; clamp the rcfi == max boundary to the
+        // last slot (LEAGUE_COUNT - 1).
+        let slot = rcfi * U256::from(LEAGUE_COUNT) / max;
+        let slot = slot.min(U256::from(LEAGUE_COUNT - 1)).to::<u16>();
+        Ok(MIN_LEAGUE + slot)
+    }
+
+    /// League for `account` at the current block time. See [`Self::league_at`].
+    pub fn league(&self, account: Address) -> Result<u16> {
+        let now = self.storage.timestamp()?.to::<u64>();
+        self.league_at(account, now)
     }
 }

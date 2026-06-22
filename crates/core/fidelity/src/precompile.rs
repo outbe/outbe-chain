@@ -4,6 +4,7 @@ use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
 use crate::math::DECIMALS;
+use crate::runtime::{MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::FidelityContract;
 
 sol!("../../../contracts/precompiles/src/IFidelity.sol");
@@ -23,6 +24,10 @@ pub fn dispatch(
             getRcfi(c) => view(c, |c| contract.get_rcfi_scaled(c.account)),
             getRcfiAt(c) => view(c, |c| contract.compute_rcfi_scaled(c.account, c.timestamp)),
             decimals(_) => metadata::<IFidelity::decimalsCall>(|| Ok(DECIMALS)),
+            maxRcfiAt(c) => view(c, |c| contract.max_rcfi_at(c.timestamp)),
+            minLeague(_) => metadata::<IFidelity::minLeagueCall>(|| Ok(MIN_LEAGUE)),
+            maxLeague(_) => metadata::<IFidelity::maxLeagueCall>(|| Ok(MAX_LEAGUE)),
+            league(c) => view(c, |c| contract.league(c.account)),
         }
     })
 }

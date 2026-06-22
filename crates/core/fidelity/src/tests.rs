@@ -3,10 +3,12 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::math::{t_dec, L_FP, SCALE};
+use crate::runtime::{MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::{active_cohort_key, sold_cohort_key, FidelityContract};
 use crate::schema::{ActiveCohort, SoldCohort};
 
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
+const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 const DAY: u64 = 86_400;
 const T0: u64 = 1_700_000_000;
 
@@ -316,5 +318,142 @@ fn compute_rcfi_scaled_no_history_is_zero_at_any_timestamp() {
                 "no cohorts ⇒ zero RCFI at +{age}d",
             );
         }
+    });
+}
+
+// --- leagues -----------------------------------------------------------------
+
+#[test]
+fn first_qualified_start_anchors_earliest_acquisition() {
+    // The global anchor is the chain-wide minimum qualified_start: set on the
+    // first-ever acquisition and never moved by a later qualifier or by the
+    // anchor's own subsequent activity.
+    with_contract(|c| {
+        assert_eq!(
+            c.first_qualified_start.read().unwrap(),
+            0,
+            "unset before any acquisition"
+        );
+        c.cohort_in(BOB, u(100), T0).unwrap();
+        assert_eq!(c.first_qualified_start.read().unwrap(), T0);
+
+        c.cohort_in(ALICE, u(100), T0 + 100 * DAY).unwrap();
+        assert_eq!(
+            c.first_qualified_start.read().unwrap(),
+            T0,
+            "a later qualifier must not move the anchor"
+        );
+
+        c.cohort_in(BOB, u(50), T0 + 200 * DAY).unwrap();
+        c.cohort_out(BOB, u(50), T0 + 300 * DAY).unwrap();
+        assert_eq!(c.first_qualified_start.read().unwrap(), T0);
+    });
+}
+
+#[test]
+fn max_rcfi_at_is_zero_until_first_qualifier_then_decays_from_it() {
+    with_contract(|c| {
+        // No anchor yet ⇒ no ceiling.
+        assert_eq!(c.max_rcfi_at(T0 + 365 * DAY).unwrap(), U256::ZERO);
+
+        c.cohort_in(BOB, u(100), T0).unwrap();
+        // Ceiling is t_dec(age) measured from the anchor, independent of holdings.
+        for age in [0u64, 1, 365, 730, 1460] {
+            assert_eq!(
+                c.max_rcfi_at(T0 + age * DAY).unwrap(),
+                t_dec(age * DAY),
+                "synthetic max must equal t_dec(age) at +{age}d",
+            );
+        }
+        // A timestamp before the anchor saturates to zero.
+        assert_eq!(c.max_rcfi_at(T0 - 100 * DAY).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn oldest_full_holder_reaches_max_league() {
+    // The anchor account holding 100% has RCFI == synthetic max, so it lands in
+    // the top slot. The clamp keeps the rcfi == max boundary at MAX_LEAGUE rather
+    // than overflowing past the last slot.
+    with_contract(|c| {
+        c.cohort_in(BOB, u(100), T0).unwrap();
+        let ts = T0 + 730 * DAY;
+        assert_eq!(
+            c.compute_rcfi_scaled(BOB, ts).unwrap(),
+            c.max_rcfi_at(ts).unwrap(),
+            "anchor 100%-holder sits exactly at the ceiling",
+        );
+        assert_eq!(c.league_at(BOB, ts).unwrap(), MAX_LEAGUE);
+    });
+}
+
+#[test]
+fn league_is_min_for_accounts_without_retention() {
+    with_contract(|c| {
+        // Before any account qualifies the ceiling is zero ⇒ everyone is MIN_LEAGUE.
+        assert_eq!(c.league_at(ALICE, T0 + 365 * DAY).unwrap(), MIN_LEAGUE);
+
+        // With an anchor present, an account that never qualified has zero RCFI.
+        c.cohort_in(BOB, u(100), T0).unwrap();
+        assert_eq!(c.league_at(ALICE, T0 + 365 * DAY).unwrap(), MIN_LEAGUE);
+
+        // An account that fully sold out (zero efficiency) also drops to the floor.
+        c.cohort_in(ALICE, u(100), T0).unwrap();
+        c.cohort_out(ALICE, u(100), T0 + DAY).unwrap();
+        assert_eq!(c.league_at(ALICE, T0 + 365 * DAY).unwrap(), MIN_LEAGUE);
+    });
+}
+
+#[test]
+fn earlier_qualifier_outranks_later_with_equal_holding() {
+    // Two 100%-holders ranked by age: the earlier qualifier (the anchor) tops the
+    // table; the later one ranks strictly below despite identical perfect holding.
+    with_contract(|c| {
+        c.cohort_in(BOB, u(100), T0).unwrap(); // anchor
+        c.cohort_in(ALICE, u(100), T0 + 365 * DAY).unwrap();
+        let ts = T0 + 730 * DAY;
+        let bob = c.league_at(BOB, ts).unwrap();
+        let alice = c.league_at(ALICE, ts).unwrap();
+        assert_eq!(bob, MAX_LEAGUE, "anchor 100%-holder tops the league");
+        assert!(alice < bob, "younger wallet ranks lower: {alice} !< {bob}");
+        assert!(alice >= MIN_LEAGUE);
+    });
+}
+
+#[test]
+fn selling_lowers_league_vs_same_age_full_holder() {
+    // Same qualified_start, different efficiency. BOB holds 100% (top league);
+    // ALICE sells half a mature position, so efficiency < 1 ⇒ strictly lower league
+    // but, with retention remaining, still above the floor.
+    with_contract(|c| {
+        c.cohort_in(BOB, u(1000), T0).unwrap(); // anchor, 100% hold
+        c.cohort_in(ALICE, u(500), T0).unwrap();
+        c.cohort_in(ALICE, u(500), T0).unwrap();
+        c.cohort_out(ALICE, u(500), T0 + 1000 * DAY).unwrap(); // mature half-sale
+        let ts = T0 + 1200 * DAY;
+        let bob = c.league_at(BOB, ts).unwrap();
+        let alice = c.league_at(ALICE, ts).unwrap();
+        assert_eq!(bob, MAX_LEAGUE);
+        assert!(
+            alice < bob,
+            "selling must lower the league: {alice} !< {bob}"
+        );
+        assert!(
+            alice > MIN_LEAGUE,
+            "a partial seller is not at the floor: {alice}"
+        );
+    });
+}
+
+#[test]
+fn league_slot_is_exact_for_two_thirds_ratio() {
+    // Anchor at T0 (100% → defines the ceiling). A wallet qualifying one half-life
+    // later and holding 100% has RCFI t_dec(365d) = 0.5L against a ceiling
+    // t_dec(730d) = 0.75L — an exact 2/3 ratio (L cancels). slot =
+    // floor(4096 · 2/3) = 2730 ⇒ league 2731.
+    with_contract(|c| {
+        c.cohort_in(BOB, u(100), T0).unwrap();
+        c.cohort_in(ALICE, u(100), T0 + 365 * DAY).unwrap();
+        assert_eq!(c.league_at(ALICE, T0 + 730 * DAY).unwrap(), 2731);
     });
 }
