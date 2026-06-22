@@ -11,9 +11,6 @@
 //! - No ad-hoc block propagation channel or local cache admission
 
 use std::{
-    fmt,
-    future::Future,
-    pin::Pin,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
@@ -51,14 +48,6 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlock>> + Send + 'a>>;
-
-pub(crate) trait AncestryReader: Send + Sync {
-    fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
-    fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a>;
-    fn is_ready(&self) -> bool;
-}
-
 struct MarshalAncestryReader<C: commonware_runtime::Clock> {
     marshal: crate::marshal_types::MarshalMailbox,
     block_cache: BlockCacheHandle,
@@ -256,177 +245,6 @@ fn finalized_parent_attestation_from_phase1_system_tx(
     }))
 }
 
-fn block_boundary_artifact(
-    block: &ConsensusBlock,
-) -> Result<Option<outbe_primitives::consensus::DkgBoundaryArtifact>, String> {
-    match extract_header_artifact_from_block(block)? {
-        Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => Ok(Some(boundary)),
-        _ => Ok(None),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoundaryRequirement {
-    NoPending,
-    AlreadyCommitted,
-    MustEmit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BoundaryRequirementError {
-    Unavailable(String),
-    Conflict(String),
-}
-
-impl BoundaryRequirementError {
-    fn is_unavailable(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
-    }
-}
-
-impl fmt::Display for BoundaryRequirementError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable(message) | Self::Conflict(message) => f.write_str(message),
-        }
-    }
-}
-
-fn boundary_scan_floor(pending: &outbe_primitives::consensus::DkgBoundaryArtifact) -> u64 {
-    if pending.freeze_height <= pending.planned_activation_height {
-        pending.freeze_height
-    } else {
-        pending
-            .planned_activation_height
-            .saturating_sub(crate::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
-    }
-}
-
-async fn resolve_boundary_requirement<R: AncestryReader>(
-    parent: Option<&ConsensusBlock>,
-    pending: Option<&outbe_primitives::consensus::DkgBoundaryArtifact>,
-    dkg_manager: &crate::dkg_manager::Mailbox,
-    ancestry: &R,
-) -> Result<BoundaryRequirement, BoundaryRequirementError> {
-    let Some(pending) = pending else {
-        return Ok(BoundaryRequirement::NoPending);
-    };
-    let Some(parent) = parent else {
-        return Ok(BoundaryRequirement::MustEmit);
-    };
-    let original_parent_hash = parent.block_hash();
-    let pending_hash = crate::dkg_manager::Mailbox::boundary_artifact_hash(pending)
-        .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-
-    if let Some(status) = dkg_manager.cached_boundary_status(original_parent_hash, pending_hash) {
-        return match status {
-            crate::dkg_manager::BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
-            crate::dkg_manager::BoundaryStatus::BoundaryCommitted(committed) => {
-                if committed.artifact_hash == pending_hash && committed.artifact == *pending {
-                    Ok(BoundaryRequirement::AlreadyCommitted)
-                } else {
-                    Err(BoundaryRequirementError::Conflict(
-                        "cached DKG BoundaryOutcome conflicts with pending boundary".to_string(),
-                    ))
-                }
-            }
-            crate::dkg_manager::BoundaryStatus::Conflict => {
-                Err(BoundaryRequirementError::Conflict(
-                    "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                ))
-            }
-        };
-    }
-
-    if !ancestry.is_ready() {
-        return Err(BoundaryRequirementError::Unavailable(
-            "DKG boundary ancestry unavailable: marshal ancestry reader is not ready".to_string(),
-        ));
-    }
-
-    let mut current = parent.clone();
-    let scan_floor = boundary_scan_floor(pending);
-    loop {
-        if let Some(boundary) =
-            block_boundary_artifact(&current).map_err(BoundaryRequirementError::Unavailable)?
-        {
-            let boundary_hash = crate::dkg_manager::Mailbox::boundary_artifact_hash(&boundary)
-                .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-            if boundary_hash == pending_hash && boundary == *pending {
-                let committed = crate::dkg_manager::CommittedDkgBoundary {
-                    artifact: boundary,
-                    artifact_hash: boundary_hash,
-                    block_number: current.number(),
-                    block_hash: current.block_hash(),
-                };
-                dkg_manager.record_boundary_status(
-                    original_parent_hash,
-                    pending_hash,
-                    crate::dkg_manager::BoundaryStatus::BoundaryCommitted(committed),
-                );
-                return Ok(BoundaryRequirement::AlreadyCommitted);
-            }
-            if boundary.epoch == pending.epoch {
-                dkg_manager.record_boundary_status(
-                    original_parent_hash,
-                    pending_hash,
-                    crate::dkg_manager::BoundaryStatus::Conflict,
-                );
-                return Err(BoundaryRequirementError::Conflict(
-                    // Outbe has one DKG boundary artifact per epoch. Same
-                    // epoch with different bytes means a local state bug or a
-                    // conflicting proposal, not an alternate valid activation.
-                    "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                ));
-            }
-        }
-
-        if current.number() == 0 || current.number() <= scan_floor {
-            dkg_manager.record_boundary_status(
-                original_parent_hash,
-                pending_hash,
-                crate::dkg_manager::BoundaryStatus::NoBoundarySeen,
-            );
-            return Ok(BoundaryRequirement::MustEmit);
-        }
-
-        let expected_hash = current.parent_hash();
-        let expected_height = current.number().saturating_sub(1);
-        let mut next = ancestry.get_block_by_height(expected_height).await;
-        let needs_hash_lookup = match next.as_ref() {
-            Some(block) if block.block_hash() == expected_hash => false,
-            Some(block) => {
-                let stale_hash = block.block_hash();
-                if dkg_manager.evict_boundary_status(stale_hash) {
-                    debug!(
-                        expected_height,
-                        stale_hash = %stale_hash,
-                        expected_hash = %expected_hash,
-                        "evicted stale DKG boundary status after non-canonical ancestry height hit"
-                    );
-                }
-                true
-            }
-            None => true,
-        };
-        if needs_hash_lookup {
-            next = ancestry.get_block_by_hash(expected_hash).await;
-        }
-        let Some(next) = next else {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
-            )));
-        };
-        if next.number() != expected_height {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
-                next.number()
-            )));
-        };
-        current = next;
-    }
-}
-
 use alloy_consensus::{BlockHeader as _, SignableTransaction as _, Transaction as _};
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_consensus::types::{Epoch, Height, Round, View};
@@ -455,6 +273,7 @@ use crate::{
     block::ConsensusBlock,
     committee_provider::CommitteeProvider,
     digest::Digest,
+    dkg_manager::{AncestryReader, BlockLookupFuture, BoundaryRequirement},
     executor,
     finalization::{
         actor::BlockCacheHandle,
@@ -1917,13 +1736,10 @@ impl ApplicationShared {
             PROPOSE_RESOLUTION_TIMEOUT,
             clock.child("ancestry"),
         );
-        let consensus_header_artifact = match resolve_boundary_requirement(
-            parent_block.as_ref(),
-            pending_boundary.as_ref(),
-            &self.dkg_manager,
-            &ancestry,
-        )
-        .await
+        let consensus_header_artifact = match self
+            .dkg_manager
+            .resolve_boundary(parent_block.as_ref(), pending_boundary.as_ref(), &ancestry)
+            .await
         {
             Ok(BoundaryRequirement::AlreadyCommitted) => {
                 crate::metrics::record_dkg_boundary_requirement("already_committed");
@@ -2676,14 +2492,10 @@ async fn validate_header_consensus_artifacts(
     let expected_boundary = dkg_manager.pending_boundary_artifact(round.epoch()).await;
     let artifact = extract_header_artifact_from_block(block)?;
 
-    match resolve_boundary_requirement(
-        parent_block,
-        expected_boundary.as_ref(),
-        dkg_manager,
-        ancestry,
-    )
-    .await
-    .map_err(|error| error.to_string())?
+    match dkg_manager
+        .resolve_boundary(parent_block, expected_boundary.as_ref(), ancestry)
+        .await
+        .map_err(|error| error.to_string())?
     {
         BoundaryRequirement::NoPending => {}
         BoundaryRequirement::AlreadyCommitted => {
@@ -2799,14 +2611,6 @@ mod clamp_tests {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        },
-    };
-
     use alloy_primitives::{address, Address, Bytes, B256};
     use commonware_codec::Encode as _;
     use commonware_consensus::{
@@ -2814,15 +2618,10 @@ mod tests {
         types::{Epoch, Round, View},
     };
     use commonware_cryptography::{
-        bls12381::{
-            self,
-            dkg::feldman_desmedt::{Dealer, Info, Output, Player},
-            primitives::{sharing::Mode, variant::MinSig},
-        },
+        bls12381::{self, primitives::variant::MinSig},
         certificate::Scheme as _,
         Hasher, Sha256, Signer as _,
     };
-    use commonware_math::algebra::Random;
     use commonware_parallel::Sequential;
     use commonware_utils::{
         ordered::{Quorum as _, Set},
@@ -2844,95 +2643,13 @@ mod tests {
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
     use super::{
-        resolve_boundary_requirement, validate_context_parent_binding,
-        validate_header_consensus_artifacts, validate_rewards_beneficiary,
-        validate_system_tx_leader_binding, AncestryReader, ApplicationEpochFence,
-        BlockLookupFuture, BoundaryRequirement, CommitteeProvider, ConsensusBlock, Digest,
-        EpochFenceRejection,
+        validate_context_parent_binding, validate_header_consensus_artifacts,
+        validate_rewards_beneficiary, validate_system_tx_leader_binding, ApplicationEpochFence,
+        CommitteeProvider, ConsensusBlock, Digest, EpochFenceRejection,
     };
+    use crate::test_fixtures::*;
 
-    const V1: Address = address!("0x1111111111111111111111111111111111111111");
-    const V2: Address = address!("0x2222222222222222222222222222222222222222");
-    const V3: Address = address!("0x3333333333333333333333333333333333333333");
-    const V4: Address = address!("0x4444444444444444444444444444444444444444");
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
-
-    #[derive(Clone, Default)]
-    struct TestAncestryReader {
-        blocks_by_height: BTreeMap<u64, ConsensusBlock>,
-        blocks_by_hash: BTreeMap<B256, ConsensusBlock>,
-        ready: bool,
-        height_lookups: Arc<AtomicUsize>,
-        hash_lookups: Arc<AtomicUsize>,
-    }
-
-    impl TestAncestryReader {
-        fn ready() -> Self {
-            Self {
-                blocks_by_height: BTreeMap::new(),
-                blocks_by_hash: BTreeMap::new(),
-                ready: true,
-                height_lookups: Arc::new(AtomicUsize::new(0)),
-                hash_lookups: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn not_ready() -> Self {
-            Self {
-                blocks_by_height: BTreeMap::new(),
-                blocks_by_hash: BTreeMap::new(),
-                ready: false,
-                height_lookups: Arc::new(AtomicUsize::new(0)),
-                hash_lookups: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn with_block(mut self, block: ConsensusBlock) -> Self {
-            self.blocks_by_height.insert(block.number(), block);
-            self
-        }
-
-        fn with_hash_block(mut self, block: ConsensusBlock) -> Self {
-            self.blocks_by_hash.insert(block.block_hash(), block);
-            self
-        }
-
-        fn lookup_count(&self) -> usize {
-            self.height_lookups.load(Ordering::SeqCst) + self.hash_lookups.load(Ordering::SeqCst)
-        }
-    }
-
-    impl AncestryReader for TestAncestryReader {
-        fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a> {
-            self.height_lookups.fetch_add(1, Ordering::SeqCst);
-            let block = self.blocks_by_height.get(&height).cloned();
-            Box::pin(async move { block })
-        }
-
-        fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a> {
-            self.hash_lookups.fetch_add(1, Ordering::SeqCst);
-            let block = self.blocks_by_hash.get(&hash).cloned().or_else(|| {
-                self.blocks_by_height
-                    .values()
-                    .find(|block| block.block_hash() == hash)
-                    .cloned()
-            });
-            Box::pin(async move { block })
-        }
-
-        fn is_ready(&self) -> bool {
-            self.ready
-        }
-    }
-
-    fn validator_set_from_keys(keys: &[bls12381::PrivateKey]) -> crate::validators::ValidatorSet {
-        let addresses = [V1, V2, V3, V4];
-        crate::validators::ValidatorSet {
-            public_keys: keys.iter().map(|key| key.public_key()).collect(),
-            addresses: addresses[..keys.len()].to_vec(),
-            p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; keys.len()],
-        }
-    }
 
     fn leader_binding_providers(
         epoch: Epoch,
@@ -3035,38 +2752,6 @@ mod tests {
         );
     }
 
-    fn block_with_header_artifact(artifact: &ConsensusHeaderArtifact) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_number_parent_and_header_artifact(
-        number: u64,
-        parent_hash: B256,
-        artifact: &ConsensusHeaderArtifact,
-    ) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = number;
-        block.header.parent_hash = parent_hash;
-        block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_number(number: u64) -> ConsensusBlock {
-        block_with_number_and_parent(number, B256::ZERO)
-    }
-
-    fn block_with_number_and_parent(number: u64, parent_hash: B256) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = number;
-        block.header.parent_hash = parent_hash;
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
     fn sign_system_input(
         signer: &OutbeEvmSigner,
         input: SystemTxInputV2,
@@ -3142,109 +2827,6 @@ mod tests {
             ],
             outbe_primitives::chain::CHAIN_ID,
         )
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn dkg_runtime_artifacts() -> (
-        Vec<bls12381::PrivateKey>,
-        Set<bls12381::PublicKey>,
-        Output<MinSig, bls12381::PublicKey>,
-        commonware_cryptography::bls12381::primitives::sharing::Sharing<MinSig>,
-        Bytes,
-    ) {
-        let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
-            .collect();
-        keys.sort_by_key(|a| a.public_key().encode());
-
-        let participants: Set<bls12381::PublicKey> =
-            keys.iter().map(|k| k.public_key()).try_collect().unwrap();
-
-        let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            &crate::config::outbe_app_namespace(),
-            7,
-            None,
-            Mode::NonZeroCounter,
-            participants.clone(),
-            participants.clone(),
-        )
-        .unwrap();
-
-        let mut dealers = Vec::new();
-        let mut pub_msgs = Vec::new();
-        let mut all_priv_msgs = Vec::new();
-
-        for key in &keys {
-            let (dealer, pub_msg, priv_msgs) =
-                Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                    rand_core::OsRng,
-                    info.clone(),
-                    key.clone(),
-                    None,
-                )
-                .unwrap();
-            dealers.push(dealer);
-            pub_msgs.push(pub_msg);
-            all_priv_msgs.push(priv_msgs);
-        }
-
-        let mut players: Vec<Player<MinSig, bls12381::PrivateKey>> = keys
-            .iter()
-            .map(|k| Player::new(info.clone(), k.clone()).unwrap())
-            .collect();
-
-        for (dealer_idx, (pub_msg, priv_msgs)) in
-            pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-        {
-            let dealer_pk = keys[dealer_idx].public_key();
-            for (player_pk, priv_msg) in priv_msgs {
-                let player_idx = keys
-                    .iter()
-                    .position(|k| &k.public_key() == player_pk)
-                    .unwrap();
-                if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                    dealer_pk.clone(),
-                    pub_msg.clone(),
-                    priv_msg.clone(),
-                ) {
-                    dealers[dealer_idx]
-                        .receive_player_ack(player_pk.clone(), ack)
-                        .unwrap();
-                }
-            }
-        }
-
-        let mut logs = std::collections::BTreeMap::new();
-        let mut first_log = None;
-        for dealer in dealers {
-            let signed_log = dealer.finalize::<N3f1>();
-            if first_log.is_none() {
-                first_log = Some(Bytes::from(signed_log.encode()));
-            }
-            if let Some((pk, log)) = signed_log.check(&info) {
-                logs.insert(pk, log);
-            }
-        }
-
-        let mut dkg_logs = commonware_cryptography::bls12381::dkg::feldman_desmedt::Logs::<
-            MinSig,
-            bls12381::PublicKey,
-            N3f1,
-        >::new(info.clone());
-        for (dealer_pk, log) in logs {
-            dkg_logs.record(dealer_pk, log);
-        }
-        let (output, _share) = players
-            .remove(0)
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-                &mut rand_core::OsRng,
-                dkg_logs,
-                &Sequential,
-            )
-            .unwrap();
-        let polynomial = output.public().clone();
-
-        (keys, participants, output, polynomial, first_log.unwrap())
     }
 
     // `valid_metadata_with_supplemental_finalize_vote` and the
@@ -3764,343 +3346,6 @@ mod tests {
         .await
         .unwrap_err();
         assert!(wrong_kind.contains("omitted pending DKG BoundaryOutcome"));
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_is_derived_from_parent_snapshot_not_local_served_flag() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(0),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: true,
-            dkg_cycle: 0,
-            freeze_height: 0,
-            planned_activation_height: 0,
-            vrf_material_version: 0,
-            is_validator_set_change: true,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let parent =
-            block_with_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("parent ancestry should decode"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_no_pending_does_not_read_ancestry() {
-        let parent = block_with_number_and_parent(120, B256::from([0x44; 32]));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), None, &manager, &ancestry)
-                .await
-                .expect("no pending boundary is a normal requirement state"),
-            BoundaryRequirement::NoPending
-        );
-        assert_eq!(ancestry.lookup_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_uses_marshal_ancestry_after_block_cache_eviction() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=120 {
-            let block = block_with_number_and_parent(number, parent_hash);
-            parent_hash = block.block_hash();
-            if number == 120 {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("parent block exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("marshal ancestry should resolve"),
-            BoundaryRequirement::MustEmit
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_finds_deep_committed_boundary() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=120 {
-            let block = if number == 90 {
-                block_with_number_parent_and_header_artifact(
-                    number,
-                    parent_hash,
-                    &ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()),
-                )
-            } else {
-                block_with_number_and_parent(number, parent_hash)
-            };
-            parent_hash = block.block_hash();
-            if number == 120 {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("parent block exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("marshal ancestry should resolve"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-
-        let not_ready = TestAncestryReader::not_ready();
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &not_ready)
-                .await
-                .expect("cached boundary status should avoid cold ancestry reads"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_finds_boundary_committed_at_late_activation_height() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let planned_activation_height: u64 = 120;
-        let late_activation_height = planned_activation_height
-            .saturating_add(crate::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=late_activation_height {
-            let block = if number == late_activation_height {
-                block_with_number_parent_and_header_artifact(
-                    number,
-                    parent_hash,
-                    &ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()),
-                )
-            } else {
-                block_with_number_and_parent(number, parent_hash)
-            };
-            parent_hash = block.block_hash();
-            if number == late_activation_height {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("late activation parent exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("late activation boundary should resolve"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_uses_hash_lookup_when_height_lookup_is_stale() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 119,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
-        let canonical_parent = block_with_number_and_parent(119, B256::from([0x22; 32]));
-        let parent = block_with_number_and_parent(120, canonical_parent.block_hash());
-        let ancestry = TestAncestryReader::ready()
-            .with_block(stale_parent)
-            .with_hash_block(canonical_parent);
-        let manager = DkgManagerMailbox::new();
-        let pending_hash = DkgManagerMailbox::boundary_artifact_hash(&artifact).unwrap();
-        let stale_hash = ancestry
-            .blocks_by_height
-            .get(&119)
-            .expect("stale height hit exists")
-            .block_hash();
-        manager.record_boundary_status(
-            stale_hash,
-            pending_hash,
-            crate::dkg_manager::BoundaryStatus::NoBoundarySeen,
-        );
-        assert!(manager
-            .cached_boundary_status(stale_hash, pending_hash)
-            .is_some());
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("hash lookup should recover canonical ancestry after stale height hit"),
-            BoundaryRequirement::MustEmit
-        );
-        assert!(
-            manager
-                .cached_boundary_status(stale_hash, pending_hash)
-                .is_none(),
-            "stale parent status must be explicitly evicted when height lookup returns a non-canonical block"
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_rejects_missing_canonical_parent_after_stale_height_hit() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 119,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
-        let canonical_parent = block_with_number_and_parent(119, B256::from([0x22; 32]));
-        let parent = block_with_number_and_parent(120, canonical_parent.block_hash());
-        let ancestry = TestAncestryReader::ready().with_block(stale_parent);
-        let manager = DkgManagerMailbox::new();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error.to_string().contains("missing parent"));
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_reports_backfill_not_ready() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let parent = block_with_number_and_parent(120, B256::from([0x33; 32]));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::not_ready();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error.to_string().contains("not ready"));
-        assert_eq!(ancestry.lookup_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_rejects_same_epoch_conflict() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut conflicting = artifact.clone();
-        conflicting.vrf_material_version = conflicting.vrf_material_version.saturating_add(1);
-        let parent = block_with_number_parent_and_header_artifact(
-            120,
-            B256::ZERO,
-            &ConsensusHeaderArtifact::BoundaryOutcome(conflicting),
-        );
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("conflicting DKG BoundaryOutcome"));
     }
 
     #[tokio::test]
