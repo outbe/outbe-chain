@@ -37,8 +37,8 @@ fn u(v: u64) -> U256 {
 #[test]
 fn no_history_returns_zero_rcfi() {
     with_contract(|c| {
-        // get_rcfi reads the (zero) block timestamp; no cohorts → 0.
-        assert_eq!(c.get_rcfi(ALICE).unwrap(), 0);
+        // get_rcfi_scaled reads the (zero) block timestamp; no cohorts → 0.
+        assert_eq!(c.get_rcfi_scaled(ALICE).unwrap(), U256::ZERO);
     });
 }
 
@@ -48,8 +48,8 @@ fn single_cohort_decay_matches_spec() {
     // 493 @ 4yr (the PDF reference benchmark ≈ 493.67).
     with_contract(|c| {
         c.cohort_in(ALICE, u(100), T0).unwrap();
-        assert_eq!(c.compute_rcfi(ALICE, T0 + 365 * DAY).unwrap(), 263);
-        assert_eq!(c.compute_rcfi(ALICE, T0 + 1460 * DAY).unwrap(), 493);
+        assert_eq!(rcfi_days(c, ALICE, T0 + 365 * DAY), 263);
+        assert_eq!(rcfi_days(c, ALICE, T0 + 1460 * DAY), 493);
     });
 }
 
@@ -218,6 +218,12 @@ fn days(fp: U256) -> f64 {
     micro as f64 / 1_000_000.0
 }
 
+/// Floored whole decayed-days RCFI at `ts`, derived from the scaled value the
+/// precompile exposes (`SCALE` == one decayed day).
+fn rcfi_days(c: &FidelityContract, account: Address, ts: u64) -> u64 {
+    (c.compute_rcfi_scaled(account, ts).unwrap() / SCALE).to::<u64>()
+}
+
 #[test]
 fn compute_rcfi_scaled_equals_t_dec_for_holding_at_historical_times() {
     // 100% holding (one cohort, no sales) ⇒ efficiency == 1, so the scaled RCFI
@@ -245,11 +251,10 @@ fn compute_rcfi_scaled_equals_t_dec_for_holding_at_historical_times() {
 }
 
 #[test]
-fn compute_rcfi_scaled_is_unfloored_fp_and_floors_to_compute_rcfi() {
+fn compute_rcfi_scaled_is_unfloored_fp() {
     // Across a history (deposit + later partial sale) and several historical
-    // timestamps, the scaled value is the *un-floored* `compute_rcfi_fp` result,
-    // and flooring it by SCALE (i.e. `decimals() == 18`) reproduces the
-    // integer-day `compute_rcfi`.
+    // timestamps, the scaled value the precompile exposes is exactly the
+    // un-floored `rcfi` from `compute_rcfi_fp` (no rounding applied).
     with_contract(|c| {
         c.cohort_in(ALICE, u(100), T0).unwrap();
         c.cohort_in(ALICE, u(50), T0 + 100 * DAY).unwrap();
@@ -262,11 +267,6 @@ fn compute_rcfi_scaled_is_unfloored_fp_and_floors_to_compute_rcfi() {
             assert_eq!(
                 scaled, raw_fp,
                 "scaled must equal raw fixed-point at +{age}d"
-            );
-            assert_eq!(
-                (scaled / SCALE).to::<u64>(),
-                c.compute_rcfi(ALICE, ts).unwrap(),
-                "floor(scaled / 1e18) must equal compute_rcfi at +{age}d",
             );
         }
     });

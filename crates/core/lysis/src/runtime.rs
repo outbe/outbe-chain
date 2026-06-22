@@ -46,11 +46,11 @@ pub fn lysis(
     }
 
     // 2. Collect each owner's RCFI (the fidelity index) and total nominal interest
-    let mut tribute_fis: Vec<u64> = Vec::with_capacity(tributes.len());
+    let mut tribute_fis: Vec<u16> = Vec::with_capacity(tributes.len());
     let mut total_interest = U256::ZERO;
 
     for tribute in &tributes {
-        let fi = outbe_fidelity::api::get_rcfi(storage.clone(), tribute.owner)?;
+        let fi = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
         tribute_fis.push(fi);
         total_interest += tribute.nominal_amount_minor;
     }
@@ -165,19 +165,19 @@ pub fn lysis(
 /// the sum of all `nominal_amounts` (precomputed by the caller).
 pub(crate) fn compute_fi_fraction_map(
     nominal_amounts: &[U256],
-    tribute_fis: &[u64],
+    tribute_fis: &[u16],
     total_interest: U256,
     gratis_allocation: U256,
-) -> Result<std::collections::HashMap<u64, U256>> {
+) -> Result<std::collections::HashMap<u16, U256>> {
     // 3. Group tributes by fidelity index (sorted ascending for algorithm stability)
-    let mut fi_groups: std::collections::BTreeMap<u64, Vec<usize>> =
+    let mut fi_groups: std::collections::BTreeMap<u16, Vec<usize>> =
         std::collections::BTreeMap::new();
     for (i, &fi) in tribute_fis.iter().enumerate() {
         fi_groups.entry(fi).or_default().push(i);
     }
 
     // 4. Prepare distribution parameters in fixed-point (SCALE = 10^18)
-    let sorted_fis: Vec<u64> = fi_groups.keys().copied().collect();
+    let sorted_fis: Vec<u16> = fi_groups.keys().copied().collect();
     let mut y_fp: Vec<U256> = Vec::with_capacity(sorted_fis.len());
     let mut p: Vec<u64> = Vec::with_capacity(sorted_fis.len());
 
@@ -217,7 +217,7 @@ pub(crate) fn compute_fi_fraction_map(
     let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;
 
     // 7. Build FI → fraction map (fixed-point)
-    let mut fi_fraction_map: std::collections::HashMap<u64, U256> =
+    let mut fi_fraction_map: std::collections::HashMap<u16, U256> =
         std::collections::HashMap::with_capacity(sorted_fis.len());
     for (i, &fi) in sorted_fis.iter().enumerate() {
         if let Some(&frac) = fractions.get(i) {

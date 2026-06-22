@@ -107,8 +107,9 @@ fn golden_matches_decay_py_reference() {
                 sample.d_age
             );
 
-            // The public u64 RCFI is the floor of the reference within ±1 day.
-            let rcfi_u64 = c.compute_rcfi(ALICE, sample.ts).unwrap();
+            // The floored whole-day RCFI matches the reference within ±1 day
+            // (SCALE = 10^18 decayed-day fixed point).
+            let rcfi_u64 = (rcfi_fp / U256::from(1_000_000_000_000_000_000u128)).to::<u64>();
             assert!(
                 (rcfi_u64 as f64 - sample.rcfi.floor()).abs() <= 1.0,
                 "floor rcfi at ts={}: got {rcfi_u64}, want {}",
