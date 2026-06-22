@@ -16,6 +16,11 @@ use outbe_primitives::units::SCALE_1E18;
 /// Fixed-point denominator (10^18).
 pub(crate) const SCALE: U256 = SCALE_1E18;
 
+/// Decimal precision of the fixed-point RCFI: `SCALE = 10^DECIMALS`, so a
+/// `getRcfi` value of `10^18` represents one decayed day. Exposed externally via
+/// `IFidelity.decimals()`.
+pub(crate) const DECIMALS: u8 = 18;
+
 /// Half-life in seconds (365 days). The decay ratio `T/H` is computed in
 /// seconds so sub-day precision is preserved.
 pub(crate) const H_SEC: u64 = 365 * 86_400;

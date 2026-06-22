@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
+use crate::math::DECIMALS;
 use crate::schema::FidelityContract;
 
 sol!("../../../contracts/precompiles/src/IFidelity.sol");
@@ -19,7 +20,9 @@ pub fn dispatch(
         let contract = FidelityContract::new(storage);
         use IFidelity::IFidelityCalls::*;
         match call {
-            getRcfi(c) => view(c, |c| contract.get_rcfi(c.account)),
+            getRcfi(c) => view(c, |c| contract.get_rcfi_scaled(c.account)),
+            getRcfiAt(c) => view(c, |c| contract.compute_rcfi_scaled(c.account, c.timestamp)),
+            decimals(_) => metadata::<IFidelity::decimalsCall>(|| Ok(DECIMALS)),
         }
     })
 }

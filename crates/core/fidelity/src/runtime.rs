@@ -99,6 +99,15 @@ impl FidelityContract<'_> {
         Ok((rcfi_fp / SCALE).to::<u64>())
     }
 
+    /// RCFI for `account` at block time `timestamp` (seconds) as the fixed-point
+    /// value the precompile exposes: decayed days scaled by `10^DECIMALS`
+    /// (`SCALE`), so `SCALE` is one decayed day. Unlike [`Self::compute_rcfi`]
+    /// this keeps the full `rcfi` from [`Self::compute_rcfi_fp`] without flooring.
+    pub fn compute_rcfi_scaled(&self, account: Address, timestamp: u64) -> Result<U256> {
+        let (rcfi_fp, _, _) = self.compute_rcfi_fp(account, timestamp)?;
+        Ok(rcfi_fp)
+    }
+
     /// Fixed-point RCFI as `(rcfi, efficiency, d_dec_age)`, all 10^18-scaled.
     /// `rcfi = d_dec_age · efficiency`; `efficiency ∈ [0, 10^18]`. Pure given `now`.
     ///
@@ -149,5 +158,12 @@ impl FidelityContract<'_> {
     pub fn get_rcfi(&self, account: Address) -> Result<u64> {
         let now = self.storage.timestamp()?.to::<u64>();
         self.compute_rcfi(account, now)
+    }
+
+    /// RCFI for `account` at the current block time as the fixed-point value the
+    /// precompile exposes (`10^DECIMALS`-scaled decayed days).
+    pub fn get_rcfi_scaled(&self, account: Address) -> Result<U256> {
+        let now = self.storage.timestamp()?.to::<u64>();
+        self.compute_rcfi_scaled(account, now)
     }
 }
