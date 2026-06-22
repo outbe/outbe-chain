@@ -1149,15 +1149,18 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 # --- External contracts ---
 
 def seed_intex_factory(storage: StorageBuilder, config: dict):
-    """Write the IntexFactory profile selector (config slot 13) from
-    `profile: "prod" | "dev"` (default "prod")."""
+    """Write the profile selector (slot 13) from `profile: "prod"|"dev"`;
+    prod is the default and seeds nothing."""
     profile = str(config.get("profile", "prod")).lower()
     if profile not in INTEX_PROFILE_SELECTORS:
         raise ValueError(
             f"intex_factory: unknown profile {profile!r}; "
             f"expected one of {sorted(INTEX_PROFILE_SELECTORS)}"
         )
-    storage.set_slot(13, INTEX_PROFILE_SELECTORS[profile])  # config_profile
+    selector = INTEX_PROFILE_SELECTORS[profile]
+    if selector == 0:
+        return
+    storage.set_slot(13, selector)
 
 
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
@@ -1422,15 +1425,15 @@ def main():
         print(f"  Oracle: {len(pairs)} pairs, {len(settlements)} settlements, "
               f"{len(oracle_storage.entries)} storage entries")
 
-    # Seed IntexFactory profile selector (account preserved by the runtime
-    # marker list, so no extra wiring needed).
+    # Seed IntexFactory profile selector (prod seeds nothing).
     if "intex_factory" in seed:
         intex_factory_storage = StorageBuilder()
         seed_intex_factory(intex_factory_storage, seed["intex_factory"])
-        entry = alloc.setdefault(INTEX_FACTORY_ADDRESS, {})
-        entry.setdefault("storage", {}).update(intex_factory_storage.entries)
-        entry.setdefault("code", MARKER_CODE)
-        print(f"  IntexFactory: {len(intex_factory_storage.entries)} storage entries")
+        if intex_factory_storage.entries:
+            entry = alloc.setdefault(INTEX_FACTORY_ADDRESS, {})
+            entry.setdefault("storage", {}).update(intex_factory_storage.entries)
+            entry.setdefault("code", MARKER_CODE)
+            print(f"  IntexFactory: {len(intex_factory_storage.entries)} storage entries")
 
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:
