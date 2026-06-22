@@ -706,7 +706,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
                 .await;
 
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.forkchoice.safe_block_hash = parent_digest.0;
@@ -772,7 +772,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             // `marshal.proposed(parent_block)` — the marshal store lags behind
             // FinalizationView (the epoch-boundary first-slot race).
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.last_finalized_round = Some(finalized_round);

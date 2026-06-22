@@ -278,7 +278,7 @@ use crate::{
     finalization::{
         actor::BlockCacheHandle,
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
-        state::FinalizationViewHandle,
+        state::{FinalizationViewAccess, FinalizationViewHandle},
     },
     hybrid::{HybridElectorConfigProvider, HybridSchemeProvider},
     validators::ValidatorSet,
@@ -1121,21 +1121,14 @@ impl ApplicationShared {
         let epoch = genesis.epoch;
         if epoch.get() == 0 {
             if self.trust_el_head {
-                let view = self
-                    .finalization_view
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if view.last_finalized_number > 0
-                    && view.forkchoice.finalized_block_hash != B256::ZERO
-                {
+                let anchor = self.finalization_view.finalized_anchor();
+                if anchor.number > 0 && anchor.finalized_head_hash != B256::ZERO {
                     debug!(
-                        finalized_number = view.last_finalized_number,
-                        finalized_hash = %view.forkchoice.finalized_block_hash,
+                        finalized_number = anchor.number,
+                        finalized_hash = %anchor.finalized_head_hash,
                         "handle_genesis(epoch=0): using execution head as anchor (--testnet.trust-el-head)"
                     );
-                    let _ = genesis
-                        .response
-                        .send(Digest(view.forkchoice.finalized_block_hash));
+                    let _ = genesis.response.send(Digest(anchor.finalized_head_hash));
                     return;
                 }
             }
@@ -1148,16 +1141,8 @@ impl ApplicationShared {
         // deterministic runtimes; no wall-clock on the consensus path).
         let deadline = clock.current() + GENESIS_ANCHOR_WAIT_TIMEOUT;
         loop {
-            let (height, hash) = {
-                let view = self.finalization_view.read().expect(
-                    "FinalizationView lock poisoned in handle_genesis; \
-                     this indicates a panic in the FinalizationActor write path",
-                );
-                (
-                    view.last_finalized_number,
-                    view.forkchoice.finalized_block_hash,
-                )
-            };
+            let anchor = self.finalization_view.finalized_anchor();
+            let (height, hash) = (anchor.number, anchor.finalized_head_hash);
             if height > 0 && hash != B256::ZERO {
                 debug!(
                     %epoch,
@@ -1221,17 +1206,9 @@ impl ApplicationShared {
             return Ok(None);
         }
 
-        let (expected_height, expected_hash, finalized_round) = {
-            let view = self
-                .finalization_view
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            (
-                view.last_finalized_number,
-                view.forkchoice.finalized_block_hash,
-                view.last_finalized_round,
-            )
-        };
+        let anchor = self.finalization_view.finalized_anchor();
+        let (expected_height, expected_hash, finalized_round) =
+            (anchor.number, anchor.finalized_head_hash, anchor.round);
         let Some(finalized_round) = finalized_round else {
             return Err(EpochBoundaryParentError::MissingAnchor {
                 epoch: round.epoch().get(),
@@ -1433,14 +1410,8 @@ impl ApplicationShared {
                 }
             }
 
-            {
-                let mut view = self
-                    .finalization_view
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                view.last_timestamp_millis =
-                    std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
-            }
+            self.finalization_view
+                .advance_timestamp_floor(parent_block.timestamp_millis());
         }
 
         self.vrf_safety
@@ -1668,11 +1639,7 @@ impl ApplicationShared {
             return Ok(BuildBlockOutcome::EpochStale);
         }
 
-        let parent_timestamp_millis = self
-            .finalization_view
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .last_timestamp_millis;
+        let parent_timestamp_millis = self.finalization_view.timestamp_floor();
         let now_millis = unix_now_millis()?;
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
@@ -1701,15 +1668,9 @@ impl ApplicationShared {
             outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
             outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         );
-        let prev_randao = {
-            let mut view = self
-                .finalization_view
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            view.last_timestamp_millis =
-                std::cmp::max(view.last_timestamp_millis, timestamp_millis);
-            view.prev_randao
-        };
+        let prev_randao = self
+            .finalization_view
+            .advance_floor_and_read_prev_randao(timestamp_millis);
 
         // build header.extra_data only from consensus header
         // artifacts that affect block hashing (DKG boundary/dealer-log).
@@ -2228,12 +2189,8 @@ impl ApplicationShared {
                     ));
                 }
 
-                let mut view = self
-                    .finalization_view
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                view.last_timestamp_millis =
-                    std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
+                self.finalization_view
+                    .advance_timestamp_floor(parent_block.timestamp_millis());
             }
         }
 
@@ -2329,14 +2286,8 @@ impl ApplicationShared {
             .executor_mailbox
             .canonicalize_head(block_height, payload_digest)
             .await;
-        {
-            let mut view = self
-                .finalization_view
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            view.last_timestamp_millis =
-                std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
-        }
+        self.finalization_view
+            .advance_timestamp_floor(block.timestamp_millis());
 
         Ok(())
     }
