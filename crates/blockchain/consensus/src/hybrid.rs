@@ -58,7 +58,7 @@ use std::{
 /// VRF-based leader election for the hybrid scheme (lifted out of this file).
 pub mod election;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 /// CSPRNG allowed only for Commonware BLS batch-verification weights.
 ///

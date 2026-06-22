@@ -13,11 +13,8 @@ use std::{collections::BTreeSet, time::Duration};
 use alloy_primitives::{Address, B256};
 use commonware_codec::Read as _;
 use commonware_consensus::{
-    simplex::{
-        elector::{Config as _, Elector as _},
-        types::Finalization,
-    },
-    types::{Epoch, Height, Round, View},
+    simplex::{elector::Config as _, types::Finalization},
+    types::{Epoch, Height},
 };
 use commonware_cryptography::{
     bls12381::primitives::variant::MinSig,
@@ -442,17 +439,19 @@ fn canonical_missed_proposers(
     let elector_config = elector_config_provider.scoped(epoch)?;
     let elector = elector_config.as_ref().clone().build(participants);
 
-    let cap = current_view
-        .saturating_sub(parent_view)
-        .saturating_sub(1)
-        .min(MAX_MISSED_PROPOSERS_IN_METADATA as u64) as usize;
-    let mut missed = Vec::with_capacity(cap);
-    for view in (parent_view + 1)..current_view {
-        if missed.len() >= MAX_MISSED_PROPOSERS_IN_METADATA {
-            break;
-        }
-        let round = Round::new(epoch, View::new(view));
-        let leader = elector.elect(round, Some(&previous.certificate));
+    // Shared single source of truth with the proposer-side reporter path: the
+    // election sequence must match exactly or this recompute would reject a
+    // valid proposer's `missed_proposers` list.
+    let leaders = crate::missed_proposers::elected_leaders_for_gap(
+        epoch,
+        &elector,
+        Some(&previous.certificate),
+        parent_view,
+        current_view,
+        MAX_MISSED_PROPOSERS_IN_METADATA,
+    );
+    let mut missed = Vec::with_capacity(leaders.len());
+    for leader in &leaders {
         let leader_idx = leader.get() as usize;
         let address = expected_committee.get(leader_idx)?;
         missed.push(*address);
