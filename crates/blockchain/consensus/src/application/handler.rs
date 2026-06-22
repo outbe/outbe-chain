@@ -245,15 +245,14 @@ fn finalized_parent_attestation_from_phase1_system_tx(
     }))
 }
 
-use alloy_consensus::{BlockHeader as _, SignableTransaction as _, Transaction as _};
+use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_consensus::types::{Epoch, Height, Round, View};
 use commonware_cryptography::{
     bls12381::{primitives::variant::MinSig, PublicKey},
-    certificate::{Provider as _, Scheme as _},
+    certificate::Provider as _,
 };
 use commonware_utils::channel::oneshot;
-use commonware_utils::ordered::Quorum as _;
 use futures::StreamExt;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
@@ -263,7 +262,6 @@ use outbe_primitives::{
     },
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
-use reth_ethereum::primitives::SignedTransaction as _;
 use reth_node_builder::{BuiltPayload as _, ConsensusEngineHandle};
 use reth_payload_builder::PayloadBuilderHandle;
 use tracing::{debug, error, info, warn};
@@ -313,210 +311,10 @@ type PayloadBuilder = PayloadBuilderHandle<OutbePayloadTypes>;
 // verify path.
 use crate::finalization::util::extract_header_artifact_from_block;
 
-fn consensus_leader_evm_address(
-    round: Round,
-    proposer: &PublicKey,
-    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
-) -> Result<Address, String> {
-    let epoch = round.epoch();
-    let scheme = certificate_scheme_provider
-        .scoped(epoch)
-        .ok_or_else(|| format!("missing certificate scheme for epoch {epoch}"))?;
-    let participant = scheme.participants().index(proposer).ok_or_else(|| {
-        format!("consensus leader public key is not in epoch {epoch} participant set")
-    })?;
-    let index: usize = participant
-        .get()
-        .try_into()
-        .map_err(|_| format!("participant index {} does not fit usize", participant.get()))?;
-    let committee = committee_provider
-        .ordered_committee(epoch)
-        .ok_or_else(|| format!("missing ordered EVM committee for epoch {epoch}"))?;
-
-    committee.get(index).copied().ok_or_else(|| {
-        format!("ordered EVM committee for epoch {epoch} is missing participant index {index}")
-    })
-}
-
-fn validate_rewards_beneficiary(block: &ConsensusBlock) -> Result<(), String> {
-    if block.number() > 0 && block.header().beneficiary() != REWARDS_ADDRESS {
-        return Err(format!(
-            "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-            REWARDS_ADDRESS,
-            block.header().beneficiary()
-        ));
-    }
-    Ok(())
-}
-
-fn validate_context_parent_binding(
-    block: &ConsensusBlock,
-    parent_block: Option<&ConsensusBlock>,
-    context_parent_digest: Digest,
-    genesis_hash: B256,
-) -> Result<(), String> {
-    if block.parent_digest() != context_parent_digest {
-        return Err(format!(
-            "proposed block parent digest {} does not match Simplex context parent {}",
-            block.parent_digest().0,
-            context_parent_digest.0
-        ));
-    }
-
-    let expected_number = if context_parent_digest.0 == genesis_hash {
-        1
-    } else {
-        let parent = parent_block.ok_or_else(|| {
-            "non-genesis Simplex context parent was not resolved for height validation".to_string()
-        })?;
-        if parent.digest() != context_parent_digest {
-            return Err(format!(
-                "resolved parent digest {} does not match Simplex context parent {}",
-                parent.digest().0,
-                context_parent_digest.0
-            ));
-        }
-        parent.number().checked_add(1).ok_or_else(|| {
-            "parent block number overflow while validating proposal height".to_string()
-        })?
-    };
-
-    if block.number() != expected_number {
-        return Err(format!(
-            "proposed block number {} does not extend Simplex parent height {}",
-            block.number(),
-            expected_number.saturating_sub(1)
-        ));
-    }
-
-    Ok(())
-}
-
-fn validate_system_tx_leader_binding(
-    block: &ConsensusBlock,
-    round: Round,
-    proposer: &PublicKey,
-    chain_id: u64,
-    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
-) -> Result<(), String> {
-    let raw_block = block.clone().into_inner().into_block();
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        raw_block.header.extra_data().as_ref(),
-    )
-    .map_err(|error| format!("decode Outbe block artifacts for system tx validation: {error}"))?;
-
-    let layout = outbe_primitives::system_tx::split_system_layout(&raw_block.body.transactions)
-        .map_err(|error| format!("invalid system tx layout for leader binding: {error}"))?;
-    let has_boundary_outcome = matches!(
-        &artifacts.consensus_header_artifact,
-        Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(_))
-    );
-    let has_tee_bootstrap =
-        layout.has_begin_kind(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_primitives::system_tx::validate_active_system_tx_set(
-        &layout,
-        raw_block.header.number(),
-        has_boundary_outcome,
-        has_tee_bootstrap,
-    )
-    .map_err(|error| format!("invalid system tx set: {error}"))?;
-
-    if layout.system_tx_count() == 0 {
-        return Ok(());
-    }
-
-    if raw_block.header.number() >= 2 {
-        let finalization_tx = *layout
-            .begin
-            .first()
-            .ok_or_else(|| "missing CertifiedParentAccounting system tx".to_string())?;
-        let input =
-            outbe_primitives::system_tx::SystemTxInputV2::decode(finalization_tx.input().as_ref())
-                .map_err(|error| {
-                    format!("decode CertifiedParentAccounting system tx input: {error}")
-                })?;
-        let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
-            input
-        else {
-            return Err("expected CertifiedParentAccounting system tx at begin ordinal 0".into());
-        };
-        if metadata.finalized_block_hash != raw_block.header.parent_hash() {
-            return Err(format!(
-                "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                raw_block.header.parent_hash(),
-                metadata.finalized_block_hash
-            ));
-        }
-    }
-
-    if let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
-        header_artifact,
-    )) = artifacts.consensus_header_artifact.as_ref()
-    {
-        let mut found = false;
-        for tx in layout.begin.iter().chain(layout.end.iter()) {
-            let tx = *tx;
-            let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-                .map_err(|error| format!("decode system transaction input: {error}"))?;
-            if let outbe_primitives::system_tx::SystemTxInputV2::BoundaryOutcome { artifact } =
-                input
-            {
-                if &artifact != header_artifact {
-                    return Err("BoundaryOutcome system tx artifact mismatch".into());
-                }
-                found = true;
-            }
-        }
-        if !found {
-            return Err("missing BoundaryOutcome system tx for header artifact".into());
-        }
-    }
-
-    for (ordinal, tx) in layout.begin.iter().chain(layout.end.iter()).enumerate() {
-        let tx = *tx;
-        let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-            .map_err(|error| format!("decode system transaction input: {error}"))?;
-        let ordinal: u8 = ordinal
-            .try_into()
-            .map_err(|_| format!("system tx ordinal {ordinal} exceeds u8 range"))?;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
-            input.kind(),
-            ordinal,
-            raw_block.header.number(),
-            chain_id,
-            input.encode().map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| format!("build unsigned system transaction: {error}"))?;
-        if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(format!(
-                "system tx signature_hash mismatch for {:?} at ordinal {}",
-                input.kind(),
-                ordinal
-            ));
-        }
-    }
-
-    let expected = consensus_leader_evm_address(
-        round,
-        proposer,
-        certificate_scheme_provider,
-        committee_provider,
-    )?;
-    for tx in layout.begin.iter().chain(layout.end.iter()) {
-        let signer = tx
-            .try_recover()
-            .map_err(|error| format!("recover system tx signer for leader binding: {error}"))?;
-        if signer != expected {
-            return Err(format!(
-                "system tx signer {signer} does not match consensus leader EVM address {expected}"
-            ));
-        }
-    }
-
-    Ok(())
-}
+use crate::application::validation::{
+    validate_context_parent_binding, validate_rewards_beneficiary,
+    validate_system_tx_leader_binding,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EpochFenceRejection {
@@ -2574,18 +2372,9 @@ mod tests {
         Hasher, Sha256, Signer as _,
     };
     use commonware_parallel::Sequential;
-    use commonware_utils::{
-        ordered::{Quorum as _, Set},
-        N3f1, TryCollect as _,
-    };
+    use commonware_utils::{ordered::Quorum as _, N3f1};
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-    use outbe_primitives::reshare_artifact::{
-        encode_consensus_header_artifact, ConsensusHeaderArtifact,
-    };
-    use outbe_primitives::signer::OutbeEvmSigner;
-    use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2};
-    use outbe_primitives::OutbeHeader;
-    use reth_ethereum::{primitives::SealedBlock, Block, TransactionSigned};
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
     use crate::dkg_manager::{self, Mailbox as DkgManagerMailbox};
     use crate::finalization::util::{
@@ -2594,72 +2383,12 @@ mod tests {
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
     use super::{
-        validate_context_parent_binding, validate_header_consensus_artifacts,
-        validate_rewards_beneficiary, validate_system_tx_leader_binding, ApplicationEpochFence,
-        CommitteeProvider, ConsensusBlock, Digest, EpochFenceRejection,
+        validate_header_consensus_artifacts, ApplicationEpochFence, CommitteeProvider, Digest,
+        EpochFenceRejection,
     };
     use crate::test_fixtures::*;
 
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
-
-    fn leader_binding_providers(
-        epoch: Epoch,
-        validator_set: &crate::validators::ValidatorSet,
-    ) -> (HybridSchemeProvider<MinSig>, CommitteeProvider) {
-        let participants: Set<bls12381::PublicKey> = validator_set
-            .public_keys
-            .iter()
-            .cloned()
-            .try_collect()
-            .expect("participants should build");
-        let dkg = crate::bls::bootstrap_dkg(
-            validator_set
-                .public_keys
-                .len()
-                .try_into()
-                .expect("validator count fits u32"),
-        )
-        .expect("bootstrap dkg should succeed");
-        let verifier = HybridScheme::<MinSig>::verifier(
-            &crate::config::outbe_app_namespace(),
-            participants.clone(),
-            dkg.polynomial,
-        )
-        .expect("verifier scheme should build");
-        let ordered_committee = participants
-            .iter()
-            .map(|public_key| {
-                let index = validator_set
-                    .public_keys
-                    .iter()
-                    .position(|candidate| candidate == public_key)
-                    .expect("participant exists in validator set");
-                validator_set.addresses[index]
-            })
-            .collect();
-
-        let scheme_provider = HybridSchemeProvider::new();
-        let committee_provider = CommitteeProvider::new();
-        assert!(scheme_provider.register(epoch, verifier));
-        assert!(committee_provider.register(epoch, ordered_committee));
-        (scheme_provider, committee_provider)
-    }
-
-    fn participants_with_count(n: u64) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
-        let keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|i| bls12381::PrivateKey::from_seed(i + 1))
-            .collect();
-        let participants: Set<bls12381::PublicKey> = keys
-            .iter()
-            .map(|sk| bls12381::PublicKey::from(sk.clone()))
-            .try_collect()
-            .expect("participants should build");
-        (keys, participants)
-    }
-
-    fn participants() -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
-        participants_with_count(3)
-    }
 
     #[test]
     fn epoch_fence_allows_old_epoch_at_boundary_height() {
@@ -2701,83 +2430,6 @@ mod tests {
             fence.check(Round::new(Epoch::new(3), View::new(1)), 361),
             Ok(())
         );
-    }
-
-    fn sign_system_input(
-        signer: &OutbeEvmSigner,
-        input: SystemTxInputV2,
-        ordinal: u8,
-        block_number: u64,
-        chain_id: u64,
-    ) -> TransactionSigned {
-        let unsigned = build_unsigned_system_tx(
-            input.kind(),
-            ordinal,
-            block_number,
-            chain_id,
-            input.encode().expect("input encodes"),
-        )
-        .expect("system tx builds");
-        signer.sign_unsigned(unsigned).expect("system tx signs")
-    }
-
-    fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentAccountingMetadata {
-        CertifiedParentAccountingMetadata {
-            finalized_block_number: 1,
-            finalized_block_hash,
-            finalized_view: 1,
-            ..Default::default()
-        }
-    }
-
-    fn block_with_system_inputs(
-        signer: &OutbeEvmSigner,
-        block_number: u64,
-        parent_hash: B256,
-        extra_data: Bytes,
-        inputs: Vec<SystemTxInputV2>,
-        chain_id: u64,
-    ) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = block_number;
-        block.header.parent_hash = parent_hash;
-        block.header.extra_data = extra_data;
-        for (ordinal, input) in inputs.into_iter().enumerate() {
-            block.body.transactions.push(sign_system_input(
-                signer,
-                input,
-                ordinal.try_into().expect("test ordinal fits"),
-                block_number,
-                chain_id,
-            ));
-        }
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
-        // block 1 mandatorily carries a BoundaryOutcome under V2,
-        // so the minimum-shape "block with system txs" test fixture moved to
-        // block 2 where the canonical layout is
-        // `[CertifiedParentAccounting, CycleTick, OracleSlashWindow]`.
-        let parent_hash = B256::ZERO;
-        block_with_system_inputs(
-            signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        )
     }
 
     // `valid_metadata_with_supplemental_finalize_vote` and the
@@ -2937,268 +2589,6 @@ mod tests {
             validate_consensus_metadata(Some(&metadata), &scheme_provider, &committee_provider),
             AttestationVerdict::RejectCertificate
         );
-    }
-
-    #[test]
-    fn rewards_beneficiary_rejects_non_genesis_mismatch() {
-        let block = block_with_number_and_parent(1, B256::ZERO);
-        let error = validate_rewards_beneficiary(&block)
-            .expect_err("non-genesis beneficiary must be rewards escrow");
-        assert!(error.contains("beneficiary must be REWARDS_ADDRESS"));
-    }
-
-    #[test]
-    fn context_parent_binding_accepts_direct_child() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, parent.block_hash());
-
-        validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-            .expect("direct child extends Simplex context parent");
-    }
-
-    #[test]
-    fn context_parent_binding_rejects_wrong_parent_digest() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, B256::from([0x44; 32]));
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child must bind header parent to Simplex context parent");
-        assert!(error.contains("does not match Simplex context parent"));
-    }
-
-    #[test]
-    fn context_parent_binding_rejects_height_gap() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(9, parent.block_hash());
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child height must be parent height plus one");
-        assert!(error.contains("does not extend Simplex parent height"));
-    }
-
-    #[test]
-    fn context_parent_binding_accepts_genesis_parent_for_block_one() {
-        let genesis_hash = B256::from([0x55; 32]);
-        let child = block_with_number_and_parent(1, genesis_hash);
-
-        validate_context_parent_binding(&child, None, Digest(genesis_hash), genesis_hash)
-            .expect("block 1 extends genesis parent");
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_missing_mandatory_kind_before_engine_status() {
-        let (keys, _) = participants();
-        let validator_set = validator_set_from_keys(&keys);
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_number(1);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("block 1 must carry mandatory CycleTick system tx");
-
-        assert!(error.contains("invalid system tx set"));
-    }
-
-    #[test]
-    fn system_tx_leader_binding_accepts_consensus_leader_address() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect("system tx signer matches consensus leader EVM address");
-    }
-
-    #[test]
-    fn system_tx_leader_binding_uses_epoch_registered_committee() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([9u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[1] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(1), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(1), View::new(1)),
-            &keys[1].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect("epoch-scoped committee maps current leader to EVM signer");
-    }
-
-    #[test]
-    fn system_tx_leader_binding_rejects_non_leader_signer() {
-        let (keys, _) = participants();
-        let leader_signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let non_leader_signer = OutbeEvmSigner::from_secret_bytes([8u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = leader_signer.address();
-        validator_set.addresses[1] = non_leader_signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&non_leader_signer);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("non-leader system tx signer must be rejected");
-        assert!(error.contains("does not match consensus leader EVM address"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_wrong_chain_id_before_engine_status() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID + 1,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("wrong active chain id must be rejected before Engine status");
-        assert!(error.contains("system tx signature_hash mismatch"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_finalization_parent_hash_mismatch_before_engine_status() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let parent_hash = B256::from([0x11; 32]);
-        let wrong_hash = B256::from([0x22; 32]);
-        let block = block_with_system_inputs(
-            &signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(wrong_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        );
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err(
-            "CertifiedParentAccounting metadata must bind to header parent hash before Engine status",
-        );
-        assert!(error.contains("CertifiedParentAccounting metadata hash must match block parent"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_boundary_calldata_mismatch_before_engine_status() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let header_artifact =
-            dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-                epoch: Epoch::new(0),
-                validator_set: &validator_set,
-                output: &output,
-                is_full_dkg: true,
-                dkg_cycle: 0,
-                freeze_height: 0,
-                planned_activation_height: 0,
-                vrf_material_version: 0,
-                is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
-            })
-            .unwrap();
-        let mut tx_artifact = header_artifact.clone();
-        tx_artifact.planned_activation_height =
-            tx_artifact.planned_activation_height.saturating_add(1);
-
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let parent_hash = B256::from([0x33; 32]);
-        let block = block_with_system_inputs(
-            &signer,
-            2,
-            parent_hash,
-            encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(
-                header_artifact,
-            ))
-            .expect("header artifact encodes"),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::BoundaryOutcome {
-                    artifact: tx_artifact,
-                },
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        );
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("BoundaryOutcome calldata must bind to header artifact before Engine status");
-        assert!(error.contains("BoundaryOutcome system tx artifact mismatch"));
     }
 
     #[tokio::test]

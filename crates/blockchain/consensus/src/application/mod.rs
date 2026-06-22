@@ -6,6 +6,7 @@
 pub mod actor;
 pub mod handler;
 pub mod ingress;
+pub(crate) mod validation;
 
 pub use handler::{ApplicationDeps, ApplicationHandler};
 pub use ingress::Mailbox;

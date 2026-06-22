@@ -18,6 +18,7 @@ use std::{
 
 use alloy_primitives::{address, Address, Bytes, B256};
 use commonware_codec::Encode as _;
+use commonware_consensus::types::Epoch;
 use commonware_cryptography::{
     bls12381::{
         self,
@@ -33,14 +34,19 @@ use commonware_cryptography::{
 use commonware_math::algebra::Random;
 use commonware_parallel::Sequential;
 use commonware_utils::{ordered::Set, N3f1, TryCollect as _};
+use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{
     encode_consensus_header_artifact, ConsensusHeaderArtifact,
 };
+use outbe_primitives::signer::OutbeEvmSigner;
+use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2};
 use outbe_primitives::OutbeHeader;
-use reth_ethereum::{primitives::SealedBlock, Block};
+use reth_ethereum::{primitives::SealedBlock, Block, TransactionSigned};
 
 use crate::block::ConsensusBlock;
+use crate::committee_provider::CommitteeProvider;
 use crate::dkg_manager::{AncestryReader, BlockLookupFuture};
+use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
 pub(crate) const V1: Address = address!("0x1111111111111111111111111111111111111111");
 pub(crate) const V2: Address = address!("0x2222222222222222222222222222222222222222");
@@ -252,4 +258,144 @@ pub(crate) fn dkg_runtime_artifacts() -> (
     let polynomial = output.public().clone();
 
     (keys, participants, output, polynomial, first_log.unwrap())
+}
+
+// ---- Promoted from application::handler test module (shared system-tx fixtures) ----
+
+pub(crate) fn leader_binding_providers(
+    epoch: Epoch,
+    validator_set: &crate::validators::ValidatorSet,
+) -> (HybridSchemeProvider<MinSig>, CommitteeProvider) {
+    let participants: Set<bls12381::PublicKey> = validator_set
+        .public_keys
+        .iter()
+        .cloned()
+        .try_collect()
+        .expect("participants should build");
+    let dkg = crate::bls::bootstrap_dkg(
+        validator_set
+            .public_keys
+            .len()
+            .try_into()
+            .expect("validator count fits u32"),
+    )
+    .expect("bootstrap dkg should succeed");
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &crate::config::outbe_app_namespace(),
+        participants.clone(),
+        dkg.polynomial,
+    )
+    .expect("verifier scheme should build");
+    let ordered_committee = participants
+        .iter()
+        .map(|public_key| {
+            let index = validator_set
+                .public_keys
+                .iter()
+                .position(|candidate| candidate == public_key)
+                .expect("participant exists in validator set");
+            validator_set.addresses[index]
+        })
+        .collect();
+
+    let scheme_provider = HybridSchemeProvider::new();
+    let committee_provider = CommitteeProvider::new();
+    assert!(scheme_provider.register(epoch, verifier));
+    assert!(committee_provider.register(epoch, ordered_committee));
+    (scheme_provider, committee_provider)
+}
+
+pub(crate) fn participants_with_count(
+    n: u64,
+) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
+    let keys: Vec<bls12381::PrivateKey> = (0..n)
+        .map(|i| bls12381::PrivateKey::from_seed(i + 1))
+        .collect();
+    let participants: Set<bls12381::PublicKey> = keys
+        .iter()
+        .map(|sk| bls12381::PublicKey::from(sk.clone()))
+        .try_collect()
+        .expect("participants should build");
+    (keys, participants)
+}
+
+pub(crate) fn participants() -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
+    participants_with_count(3)
+}
+
+pub(crate) fn sign_system_input(
+    signer: &OutbeEvmSigner,
+    input: SystemTxInputV2,
+    ordinal: u8,
+    block_number: u64,
+    chain_id: u64,
+) -> TransactionSigned {
+    let unsigned = build_unsigned_system_tx(
+        input.kind(),
+        ordinal,
+        block_number,
+        chain_id,
+        input.encode().expect("input encodes"),
+    )
+    .expect("system tx builds");
+    signer.sign_unsigned(unsigned).expect("system tx signs")
+}
+
+pub(crate) fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentAccountingMetadata {
+    CertifiedParentAccountingMetadata {
+        finalized_block_number: 1,
+        finalized_block_hash,
+        finalized_view: 1,
+        ..Default::default()
+    }
+}
+
+pub(crate) fn block_with_system_inputs(
+    signer: &OutbeEvmSigner,
+    block_number: u64,
+    parent_hash: B256,
+    extra_data: Bytes,
+    inputs: Vec<SystemTxInputV2>,
+    chain_id: u64,
+) -> ConsensusBlock {
+    let mut block = Block::default();
+    block.header.number = block_number;
+    block.header.parent_hash = parent_hash;
+    block.header.extra_data = extra_data;
+    for (ordinal, input) in inputs.into_iter().enumerate() {
+        block.body.transactions.push(sign_system_input(
+            signer,
+            input,
+            ordinal.try_into().expect("test ordinal fits"),
+            block_number,
+            chain_id,
+        ));
+    }
+    let block = block.map_header(OutbeHeader::new);
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
+    // block 1 mandatorily carries a BoundaryOutcome under V2,
+    // so the minimum-shape "block with system txs" test fixture moved to
+    // block 2 where the canonical layout is
+    // `[CertifiedParentAccounting, CycleTick, OracleSlashWindow]`.
+    let parent_hash = B256::ZERO;
+    block_with_system_inputs(
+        signer,
+        2,
+        parent_hash,
+        Bytes::new(),
+        vec![
+            SystemTxInputV2::CertifiedParentAccounting {
+                metadata: finalized_metadata(parent_hash),
+            },
+            SystemTxInputV2::LateFinalizeCredits {
+                artifact: Default::default(),
+            },
+            SystemTxInputV2::CycleTick,
+            SystemTxInputV2::OracleSlashWindow,
+        ],
+        outbe_primitives::chain::CHAIN_ID,
+    )
 }
