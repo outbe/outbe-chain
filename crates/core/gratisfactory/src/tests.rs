@@ -1,6 +1,7 @@
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
+use outbe_fidelity::FidelityContract;
 use outbe_gratis::Gratis;
 use outbe_gratispool::constants::{denomination, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
@@ -15,9 +16,23 @@ use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
 
 const CHAIN_ID: u64 = 1;
+const CREATED_AT: u64 = 1_700_000_000;
 
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
+}
+
+/// Gives `account` a positive RCFI by recording a gratis cohort acquired one
+/// year before the test's block time. `pledge_gratis` gates on
+/// `get_rcfi(caller) > 0`, so any test that expects a pledge to pass the
+/// fidelity check must seed this first (and the storage timestamp must be set
+/// so `get_rcfi` reads a non-zero `now`).
+fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    let mut fidelity = FidelityContract::new(storage);
+    fidelity
+        .on_gratis_mined(account, U256::from(100u64), CREATED_AT - ONE_YEAR_SECS)
+        .unwrap();
 }
 
 fn dispatch_call_bytes(call: IGratisFactory::IGratisFactoryCalls) -> Bytes {
@@ -27,11 +42,13 @@ fn dispatch_call_bytes(call: IGratisFactory::IGratisFactoryCalls) -> Bytes {
 #[test]
 fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let amount = denomination(1).unwrap();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
+        seed_fidelity(storage.clone(), alice());
 
         let pledge_call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
             IGratisFactory::pledgeGratisCall {
@@ -56,7 +73,12 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
 #[test]
 fn pledge_unknown_denom_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
+        // Seed fidelity so the pledge clears the RCFI gate and reaches the
+        // denomination check we're actually asserting here.
+        seed_fidelity(storage.clone(), alice());
+
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
             IGratisFactory::pledgeGratisCall {
                 denomId: 99,
@@ -71,11 +93,13 @@ fn pledge_unknown_denom_reverts() {
 #[test]
 fn pledge_duplicate_commitment_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let amount = denomination(1).unwrap();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
+        seed_fidelity(storage.clone(), alice());
 
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
             IGratisFactory::pledgeGratisCall {
@@ -90,14 +114,41 @@ fn pledge_duplicate_commitment_reverts() {
 }
 
 #[test]
+fn pledge_rejects_zero_rcfi() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = denomination(1).unwrap();
+        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        // No fidelity cohort seeded → get_rcfi(alice) == 0 → pledge rejected
+        // before any Gratis movement.
+        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
+            IGratisFactory::pledgeGratisCall {
+                denomId: 1,
+                commitment: U256::from(0xA6u64),
+            },
+        ));
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("fidelity"));
+
+        // Escrow untouched and caller keeps the full balance.
+        let gratis = Gratis::new(storage);
+        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
+        assert_eq!(gratis.pledged_of(alice()).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
 fn unpledge_releases_escrow_back_to_pledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
         let amount = denomination(denom_id).unwrap();
 
         // Alice pledges.
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        seed_fidelity(storage.clone(), alice());
         let secret = U256::from(0xAAu64);
         let null_s = U256::from(0xBBu64);
         let commitment = commitment_hash(secret, null_s, denom_id).unwrap();

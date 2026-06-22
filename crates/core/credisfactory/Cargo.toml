@@ -18,6 +18,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 outbe-gratisfactory.workspace = true
+outbe-fidelity.workspace = true
 # Enable the test-helpers feature on outbe-gratispool so e2e tests can drive
 # the verifier outcome without a real Barretenberg-prover proof. Cargo
 # unions features across `[dependencies]` and `[dev-dependencies]` for test

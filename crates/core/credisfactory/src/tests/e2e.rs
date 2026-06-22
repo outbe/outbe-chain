@@ -43,9 +43,11 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
 }
 
 /// Gives `account` a positive RCFI by recording a gratis cohort acquired one
-/// year before the test's block time. The credisfactory gate requires
-/// `get_rcfi(account) > 0`; with no cohort RCFI is 0 and the request is
-/// rejected (see `request_credis_rejects_zero_rcfi`).
+/// year before the test's block time. The fidelity gate now lives in
+/// `gratisfactory::pledge_gratis` (it requires `get_rcfi(caller) > 0`), so the
+/// e2e flow must seed this before its pledge leg or `pledge_gratis` rejects.
+/// The zero-RCFI rejection itself is asserted in the gratisfactory crate
+/// (`pledge_rejects_zero_rcfi`).
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     let mut fidelity = FidelityContract::new(storage);
@@ -285,47 +287,9 @@ fn request_credis_rejects_overdue_anadosis() {
     });
 }
 
-#[test]
-fn request_credis_rejects_zero_rcfi() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let amount = denomination(denom_id).unwrap();
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
-        // No fidelity cohort seeded → get_rcfi(alice) == 0 → request rejected.
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-
-        let pledge_c = commitment_hash(U256::from(1u64), U256::from(2u64), denom_id).unwrap();
-        let reclaim_c = commitment_hash(U256::from(3u64), U256::from(4u64), denom_id).unwrap();
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
-
-        let args = RequestArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(U256::from(2u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, reclaim_c)
-                .unwrap(),
-            proof: vec![0u8; 32],
-            reclaim_commitment: reclaim_c,
-        };
-        let err = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                vault(),
-                alice(),
-                args,
-                CREATED_AT,
-                BLOCK_NUMBER,
-            )
-            .unwrap_err()
-        });
-        assert!(err.to_string().contains("fidelity"));
-    });
-}
+// Zero-RCFI rejection is no longer a credisfactory concern: the fidelity gate
+// moved to `gratisfactory::pledge_gratis`. The rejection is asserted in the
+// gratisfactory crate (`pledge_rejects_zero_rcfi`).
 
 #[test]
 fn request_credis_rejects_zero_asset() {

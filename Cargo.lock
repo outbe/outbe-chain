@@ -7133,6 +7133,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-credis",
+ "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-gratispool",
