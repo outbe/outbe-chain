@@ -65,7 +65,14 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
             );
         }
         for series_id in series {
-            if try_qualify(&ctx.storage, &mut factory, series_id, maturity_secs, now, rate)? {
+            if try_qualify(
+                &ctx.storage,
+                &mut factory,
+                series_id,
+                maturity_secs,
+                now,
+                rate,
+            )? {
                 promoted = promoted.saturating_add(1);
             }
         }
