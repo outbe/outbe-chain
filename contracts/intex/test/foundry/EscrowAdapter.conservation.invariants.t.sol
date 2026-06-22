@@ -3,9 +3,9 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";

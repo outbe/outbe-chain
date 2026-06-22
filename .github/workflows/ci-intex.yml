@@ -75,16 +75,6 @@ jobs:
       - name: Compile contracts
         run: yarn compile
 
-      - name: Upload compiled artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: intex-compiled-contracts
-          path: |
-            contracts/intex/artifacts/
-            contracts/intex/cache/
-            contracts/intex/typechain-types/
-          retention-days: 1
-
   test-foundry:
     name: Foundry Tests
     runs-on: depot-ubuntu-24.04
@@ -103,31 +93,6 @@ jobs:
 
       - name: Run Forge tests
         run: forge test -vv
-
-  test-hardhat:
-    name: Hardhat Tests
-    runs-on: depot-ubuntu-24.04
-    needs: [compile]
-    defaults:
-      run:
-        working-directory: contracts/intex
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup
-        uses: ./.github/actions/setup-node-yarn
-        with:
-          working-directory: contracts/intex
-
-      - name: Download compiled artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: intex-compiled-contracts
-          path: contracts/intex
-
-      - name: Run Hardhat tests
-        run: yarn test:hardhat
 
   slither:
     name: Slither
@@ -198,7 +163,6 @@ jobs:
       - format
       - compile
       - test-foundry
-      - test-hardhat
       - slither
       - aderyn
     timeout-minutes: 5

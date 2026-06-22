@@ -21,14 +21,14 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
 };
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::keccak256;
 use commonware_codec::Encode;
 use commonware_cryptography::certificate::{Provider as _, Scheme as _};
 use commonware_runtime::{Clock, Spawner};
 use futures::{channel::mpsc, StreamExt};
 use outbe_primitives::{
-    consensus::{ConsensusExecutionBridge, ConsensusStatus},
+    consensus::{ConsensusData, ConsensusExecutionBridge, ConsensusStatus},
     error::Result,
 };
 use tracing::{debug, info, warn};
@@ -483,6 +483,73 @@ impl FinalizationActor {
         // the snapshot written by `apply_boundary_outcome` under the canonical
         // hash, even when the certified-notarization slot has the right value.
         let consensus_data = finalized.consensus_data.clone();
+
+        // Persist the canonical parent-proof record before publishing the view,
+        // closing the post-finalize / pre-child-build crash window. The V2
+        // canonical fields match the certified-notarization writer. No `view`
+        // access, so this is safe to call while the write guard is held.
+        let (committee_set_hash, committee_size) =
+            self.persist_finalization_record(&finalized, &consensus_data, digest, block_number)?;
+
+        // Rekey the reporter's view-buffered late-finalize votes to this block
+        // number and prune those outside the K-block inclusion window. No `view`
+        // access.
+        self.rekey_late_finalize_votes(
+            &finalized,
+            &consensus_data,
+            digest,
+            block_number,
+            committee_set_hash,
+            committee_size,
+        );
+
+        // Prune old parent-cert records and record store metrics. No `view` access.
+        self.prune_parent_cert_store(block_number)?;
+
+        view.last_finalized_round = Some(match view.last_finalized_round {
+            Some(last_round) => std::cmp::max(last_round, finalized.round),
+            None => finalized.round,
+        });
+
+        if let Some(seed) = finalized.vrf_seed {
+            view.prev_randao = seed;
+        } else {
+            self.deps.vrf_safety.mark_degraded();
+        }
+
+        view.forkchoice.finalized_block_hash = digest.0;
+        view.forkchoice.safe_block_hash = digest.0;
+        view.forkchoice.head_block_hash = digest.0;
+
+        view.last_finalized_number = block_number;
+        view.last_timestamp_millis =
+            std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
+
+        // Drop the write lock before bridge/dkg work so later `build_block`
+        // readers can proceed after the durable parent-cert handoff is visible.
+        drop(view);
+
+        self.publish_consensus_status(&finalized, &consensus_data, block_number);
+        self.note_finalized_dkg_artifact(&block, digest, block_number);
+        self.evict_finalized_block_cache();
+
+        Ok(())
+    }
+
+    /// Build and persist the canonical V2 finalization parent-proof record, and
+    /// return the `(committee_set_hash, committee_size)` the late-finalize rekey
+    /// needs. Does not touch the shared `view`. The V2 canonical fields are
+    /// derived from the epoch's `HybridScheme` so the finalization-slot record
+    /// matches the certified-notarization writer; a snapshot-build failure is an
+    /// encode-invariant violation and fails the finalization deterministically
+    /// rather than writing a record whose `committee_set_hash` would diverge.
+    fn persist_finalization_record(
+        &self,
+        finalized: &Finalized,
+        consensus_data: &ConsensusData,
+        digest: Digest,
+        block_number: u64,
+    ) -> eyre::Result<(alloy_primitives::B256, usize)> {
         let encoded_certificate = consensus_data
             .finalized_certificate
             .encoded_certificate
@@ -493,7 +560,7 @@ impl FinalizationActor {
             .ordered_committee
             .clone();
         // Captured before `ordered_committee` is moved into the proof record, for
-        // the late-finalize store resolve below.
+        // the late-finalize store resolve.
         let committee_size = ordered_committee.len();
         let (committee_set_hash, vrf_material_version, vrf_group_public_key_hash) = match self
             .deps
@@ -502,19 +569,9 @@ impl FinalizationActor {
         {
             Some(scheme) => {
                 let participants = scheme.participants();
-                let committee: Vec<CommitteeEntry> = ordered_committee
+                let encoded_pubkeys: Vec<Vec<u8>> = participants
                     .iter()
-                    .zip(participants.iter())
-                    .map(|(address, pubkey)| {
-                        let bytes = pubkey.encode();
-                        let mut consensus_pubkey = [0u8; 48];
-                        let len = bytes.as_ref().len().min(48);
-                        consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-                        CommitteeEntry {
-                            address: *address,
-                            consensus_pubkey,
-                        }
-                    })
+                    .map(|pubkey| pubkey.encode().as_ref().to_vec())
                     .collect();
                 let vrf_group_public_key_bytes: Vec<u8> = scheme
                     .identity()
@@ -526,14 +583,23 @@ impl FinalizationActor {
                     keccak256(&vrf_group_public_key_bytes)
                 };
                 let vrf_material_version = scheme.active_vrf_material_version();
-                let snapshot = CommitteeSnapshot {
-                    committee,
+                // Single canonical builder (shared with the resolver, reporter,
+                // and DKG proposer). Reconstructed from finalized metadata, so no
+                // full polynomial is available; `B256::ZERO` is the unused
+                // `vrf_public_polynomial_hash` (excluded from committee_set_hash_v2).
+                let snapshot = build_committee_snapshot(
+                    &ordered_committee,
+                    &encoded_pubkeys,
                     vrf_material_version,
                     vrf_group_public_key_bytes,
-                    // Reconstructed from finalized metadata (no full polynomial);
-                    // unused by committee_set_hash_v2.
-                    vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
-                };
+                    alloy_primitives::B256::ZERO,
+                )
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "finalization committee snapshot build failed at epoch \
+                         {finalized_epoch}: {e}"
+                    )
+                })?;
                 let committee_set_hash = committee_set_hash_v2(finalized_epoch, &snapshot);
                 (
                     committee_set_hash,
@@ -571,10 +637,8 @@ impl FinalizationActor {
             committee_set_hash,
             vrf_material_version,
             vrf_group_public_key_hash,
-            // `finalize_votes` legacy field dropped from
-            // `FinalizedParentCertificateData`; left blank on the record
-            // (still present on the record schema for backward-compat
-            // serde decoding of pre- on-disk data).
+            // Legacy `finalize_votes` left blank (kept on the record schema for
+            // backward-compat serde decoding of older on-disk data).
             finalize_votes: Vec::new(),
             missed_proposers: consensus_data.missed_proposers.clone(),
             stored_at_height: block_number,
@@ -584,15 +648,25 @@ impl FinalizationActor {
             .parent_cert_store
             .put_finalization(snap)
             .map_err(|error| eyre::eyre!("persist finalization parent proof record: {error}"))?;
+        Ok((committee_set_hash, committee_size))
+    }
 
-        // the reporter buffered this view's late finalize votes by
-        // view; only now is the block number known. Rekey them to `block_number`
-        // and prune targets that have left the K-block inclusion window. Best-
-        // effort, process-local: a poisoned lock just skips the rekey (degrading
-        // to crediting nobody) and never stalls finalization.
+    /// Rekey the reporter's view-buffered late-finalize votes to the now-known
+    /// `block_number` and prune targets outside the K-block inclusion window.
+    /// Best-effort and process-local: a poisoned lock just skips the rekey
+    /// (crediting nobody) and never stalls finalization. No `view` access.
+    fn rekey_late_finalize_votes(
+        &self,
+        finalized: &Finalized,
+        consensus_data: &ConsensusData,
+        digest: Digest,
+        block_number: u64,
+        committee_set_hash: alloy_primitives::B256,
+        committee_size: usize,
+    ) {
         if let Ok(mut store) = self.deps.late_sig_store.lock() {
             // Canonical (epoch, view, parent_view) from the finalized certificate
-            // so even a pure post-finalization vote (no pending entry) is bound
+            // so even a pure post-finalization vote (no pending entry) binds
             // correctly.
             store.resolve_finalized(
                 finalized.round.epoch().get(),
@@ -604,6 +678,11 @@ impl FinalizationActor {
                 committee_size,
             );
         }
+    }
+
+    /// Prune parent-cert records below the retention floor and record store
+    /// metrics. No `view` access.
+    fn prune_parent_cert_store(&self, block_number: u64) -> eyre::Result<()> {
         let pruned = self
             .deps
             .parent_cert_store
@@ -618,35 +697,18 @@ impl FinalizationActor {
         } else {
             crate::metrics::record_parent_cert_retained_depth(0);
         }
+        Ok(())
+    }
 
-        view.last_finalized_round = Some(match view.last_finalized_round {
-            Some(last_round) => std::cmp::max(last_round, finalized.round),
-            None => finalized.round,
-        });
-
-        if let Some(seed) = finalized.vrf_seed {
-            view.prev_randao = seed;
-        } else {
-            self.deps.vrf_safety.mark_degraded();
-        }
-
-        view.forkchoice.finalized_block_hash = digest.0;
-        view.forkchoice.safe_block_hash = digest.0;
-        view.forkchoice.head_block_hash = digest.0;
-
-        view.last_finalized_number = block_number;
-        view.last_timestamp_millis =
-            std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
-
-        // Drop the write lock before bridge/dkg work so later `build_block`
-        // readers can proceed after the durable parent-cert handoff is visible.
-        drop(view);
-
-        // The bridge no longer carries the legacy `pending` finalization queue;
-        // the parent certificate store (written above) is the single
-        // consensus-owned producer-consumer handoff for finalized-parent
-        // certificate metadata. The actor still owns RPC status updates; write a
-        // fresh `ConsensusStatus` view here after durable persistence.
+    /// Publish a fresh `ConsensusStatus` to the bridge for RPC after durable
+    /// persistence. The parent-cert store is the consensus handoff; this is only
+    /// the RPC status view. Runs after the `view` write lock is released.
+    fn publish_consensus_status(
+        &self,
+        finalized: &Finalized,
+        consensus_data: &ConsensusData,
+        block_number: u64,
+    ) {
         if let Some(ref bridge) = self.deps.bridge {
             let vrf_safety = self.deps.vrf_safety.snapshot();
             let connected_peers = consensus_data
@@ -669,8 +731,17 @@ impl FinalizationActor {
                 vrf_expiry_height: vrf_safety.vrf_expiry_height,
             });
         }
+    }
 
-        match extract_header_artifact_from_block(&block) {
+    /// Record the finalized block's DKG header artifact (if present) with the
+    /// DKG manager. A malformed artifact is logged and skipped, never fatal.
+    fn note_finalized_dkg_artifact(
+        &self,
+        block: &ConsensusBlock,
+        digest: Digest,
+        block_number: u64,
+    ) {
+        match extract_header_artifact_from_block(block) {
             Ok(artifact) => {
                 self.deps.dkg_manager.note_finalized_header_artifact_at(
                     block_number,
@@ -686,10 +757,12 @@ impl FinalizationActor {
                 );
             }
         }
+    }
 
-        // Evict stale entries from the shared block_cache. Block
-        // entries with number <= finalized number cannot be needed by
-        // any future verify path.
+    /// Evict block-cache entries at or below the new finalized height; they can
+    /// no longer be needed by any future verify path. Re-reads the view under a
+    /// short read lock (the write lock was already released).
+    fn evict_finalized_block_cache(&self) {
         let finalized_num = self
             .deps
             .view
@@ -703,8 +776,6 @@ impl FinalizationActor {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.retain(|_, cached_block| cached_block.number() > finalized_num);
         crate::metrics::record_block_cache_size(cache.len());
-
-        Ok(())
     }
 }
 

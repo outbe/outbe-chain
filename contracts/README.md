@@ -16,7 +16,7 @@ Solidity smart contracts for the Outbe
 | [vault](./vault) | Non-custodial ERC-4626 vault provider, based on Morpho Vaults V2. | 0.8.30 | Forge + soldeer |
 | [smart-account](./smart-account) | ERC-4337 smart-account solution built on the ZeroDev Kernel. | 0.8.30 | Forge + soldeer |
 | [precompiles](./precompiles) | Solidity interfaces for the outbe-chain stateful precompiles (e.g. Oracle). | 0.8.30 | Forge |
-| [intex](./intex) | Intex NFT (ERC-1155) / auction cross-chain contracts. | 0.8.30 | Hardhat + Forge |
+| [intex](./intex) | Intex NFT (ERC-1155) / auction cross-chain contracts. | 0.8.30 | Forge + Hardhat (only tasks) |
 
 Each sub-project documents its own design and usage in its `README.md`.
 
@@ -26,7 +26,7 @@ Every sub-project follows the same layout:
 
 ```
 contracts/<name>/
-  src/            # contracts (intex uses contracts/)
+  src/            # contracts
   test/           # forge tests
   script/         # forge deploy/ops scripts
   abi-export/     # exported ABIs (mise run export-abi)

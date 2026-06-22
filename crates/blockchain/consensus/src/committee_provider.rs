@@ -1,17 +1,17 @@
 use alloy_primitives::Address;
 use commonware_consensus::types::Epoch;
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
+
+use crate::epoch_registry::EpochRegistry;
 
 /// Epoch-scoped provider of ordered committee snapshots.
 ///
 /// The stored address ordering must match the participant ordering used by the
-/// Hybrid certificate signers bitmap for that epoch.
+/// Hybrid certificate signers bitmap for that epoch. Thin typed wrapper over a
+/// shared [`EpochRegistry`].
 #[derive(Clone, Debug, Default)]
 pub struct CommitteeProvider {
-    inner: Arc<Mutex<HashMap<Epoch, Arc<Vec<Address>>>>>,
+    inner: EpochRegistry<Vec<Address>>,
 }
 
 impl CommitteeProvider {
@@ -20,33 +20,15 @@ impl CommitteeProvider {
     }
 
     pub fn register(&self, epoch: Epoch, committee: Vec<Address>) -> bool {
-        let mut committees = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match committees.entry(epoch) {
-            Entry::Vacant(entry) => {
-                entry.insert(Arc::new(committee));
-                true
-            }
-            Entry::Occupied(_) => false,
-        }
+        self.inner.register(epoch, committee)
     }
 
     pub fn remove(&self, epoch: &Epoch) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(epoch)
-            .is_some()
+        self.inner.remove(epoch)
     }
 
     pub fn ordered_committee(&self, epoch: Epoch) -> Option<Arc<Vec<Address>>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&epoch)
-            .cloned()
+        self.inner.get(&epoch)
     }
 }
 

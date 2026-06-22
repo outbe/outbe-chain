@@ -1180,6 +1180,8 @@ mod oracle_tests {
             let day_1 = crate::scurve::DAY_SECONDS;
             let day_2 = 2 * crate::scurve::DAY_SECONDS;
             let day_3 = 3 * crate::scurve::DAY_SECONDS;
+            let day_4 = 4 * crate::scurve::DAY_SECONDS;
+            // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
             oracle
                 .write_snapshot(day_1 + 60, &[(pair_id, U256::in_units(100u64), SCALE_1E18)])
                 .unwrap();
@@ -1190,8 +1192,10 @@ mod oracle_tests {
                 .write_snapshot(day_3 + 60, &[(pair_id, U256::in_units(120u64), SCALE_1E18)])
                 .unwrap();
 
+            // Hook fires on the first block of day_4 — the current day has NO
+            // close yet, mirroring the real start-of-day boundary block.
             let runtime_ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(3, day_3 + 120, 1),
+                BlockContext::empty_for_tests(4, day_4 + 120, 1),
                 storage.clone(),
             );
             <crate::hooks::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
@@ -1203,10 +1207,10 @@ mod oracle_tests {
                 oracle.scurve_peak_price.read(&0).unwrap(),
                 U256::in_units(150u64)
             );
-            assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_3);
+            assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
 
             let active_value =
-                crate::scurve::get_max_active_scurve_value(&oracle, pair_id, day_3).unwrap();
+                crate::scurve::get_max_active_scurve_value(&oracle, pair_id, day_4).unwrap();
             assert!(!active_value.is_zero());
             assert!(active_value < U256::in_units(150u64));
         });

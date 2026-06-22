@@ -33,12 +33,14 @@ lcov.info
 .npmrc-pkg
 params.json
 
+# Local-only config (external/deployment addresses — never committed)
+config/external-addresses.json
+
 # ignition
 /ignition/deployments/
 
-# Bidder data (wallets with private keys, generated commits)
-/data/bidders/
-!/data/bidders/wallets-bsc-testnet.json
+# Local data (test fixtures, bidder wallets with private keys — never committed)
+/data/
 
 # Generated sample files
 sample-nft.svg
@@ -51,6 +53,9 @@ sample-nft-metadata.json
 report.md
 slither-report.sarif
 
+# Generated context doc (kept local, never committed)
+CONTEXT.md
+
 # Local scratch (design notes, throwaway reference files — never committed)
 /.scratch/
 
@@ -59,3 +64,6 @@ slither-report.sarif
 .claude/
 
 reports/
+
+# Forge broadcast logs (deploy output)
+/broadcast

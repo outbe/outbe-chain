@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 
 /// @title MockAuctionEscrow
 /// @notice Minimal escrow stub for IntexAuction unit tests. Selector-matches `IEscrowAdapter.lockFunds`

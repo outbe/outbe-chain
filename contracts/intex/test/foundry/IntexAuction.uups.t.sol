@@ -6,8 +6,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 
 contract IntexAuctionUupsTest is Test {
@@ -42,19 +42,19 @@ contract IntexAuctionUupsTest is Test {
 
     function test_RevertWhen_InitializeCalledTwice() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        auction.initialize(stranger, stranger);
+        auction.initialize(stranger);
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
         IntexAuction impl = new IntexAuction();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(admin, bridger);
+        impl.initialize(admin);
     }
 
     function test_RevertWhen_InitializeZeroAdmin() public {
         IntexAuction impl = new IntexAuction();
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "defaultAdmin"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (address(0), bridger)));
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (address(0))));
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {

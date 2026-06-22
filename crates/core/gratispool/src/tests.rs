@@ -99,6 +99,35 @@ fn add_commitment_duplicate_reverts() {
     });
 }
 
+#[test]
+fn add_commitment_rejects_non_canonical_commitment() {
+    // A commitment `>= p` (BN254 scalar field modulus) is non-canonical and
+    // would panic merkle_node's `u256_to_fr(..).unwrap()` on every validator.
+    // The deposit gate in `append_leaf` must reject it with a typed error
+    // instead of panicking. Mirrors `non_canonical_nullifier_rejected` on the
+    // spend path.
+    use ark_bn254::Fr;
+    use ark_ff::{BigInteger, PrimeField};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let denom_id: u8 = 1;
+
+        // p = BN254 scalar field modulus, as a U256. `p` itself is the
+        // smallest non-canonical value.
+        let p_be = <Fr as PrimeField>::MODULUS.to_bytes_be();
+        let mut buf = [0u8; 32];
+        buf[32 - p_be.len()..].copy_from_slice(&p_be);
+        let p = U256::from_be_bytes(buf);
+
+        let err = api::add_commitment(storage, denom_id, p).unwrap_err();
+        assert!(
+            err.to_string().contains("canonical"),
+            "non-canonical commitment must be rejected, got: {err}"
+        );
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Spend
 // ---------------------------------------------------------------------------

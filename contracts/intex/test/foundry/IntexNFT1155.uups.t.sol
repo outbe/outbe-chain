@@ -28,19 +28,19 @@ contract IntexNFT1155UupsTest is Test {
 
     function test_RevertWhen_InitializeCalledTwice() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        nft.initialize(stranger, stranger);
+        nft.initialize(stranger);
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
         IntexNFT1155 impl = new IntexNFT1155();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(admin, bridger);
+        impl.initialize(admin);
     }
 
     function test_RevertWhen_InitializeZeroAdmin() public {
         IntexNFT1155 impl = new IntexNFT1155();
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "defaultAdmin", address(0)));
-        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (address(0), bridger)));
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (address(0))));
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {

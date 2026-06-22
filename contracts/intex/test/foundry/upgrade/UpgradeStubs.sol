@@ -2,10 +2,10 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 

@@ -7,21 +7,20 @@ import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 
 /// @title DeployOutbe
 /// @author Outbe
 /// @notice Deploy the Outbe-side intex contracts as UUPS proxies through the CREATE3 factory.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID (the remote endpoint id for the Outbe-side
-///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE), the owner / LZ
-///      delegate, and the initial bridger (RELAYER_ROLE). Wiring is separate.
+///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE) and the owner / LZ
+///      delegate. Wiring is separate.
 contract DeployOutbe is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
-        // The deployer holds every privileged role at deploy time: admin, owner/LZ delegate, bridger.
+        // The deployer is admin and owner/LZ delegate.
         address admin = deployer;
-        address bridger = deployer;
         address delegate = deployer;
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
@@ -35,7 +34,7 @@ contract DeployOutbe is BaseScript {
             deployer,
             "IntexNFT1155",
             address(new IntexNFT1155()),
-            abi.encodeCall(IntexNFT1155.initialize, (admin, bridger))
+            abi.encodeCall(IntexNFT1155.initialize, (admin))
         );
         address onft = deployProxy(
             factory,

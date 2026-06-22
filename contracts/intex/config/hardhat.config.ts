@@ -1,64 +1,18 @@
 import type { HardhatUserConfig } from "hardhat/config";
 
-import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
-import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
-import hardhatVerify from "@nomicfoundation/hardhat-verify";
 import { configVariable } from "hardhat/config";
 import "dotenv/config";
-import { auctionFlowTasks } from "../tasks/auction/flow.js";
-import { auctionStageTasks } from "../tasks/auction/stageManagement.js";
-import { auctionBidderTasks } from "../tasks/auction/bidders.js";
-import { crosschainTasks } from "../tasks/auction/crosschainFlow.js";
-import { generateCommitHashTasks } from "../tasks/auction/generateCommitHash.js";
-import { intex1155IssuanceTasks } from "../tasks/intex/issuance.js";
-import { intexQualifyTasks } from "../tasks/intex/qualify.js";
-import { qualifiedFlowTasks } from "../tasks/intex/qualified.js";
-import { settlementTasks } from "../tasks/intex/settlement.js";
+import { generateCommitHashTasks } from "../tasks/runbook/generateCommitHash.js";
+import { qualifiedFlowTasks } from "../tasks/runbook/qualified.js";
 import { lzBridgeUtilTasks } from "../tasks/layerzero/bridgeUtils.js";
 import { lzNonceClearTasks } from "../tasks/layerzero/nonceClear.js";
 import { onft1155Tasks } from "../tasks/layerzero/onft1155Transfer.js";
 import { wireTasks } from "../tasks/cd/wire.js";
-import { demoTasks } from "../tasks/demo/index.js";
+import { runbookTasks } from "../tasks/runbook/index.js";
 
 const config: HardhatUserConfig = {
-  plugins: [hardhatToolboxViemPlugin, hardhatTypechain, hardhatVerify],
-  tasks: [...auctionFlowTasks, ...auctionStageTasks, ...auctionBidderTasks, ...crosschainTasks, ...generateCommitHashTasks, ...intex1155IssuanceTasks, ...intexQualifyTasks, ...qualifiedFlowTasks, ...settlementTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...demoTasks],
-  paths: {
-    sources: ["./contracts", "./test/mocks"],
-    tests: "./test/hardhat",
-  },
-  solidity: {
-    npmFilesToBuild: ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"],
-    profiles: {
-      default: {
-        version: "0.8.30",
-        settings: {
-          evmVersion: "prague",
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          viaIR: true
-        }
-      },
-      production: {
-        version: "0.8.30",
-        settings: {
-          evmVersion: "prague",
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          viaIR: true
-        },
-      },
-    },
-  },
-  verify: {
-    etherscan: {
-      apiKey: configVariable("ETHERSCAN_API_KEY"),
-    }
-  },
+  plugins: [],
+  tasks: [...generateCommitHashTasks, ...qualifiedFlowTasks, ...lzBridgeUtilTasks, ...lzNonceClearTasks, ...onft1155Tasks, ...wireTasks, ...runbookTasks],
   networks: {
     default: {
       type: "edr-simulated",
