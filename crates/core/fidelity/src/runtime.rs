@@ -105,12 +105,12 @@ impl FidelityContract<'_> {
     /// Overflow safety: each term `size · T_dec(..)` has `T_dec ≤ L_FP (~2^70)`;
     /// for any realistic supply and cohort count the sums and `num·SCALE` stay
     /// well under `2^256` (see the crate plan's overflow analysis).
-    pub fn compute_rcfi_fp(&self, account: Address, now: u64) -> Result<(U256, U256, U256)> {
+    pub fn compute_rcfi_fp(&self, account: Address, timestamp: u64) -> Result<(U256, U256, U256)> {
         let qs = self.qualified_start.read(&account)?;
         if qs == 0 {
             return Ok((U256::ZERO, U256::ZERO, U256::ZERO));
         }
-        let d_dec_age = t_dec(now.saturating_sub(qs));
+        let d_dec_age = t_dec(timestamp.saturating_sub(qs));
 
         let mut num = U256::ZERO;
         let mut den = U256::ZERO;
@@ -119,7 +119,7 @@ impl FidelityContract<'_> {
         let active = self.active_count.read(&account)?;
         for i in 0..active {
             if let Some(c) = self.active_cohorts.get(active_cohort_key(account, i))? {
-                let contribution = c.size * t_dec(now.saturating_sub(c.acquired_at));
+                let contribution = c.size * t_dec(timestamp.saturating_sub(c.acquired_at));
                 num += contribution;
                 den += contribution;
             }
@@ -129,8 +129,8 @@ impl FidelityContract<'_> {
         let sold = self.sold_count.read(&account)?;
         for i in 0..sold {
             if let Some(c) = self.sold_cohorts.get(sold_cohort_key(account, i))? {
-                let buy = t_dec(now.saturating_sub(c.acquired_at));
-                let sell = t_dec(now.saturating_sub(c.sold_at));
+                let buy = t_dec(timestamp.saturating_sub(c.acquired_at));
+                let sell = t_dec(timestamp.saturating_sub(c.sold_at));
                 // buy ≥ sell since acquired_at ≤ sold_at; saturating guards skew.
                 den += c.size * buy.saturating_sub(sell);
             }
