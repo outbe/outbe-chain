@@ -13,9 +13,6 @@ pub struct IssuanceParams {
     pub promis_load_minor: u128,
     pub cost_amount_minor: u64,
     pub coen_price: U256,
-    pub intex_call_period: u32,
-    pub call_window_days: u16,
-    pub call_threshold_days: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.
@@ -68,6 +65,10 @@ pub struct IntexFactoryContract {
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 12)]
     pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    #[attribute(order = 13)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl IntexFactoryContract<'_> {
