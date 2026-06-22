@@ -85,8 +85,8 @@ use outbe_consensus::{
         state::new_finalization_view,
     },
     hybrid::{
-        HybridElectorConfigProvider, HybridRandom, HybridScheme, HybridSchemeProvider,
-        VrfMaterialProvider,
+        election::{HybridElectorConfigProvider, HybridRandom},
+        HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
     },
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,

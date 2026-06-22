@@ -280,7 +280,7 @@ use crate::{
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
-    hybrid::{HybridElectorConfigProvider, HybridSchemeProvider},
+    hybrid::{election::HybridElectorConfigProvider, HybridSchemeProvider},
     validators::ValidatorSet,
     vrf_safety::VrfSafetyGate,
 };

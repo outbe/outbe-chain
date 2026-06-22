@@ -42,7 +42,9 @@ use crate::{
         CertifiedParentProofKey, CertifiedParentProofRecord, FinalizedParentCertStore,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridRandomElector, HybridScheme},
+    hybrid::{
+        bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
+    },
 };
 use outbe_primitives::{
     consensus::{ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData},
@@ -827,7 +829,7 @@ mod tests {
             ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
             parent_cert_store::FinalizedParentCertStore,
         },
-        hybrid::{HybridRandom, HybridScheme},
+        hybrid::{election::HybridRandom, HybridScheme},
     };
 
     fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {

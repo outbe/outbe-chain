@@ -43,7 +43,7 @@ use crate::finalization::util::{
     build_signer_bitmap, validate_consensus_metadata_for_verify, AttestationValidationContext,
     AttestationVerdict,
 };
-use crate::hybrid::{HybridElectorConfigProvider, HybridRandom};
+use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;

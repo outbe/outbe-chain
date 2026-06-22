@@ -2098,7 +2098,8 @@ fn test_epoch_elector_config_allows_genesis_without_continuity() {
     let vrf_materials = VrfMaterialProvider::new(0, dkg.polynomial, None);
     let config =
         epoch_elector_config(Epoch::new(0), &ReporterContinuity::default(), vrf_materials).unwrap();
-    let elector: outbe_consensus::hybrid::HybridRandomElector<MinSig> = config.build(&participants);
+    let elector: outbe_consensus::hybrid::election::HybridRandomElector<MinSig> =
+        config.build(&participants);
     let leader = elector.elect(Round::new(Epoch::new(0), View::new(1)), None);
     assert!(leader.get() < participants.len() as u32);
 }
@@ -2123,7 +2124,8 @@ fn test_epoch_elector_config_uses_previous_certificate_for_view_one() {
     let dkg = bootstrap_dkg(3).unwrap();
     let vrf_materials = VrfMaterialProvider::new(0, dkg.polynomial, None);
     let config = epoch_elector_config(Epoch::new(1), &continuity, vrf_materials).unwrap();
-    let elector: outbe_consensus::hybrid::HybridRandomElector<MinSig> = config.build(&participants);
+    let elector: outbe_consensus::hybrid::election::HybridRandomElector<MinSig> =
+        config.build(&participants);
 
     let leader = elector.elect(Round::new(Epoch::new(1), View::new(1)), None);
     let expected = commonware_utils::Participant::new(commonware_utils::modulo(

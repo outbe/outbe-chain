@@ -34,8 +34,8 @@ use crate::{
     committee_provider::CommitteeProvider,
     digest::Digest,
     hybrid::{
-        bls_batch_verification_rng, HybridCertificate, HybridElectorConfigProvider, HybridScheme,
-        HybridSchemeProvider,
+        bls_batch_verification_rng, election::HybridElectorConfigProvider, HybridCertificate,
+        HybridScheme, HybridSchemeProvider,
     },
 };
 
