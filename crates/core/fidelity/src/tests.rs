@@ -2,7 +2,7 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::math::SCALE;
+use crate::math::{t_dec, L_FP, SCALE};
 use crate::schema::{active_cohort_key, sold_cohort_key, FidelityContract};
 use crate::schema::{ActiveCohort, SoldCohort};
 
@@ -205,5 +205,116 @@ fn zero_amount_hooks_are_noops() {
         c.cohort_out(ALICE, U256::ZERO, T0).unwrap();
         assert_eq!(c.active_count.read(&ALICE).unwrap(), 0);
         assert_eq!(c.qualified_start.read(&ALICE).unwrap(), 0);
+    });
+}
+
+// --- compute_rcfi_scaled: 1e18 fixed-point RCFI at historical timestamps -----
+
+/// Fixed-point (10^18) decayed-days → f64 days, for tolerance checks only.
+fn days(fp: U256) -> f64 {
+    let micro: u128 = (fp * U256::from(1_000_000u64) / SCALE).to::<u128>();
+    micro as f64 / 1_000_000.0
+}
+
+#[test]
+fn compute_rcfi_scaled_equals_t_dec_for_holding_at_historical_times() {
+    // 100% holding (one cohort, no sales) ⇒ efficiency == 1, so the scaled RCFI
+    // is exactly the decayed wallet age `t_dec(age)` evaluated AT THE SUPPLIED
+    // timestamp — the 1e18 value the precompile returns. Checking several past
+    // timestamps proves the result is a pure function of the `timestamp`
+    // argument (history evaluated "as of" that instant), not of "now".
+    with_contract(|c| {
+        c.cohort_in(ALICE, u(100), T0).unwrap();
+        for age in [0u64, 1, 365, 730, 1460, 3650] {
+            let ts = T0 + age * DAY;
+            assert_eq!(
+                c.compute_rcfi_scaled(ALICE, ts).unwrap(),
+                t_dec(age * DAY),
+                "scaled RCFI must equal t_dec(age) at +{age}d",
+            );
+        }
+        // A timestamp before the wallet's first acquisition has zero retention.
+        assert_eq!(
+            c.compute_rcfi_scaled(ALICE, T0 - 100 * DAY).unwrap(),
+            U256::ZERO,
+            "pre-acquisition timestamp must be zero",
+        );
+    });
+}
+
+#[test]
+fn compute_rcfi_scaled_is_unfloored_fp_and_floors_to_compute_rcfi() {
+    // Across a history (deposit + later partial sale) and several historical
+    // timestamps, the scaled value is the *un-floored* `compute_rcfi_fp` result,
+    // and flooring it by SCALE (i.e. `decimals() == 18`) reproduces the
+    // integer-day `compute_rcfi`.
+    with_contract(|c| {
+        c.cohort_in(ALICE, u(100), T0).unwrap();
+        c.cohort_in(ALICE, u(50), T0 + 100 * DAY).unwrap();
+        c.cohort_out(ALICE, u(30), T0 + 200 * DAY).unwrap();
+
+        for age in [50u64, 150, 365, 1000, 1460] {
+            let ts = T0 + age * DAY;
+            let scaled = c.compute_rcfi_scaled(ALICE, ts).unwrap();
+            let (raw_fp, _, _) = c.compute_rcfi_fp(ALICE, ts).unwrap();
+            assert_eq!(
+                scaled, raw_fp,
+                "scaled must equal raw fixed-point at +{age}d"
+            );
+            assert_eq!(
+                (scaled / SCALE).to::<u64>(),
+                c.compute_rcfi(ALICE, ts).unwrap(),
+                "floor(scaled / 1e18) must equal compute_rcfi at +{age}d",
+            );
+        }
+    });
+}
+
+#[test]
+fn compute_rcfi_scaled_preserves_subday_precision() {
+    // At one year a 100%-held wallet has RCFI ≈ 263.2918 decayed days — not a
+    // whole number. The scaled value keeps the fraction the floored `u64`
+    // variant discards.
+    with_contract(|c| {
+        c.cohort_in(ALICE, u(100), T0).unwrap();
+        let scaled = c.compute_rcfi_scaled(ALICE, T0 + 365 * DAY).unwrap();
+        assert_eq!(scaled / SCALE, u(263), "integer part is 263 decayed days");
+        assert!(
+            scaled % SCALE != U256::ZERO,
+            "fractional 1e18 part must be retained"
+        );
+        assert!(
+            (days(scaled) - 263.2918).abs() < 0.001,
+            "matches the spec checkpoint",
+        );
+    });
+}
+
+#[test]
+fn compute_rcfi_scaled_is_monotonic_across_historical_timestamps() {
+    // Querying progressively later historical timestamps yields strictly larger
+    // values (decay accumulates) that never exceed the saturation limit L.
+    with_contract(|c| {
+        c.cohort_in(ALICE, u(100), T0).unwrap();
+        let mut prev = U256::ZERO;
+        for age in [1u64, 30, 365, 730, 1460, 3650, 36500] {
+            let cur = c.compute_rcfi_scaled(ALICE, T0 + age * DAY).unwrap();
+            assert!(cur > prev, "scaled RCFI must increase at +{age}d");
+            assert!(cur <= L_FP, "scaled RCFI must not exceed L at +{age}d");
+            prev = cur;
+        }
+    });
+}
+
+#[test]
+fn compute_rcfi_scaled_no_history_is_zero_at_any_timestamp() {
+    with_contract(|c| {
+        for age in [0u64, 365, 3650] {
+            assert_eq!(
+                c.compute_rcfi_scaled(ALICE, T0 + age * DAY).unwrap(),
+                U256::ZERO,
+                "no cohorts ⇒ zero RCFI at +{age}d",
+            );
+        }
     });
 }
