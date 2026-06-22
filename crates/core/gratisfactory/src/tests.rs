@@ -1,7 +1,6 @@
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
-use outbe_fidelity::FidelityContract;
 use outbe_gratis::Gratis;
 use outbe_gratispool::constants::{denomination, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
@@ -29,10 +28,13 @@ fn alice() -> Address {
 /// so `get_rcfi` reads a non-zero `now`).
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    let mut fidelity = FidelityContract::new(storage);
-    fidelity
-        .on_gratis_mined(account, U256::from(100u64), CREATED_AT - ONE_YEAR_SECS)
-        .unwrap();
+    outbe_fidelity::api::on_gratis_mined(
+        storage,
+        account,
+        U256::from(100u64),
+        CREATED_AT - ONE_YEAR_SECS,
+    )
+    .unwrap();
 }
 
 fn dispatch_call_bytes(call: IGratisFactory::IGratisFactoryCalls) -> Bytes {

@@ -16,7 +16,6 @@
 use alloy_primitives::{keccak256, Address, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
-use outbe_fidelity::FidelityContract;
 use outbe_gratis::Gratis;
 use outbe_gratisfactory::runtime as gf;
 use outbe_gratispool::constants::{
@@ -50,10 +49,13 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
 /// (`pledge_rejects_zero_rcfi`).
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    let mut fidelity = FidelityContract::new(storage);
-    fidelity
-        .on_gratis_mined(account, U256::from(100u64), CREATED_AT - ONE_YEAR_SECS)
-        .unwrap();
+    outbe_fidelity::api::on_gratis_mined(
+        storage,
+        account,
+        U256::from(100u64),
+        CREATED_AT - ONE_YEAR_SECS,
+    )
+    .unwrap();
 }
 
 fn one_e18() -> U256 {

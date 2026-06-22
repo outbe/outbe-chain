@@ -6,7 +6,6 @@
 use alloy_primitives::{Address, U256};
 
 use crate::errors::GratisFactoryError;
-use outbe_fidelity::FidelityContract;
 use outbe_gratis::Gratis;
 use outbe_gratispool::api as pool;
 use outbe_gratispool::SpendArgs;
@@ -23,8 +22,7 @@ pub fn pledge_gratis(
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
     {
-        let fidelity = FidelityContract::new(storage.clone());
-        let rcfi = fidelity.get_rcfi(caller)?;
+        let rcfi = outbe_fidelity::api::get_rcfi(storage.clone(), caller)?;
         // todo implement correct fidelity check
         if rcfi == u64::MAX {
             return Err(GratisFactoryError::FidelityNotEligible.into());

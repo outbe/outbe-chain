@@ -2,7 +2,6 @@ use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
-use outbe_fidelity::schema::FidelityContract;
 use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -35,7 +34,6 @@ pub fn lysis(
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
-    let fidelity = FidelityContract::new(storage.clone());
 
     // 1. Load all tributes for the day
     let tributes = tribute_contract.get_all_day_tributes(wwd)?;
@@ -52,7 +50,7 @@ pub fn lysis(
     let mut total_interest = U256::ZERO;
 
     for tribute in &tributes {
-        let fi = fidelity.get_rcfi(tribute.owner)?;
+        let fi = outbe_fidelity::api::get_rcfi(storage.clone(), tribute.owner)?;
         tribute_fis.push(fi);
         total_interest += tribute.nominal_amount_minor;
     }
