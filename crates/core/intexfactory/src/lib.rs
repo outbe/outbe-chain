@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod called;
+pub mod config;
 pub mod constants;
 pub mod errors;
 pub mod precompile;

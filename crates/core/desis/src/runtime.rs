@@ -9,8 +9,7 @@ use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::constants::{
-    BID_QUANTITY_FLOOR_BPS, DEFAULT_CALL_THRESHOLD_DAYS, DEFAULT_CALL_WINDOW_DAYS,
-    DEFAULT_INTEX_CALL_PERIOD, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
+    BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
     QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -373,9 +372,6 @@ pub fn clear_auction(
         promis_load_minor: config.promis_load_minor,
         cost_amount_minor: config.cost_amount_minor,
         coen_price: config.coen_price,
-        intex_call_period: DEFAULT_INTEX_CALL_PERIOD,
-        call_window_days: DEFAULT_CALL_WINDOW_DAYS,
-        call_threshold_days: DEFAULT_CALL_THRESHOLD_DAYS,
         issuance_currency: QUALIFIER_ISSUANCE_ISO,
         reference_currency: QUALIFIER_REFERENCE_ISO,
         recipients: result.winners.clone(),
