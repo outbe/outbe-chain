@@ -10,6 +10,8 @@ use outbe_gratispool::api as pool;
 use outbe_gratispool::SpendArgs;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_fidelity::FidelityContract;
+use crate::errors::GratisFactoryError;
 
 /// Append a user-supplied pledge commitment to the pool and move the
 /// caller's Gratis into the credis escrow.
@@ -20,6 +22,16 @@ pub fn pledge_gratis(
     denom_id: u8,
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
+
+    {
+        // todo implement correct fidelity check
+        let fidelity = FidelityContract::new(storage.clone());
+        let rcfi = fidelity.get_rcfi(caller)?;
+        if rcfi == 0 {
+            return Err(GratisFactoryError::FidelityNotEligible.into());
+        }
+    }
+
     // Append the commitment first so denomination / duplicate checks fire
     // before any Gratis movement. The pool returns the amount to escrow.
     let (new_root, leaf_index, amount) =

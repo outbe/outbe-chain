@@ -23,7 +23,6 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::{AnadosisResult, CredisContract, NUMBER_OF_ANADOSIS};
-use outbe_fidelity::FidelityContract;
 use outbe_gratispool::api as pool;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::api::get_exchange_rate;
@@ -109,19 +108,6 @@ pub fn request_credis(
         let credis = CredisContract::new(storage.clone());
         if credis.has_overdue_anadosis(bundle_account, current_time)? {
             return Err(CredisFactoryError::OverduePayments.into());
-        }
-    }
-
-    // Fidelity gate now operates on `bundleAccount` — the shielded pool no
-    // longer surfaces the pledger's address. PoC limitation; the stricter
-    // form (in-circuit attestation-tree-membership) lives in the architecture
-    // spec and is out of scope here. Eligibility requires a positive RCFI: the
-    // account must have retained (not fully-sold) gratis history.
-    {
-        let fidelity = FidelityContract::new(storage.clone());
-        let rcfi = fidelity.get_rcfi(bundle_account)?;
-        if rcfi == 0 {
-            return Err(CredisFactoryError::FidelityNotEligible.into());
         }
     }
 
