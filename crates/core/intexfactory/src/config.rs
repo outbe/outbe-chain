@@ -42,7 +42,7 @@ impl IntexParams {
         maturity_period_secs: 24 * 3600,
         call_window_days: 3,
         call_threshold_days: 2,
-        intex_call_period_secs: 24 * 3600,
+        intex_call_period_secs: 3 * 24 * 3600,
         call_price_num: 110,
         floor_price_num: 105,
     };
