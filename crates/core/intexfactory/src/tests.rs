@@ -7,7 +7,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::called;
-use crate::constants::QUALIFIER_REFERENCE_ISO;
+use crate::constants::{
+    CALL_PRICE_NUM, FLOOR_PRICE_NUM, MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO,
+};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -114,18 +116,18 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::derived_floor(U256::from(COEN_PRICE)).unwrap();
-    let call = runtime::derived_call_price(U256::from(COEN_PRICE)).unwrap();
+    let floor = runtime::derived_floor(U256::from(COEN_PRICE), FLOOR_PRICE_NUM).unwrap();
+    let call = runtime::derived_call_price(U256::from(COEN_PRICE), CALL_PRICE_NUM).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000_000_000_000_000u64);
     assert_eq!(
-        runtime::derived_floor(one).unwrap(),
+        runtime::derived_floor(one, FLOOR_PRICE_NUM).unwrap(),
         U256::from(1_080_000_000_000_000_000u64)
     );
     assert_eq!(
-        runtime::derived_call_price(one).unwrap(),
+        runtime::derived_call_price(one, CALL_PRICE_NUM).unwrap(),
         U256::from(2_280_000_000_000_000_000u64)
     );
 }
@@ -331,11 +333,11 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
         // Immature -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, immature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,immature, floor + U256::from(1)).unwrap());
         // Mature but rate == floor (strict >) -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, mature, floor).unwrap());
+        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor).unwrap());
         // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert!(qualified::try_qualify(&s, &mut f, 7, mature, floor + U256::from(1)).unwrap());
+        assert!(qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor + U256::from(1)).unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -346,7 +348,7 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
         // Already Qualified -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, mature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor + U256::from(1)).unwrap());
     });
 }
 
@@ -410,7 +412,10 @@ fn qualify_series<'a>(
     let mut f = IntexFactoryContract::new(s.clone());
     let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(qualified::try_qualify(s, &mut f, id, mature, floor + U256::from(1)).unwrap());
+    assert!(
+        qualified::try_qualify(s, &mut f, id, MATURITY_PERIOD_SECONDS, mature, floor + U256::from(1))
+            .unwrap()
+    );
     f
 }
 
@@ -629,6 +634,7 @@ fn qualify_survives_lz_messenger_failure() {
             &s,
             &mut f,
             7,
+            MATURITY_PERIOD_SECONDS,
             mature,
             U256::from(EXPECTED_FLOOR) + U256::from(1)
         )
@@ -739,5 +745,92 @@ fn scan_and_call_force_calls_breached_series() {
                 .unwrap(),
             outbe_intex::IntexState::Called
         );
+    });
+}
+
+// ---------------------------------------------------------------------
+// Genesis parameter profile: prod by default, dev when selected
+// ---------------------------------------------------------------------
+
+#[test]
+fn config_defaults_to_prod_when_unset() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        // No genesis profile selected -> selector reads 0 -> prod bundle.
+        assert_eq!(
+            crate::config::read(&f).unwrap(),
+            crate::config::IntexParams::PROD
+        );
+    });
+}
+
+#[test]
+fn config_dev_profile_drives_issuance_and_maturity() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        // Select the dev profile through the single selector byte.
+        f.config_profile.write(crate::config::PROFILE_DEV).unwrap();
+        assert_eq!(
+            crate::config::read(&f).unwrap(),
+            crate::config::IntexParams::DEV
+        );
+
+        runtime::issue(&s, sample(7)).unwrap();
+
+        // Issuance captures the dev call-trigger and dev-derived prices.
+        let dev = crate::config::IntexParams::DEV;
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
+        assert_eq!(r.intex_call_period, dev.intex_call_period_secs);
+        assert_eq!(
+            r.floor_price_minor,
+            U256::from(COEN_PRICE * dev.floor_price_num / 100)
+        );
+        assert_eq!(
+            r.call_trigger(),
+            outbe_intex::IntexCallTrigger {
+                window_days: dev.call_window_days,
+                threshold_days: dev.call_threshold_days,
+                call_price_minor: U256::from(COEN_PRICE * dev.call_price_num / 100),
+            }
+        );
+
+        // Dev maturity qualifies long before the 21-day prod maturity.
+        let rate = r.floor_price_minor + U256::from(1);
+        let after_maturity = ISSUED_AT as u64 + dev.maturity_period_secs + 1;
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            dev.maturity_period_secs,
+            after_maturity,
+            rate
+        )
+        .unwrap());
+        assert_eq!(
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn config_unknown_selector_errors() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        f.config_profile.write(99u8).unwrap();
+        assert!(crate::config::read(&f).is_err());
+    });
+}
+
+/// Pin the selector slot index: the seeder writes raw slot 13, so the schema
+/// must map `config_profile` there.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        assert_eq!(f.config_profile.slot(), U256::from(13));
     });
 }

@@ -161,6 +161,7 @@ CCA_ADDRESS = "0000000000000000000000000000000000001011"
 MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
+INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
 VALIDATOR_SET_ADDRESS = "000000000000000000000000000000000000ee00"
 SLASH_INDICATOR_ADDRESS = "000000000000000000000000000000000000ee01"
 STAKING_ADDRESS = "000000000000000000000000000000000000ee02"
@@ -195,6 +196,10 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 # it bounds the felony window: a felony threshold (default 150) must stay below it.
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
+
+# IntexFactory profile selector (config slot 13). Numbers live in Rust
+# (crates/core/intexfactory/src/config.rs); genesis only picks one.
+INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
@@ -1143,6 +1148,18 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
 # --- External contracts ---
 
+def seed_intex_factory(storage: StorageBuilder, config: dict):
+    """Write the IntexFactory profile selector (config slot 13) from
+    `profile: "prod" | "dev"` (default "prod")."""
+    profile = str(config.get("profile", "prod")).lower()
+    if profile not in INTEX_PROFILE_SELECTORS:
+        raise ValueError(
+            f"intex_factory: unknown profile {profile!r}; "
+            f"expected one of {sorted(INTEX_PROFILE_SELECTORS)}"
+        )
+    storage.set_slot(13, INTEX_PROFILE_SELECTORS[profile])  # config_profile
+
+
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
     """
     Embed externally-fetched contracts (bytecode + storage) into the genesis
@@ -1404,6 +1421,16 @@ def main():
         settlements = seed["oracle"].get("settlement_currencies", [])
         print(f"  Oracle: {len(pairs)} pairs, {len(settlements)} settlements, "
               f"{len(oracle_storage.entries)} storage entries")
+
+    # Seed IntexFactory profile selector (account preserved by the runtime
+    # marker list, so no extra wiring needed).
+    if "intex_factory" in seed:
+        intex_factory_storage = StorageBuilder()
+        seed_intex_factory(intex_factory_storage, seed["intex_factory"])
+        entry = alloc.setdefault(INTEX_FACTORY_ADDRESS, {})
+        entry.setdefault("storage", {}).update(intex_factory_storage.entries)
+        entry.setdefault("code", MARKER_CODE)
+        print(f"  IntexFactory: {len(intex_factory_storage.entries)} storage entries")
 
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:

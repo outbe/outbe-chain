@@ -65,6 +65,10 @@ pub struct IntexFactoryContract {
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 12)]
     pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    #[attribute(order = 13)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl IntexFactoryContract<'_> {

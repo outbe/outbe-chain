@@ -9,9 +9,9 @@ use outbe_primitives::storage::StorageHandle;
 
 use outbe_intex::IntexState;
 
+use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, FLOOR_PRICE_DEN,
-    FLOOR_PRICE_NUM, INTEX_CALL_PERIOD_SECONDS, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
+    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
     POW_DIFFICULTY, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
@@ -30,8 +30,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
-    let floor_price_minor = derived_floor(params.coen_price)?;
-    let call_price_minor = derived_call_price(params.coen_price)?;
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    let cfg = config::read(&factory)?;
+
+    let floor_price_minor = derived_floor(params.coen_price, cfg.floor_price_num)?;
+    let call_price_minor = derived_call_price(params.coen_price, cfg.call_price_num)?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
@@ -39,10 +42,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         promis_load_minor: params.promis_load_minor,
         cost_amount_minor: params.cost_amount_minor,
         floor_price_minor,
-        intex_call_period: INTEX_CALL_PERIOD_SECONDS,
+        intex_call_period: cfg.intex_call_period_secs,
         call_trigger: outbe_intex::IntexCallTrigger {
-            window_days: CALL_WINDOW_DAYS,
-            threshold_days: CALL_THRESHOLD_DAYS,
+            window_days: cfg.call_window_days,
+            threshold_days: cfg.call_threshold_days,
             call_price_minor,
         },
         issued_at,
@@ -59,7 +62,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         IIntexNFT1155::createSeriesCall {
             seriesId: params.series_id,
             issuedIntexCount: params.issued_intex_count,
-            intexCallPeriod: INTEX_CALL_PERIOD_SECONDS,
+            intexCallPeriod: cfg.intex_call_period_secs,
         }
         .abi_encode()
         .into(),
@@ -78,10 +81,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         promisLoadMinor: params.promis_load_minor,
         costAmountMinor: params.cost_amount_minor,
         floorPriceMinor: floor_price_minor_u64,
-        intexCallPeriod: INTEX_CALL_PERIOD_SECONDS,
+        intexCallPeriod: cfg.intex_call_period_secs,
         settlementTokenAlias: params.reference_currency,
-        callWindowDays: CALL_WINDOW_DAYS,
-        callThresholdDays: CALL_THRESHOLD_DAYS,
+        callWindowDays: cfg.call_window_days,
+        callThresholdDays: cfg.call_threshold_days,
         callPriceMinor: call_price_minor_u64,
         recipients: params.recipients,
         quantities: params.quantities,
@@ -117,8 +120,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     )?;
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
-    IntexFactoryContract::new(storage.clone())
-        .insert_unqualified(params.series_id, floor_price_minor)?;
+    factory.insert_unqualified(params.series_id, floor_price_minor)?;
 
     emit_event(
         storage,
@@ -130,16 +132,16 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     )
 }
 
-pub(crate) fn derived_floor(coen_price: U256) -> Result<U256> {
+pub(crate) fn derived_floor(coen_price: U256, floor_price_num: u64) -> Result<U256> {
     coen_price
-        .checked_mul(U256::from(FLOOR_PRICE_NUM))
+        .checked_mul(U256::from(floor_price_num))
         .map(|v| v / U256::from(FLOOR_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))
 }
 
-pub(crate) fn derived_call_price(coen_price: U256) -> Result<U256> {
+pub(crate) fn derived_call_price(coen_price: U256, call_price_num: u64) -> Result<U256> {
     coen_price
-        .checked_mul(U256::from(CALL_PRICE_NUM))
+        .checked_mul(U256::from(call_price_num))
         .map(|v| v / U256::from(CALL_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("coen call price overflow".into()))
 }
