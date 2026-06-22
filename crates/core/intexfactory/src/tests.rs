@@ -333,11 +333,29 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
         // Immature -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,immature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            immature,
+            floor + U256::from(1)
+        )
+        .unwrap());
         // Mature but rate == floor (strict >) -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor).unwrap());
+        assert!(
+            !qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS, mature, floor).unwrap()
+        );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert!(qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor + U256::from(1)).unwrap());
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            mature,
+            floor + U256::from(1)
+        )
+        .unwrap());
         assert_eq!(
             outbe_intex::api::read_series(&s, 7)
                 .unwrap()
@@ -348,7 +366,15 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
         // Already Qualified -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS,mature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            mature,
+            floor + U256::from(1)
+        )
+        .unwrap());
     });
 }
 
@@ -412,10 +438,15 @@ fn qualify_series<'a>(
     let mut f = IntexFactoryContract::new(s.clone());
     let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(
-        qualified::try_qualify(s, &mut f, id, MATURITY_PERIOD_SECONDS, mature, floor + U256::from(1))
-            .unwrap()
-    );
+    assert!(qualified::try_qualify(
+        s,
+        &mut f,
+        id,
+        MATURITY_PERIOD_SECONDS,
+        mature,
+        floor + U256::from(1)
+    )
+    .unwrap());
     f
 }
 
