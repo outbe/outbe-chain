@@ -1,5 +1,4 @@
 use std::{
-    collections::btree_map::Entry,
     collections::{BTreeMap, VecDeque},
     fmt,
     future::Future,
@@ -14,17 +13,13 @@ use commonware_codec::Read as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
     self,
-    dkg::feldman_desmedt::{observe, DealerLog, Info, Logs, Output, SignedDealerLog},
+    dkg::feldman_desmedt::{Info, Output},
     primitives::{
         sharing::{Mode, Sharing},
         variant::MinSig,
     },
 };
-use commonware_parallel::Sequential;
-use commonware_utils::{
-    ordered::{Quorum, Set},
-    N3f1,
-};
+use commonware_utils::{ordered::Set, N3f1};
 use eyre::{ensure, Result, WrapErr};
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult, TeeReshareRegistration},
@@ -36,6 +31,12 @@ use tracing::{debug, info, warn};
 use crate::{
     block::ConsensusBlock, config, finalization::util::extract_header_artifact_from_block,
     util::rate_limit::LogRateLimiter, validators::ValidatorSet,
+};
+
+/// Explicit DKG ceremony state machine + non-consensus dealer-log gossip buffer.
+pub(crate) mod ceremony;
+use ceremony::{
+    DealerLogGossip, DkgCeremony, FinalizedLogOutcome, PendingDealerLogOutcome, ReconstructOutcome,
 };
 
 /// Boxed, `Send` future returned by [`AncestryReader`] lookups. Mirrors the
@@ -137,39 +138,24 @@ struct BoundaryStatusCacheEntry {
     status: BoundaryStatus,
 }
 
-#[derive(Clone, Debug)]
+/// Per-epoch ceremony shell: the pure canonical state machine, the
+/// non-consensus gossip buffer, and the channel used to notify the local DKG
+/// actor of chain-finalized dealer logs. All non-trivial logic lives in
+/// [`ceremony`]; this struct only bundles the parts and the effect sink.
+#[derive(Debug)]
 struct CeremonyState {
-    epoch: Epoch,
-    info: Info<MinSig, bls12381::PublicKey>,
-    max_players: NonZeroU32,
-    dealers: Set<bls12381::PublicKey>,
-    local_dealer_log: Option<Bytes>,
-    pending_dealer_logs: BTreeMap<bls12381::PublicKey, Bytes>,
+    canonical: DkgCeremony,
+    gossip: DealerLogGossip,
     finalized_dealer_log_tx: Option<mpsc::UnboundedSender<Bytes>>,
-    finalized_dealer_logs: BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
-    canonical_output: Option<Output<MinSig, bls12381::PublicKey>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct State {
     pending_boundary: Option<DkgBoundaryArtifact>,
     committed_boundary: Option<CommittedDkgBoundary>,
     boundary_status_cache: BTreeMap<B256, BoundaryStatusCacheEntry>,
     boundary_status_lru: VecDeque<B256>,
     ceremony: Option<CeremonyState>,
-}
-
-#[derive(Debug)]
-struct VerifiedDealerLog {
-    dealer: bls12381::PublicKey,
-    log: DealerLog<MinSig, bls12381::PublicKey>,
-}
-
-enum PendingDealerLogOutcome {
-    Stored,
-    DuplicateSame,
-    DuplicateDifferent { dealer: bls12381::PublicKey },
-    IgnoredCanonical,
 }
 
 impl Mailbox {
@@ -447,15 +433,9 @@ impl Mailbox {
 
         self.with_state(|state| {
             state.ceremony = Some(CeremonyState {
-                epoch,
-                info,
-                max_players,
-                dealers,
-                local_dealer_log: None,
-                pending_dealer_logs: BTreeMap::new(),
+                canonical: DkgCeremony::new(epoch, info, max_players, dealers),
+                gossip: DealerLogGossip::default(),
                 finalized_dealer_log_tx,
-                finalized_dealer_logs: BTreeMap::new(),
-                canonical_output: None,
             });
         });
         Ok(())
@@ -465,9 +445,8 @@ impl Mailbox {
         let dealer = self.verify_dealer_log_sync(epoch, bytes.as_ref())?;
         self.with_state(|state| {
             if let Some(ceremony) = state.ceremony.as_mut() {
-                if ceremony.epoch == epoch {
-                    ceremony.pending_dealer_logs.remove(&dealer);
-                    ceremony.local_dealer_log = Some(bytes);
+                if ceremony.canonical.epoch == epoch {
+                    ceremony.gossip.record_local(&dealer, bytes);
                 }
             }
         });
@@ -480,8 +459,7 @@ impl Mailbox {
             state.committed_boundary = None;
             Self::clear_boundary_status_cache_inner(state);
             if let Some(ceremony) = state.ceremony.as_mut() {
-                ceremony.local_dealer_log = None;
-                ceremony.pending_dealer_logs.clear();
+                ceremony.gossip.clear();
             }
         });
     }
@@ -527,14 +505,8 @@ impl Mailbox {
             let ceremony = state
                 .ceremony
                 .as_ref()
-                .filter(|ceremony| ceremony.epoch == epoch)?;
-            ceremony.local_dealer_log.clone().or_else(|| {
-                ceremony
-                    .pending_dealer_logs
-                    .iter()
-                    .next()
-                    .map(|(_, bytes)| bytes.clone())
-            })
+                .filter(|ceremony| ceremony.canonical.epoch == epoch)?;
+            ceremony.gossip.best_to_emit()
         })
     }
 
@@ -543,8 +515,8 @@ impl Mailbox {
             state
                 .ceremony
                 .as_ref()
-                .filter(|ceremony| ceremony.epoch == epoch)
-                .and_then(|ceremony| ceremony.canonical_output.clone())
+                .filter(|ceremony| ceremony.canonical.epoch == epoch)
+                .and_then(|ceremony| ceremony.canonical.output().cloned())
         })
     }
 
@@ -586,30 +558,14 @@ impl Mailbox {
             let Some(ceremony) = state
                 .ceremony
                 .as_mut()
-                .filter(|ceremony| ceremony.epoch == epoch)
+                .filter(|ceremony| ceremony.canonical.epoch == epoch)
             else {
-                return PendingDealerLogOutcome::IgnoredCanonical;
+                return PendingDealerLogOutcome::IgnoredNoActiveCeremony;
             };
-
-            if ceremony.finalized_dealer_logs.contains_key(&dealer) {
-                return PendingDealerLogOutcome::IgnoredCanonical;
-            }
-            if ceremony.local_dealer_log.as_ref() == Some(&bytes) {
-                return PendingDealerLogOutcome::DuplicateSame;
-            }
-
-            match ceremony.pending_dealer_logs.entry(dealer.clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(bytes);
-                    PendingDealerLogOutcome::Stored
-                }
-                Entry::Occupied(entry) if entry.get() == &bytes => {
-                    PendingDealerLogOutcome::DuplicateSame
-                }
-                Entry::Occupied(_) => PendingDealerLogOutcome::DuplicateDifferent {
-                    dealer: dealer.clone(),
-                },
-            }
+            let already_finalized = ceremony.canonical.is_finalized(&dealer);
+            ceremony
+                .gossip
+                .record_pending(dealer.clone(), bytes, already_finalized)
         });
 
         match outcome {
@@ -627,10 +583,17 @@ impl Mailbox {
                     );
                 }
             }
-            PendingDealerLogOutcome::IgnoredCanonical => {
+            PendingDealerLogOutcome::IgnoredFinalized => {
                 debug!(
                     ?dealer,
                     "ignoring pending P2P DKG dealer log for already-finalized dealer"
+                );
+            }
+            PendingDealerLogOutcome::IgnoredNoActiveCeremony => {
+                debug!(
+                    ?dealer,
+                    epoch = epoch.get(),
+                    "ignoring pending P2P DKG dealer log: no active ceremony for epoch"
                 );
             }
         }
@@ -674,78 +637,63 @@ impl Mailbox {
                     }
                 }
                 if let Some(ceremony) = state.ceremony.as_mut() {
-                    ceremony.local_dealer_log = None;
-                    ceremony.pending_dealer_logs.clear();
+                    ceremony.gossip.clear();
                 }
             }
             Some(ConsensusHeaderArtifact::DealerLog(bytes)) => {
                 if let Some(ceremony) = state.ceremony.as_mut() {
-                    let verified = match verify_dealer_log_for_ceremony(ceremony, bytes.as_ref()) {
+                    let verified = match ceremony.canonical.verify_dealer_log(bytes.as_ref()) {
                         Ok(verified) => verified,
                         Err(error) => {
                             warn!(%error, "ignoring finalized DKG dealer log");
                             return;
                         }
                     };
-                    if ceremony.local_dealer_log.as_ref() == Some(bytes) {
-                        ceremony.local_dealer_log = None;
-                    }
-                    ceremony.pending_dealer_logs.remove(&verified.dealer);
-                    if ceremony
-                        .finalized_dealer_logs
-                        .contains_key(&verified.dealer)
-                    {
-                        debug!(
-                            dealer = ?verified.dealer,
-                            "ignoring duplicate chain-finalized DKG dealer log"
-                        );
-                        return;
-                    }
-                    ceremony
-                        .finalized_dealer_logs
-                        .insert(verified.dealer.clone(), verified.log);
-                    debug!(
-                        dealer = ?verified.dealer,
-                        logs = ceremony.finalized_dealer_logs.len(),
-                        "recorded finalized DKG dealer log"
-                    );
-                    if let Some(tx) = &ceremony.finalized_dealer_log_tx {
-                        if tx.send(bytes.clone()).is_err() {
-                            debug!("active DKG actor is no longer accepting finalized dealer logs");
+                    // Stop re-gossiping a dealer log that is now chain-finalized.
+                    ceremony.gossip.prune_finalized(&verified.dealer, bytes);
+
+                    match ceremony.canonical.apply_finalized_dealer_log(verified) {
+                        FinalizedLogOutcome::DuplicateFinalized { dealer } => {
+                            debug!(
+                                dealer = ?dealer,
+                                "ignoring duplicate chain-finalized DKG dealer log"
+                            );
                         }
-                    }
-                    if ceremony.canonical_output.is_none() {
-                        let mut logs =
-                            Logs::<MinSig, bls12381::PublicKey, N3f1>::new(ceremony.info.clone());
-                        for (dealer, log) in ceremony.finalized_dealer_logs.clone() {
-                            logs.record(dealer, log);
-                        }
-                        match observe::<
-                            MinSig,
-                            bls12381::PublicKey,
-                            N3f1,
-                            commonware_cryptography::bls12381::Batch,
-                        >(&mut rand_core::OsRng, logs, &Sequential)
-                        {
-                            Ok(output) => {
-                                let output_hash = dkg_output_hash(&output);
-                                let polynomial_hash = public_polynomial_hash(output.public());
-                                info!(
-                                    %output_hash,
-                                    %polynomial_hash,
-                                    logs = ceremony.finalized_dealer_logs.len(),
-                                    dealers = output.dealers().len(),
-                                    players = output.players().len(),
-                                    "canonical DKG output reconstructed from finalized dealer logs"
-                                );
-                                ceremony.canonical_output = Some(output);
+                        FinalizedLogOutcome::Recorded { dealer, logs_len } => {
+                            debug!(
+                                dealer = ?dealer,
+                                logs = logs_len,
+                                "recorded finalized DKG dealer log"
+                            );
+                            // Effect: notify the local DKG actor (best-effort),
+                            // preserving the historical insert → send → reconstruct
+                            // ordering.
+                            if let Some(tx) = &ceremony.finalized_dealer_log_tx {
+                                if tx.send(bytes.clone()).is_err() {
+                                    debug!(
+                                        "active DKG actor is no longer accepting finalized dealer logs"
+                                    );
+                                }
                             }
-                            Err(error) => {
-                                debug!(
-                                    %error,
-                                    logs = ceremony.finalized_dealer_logs.len(),
-                                    "finalized DKG dealer logs do not yet produce an output"
-                                );
+                            match ceremony.canonical.try_reconstruct_if_needed() {
+                                ReconstructOutcome::Reconstructed(output) => {
+                                    info!(
+                                        output_hash = %dkg_output_hash(&output),
+                                        polynomial_hash = %public_polynomial_hash(output.public()),
+                                        logs = logs_len,
+                                        dealers = output.dealers().len(),
+                                        players = output.players().len(),
+                                        "canonical DKG output reconstructed from finalized dealer logs"
+                                    );
+                                }
+                                ReconstructOutcome::Pending(error) => {
+                                    debug!(
+                                        %error,
+                                        logs = logs_len,
+                                        "finalized DKG dealer logs do not yet produce an output"
+                                    );
+                                }
+                                ReconstructOutcome::AlreadyReconstructed => {}
                             }
                         }
                     }
@@ -760,9 +708,12 @@ impl Mailbox {
             let ceremony = state
                 .ceremony
                 .as_ref()
-                .filter(|ceremony| ceremony.epoch == epoch)
+                .filter(|ceremony| ceremony.canonical.epoch == epoch)
                 .ok_or_else(|| eyre::eyre!("no active DKG ceremony for epoch {}", epoch.get()))?;
-            verify_dealer_log_for_ceremony(ceremony, bytes).map(|verified| verified.dealer)
+            ceremony
+                .canonical
+                .verify_dealer_log(bytes)
+                .map(|verified| verified.dealer)
         })
     }
 
@@ -782,28 +733,6 @@ impl Default for Mailbox {
             duplicate_dealer_log_limiter: Arc::new(LogRateLimiter::new(Duration::from_secs(5))),
         }
     }
-}
-
-fn verify_dealer_log_for_ceremony(
-    ceremony: &CeremonyState,
-    bytes: &[u8],
-) -> Result<VerifiedDealerLog> {
-    let mut reader = bytes;
-    let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
-        &mut reader,
-        &ceremony.max_players,
-    )
-    .wrap_err("failed decoding signed dealer log")?;
-    ensure!(reader.is_empty(), "trailing bytes after signed dealer log");
-
-    let (dealer, log) = signed_log
-        .check(&ceremony.info)
-        .ok_or_else(|| eyre::eyre!("signed dealer log failed cryptographic verification"))?;
-    ensure!(
-        ceremony.dealers.index(&dealer).is_some(),
-        "signed dealer log dealer is not in ceremony committee"
-    );
-    Ok(VerifiedDealerLog { dealer, log })
 }
 
 pub struct BoundaryArtifactInput<'a> {

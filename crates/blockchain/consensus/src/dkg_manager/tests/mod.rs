@@ -8,7 +8,7 @@
 mod boundary;
 
 use alloy_primitives::{address, B256, U256};
-use commonware_codec::Encode as _;
+use commonware_codec::{Encode as _, Read as _};
 use commonware_cryptography::{
     bls12381::{
         dkg::feldman_desmedt::{observe, Dealer, DealerLog, Info, Logs, Player, SignedDealerLog},
@@ -427,7 +427,8 @@ async fn reshare_ceremony_uses_previous_players_as_dealers() {
             .ceremony
             .as_ref()
             .expect("ceremony initialized")
-            .dealers
+            .canonical
+            .dealers()
             .clone()
     });
     assert_eq!(dealers, old_participants);
@@ -464,7 +465,8 @@ async fn reshare_ceremony_keeps_removed_old_player_as_dealer() {
             .ceremony
             .as_ref()
             .expect("ceremony initialized")
-            .dealers
+            .canonical
+            .dealers()
             .clone()
     });
     assert_eq!(dealers, old_participants);
@@ -510,13 +512,7 @@ async fn pending_p2p_dealer_log_rejects_non_committee_dealer() {
         .unwrap();
     manager.with_state(|state| {
         let ceremony = state.ceremony.as_mut().unwrap();
-        ceremony.dealers = ceremony
-            .dealers
-            .iter()
-            .filter(|candidate| *candidate != dealer)
-            .cloned()
-            .try_collect()
-            .unwrap();
+        ceremony.canonical.remove_dealer_for_test(dealer);
     });
 
     assert!(manager
@@ -572,20 +568,96 @@ fn chain_finalized_replay_rejects_non_committee_dealer() {
         .unwrap();
     manager.with_state(|state| {
         let ceremony = state.ceremony.as_mut().unwrap();
-        ceremony.dealers = ceremony
-            .dealers
-            .iter()
-            .filter(|candidate| *candidate != dealer)
-            .cloned()
-            .try_collect()
-            .unwrap();
+        ceremony.canonical.remove_dealer_for_test(dealer);
     });
 
     manager
         .note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(bytes.clone())));
     let recorded =
-        manager.with_state(|state| state.ceremony.as_ref().unwrap().finalized_dealer_logs.len());
+        manager.with_state(|state| state.ceremony.as_ref().unwrap().canonical.finalized_len());
     assert_eq!(recorded, 0);
+}
+
+/// The canonical state machine is a deterministic, replayable fold over the
+/// chain-finalized dealer logs: feeding the *same* finalized-log order into two
+/// fresh managers yields the same canonical output (crash-replay safety),
+/// reconstruction is frozen once it first succeeds, and a duplicate finalized
+/// log is idempotent. (Cross-order is intentionally NOT asserted: DKG completes
+/// on threshold participation, so a different freeze-time subset is a different
+/// group key — determinism comes from canonical chain order.)
+#[test]
+fn canonical_reconstruction_is_replay_deterministic_and_frozen() {
+    let mut keys: Vec<bls12381::PrivateKey> = (0..4)
+        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .collect();
+    keys.sort_by_key(|a| a.public_key().encode());
+    let participants: Set<bls12381::PublicKey> =
+        keys.iter().map(|k| k.public_key()).try_collect().unwrap();
+    let (_info, _output, _shares, _logs, signed_logs) =
+        run_round(&keys, participants.clone(), None, None, 11);
+    // Deterministic order (BTreeMap iteration = sorted by dealer pubkey).
+    let order: Vec<Bytes> = signed_logs.values().cloned().collect();
+    assert!(order.len() >= 3, "need >= threshold logs to reconstruct");
+
+    let feed = |seq: &[Bytes]| -> Option<_> {
+        let manager = Mailbox::new();
+        manager
+            .note_ceremony_started(Epoch::new(0), 11, None, participants.clone())
+            .unwrap();
+        for bytes in seq {
+            manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(
+                bytes.clone(),
+            )));
+        }
+        manager.canonical_output(Epoch::new(0))
+    };
+
+    // Same-order replay → identical canonical output (deterministic rebuild).
+    let out_a = feed(&order).expect("reconstructed from full set");
+    let out_b = feed(&order).expect("reconstructed on replay");
+    assert_eq!(out_a, out_b);
+
+    // Freeze-once: output is fixed at first successful reconstruction and a
+    // later finalized log never changes it.
+    let manager = Mailbox::new();
+    manager
+        .note_ceremony_started(Epoch::new(0), 11, None, participants.clone())
+        .unwrap();
+    for bytes in order.iter().take(3) {
+        manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(
+            bytes.clone(),
+        )));
+    }
+    let frozen = manager
+        .canonical_output(Epoch::new(0))
+        .expect("threshold reached");
+    manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(
+        order[3].clone(),
+    )));
+    assert_eq!(
+        manager.canonical_output(Epoch::new(0)),
+        Some(frozen),
+        "reconstruction must be frozen once produced"
+    );
+
+    // Duplicate finalized log is idempotent: the same dealer is not recorded
+    // twice.
+    let manager = Mailbox::new();
+    manager
+        .note_ceremony_started(Epoch::new(0), 11, None, participants)
+        .unwrap();
+    manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(
+        order[0].clone(),
+    )));
+    manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::DealerLog(
+        order[0].clone(),
+    )));
+    let recorded =
+        manager.with_state(|state| state.ceremony.as_ref().unwrap().canonical.finalized_len());
+    assert_eq!(
+        recorded, 1,
+        "duplicate finalized dealer log must not double-count"
+    );
 }
 
 #[test]
