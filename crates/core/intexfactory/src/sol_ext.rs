@@ -86,5 +86,7 @@ sol! {
         function balanceOf(address account, uint256 id) external view returns (uint256);
         function settle(uint32 seriesId, address from, address to, uint256 amount) external;
         function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
+        function markQualified(uint32 seriesId) external;
+        function markCalled(uint32 seriesId) external;
     }
 }
