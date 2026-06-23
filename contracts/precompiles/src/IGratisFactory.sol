@@ -16,6 +16,11 @@ interface IGratisFactory {
     ///         same call.
     event GratisMined(address indexed account, uint256 amount);
 
+    /// @notice Emitted when `sender` converts gratis to native COEN via
+    ///         `mineCoen`. The gratis is burned, the Fidelity sale cohort is
+    ///         recorded, and `unitAmount` native COEN is minted 1:1.
+    event CoenMined(address indexed sender, uint256 gratisAmount, uint256 unitAmount);
+
     /// @notice Emitted when a user adds a shielded pledge to the pool.
     event GratisPledged(address indexed account, uint8 indexed denomId, uint256 commitment);
 
@@ -64,6 +69,11 @@ interface IGratisFactory {
     ///         input must bind to `msg.sender` — there is no way to direct
     ///         the released Gratis to a different address.
     function unpledgeGratis(SpendArgs calldata args) external;
+
+    /// @notice Convert `amount` gratis to native COEN at 1:1. Burns the gratis,
+    ///         records the Fidelity sale cohort, and mints the native COEN to
+    ///         `msg.sender`. Returns the minted native amount.
+    function mineCoen(uint256 amount) external returns (uint256);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

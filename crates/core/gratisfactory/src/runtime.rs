@@ -3,10 +3,13 @@
 //! Bridges the Gratis token (`outbe_gratis::Gratis`) and the shielded pool
 //! (`outbe_gratispool`):
 //!
-//! Also owns the gratis-minting path (`mine`): minting wraps
-//! `outbe_gratis::Gratis::mine`, records the Fidelity acquisition cohort, and
-//! emits `GratisMined`. NodFactory's mine path delegates here so the token
-//! and Fidelity bookkeeping live in one place.
+//! Also owns the gratis mint/burn orchestration. `mine` wraps
+//! `outbe_gratis::Gratis::mine`, records the Fidelity acquisition cohort
+//! (`cohort_in`), and emits `GratisMined`. `mine_coen` is the symmetric
+//! sale path: it wraps `outbe_gratis::Gratis::burn`, records the Fidelity
+//! sale cohort (`cohort_out`), mints native COEN 1:1, and emits `CoenMined`.
+//! Keeping both here puts the token movement and Fidelity bookkeeping in one
+//! place.
 
 use alloy_primitives::{Address, U256};
 
@@ -81,4 +84,32 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
     )?;
 
     Ok(new_supply)
+}
+
+/// Burn `amount` gratis from `account`, record the Fidelity sale cohort (LIFO
+/// via `cohort_out`), mint the matching native COEN to `account` 1:1, and emit
+/// `CoenMined`. Returns the minted native amount.
+///
+/// The `mineCoen` precompile entry point delegates here. Amount/balance
+/// validation is delegated to [`outbe_gratis::Gratis::burn`].
+pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
+    let mut gratis = Gratis::new(storage.clone());
+    gratis.burn(account, amount)?;
+
+    let now = storage.timestamp()?.to::<u64>();
+    outbe_fidelity::api::cohort_out(storage.clone(), account, amount, now)?;
+
+    // Mint native COEN to the seller 1:1 against the burned gratis.
+    storage.increase_balance(account, amount)?;
+
+    storage.emit_event(
+        GRATIS_FACTORY_ADDRESS,
+        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::CoenMined {
+            sender: account,
+            gratisAmount: amount,
+            unitAmount: amount,
+        }),
+    )?;
+
+    Ok(amount)
 }

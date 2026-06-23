@@ -240,3 +240,72 @@ fn mine_rejects_zero_amount() {
         assert!(err.to_string().contains("amount must be positive"));
     });
 }
+
+#[test]
+fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = U256::from(1_000u64);
+
+        // Seed gratis to burn plus an active Fidelity cohort of the SAME size
+        // acquired a year ago, so it has positive RCFI now and is fully
+        // consumed by the sale.
+        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        outbe_fidelity::api::cohort_in(storage.clone(), alice(), amount, CREATED_AT - ONE_YEAR_SECS)
+            .unwrap();
+        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_rcfi_scaled(alice())
+            .unwrap();
+        assert!(rcfi_before > U256::ZERO);
+
+        // mineCoen on the gratisfactory precompile.
+        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(
+            IGratisFactory::mineCoenCall { amount },
+        ));
+        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        let minted = IGratisFactory::mineCoenCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(minted, amount);
+
+        // Gratis fully burned; native COEN minted 1:1 to the seller.
+        let gratis = Gratis::new(storage.clone());
+        assert_eq!(gratis.balance_of(alice()).unwrap(), U256::ZERO);
+        assert_eq!(gratis.total_supply().unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(alice()).unwrap(), amount);
+
+        // The active cohort was fully sold via cohort_out, so RCFI is now zero.
+        // If the sale hook were dropped, this would stay positive and fail.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_rcfi_scaled(alice())
+            .unwrap();
+        assert_eq!(rcfi_after, U256::ZERO);
+    });
+}
+
+#[test]
+fn mine_coen_rejects_insufficient_balance() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        // Alice holds 100 gratis but tries to convert 200.
+        Gratis::new(storage.clone())
+            .mine(alice(), U256::from(100u64))
+            .unwrap();
+
+        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(
+            IGratisFactory::mineCoenCall {
+                amount: U256::from(200u64),
+            },
+        ));
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("insufficient balance"));
+
+        // No native COEN minted, gratis untouched (atomic revert).
+        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
+        assert_eq!(
+            Gratis::new(storage.clone()).balance_of(alice()).unwrap(),
+            U256::from(100u64)
+        );
+    });
+}

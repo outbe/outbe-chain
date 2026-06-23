@@ -53,6 +53,9 @@ pub fn dispatch(
                         outbe_gratispool::constants::ACTION_UNPLEDGE as u8,
                     )
                 }),
+                mineCoen(c) => mutate(c, caller, |sender, c| {
+                    runtime::mine_coen(storage.clone(), sender, c.amount)
+                }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
                     Ok(id == ERC165_INTERFACE_ID)
