@@ -2857,6 +2857,21 @@ where
             )
         })?;
 
+    // Defensive startup hygiene: a crash between persisting a finalization parent
+    // record and advancing the finalization view can leave an ahead-of-view
+    // record on disk. Drop any finalization record above the recovered finalized
+    // height so the store never retains a height the view has not reached.
+    let pruned_ahead = finalized_parent_cert_store
+        .prune_above_height(last_execution_height)
+        .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
+    if pruned_ahead > 0 {
+        tracing::info!(
+            pruned_ahead,
+            recovered_finalized_height = last_execution_height,
+            "dropped ahead-of-recovered-view finalization parent records at startup"
+        );
+    }
+
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;

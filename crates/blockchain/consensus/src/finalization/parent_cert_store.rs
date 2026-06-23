@@ -680,6 +680,52 @@ impl FinalizedParentCertStore {
     pub fn remove(&self, key: CertifiedParentProofKey) -> Result<bool, ParentProofStoreError> {
         <Self as CertifiedParentProofStore>::remove(self, &key)
     }
+
+    /// Drop finalization records persisted for heights strictly above `ceiling`.
+    ///
+    /// `process_finalization` durably writes the height-N parent record before it
+    /// advances the finalization view, so a crash in that window can leave an
+    /// ahead-of-recovered-view record on disk. Called once at startup with the
+    /// recovered finalized height, this restores the invariant
+    /// `stored_at_height <= recovered_last_finalized`. Selection already drains
+    /// any height-mismatched record at read time (`validate_parent_record`), so
+    /// this is defensive on-disk hygiene, not a divergence fix.
+    ///
+    /// Only the `Finalization` slot is touched: its `stored_at_height` is the real
+    /// block height. `CertifiedNotarization` records key `stored_at_height` to the
+    /// notarization view (a retention proxy, not a height), so they are not
+    /// comparable to a block-height ceiling and are left untouched.
+    pub fn prune_above_height(&self, ceiling: u64) -> Result<usize, ParentProofStoreError> {
+        let fin_drop: Vec<CertifiedParentProofKey> = {
+            let state = self.lock_read();
+            state
+                .finalization
+                .iter()
+                .filter_map(|(key, r)| (r.stored_at_height > ceiling).then_some(*key))
+                .collect()
+        };
+        if fin_drop.is_empty() {
+            return Ok(0);
+        }
+        if let Some(backend) = &self.backend {
+            for key in &fin_drop {
+                backend.remove_record::<tables::OutbeCertifiedParentFinalizationRecords>(key)?;
+            }
+        }
+        let mut dropped = 0usize;
+        {
+            let mut state = self.lock_write();
+            for key in fin_drop {
+                if state.finalization.remove(&key).is_some() {
+                    dropped += 1;
+                }
+            }
+        }
+        if dropped > 0 {
+            self.bump_revision();
+        }
+        Ok(dropped)
+    }
 }
 
 /// Narrow, write-only capability to record a local `Activity::Certification`
@@ -1103,6 +1149,31 @@ mod tests {
             meta.proof_kind,
             ParentParticipationProof::CertifiedNotarization
         );
+    }
+
+    #[test]
+    fn prune_above_height_drops_only_ahead_finalization_records() {
+        let store = FinalizedParentCertStore::new();
+        store
+            .put_finalization(finalization_record(0xAA, 50))
+            .unwrap();
+        store
+            .put_finalization(finalization_record(0xBB, 100))
+            .unwrap();
+        // CN witness: stored_at_height is a notarization-view proxy, not a height.
+        store
+            .put_certified_notarization(notarization_record(0xCC, 100))
+            .unwrap();
+
+        // Recovered finalized height = 60: the height-100 finalization record is
+        // ahead of the view and is dropped; the height-50 record stays.
+        let dropped = store.prune_above_height(60).unwrap();
+        assert_eq!(dropped, 1);
+        assert!(store.get_finalization(key(0xAA)).is_some());
+        assert!(store.get_finalization(key(0xBB)).is_none());
+        // The CertifiedNotarization slot is view-keyed, not height-comparable, so
+        // an above-height prune never touches it.
+        assert!(store.get_certified_notarization(key(0xCC)).is_some());
     }
 
     #[test]

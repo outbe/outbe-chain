@@ -123,9 +123,18 @@ enum DealerBundleAction {
 
 /// Run a DKG ceremony over P2P (initial or reshare).
 ///
-/// Blocks until the ceremony completes or times out.
-/// Requires at least 2f+1 validators to be online (N3f1 fault model).
-/// One or more offline validators will not block the ceremony.
+/// Blocks until the ceremony completes or times out. The completion quorum
+/// depends on the mode:
+/// - **Chain-finalized reshare**: completes on `>= 2f+1` (N3f1) finalized dealer
+///   logs. The chain carrier makes the selected subset canonical, so one or more
+///   offline validators do NOT block the ceremony.
+/// - **Initial interactive bootstrap (genesis)**: requires ALL `n` genesis dealer
+///   logs. There is no canonical carrier yet, so every validator must agree on
+///   the identical complete dealer-log set to derive the same public polynomial;
+///   a `2f+1` subset would be non-deterministic and could fork the genesis
+///   committee. A single offline founder therefore stalls genesis until the
+///   timeout — by design (see the completion guard below and
+///   `test_bootstrap_dkg_waits_for_all_genesis_nodes_*`).
 ///
 /// # Arguments
 /// * `signing_key` — this validator's BLS individual private key (MinPk)
