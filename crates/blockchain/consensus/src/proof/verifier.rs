@@ -32,6 +32,7 @@
 //! configuration. They land; this module exposes the entry point
 //! they will extend.
 
+use crate::proof::committee_keys::{committee_ordered_set, decode_committee_participants};
 use crate::proof::{committee_set_hash_v2, CommitteeSnapshot};
 use crate::{digest::Digest as OutbeDigest, hybrid::HybridScheme};
 use alloy_primitives::{keccak256, B256};
@@ -399,18 +400,7 @@ pub fn verify_v2_proof(
     }
 
     // Build the snapshot view + vote binding from metadata.
-    let participants: Vec<bls12381::PublicKey> = snapshot
-        .committee
-        .iter()
-        .map(|entry| {
-            // CommitteeEntry stores the 48-byte MinPk consensus pubkey as a
-            // fixed-size byte array; decode it into the typed key.
-            <bls12381::PublicKey as DecodeExt<()>>::decode(Bytes::copy_from_slice(
-                &entry.consensus_pubkey,
-            ))
-            .map_err(V2VerifyError::Decode)
-        })
-        .collect::<Result<_, _>>()?;
+    let participants = decode_committee_participants(snapshot)?;
     let vrf_group_public_key = decode_min_sig_public(&snapshot.vrf_group_public_key_bytes)?;
     let view = CommitteeSnapshotView {
         participants: &participants,
@@ -453,11 +443,9 @@ pub fn verify_v2_proof(
         });
     }
 
-    // vote namespaces bind the ordered committee. Build the canonical
-    // `Set` from the snapshot committee (same sorted/deduped order as the signer's
-    // participant set) so these bytes equal what the signer used.
-    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
-        commonware_utils::ordered::Set::from_iter_dedup(participants.iter().cloned());
+    // vote namespaces bind the ordered committee (same sorted/deduped order as
+    // the signer's participant set) so these bytes equal what the signer used.
+    let committee_set = committee_ordered_set(&participants);
     let namespace = match subject {
         VoteSubject::Finalize => finalize_namespace(&committee_set),
         VoteSubject::Notarize => notarize_namespace(&committee_set),
