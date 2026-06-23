@@ -689,6 +689,12 @@ impl OutbeReporter {
     }
 
     /// Build a stable one-byte-per-participant signer bitmap from the certificate.
+    ///
+    /// Producer-side guard with diagnostics; the fill delegates to the canonical
+    /// core in [`crate::finalization::util::build_signer_bitmap`]. On a
+    /// committee/cert size skew this emits the empty sentinel, matching
+    /// [`crate::finalization::util::build_signer_bitmap_guarded`] (the resolver
+    /// path); the verify-side structural check rejects that sentinel by length.
     fn build_signer_bitmap(&self, certificate: &HybridCertificate<MinSig>) -> Vec<u8> {
         let n = certificate.signers.len();
         if n != self.validator_addresses.len() {
@@ -700,13 +706,7 @@ impl OutbeReporter {
             return Vec::new();
         }
 
-        let mut signed = vec![0u8; n];
-        for signer in certificate.signers.iter() {
-            let idx = signer.get() as usize;
-            if idx < n {
-                signed[idx] = 1;
-            }
-        }
+        let signed = crate::finalization::util::build_signer_bitmap(certificate, n);
 
         debug!(
             signers = certificate.signers.count(),

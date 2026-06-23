@@ -22,7 +22,6 @@ pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
 pub(crate) mod missed_proposers;
-pub mod participation;
 pub mod proof;
 pub mod timing;
 pub mod vrf_safety;

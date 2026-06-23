@@ -39,10 +39,10 @@ use std::{
 
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
-use crate::finalization::util::{
-    build_signer_bitmap, validate_consensus_metadata_for_verify, AttestationValidationContext,
-    AttestationVerdict,
+use crate::finalization::attestation::{
+    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
+use crate::finalization::util::build_signer_bitmap;
 use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
