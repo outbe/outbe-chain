@@ -19,11 +19,8 @@ use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
-    simplex::{
-        elector::Elector as _,
-        types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
-    },
-    types::{Epoch, Round, View},
+    simplex::types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
+    types::{Epoch, View},
     Epochable as _, Reporter, Viewable,
 };
 use commonware_cryptography::{
@@ -42,7 +39,9 @@ use crate::{
         CertifiedParentProofKey, CertifiedParentProofRecord, FinalizedParentCertStore,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridRandomElector, HybridScheme},
+    hybrid::{
+        bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
+    },
 };
 use outbe_primitives::{
     consensus::{ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData},
@@ -690,6 +689,12 @@ impl OutbeReporter {
     }
 
     /// Build a stable one-byte-per-participant signer bitmap from the certificate.
+    ///
+    /// Producer-side guard with diagnostics; the fill delegates to the canonical
+    /// core in [`crate::finalization::util::build_signer_bitmap`]. On a
+    /// committee/cert size skew this emits the empty sentinel, matching
+    /// [`crate::finalization::util::build_signer_bitmap_guarded`] (the resolver
+    /// path); the verify-side structural check rejects that sentinel by length.
     fn build_signer_bitmap(&self, certificate: &HybridCertificate<MinSig>) -> Vec<u8> {
         let n = certificate.signers.len();
         if n != self.validator_addresses.len() {
@@ -701,13 +706,7 @@ impl OutbeReporter {
             return Vec::new();
         }
 
-        let mut signed = vec![0u8; n];
-        for signer in certificate.signers.iter() {
-            let idx = signer.get() as usize;
-            if idx < n {
-                signed[idx] = 1;
-            }
-        }
+        let signed = crate::finalization::util::build_signer_bitmap(certificate, n);
 
         debug!(
             signers = certificate.signers.count(),
@@ -735,20 +734,23 @@ impl OutbeReporter {
         }
 
         let gap = current_view - last_finalized_view - 1;
-        let cap = gap.min(MAX_MISSED_PROPOSERS as u64) as usize;
-        let mut missed = Vec::with_capacity(cap);
-        let mut dropped = 0u64;
 
-        for v in (last_finalized_view + 1)..current_view {
-            if missed.len() >= MAX_MISSED_PROPOSERS {
-                dropped = current_view - v;
-                break;
-            }
+        // Single source of truth for the view-gap election sequence, shared with
+        // the verify-side recompute in `finalization::util` so proposer and
+        // validator never disagree on who was the expected leader.
+        let leaders = crate::missed_proposers::elected_leaders_for_gap(
+            self.epoch,
+            &self.elector,
+            self.view_state.last_certificate(),
+            last_finalized_view,
+            current_view,
+            MAX_MISSED_PROPOSERS,
+        );
+        let dropped = gap.saturating_sub(leaders.len() as u64);
 
-            let round = Round::new(self.epoch, View::new(v));
-            let leader = self
-                .elector
-                .elect(round, self.view_state.last_certificate());
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
             let leader_idx = leader.get() as usize;
 
             if leader_idx < self.validator_addresses.len() {
@@ -827,7 +829,7 @@ mod tests {
             ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
             parent_cert_store::FinalizedParentCertStore,
         },
-        hybrid::{HybridRandom, HybridScheme},
+        hybrid::{election::HybridRandom, HybridScheme},
     };
 
     fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {

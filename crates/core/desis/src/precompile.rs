@@ -30,7 +30,7 @@ pub fn dispatch(
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
         match call {
-            processBidsBatch(c) => mutate_void(c, caller, |_sender, c| {
+            processBidsBatch(c) => mutate_void(c, caller, |sender, c| {
                 let bids = bids_from_sol_arrays(
                     &c.bidderAddresses,
                     &c.intexQuantities,
@@ -39,6 +39,7 @@ pub fn dispatch(
                 )?;
                 runtime::process_bids_batch(
                     storage.clone(),
+                    sender,
                     c.seriesId,
                     c.srcEid,
                     c.isLast,
@@ -46,8 +47,8 @@ pub fn dispatch(
                     bids,
                 )
             }),
-            clearAuction(c) => mutate_void_payable(c, caller, value, |_sender, c, _val| {
-                runtime::clear_auction(storage.clone(), c.seriesId).map(|_| ())
+            clearAuction(c) => mutate_void_payable(c, caller, value, |sender, c, _val| {
+                runtime::clear_auction(storage.clone(), sender, c.seriesId).map(|_| ())
             }),
             getAuctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;

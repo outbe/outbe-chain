@@ -7096,6 +7096,7 @@ dependencies = [
  "metrics",
  "metrics-util",
  "outbe-primitives",
+ "parking_lot",
  "proptest",
  "rand 0.8.6",
  "rand_chacha 0.3.1",

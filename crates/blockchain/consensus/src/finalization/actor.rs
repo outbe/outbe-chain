@@ -238,11 +238,7 @@ impl FinalizationActor {
         // Stale-round short-circuit (no marshal lookup needed for
         // historical rounds).
         {
-            let view_snapshot = self
-                .deps
-                .view
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let view_snapshot = self.deps.view.read();
             if let Some(last_round) = view_snapshot.last_finalized_round {
                 if round < last_round {
                     crate::metrics::record_finalization_dropped("stale_round");
@@ -363,12 +359,7 @@ impl FinalizationActor {
                 Err(failure) => {
                     stall_cycles += 1;
                     crate::metrics::record_finalization_resolution_stalled();
-                    let last_finalized_number = self
-                        .deps
-                        .view
-                        .read()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .last_finalized_number;
+                    let last_finalized_number = self.deps.view.read().last_finalized_number;
                     tracing::warn!(
                         %digest,
                         ?round,
@@ -403,11 +394,7 @@ impl FinalizationActor {
 
         // Replay classification under a write lock so the read-modify-write
         // of the view's finalization fields is atomic.
-        let mut view = self
-            .deps
-            .view
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut view = self.deps.view.write();
 
         match classify_finalization(
             block_number,
@@ -763,12 +750,7 @@ impl FinalizationActor {
     /// no longer be needed by any future verify path. Re-reads the view under a
     /// short read lock (the write lock was already released).
     fn evict_finalized_block_cache(&self) {
-        let finalized_num = self
-            .deps
-            .view
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .last_finalized_number;
+        let finalized_num = self.deps.view.read().last_finalized_number;
         let mut cache = self
             .deps
             .block_cache

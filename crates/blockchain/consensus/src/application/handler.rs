@@ -10,13 +10,7 @@
 //! - Non-proposers resolve blocks via `marshal::resolver` (on-demand P2P)
 //! - No ad-hoc block propagation channel or local cache admission
 
-use std::{
-    fmt,
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex as StdMutex},
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 /// Maximum retry attempts for marshal block resolution before structured application failure.
 pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
@@ -51,14 +45,6 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlock>> + Send + 'a>>;
-
-pub(crate) trait AncestryReader: Send + Sync {
-    fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
-    fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a>;
-    fn is_ready(&self) -> bool;
-}
-
 struct MarshalAncestryReader<C: commonware_runtime::Clock> {
     marshal: crate::marshal_types::MarshalMailbox,
     block_cache: BlockCacheHandle,
@@ -256,186 +242,14 @@ fn finalized_parent_attestation_from_phase1_system_tx(
     }))
 }
 
-fn block_boundary_artifact(
-    block: &ConsensusBlock,
-) -> Result<Option<outbe_primitives::consensus::DkgBoundaryArtifact>, String> {
-    match extract_header_artifact_from_block(block)? {
-        Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => Ok(Some(boundary)),
-        _ => Ok(None),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoundaryRequirement {
-    NoPending,
-    AlreadyCommitted,
-    MustEmit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BoundaryRequirementError {
-    Unavailable(String),
-    Conflict(String),
-}
-
-impl BoundaryRequirementError {
-    fn is_unavailable(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
-    }
-}
-
-impl fmt::Display for BoundaryRequirementError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable(message) | Self::Conflict(message) => f.write_str(message),
-        }
-    }
-}
-
-fn boundary_scan_floor(pending: &outbe_primitives::consensus::DkgBoundaryArtifact) -> u64 {
-    if pending.freeze_height <= pending.planned_activation_height {
-        pending.freeze_height
-    } else {
-        pending
-            .planned_activation_height
-            .saturating_sub(crate::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
-    }
-}
-
-async fn resolve_boundary_requirement<R: AncestryReader>(
-    parent: Option<&ConsensusBlock>,
-    pending: Option<&outbe_primitives::consensus::DkgBoundaryArtifact>,
-    dkg_manager: &crate::dkg_manager::Mailbox,
-    ancestry: &R,
-) -> Result<BoundaryRequirement, BoundaryRequirementError> {
-    let Some(pending) = pending else {
-        return Ok(BoundaryRequirement::NoPending);
-    };
-    let Some(parent) = parent else {
-        return Ok(BoundaryRequirement::MustEmit);
-    };
-    let original_parent_hash = parent.block_hash();
-    let pending_hash = crate::dkg_manager::Mailbox::boundary_artifact_hash(pending)
-        .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-
-    if let Some(status) = dkg_manager.cached_boundary_status(original_parent_hash, pending_hash) {
-        return match status {
-            crate::dkg_manager::BoundaryStatus::NoBoundarySeen => Ok(BoundaryRequirement::MustEmit),
-            crate::dkg_manager::BoundaryStatus::BoundaryCommitted(committed) => {
-                if committed.artifact_hash == pending_hash && committed.artifact == *pending {
-                    Ok(BoundaryRequirement::AlreadyCommitted)
-                } else {
-                    Err(BoundaryRequirementError::Conflict(
-                        "cached DKG BoundaryOutcome conflicts with pending boundary".to_string(),
-                    ))
-                }
-            }
-            crate::dkg_manager::BoundaryStatus::Conflict => {
-                Err(BoundaryRequirementError::Conflict(
-                    "cached parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                ))
-            }
-        };
-    }
-
-    if !ancestry.is_ready() {
-        return Err(BoundaryRequirementError::Unavailable(
-            "DKG boundary ancestry unavailable: marshal ancestry reader is not ready".to_string(),
-        ));
-    }
-
-    let mut current = parent.clone();
-    let scan_floor = boundary_scan_floor(pending);
-    loop {
-        if let Some(boundary) =
-            block_boundary_artifact(&current).map_err(BoundaryRequirementError::Unavailable)?
-        {
-            let boundary_hash = crate::dkg_manager::Mailbox::boundary_artifact_hash(&boundary)
-                .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
-            if boundary_hash == pending_hash && boundary == *pending {
-                let committed = crate::dkg_manager::CommittedDkgBoundary {
-                    artifact: boundary,
-                    artifact_hash: boundary_hash,
-                    block_number: current.number(),
-                    block_hash: current.block_hash(),
-                };
-                dkg_manager.record_boundary_status(
-                    original_parent_hash,
-                    pending_hash,
-                    crate::dkg_manager::BoundaryStatus::BoundaryCommitted(committed),
-                );
-                return Ok(BoundaryRequirement::AlreadyCommitted);
-            }
-            if boundary.epoch == pending.epoch {
-                dkg_manager.record_boundary_status(
-                    original_parent_hash,
-                    pending_hash,
-                    crate::dkg_manager::BoundaryStatus::Conflict,
-                );
-                return Err(BoundaryRequirementError::Conflict(
-                    // Outbe has one DKG boundary artifact per epoch. Same
-                    // epoch with different bytes means a local state bug or a
-                    // conflicting proposal, not an alternate valid activation.
-                    "parent ancestry carries conflicting DKG BoundaryOutcome".to_string(),
-                ));
-            }
-        }
-
-        if current.number() == 0 || current.number() <= scan_floor {
-            dkg_manager.record_boundary_status(
-                original_parent_hash,
-                pending_hash,
-                crate::dkg_manager::BoundaryStatus::NoBoundarySeen,
-            );
-            return Ok(BoundaryRequirement::MustEmit);
-        }
-
-        let expected_hash = current.parent_hash();
-        let expected_height = current.number().saturating_sub(1);
-        let mut next = ancestry.get_block_by_height(expected_height).await;
-        let needs_hash_lookup = match next.as_ref() {
-            Some(block) if block.block_hash() == expected_hash => false,
-            Some(block) => {
-                let stale_hash = block.block_hash();
-                if dkg_manager.evict_boundary_status(stale_hash) {
-                    debug!(
-                        expected_height,
-                        stale_hash = %stale_hash,
-                        expected_hash = %expected_hash,
-                        "evicted stale DKG boundary status after non-canonical ancestry height hit"
-                    );
-                }
-                true
-            }
-            None => true,
-        };
-        if needs_hash_lookup {
-            next = ancestry.get_block_by_hash(expected_hash).await;
-        }
-        let Some(next) = next else {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
-            )));
-        };
-        if next.number() != expected_height {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
-                next.number()
-            )));
-        };
-        current = next;
-    }
-}
-
-use alloy_consensus::{BlockHeader as _, SignableTransaction as _, Transaction as _};
+use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, Bytes, B256};
-use commonware_consensus::types::{Epoch, Height, Round, View};
+use commonware_consensus::types::{Height, Round, View};
 use commonware_cryptography::{
     bls12381::{primitives::variant::MinSig, PublicKey},
-    certificate::{Provider as _, Scheme as _},
+    certificate::Provider as _,
 };
 use commonware_utils::channel::oneshot;
-use commonware_utils::ordered::Quorum as _;
 use futures::StreamExt;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
@@ -445,7 +259,6 @@ use outbe_primitives::{
     },
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
-use reth_ethereum::primitives::SignedTransaction as _;
 use reth_node_builder::{BuiltPayload as _, ConsensusEngineHandle};
 use reth_payload_builder::PayloadBuilderHandle;
 use tracing::{debug, error, info, warn};
@@ -455,13 +268,14 @@ use crate::{
     block::ConsensusBlock,
     committee_provider::CommitteeProvider,
     digest::Digest,
+    dkg_manager::{AncestryReader, BlockLookupFuture, BoundaryRequirement},
     executor,
     finalization::{
         actor::BlockCacheHandle,
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
-        state::FinalizationViewHandle,
+        state::{FinalizationViewAccess, FinalizationViewHandle},
     },
-    hybrid::{HybridElectorConfigProvider, HybridSchemeProvider},
+    hybrid::{election::HybridElectorConfigProvider, HybridSchemeProvider},
     validators::ValidatorSet,
     vrf_safety::VrfSafetyGate,
 };
@@ -494,365 +308,12 @@ type PayloadBuilder = PayloadBuilderHandle<OutbePayloadTypes>;
 // verify path.
 use crate::finalization::util::extract_header_artifact_from_block;
 
-fn consensus_leader_evm_address(
-    round: Round,
-    proposer: &PublicKey,
-    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
-) -> Result<Address, String> {
-    let epoch = round.epoch();
-    let scheme = certificate_scheme_provider
-        .scoped(epoch)
-        .ok_or_else(|| format!("missing certificate scheme for epoch {epoch}"))?;
-    let participant = scheme.participants().index(proposer).ok_or_else(|| {
-        format!("consensus leader public key is not in epoch {epoch} participant set")
-    })?;
-    let index: usize = participant
-        .get()
-        .try_into()
-        .map_err(|_| format!("participant index {} does not fit usize", participant.get()))?;
-    let committee = committee_provider
-        .ordered_committee(epoch)
-        .ok_or_else(|| format!("missing ordered EVM committee for epoch {epoch}"))?;
-
-    committee.get(index).copied().ok_or_else(|| {
-        format!("ordered EVM committee for epoch {epoch} is missing participant index {index}")
-    })
-}
-
-fn validate_rewards_beneficiary(block: &ConsensusBlock) -> Result<(), String> {
-    if block.number() > 0 && block.header().beneficiary() != REWARDS_ADDRESS {
-        return Err(format!(
-            "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-            REWARDS_ADDRESS,
-            block.header().beneficiary()
-        ));
-    }
-    Ok(())
-}
-
-fn validate_context_parent_binding(
-    block: &ConsensusBlock,
-    parent_block: Option<&ConsensusBlock>,
-    context_parent_digest: Digest,
-    genesis_hash: B256,
-) -> Result<(), String> {
-    if block.parent_digest() != context_parent_digest {
-        return Err(format!(
-            "proposed block parent digest {} does not match Simplex context parent {}",
-            block.parent_digest().0,
-            context_parent_digest.0
-        ));
-    }
-
-    let expected_number = if context_parent_digest.0 == genesis_hash {
-        1
-    } else {
-        let parent = parent_block.ok_or_else(|| {
-            "non-genesis Simplex context parent was not resolved for height validation".to_string()
-        })?;
-        if parent.digest() != context_parent_digest {
-            return Err(format!(
-                "resolved parent digest {} does not match Simplex context parent {}",
-                parent.digest().0,
-                context_parent_digest.0
-            ));
-        }
-        parent.number().checked_add(1).ok_or_else(|| {
-            "parent block number overflow while validating proposal height".to_string()
-        })?
-    };
-
-    if block.number() != expected_number {
-        return Err(format!(
-            "proposed block number {} does not extend Simplex parent height {}",
-            block.number(),
-            expected_number.saturating_sub(1)
-        ));
-    }
-
-    Ok(())
-}
-
-fn validate_system_tx_leader_binding(
-    block: &ConsensusBlock,
-    round: Round,
-    proposer: &PublicKey,
-    chain_id: u64,
-    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
-    committee_provider: &CommitteeProvider,
-) -> Result<(), String> {
-    let raw_block = block.clone().into_inner().into_block();
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        raw_block.header.extra_data().as_ref(),
-    )
-    .map_err(|error| format!("decode Outbe block artifacts for system tx validation: {error}"))?;
-
-    let layout = outbe_primitives::system_tx::split_system_layout(&raw_block.body.transactions)
-        .map_err(|error| format!("invalid system tx layout for leader binding: {error}"))?;
-    let has_boundary_outcome = matches!(
-        &artifacts.consensus_header_artifact,
-        Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(_))
-    );
-    let has_tee_bootstrap =
-        layout.has_begin_kind(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_primitives::system_tx::validate_active_system_tx_set(
-        &layout,
-        raw_block.header.number(),
-        has_boundary_outcome,
-        has_tee_bootstrap,
-    )
-    .map_err(|error| format!("invalid system tx set: {error}"))?;
-
-    if layout.system_tx_count() == 0 {
-        return Ok(());
-    }
-
-    if raw_block.header.number() >= 2 {
-        let finalization_tx = *layout
-            .begin
-            .first()
-            .ok_or_else(|| "missing CertifiedParentAccounting system tx".to_string())?;
-        let input =
-            outbe_primitives::system_tx::SystemTxInputV2::decode(finalization_tx.input().as_ref())
-                .map_err(|error| {
-                    format!("decode CertifiedParentAccounting system tx input: {error}")
-                })?;
-        let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
-            input
-        else {
-            return Err("expected CertifiedParentAccounting system tx at begin ordinal 0".into());
-        };
-        if metadata.finalized_block_hash != raw_block.header.parent_hash() {
-            return Err(format!(
-                "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                raw_block.header.parent_hash(),
-                metadata.finalized_block_hash
-            ));
-        }
-    }
-
-    if let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
-        header_artifact,
-    )) = artifacts.consensus_header_artifact.as_ref()
-    {
-        let mut found = false;
-        for tx in layout.begin.iter().chain(layout.end.iter()) {
-            let tx = *tx;
-            let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-                .map_err(|error| format!("decode system transaction input: {error}"))?;
-            if let outbe_primitives::system_tx::SystemTxInputV2::BoundaryOutcome { artifact } =
-                input
-            {
-                if &artifact != header_artifact {
-                    return Err("BoundaryOutcome system tx artifact mismatch".into());
-                }
-                found = true;
-            }
-        }
-        if !found {
-            return Err("missing BoundaryOutcome system tx for header artifact".into());
-        }
-    }
-
-    for (ordinal, tx) in layout.begin.iter().chain(layout.end.iter()).enumerate() {
-        let tx = *tx;
-        let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-            .map_err(|error| format!("decode system transaction input: {error}"))?;
-        let ordinal: u8 = ordinal
-            .try_into()
-            .map_err(|_| format!("system tx ordinal {ordinal} exceeds u8 range"))?;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
-            input.kind(),
-            ordinal,
-            raw_block.header.number(),
-            chain_id,
-            input.encode().map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| format!("build unsigned system transaction: {error}"))?;
-        if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(format!(
-                "system tx signature_hash mismatch for {:?} at ordinal {}",
-                input.kind(),
-                ordinal
-            ));
-        }
-    }
-
-    let expected = consensus_leader_evm_address(
-        round,
-        proposer,
-        certificate_scheme_provider,
-        committee_provider,
-    )?;
-    for tx in layout.begin.iter().chain(layout.end.iter()) {
-        let signer = tx
-            .try_recover()
-            .map_err(|error| format!("recover system tx signer for leader binding: {error}"))?;
-        if signer != expected {
-            return Err(format!(
-                "system tx signer {signer} does not match consensus leader EVM address {expected}"
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EpochFenceRejection {
-    StaleEpoch { active_epoch: Epoch },
-    FutureEpoch { active_epoch: Epoch },
-    BeyondBoundary { max_block_height: u64 },
-}
-
-#[derive(Debug, Clone, Copy)]
-struct EpochFenceState {
-    active_epoch: Epoch,
-    boundary: Option<EpochBoundaryFence>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct EpochBoundaryFence {
-    epoch: Epoch,
-    max_block_height: u64,
-}
-
-/// epoch continuity anchor for the first proposal of `epoch > 0`.
-///
-/// Built by [`ApplicationShared::resolve_epoch_boundary_parent`] and consumed
-/// by both `handle_propose` and `handle_verify` to bypass the `parent_view = 0`
-/// chain-genesis path for non-zero epochs.
-#[derive(Debug, Clone)]
-pub(crate) struct EpochBoundaryParent {
-    pub(crate) height: Height,
-    pub(crate) block: ConsensusBlock,
-    pub(crate) proof_key: CertifiedParentProofKey,
-}
-
-/// Typed error returned by [`ApplicationShared::resolve_epoch_boundary_parent`].
-///
-/// The variants distinguish *invalid proposal* (the proposer chose a parent
-/// that does not match the canonical anchor) from *local infrastructure issue*
-/// (the validator cannot decide locally because the finalization view or the
-/// marshal store has not caught up). Verify path votes `false` only in the
-/// first case; the rest bubble up as `Err` and drop the response channel, to
-/// match the existing `resolve_for_verify` semantics for local timeouts.
-#[derive(Debug)]
-pub(crate) enum EpochBoundaryParentError {
-    /// Simplex parent does not match the committed continuity anchor.
-    ParentMismatch {
-        expected: B256,
-        got: B256,
-        epoch: u64,
-    },
-    /// `FinalizationView` has no anchor for `epoch > 0`. Caller waited as long
-    /// as it could; this is a local-infrastructure failure, not a vote.
-    MissingAnchor { epoch: u64 },
-    /// Marshal store cannot return the anchor block.
-    MissingMarshalBlock { height: u64 },
-    /// Marshal returned a block whose digest does not match the anchor.
-    MarshalHashMismatch {
-        height: u64,
-        expected: B256,
-        got: B256,
-    },
-}
-
-impl std::fmt::Display for EpochBoundaryParentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ParentMismatch {
-                expected,
-                got,
-                epoch,
-            } => write!(
-                f,
-                "epoch boundary parent mismatch: simplex parent {got} != finalized anchor {expected} (epoch={epoch})",
-            ),
-            Self::MissingAnchor { epoch } => write!(
-                f,
-                "broken epoch continuity: epoch={epoch} but no finalized anchor in finalization_view",
-            ),
-            Self::MissingMarshalBlock { height } => write!(
-                f,
-                "epoch boundary parent block at height {height} not found in marshal",
-            ),
-            Self::MarshalHashMismatch {
-                height,
-                expected,
-                got,
-            } => write!(
-                f,
-                "marshal block at height {height} has digest {got} != simplex parent {expected}",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for EpochBoundaryParentError {}
-
-/// Guards application work during DKG activation so an old Simplex epoch cannot
-/// submit Engine API work past the activation boundary while the epoch restarts.
-#[derive(Debug, Clone)]
-pub struct ApplicationEpochFence {
-    state: Arc<StdMutex<EpochFenceState>>,
-}
-
-impl ApplicationEpochFence {
-    pub fn new(active_epoch: Epoch) -> Self {
-        Self {
-            state: Arc::new(StdMutex::new(EpochFenceState {
-                active_epoch,
-                boundary: None,
-            })),
-        }
-    }
-
-    pub fn arm_activation_boundary(&self, epoch: Epoch, max_block_height: u64) {
-        let mut state = self.lock_state();
-        state.boundary = Some(EpochBoundaryFence {
-            epoch,
-            max_block_height,
-        });
-    }
-
-    pub fn advance_epoch(&self, next_epoch: Epoch) {
-        let mut state = self.lock_state();
-        state.active_epoch = next_epoch;
-        state.boundary = state.boundary.filter(|fence| fence.epoch >= next_epoch);
-    }
-
-    fn check(&self, round: Round, candidate_block_height: u64) -> Result<(), EpochFenceRejection> {
-        let state = self.lock_state();
-        let round_epoch = round.epoch();
-        if round_epoch < state.active_epoch {
-            return Err(EpochFenceRejection::StaleEpoch {
-                active_epoch: state.active_epoch,
-            });
-        }
-        if round_epoch > state.active_epoch {
-            return Err(EpochFenceRejection::FutureEpoch {
-                active_epoch: state.active_epoch,
-            });
-        }
-        if let Some(fence) = state.boundary {
-            if fence.epoch == round_epoch && candidate_block_height > fence.max_block_height {
-                return Err(EpochFenceRejection::BeyondBoundary {
-                    max_block_height: fence.max_block_height,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, EpochFenceState> {
-        match self.state.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
+use crate::application::epoch_boundary::{self, ApplicationEpochFence, EpochBoundaryParentError};
+use crate::application::validation::{
+    validate_context_parent_binding, validate_rewards_beneficiary,
+    validate_system_tx_leader_binding,
+};
+use crate::application::verify_resolution::{resolve_for_verify, VerifyResolveTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProposeOutcome {
@@ -1302,21 +763,14 @@ impl ApplicationShared {
         let epoch = genesis.epoch;
         if epoch.get() == 0 {
             if self.trust_el_head {
-                let view = self
-                    .finalization_view
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if view.last_finalized_number > 0
-                    && view.forkchoice.finalized_block_hash != B256::ZERO
-                {
+                let anchor = self.finalization_view.finalized_anchor();
+                if anchor.number > 0 && anchor.finalized_head_hash != B256::ZERO {
                     debug!(
-                        finalized_number = view.last_finalized_number,
-                        finalized_hash = %view.forkchoice.finalized_block_hash,
+                        finalized_number = anchor.number,
+                        finalized_hash = %anchor.finalized_head_hash,
                         "handle_genesis(epoch=0): using execution head as anchor (--testnet.trust-el-head)"
                     );
-                    let _ = genesis
-                        .response
-                        .send(Digest(view.forkchoice.finalized_block_hash));
+                    let _ = genesis.response.send(Digest(anchor.finalized_head_hash));
                     return;
                 }
             }
@@ -1329,16 +783,8 @@ impl ApplicationShared {
         // deterministic runtimes; no wall-clock on the consensus path).
         let deadline = clock.current() + GENESIS_ANCHOR_WAIT_TIMEOUT;
         loop {
-            let (height, hash) = {
-                let view = self.finalization_view.read().expect(
-                    "FinalizationView lock poisoned in handle_genesis; \
-                     this indicates a panic in the FinalizationActor write path",
-                );
-                (
-                    view.last_finalized_number,
-                    view.forkchoice.finalized_block_hash,
-                )
-            };
+            let anchor = self.finalization_view.finalized_anchor();
+            let (height, hash) = (anchor.number, anchor.finalized_head_hash);
             if height > 0 && hash != B256::ZERO {
                 debug!(
                     %epoch,
@@ -1365,111 +811,6 @@ impl ApplicationShared {
         }
     }
 
-    /// epoch continuity: resolve the parent for the very first
-    /// proposal of a fresh epoch (`epoch > 0`, `parent_view = 0`).
-    ///
-    /// Simplex restarts at every epoch advance and treats the digest
-    /// returned by [`Self::handle_genesis`] as the parent of `view = 1`.
-    /// For `epoch > 0` that digest is the canonical last-finalized block's
-    /// hash (the *continuity anchor*), not chain genesis. The application
-    /// must therefore translate this synthetic `parent_view = 0` context
-    /// back into the real block 120 (or whatever the boundary block is),
-    /// not into the chain genesis special case.
-    ///
-    /// `Ok(None)` means "this is not the epoch boundary" — caller falls
-    /// back to its existing resolution path (chain genesis check followed
-    /// by `block_cache → subscribe_by_digest`).
-    ///
-    /// `Ok(Some(EpochBoundaryParent))` carries the resolved finalized
-    /// block and is fed straight into `engine.new_payload` / `build_block`.
-    ///
-    /// `Err(EpochBoundaryParentError)` is split into two categories:
-    /// * `ParentMismatch` — the Simplex parent does not match the
-    ///   committed anchor. This is an *invalid proposal*; verify path
-    ///   votes false, propose path forfeits the slot.
-    /// * `MissingAnchor` / `MissingMarshalBlock` / `MarshalHashMismatch` —
-    ///   local infrastructure issue; verify path drops the response
-    ///   channel (matching the existing `resolve_for_verify` behaviour)
-    ///   rather than voting false on a valid block.
-    async fn resolve_epoch_boundary_parent(
-        &self,
-        clock: &impl commonware_runtime::Clock,
-        round: Round,
-        parent_view: View,
-        parent_digest: Digest,
-    ) -> Result<Option<EpochBoundaryParent>, EpochBoundaryParentError> {
-        if round.epoch().get() == 0 || parent_view != View::new(0) {
-            return Ok(None);
-        }
-
-        let (expected_height, expected_hash, finalized_round) = {
-            let view = self
-                .finalization_view
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            (
-                view.last_finalized_number,
-                view.forkchoice.finalized_block_hash,
-                view.last_finalized_round,
-            )
-        };
-        let Some(finalized_round) = finalized_round else {
-            return Err(EpochBoundaryParentError::MissingAnchor {
-                epoch: round.epoch().get(),
-            });
-        };
-        if expected_height == 0 || expected_hash == B256::ZERO {
-            return Err(EpochBoundaryParentError::MissingAnchor {
-                epoch: round.epoch().get(),
-            });
-        }
-        if parent_digest.0 != expected_hash {
-            return Err(EpochBoundaryParentError::ParentMismatch {
-                expected: expected_hash,
-                got: parent_digest.0,
-                epoch: round.epoch().get(),
-            });
-        }
-
-        // Marshal exposes only digest-based lookup. Since we just confirmed
-        // `parent_digest == expected_hash`, looking up by digest yields the
-        // committed anchor block; we then sanity-check the height to catch
-        // a corrupted local store.
-        let block_future = self.marshal_mailbox.clone().subscribe_by_digest(
-            parent_digest,
-            commonware_consensus::marshal::core::DigestFallback::Wait,
-        );
-        // `Clock::timeout` returns `Err(Error::Timeout)` on expiry; the inner
-        // `Ok`/`Err` is the marshal waiter's own result, unchanged.
-        let block = match clock
-            .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)
-            .await
-        {
-            Ok(Ok(block)) => block,
-            Ok(Err(_)) | Err(_) => {
-                return Err(EpochBoundaryParentError::MissingMarshalBlock {
-                    height: expected_height,
-                });
-            }
-        };
-        if block.number() != expected_height {
-            return Err(EpochBoundaryParentError::MarshalHashMismatch {
-                height: expected_height,
-                expected: parent_digest.0,
-                got: block.digest().0,
-            });
-        }
-        Ok(Some(EpochBoundaryParent {
-            height: Height::new(expected_height),
-            block,
-            proof_key: CertifiedParentProofKey::new(
-                finalized_round.epoch().get(),
-                finalized_round.view().get(),
-                expected_hash,
-            ),
-        }))
-    }
-
     /// Handle propose request strict wait.
     ///
     /// 1. Resolve parent block (local cache or marshal)
@@ -1493,9 +834,15 @@ impl ApplicationShared {
         // new Simplex epoch (`epoch > 0`, `parent_view = 0`) before the chain
         // genesis path. `Ok(None)` means "not an epoch boundary"; caller falls
         // through to the chain genesis / cache / marshal-by-digest branches.
-        let maybe_epoch_anchor = match self
-            .resolve_epoch_boundary_parent(clock, round, parent_view, parent_digest)
-            .await
+        let maybe_epoch_anchor = match epoch_boundary::resolve_epoch_boundary_parent(
+            &self.finalization_view,
+            &self.marshal_mailbox,
+            clock,
+            round,
+            parent_view,
+            parent_digest,
+        )
+        .await
         {
             Ok(opt) => opt,
             Err(error) => {
@@ -1614,14 +961,8 @@ impl ApplicationShared {
                 }
             }
 
-            {
-                let mut view = self
-                    .finalization_view
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                view.last_timestamp_millis =
-                    std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
-            }
+            self.finalization_view
+                .advance_timestamp_floor(parent_block.timestamp_millis());
         }
 
         self.vrf_safety
@@ -1849,11 +1190,7 @@ impl ApplicationShared {
             return Ok(BuildBlockOutcome::EpochStale);
         }
 
-        let parent_timestamp_millis = self
-            .finalization_view
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .last_timestamp_millis;
+        let parent_timestamp_millis = self.finalization_view.timestamp_floor();
         let now_millis = unix_now_millis()?;
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
@@ -1882,15 +1219,9 @@ impl ApplicationShared {
             outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
             outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         );
-        let prev_randao = {
-            let mut view = self
-                .finalization_view
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            view.last_timestamp_millis =
-                std::cmp::max(view.last_timestamp_millis, timestamp_millis);
-            view.prev_randao
-        };
+        let prev_randao = self
+            .finalization_view
+            .advance_floor_and_read_prev_randao(timestamp_millis);
 
         // build header.extra_data only from consensus header
         // artifacts that affect block hashing (DKG boundary/dealer-log).
@@ -1917,13 +1248,10 @@ impl ApplicationShared {
             PROPOSE_RESOLUTION_TIMEOUT,
             clock.child("ancestry"),
         );
-        let consensus_header_artifact = match resolve_boundary_requirement(
-            parent_block.as_ref(),
-            pending_boundary.as_ref(),
-            &self.dkg_manager,
-            &ancestry,
-        )
-        .await
+        let consensus_header_artifact = match self
+            .dkg_manager
+            .resolve_boundary(parent_block.as_ref(), pending_boundary.as_ref(), &ancestry)
+            .await
         {
             Ok(BoundaryRequirement::AlreadyCommitted) => {
                 crate::metrics::record_dkg_boundary_requirement("already_committed");
@@ -2167,9 +1495,15 @@ impl ApplicationShared {
 
         // epoch continuity: special-case epoch boundary parent
         // before falling back to chain-genesis / generic verify resolution.
-        let maybe_epoch_anchor = match self
-            .resolve_epoch_boundary_parent(clock, round, parent_view, parent_digest)
-            .await
+        let maybe_epoch_anchor = match epoch_boundary::resolve_epoch_boundary_parent(
+            &self.finalization_view,
+            &self.marshal_mailbox,
+            clock,
+            round,
+            parent_view,
+            parent_digest,
+        )
+        .await
         {
             Ok(opt) => opt,
             Err(EpochBoundaryParentError::ParentMismatch { .. }) => {
@@ -2202,15 +1536,23 @@ impl ApplicationShared {
              resolve to Some(EpochBoundaryParent) or return an explicit error"
         );
 
-        let block_resolution =
-            self.resolve_for_verify(clock, round, payload_digest, VerifyResolveTarget::Block);
+        let block_resolution = resolve_for_verify(
+            &self.block_cache,
+            &self.marshal_mailbox,
+            clock,
+            round,
+            payload_digest,
+            VerifyResolveTarget::Block,
+        );
         let parent_resolution = async {
             if let Some(anchor) = maybe_epoch_anchor {
                 Ok(Some(anchor.block))
             } else if parent_digest.0 == self.genesis_hash {
                 Ok(None)
             } else {
-                self.resolve_for_verify(
+                resolve_for_verify(
+                    &self.block_cache,
+                    &self.marshal_mailbox,
                     clock,
                     parent_round(round, parent_view),
                     parent_digest,
@@ -2412,12 +1754,8 @@ impl ApplicationShared {
                     ));
                 }
 
-                let mut view = self
-                    .finalization_view
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                view.last_timestamp_millis =
-                    std::cmp::max(view.last_timestamp_millis, parent_block.timestamp_millis());
+                self.finalization_view
+                    .advance_timestamp_floor(parent_block.timestamp_millis());
             }
         }
 
@@ -2513,94 +1851,10 @@ impl ApplicationShared {
             .executor_mailbox
             .canonicalize_head(block_height, payload_digest)
             .await;
-        {
-            let mut view = self
-                .finalization_view
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            view.last_timestamp_millis =
-                std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
-        }
+        self.finalization_view
+            .advance_timestamp_floor(block.timestamp_millis());
 
         Ok(())
-    }
-
-    async fn resolve_for_verify(
-        &self,
-        clock: &impl commonware_runtime::Clock,
-        round: Round,
-        digest: Digest,
-        target: VerifyResolveTarget,
-    ) -> Result<ConsensusBlock, VerifyResolveError> {
-        let started_at = Instant::now();
-        debug!(
-            %round,
-            digest = %digest.0,
-            target = target.as_str(),
-            "verify resolve started"
-        );
-        let cached = self
-            .block_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&digest)
-            .cloned();
-        if let Some(block) = cached {
-            debug!(
-                %round,
-                digest = %digest.0,
-                target = target.as_str(),
-                source = "cache",
-                result = "Resolved",
-                elapsed_ms = started_at.elapsed().as_millis(),
-                "verify resolve finished"
-            );
-            return Ok(block);
-        }
-
-        let marshal = self.marshal_mailbox.clone();
-        let block_future = marshal.subscribe_by_digest(
-            digest,
-            commonware_consensus::marshal::core::DigestFallback::FetchByRound { round },
-        );
-        match clock.timeout(VERIFY_RESOLUTION_TIMEOUT, block_future).await {
-            Ok(Ok(block)) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Resolved",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Ok(block)
-            }
-            Ok(Err(_)) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Unavailable",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Err(VerifyResolveError::Unavailable)
-            }
-            Err(_) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Timeout",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Err(VerifyResolveError::Timeout)
-            }
-        }
     }
 }
 
@@ -2612,27 +1866,6 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 
 // `retry_with_backoff`, `RetryFailure`, `RetryFailureKind` moved to
 // `crate::finalization::util` in step 17. Imported at the top of this file.
-
-#[derive(Debug, Clone, Copy)]
-enum VerifyResolveError {
-    Timeout,
-    Unavailable,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum VerifyResolveTarget {
-    Block,
-    Parent,
-}
-
-impl VerifyResolveTarget {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Block => "block",
-            Self::Parent => "parent",
-        }
-    }
-}
 
 // `extract_consensus_metadata_from_block` and
 // `extract_header_artifact_from_block` moved to
@@ -2676,14 +1909,10 @@ async fn validate_header_consensus_artifacts(
     let expected_boundary = dkg_manager.pending_boundary_artifact(round.epoch()).await;
     let artifact = extract_header_artifact_from_block(block)?;
 
-    match resolve_boundary_requirement(
-        parent_block,
-        expected_boundary.as_ref(),
-        dkg_manager,
-        ancestry,
-    )
-    .await
-    .map_err(|error| error.to_string())?
+    match dkg_manager
+        .resolve_boundary(parent_block, expected_boundary.as_ref(), ancestry)
+        .await
+        .map_err(|error| error.to_string())?
     {
         BoundaryRequirement::NoPending => {}
         BoundaryRequirement::AlreadyCommitted => {
@@ -2799,14 +2028,6 @@ mod clamp_tests {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        },
-    };
-
     use alloy_primitives::{address, Address, Bytes, B256};
     use commonware_codec::Encode as _;
     use commonware_consensus::{
@@ -2814,438 +2035,24 @@ mod tests {
         types::{Epoch, Round, View},
     };
     use commonware_cryptography::{
-        bls12381::{
-            self,
-            dkg::feldman_desmedt::{Dealer, Info, Output, Player},
-            primitives::{sharing::Mode, variant::MinSig},
-        },
+        bls12381::{self, primitives::variant::MinSig},
         certificate::Scheme as _,
         Hasher, Sha256, Signer as _,
     };
-    use commonware_math::algebra::Random;
     use commonware_parallel::Sequential;
-    use commonware_utils::{
-        ordered::{Quorum as _, Set},
-        N3f1, TryCollect as _,
-    };
+    use commonware_utils::{ordered::Quorum as _, N3f1};
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-    use outbe_primitives::reshare_artifact::{
-        encode_consensus_header_artifact, ConsensusHeaderArtifact,
-    };
-    use outbe_primitives::signer::OutbeEvmSigner;
-    use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2};
-    use outbe_primitives::OutbeHeader;
-    use reth_ethereum::{primitives::SealedBlock, Block, TransactionSigned};
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
     use crate::dkg_manager::{self, Mailbox as DkgManagerMailbox};
-    use crate::finalization::util::{
-        build_signer_bitmap, validate_consensus_metadata, AttestationVerdict,
-    };
+    use crate::finalization::attestation::{validate_consensus_metadata, AttestationVerdict};
+    use crate::finalization::util::build_signer_bitmap;
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
-    use super::{
-        resolve_boundary_requirement, validate_context_parent_binding,
-        validate_header_consensus_artifacts, validate_rewards_beneficiary,
-        validate_system_tx_leader_binding, AncestryReader, ApplicationEpochFence,
-        BlockLookupFuture, BoundaryRequirement, CommitteeProvider, ConsensusBlock, Digest,
-        EpochFenceRejection,
-    };
+    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest};
+    use crate::test_fixtures::*;
 
-    const V1: Address = address!("0x1111111111111111111111111111111111111111");
-    const V2: Address = address!("0x2222222222222222222222222222222222222222");
-    const V3: Address = address!("0x3333333333333333333333333333333333333333");
-    const V4: Address = address!("0x4444444444444444444444444444444444444444");
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
-
-    #[derive(Clone, Default)]
-    struct TestAncestryReader {
-        blocks_by_height: BTreeMap<u64, ConsensusBlock>,
-        blocks_by_hash: BTreeMap<B256, ConsensusBlock>,
-        ready: bool,
-        height_lookups: Arc<AtomicUsize>,
-        hash_lookups: Arc<AtomicUsize>,
-    }
-
-    impl TestAncestryReader {
-        fn ready() -> Self {
-            Self {
-                blocks_by_height: BTreeMap::new(),
-                blocks_by_hash: BTreeMap::new(),
-                ready: true,
-                height_lookups: Arc::new(AtomicUsize::new(0)),
-                hash_lookups: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn not_ready() -> Self {
-            Self {
-                blocks_by_height: BTreeMap::new(),
-                blocks_by_hash: BTreeMap::new(),
-                ready: false,
-                height_lookups: Arc::new(AtomicUsize::new(0)),
-                hash_lookups: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn with_block(mut self, block: ConsensusBlock) -> Self {
-            self.blocks_by_height.insert(block.number(), block);
-            self
-        }
-
-        fn with_hash_block(mut self, block: ConsensusBlock) -> Self {
-            self.blocks_by_hash.insert(block.block_hash(), block);
-            self
-        }
-
-        fn lookup_count(&self) -> usize {
-            self.height_lookups.load(Ordering::SeqCst) + self.hash_lookups.load(Ordering::SeqCst)
-        }
-    }
-
-    impl AncestryReader for TestAncestryReader {
-        fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a> {
-            self.height_lookups.fetch_add(1, Ordering::SeqCst);
-            let block = self.blocks_by_height.get(&height).cloned();
-            Box::pin(async move { block })
-        }
-
-        fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a> {
-            self.hash_lookups.fetch_add(1, Ordering::SeqCst);
-            let block = self.blocks_by_hash.get(&hash).cloned().or_else(|| {
-                self.blocks_by_height
-                    .values()
-                    .find(|block| block.block_hash() == hash)
-                    .cloned()
-            });
-            Box::pin(async move { block })
-        }
-
-        fn is_ready(&self) -> bool {
-            self.ready
-        }
-    }
-
-    fn validator_set_from_keys(keys: &[bls12381::PrivateKey]) -> crate::validators::ValidatorSet {
-        let addresses = [V1, V2, V3, V4];
-        crate::validators::ValidatorSet {
-            public_keys: keys.iter().map(|key| key.public_key()).collect(),
-            addresses: addresses[..keys.len()].to_vec(),
-            p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; keys.len()],
-        }
-    }
-
-    fn leader_binding_providers(
-        epoch: Epoch,
-        validator_set: &crate::validators::ValidatorSet,
-    ) -> (HybridSchemeProvider<MinSig>, CommitteeProvider) {
-        let participants: Set<bls12381::PublicKey> = validator_set
-            .public_keys
-            .iter()
-            .cloned()
-            .try_collect()
-            .expect("participants should build");
-        let dkg = crate::bls::bootstrap_dkg(
-            validator_set
-                .public_keys
-                .len()
-                .try_into()
-                .expect("validator count fits u32"),
-        )
-        .expect("bootstrap dkg should succeed");
-        let verifier = HybridScheme::<MinSig>::verifier(
-            &crate::config::outbe_app_namespace(),
-            participants.clone(),
-            dkg.polynomial,
-        )
-        .expect("verifier scheme should build");
-        let ordered_committee = participants
-            .iter()
-            .map(|public_key| {
-                let index = validator_set
-                    .public_keys
-                    .iter()
-                    .position(|candidate| candidate == public_key)
-                    .expect("participant exists in validator set");
-                validator_set.addresses[index]
-            })
-            .collect();
-
-        let scheme_provider = HybridSchemeProvider::new();
-        let committee_provider = CommitteeProvider::new();
-        assert!(scheme_provider.register(epoch, verifier));
-        assert!(committee_provider.register(epoch, ordered_committee));
-        (scheme_provider, committee_provider)
-    }
-
-    fn participants_with_count(n: u64) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
-        let keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|i| bls12381::PrivateKey::from_seed(i + 1))
-            .collect();
-        let participants: Set<bls12381::PublicKey> = keys
-            .iter()
-            .map(|sk| bls12381::PublicKey::from(sk.clone()))
-            .try_collect()
-            .expect("participants should build");
-        (keys, participants)
-    }
-
-    fn participants() -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
-        participants_with_count(3)
-    }
-
-    #[test]
-    fn epoch_fence_allows_old_epoch_at_boundary_height() {
-        let fence = ApplicationEpochFence::new(Epoch::new(2));
-        fence.arm_activation_boundary(Epoch::new(2), 360);
-
-        assert_eq!(
-            fence.check(Round::new(Epoch::new(2), View::new(120)), 360),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn epoch_fence_rejects_old_epoch_above_boundary_height() {
-        let fence = ApplicationEpochFence::new(Epoch::new(2));
-        fence.arm_activation_boundary(Epoch::new(2), 360);
-
-        assert_eq!(
-            fence.check(Round::new(Epoch::new(2), View::new(121)), 361),
-            Err(EpochFenceRejection::BeyondBoundary {
-                max_block_height: 360,
-            })
-        );
-    }
-
-    #[test]
-    fn epoch_fence_rejects_old_epoch_after_advance() {
-        let fence = ApplicationEpochFence::new(Epoch::new(2));
-        fence.arm_activation_boundary(Epoch::new(2), 360);
-        fence.advance_epoch(Epoch::new(3));
-
-        assert_eq!(
-            fence.check(Round::new(Epoch::new(2), View::new(1)), 361),
-            Err(EpochFenceRejection::StaleEpoch {
-                active_epoch: Epoch::new(3),
-            })
-        );
-        assert_eq!(
-            fence.check(Round::new(Epoch::new(3), View::new(1)), 361),
-            Ok(())
-        );
-    }
-
-    fn block_with_header_artifact(artifact: &ConsensusHeaderArtifact) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_number_parent_and_header_artifact(
-        number: u64,
-        parent_hash: B256,
-        artifact: &ConsensusHeaderArtifact,
-    ) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = number;
-        block.header.parent_hash = parent_hash;
-        block.header.extra_data = encode_consensus_header_artifact(artifact).unwrap();
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_number(number: u64) -> ConsensusBlock {
-        block_with_number_and_parent(number, B256::ZERO)
-    }
-
-    fn block_with_number_and_parent(number: u64, parent_hash: B256) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = number;
-        block.header.parent_hash = parent_hash;
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn sign_system_input(
-        signer: &OutbeEvmSigner,
-        input: SystemTxInputV2,
-        ordinal: u8,
-        block_number: u64,
-        chain_id: u64,
-    ) -> TransactionSigned {
-        let unsigned = build_unsigned_system_tx(
-            input.kind(),
-            ordinal,
-            block_number,
-            chain_id,
-            input.encode().expect("input encodes"),
-        )
-        .expect("system tx builds");
-        signer.sign_unsigned(unsigned).expect("system tx signs")
-    }
-
-    fn finalized_metadata(finalized_block_hash: B256) -> CertifiedParentAccountingMetadata {
-        CertifiedParentAccountingMetadata {
-            finalized_block_number: 1,
-            finalized_block_hash,
-            finalized_view: 1,
-            ..Default::default()
-        }
-    }
-
-    fn block_with_system_inputs(
-        signer: &OutbeEvmSigner,
-        block_number: u64,
-        parent_hash: B256,
-        extra_data: Bytes,
-        inputs: Vec<SystemTxInputV2>,
-        chain_id: u64,
-    ) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = block_number;
-        block.header.parent_hash = parent_hash;
-        block.header.extra_data = extra_data;
-        for (ordinal, input) in inputs.into_iter().enumerate() {
-            block.body.transactions.push(sign_system_input(
-                signer,
-                input,
-                ordinal.try_into().expect("test ordinal fits"),
-                block_number,
-                chain_id,
-            ));
-        }
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
-        // block 1 mandatorily carries a BoundaryOutcome under V2,
-        // so the minimum-shape "block with system txs" test fixture moved to
-        // block 2 where the canonical layout is
-        // `[CertifiedParentAccounting, CycleTick, OracleSlashWindow]`.
-        let parent_hash = B256::ZERO;
-        block_with_system_inputs(
-            signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        )
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn dkg_runtime_artifacts() -> (
-        Vec<bls12381::PrivateKey>,
-        Set<bls12381::PublicKey>,
-        Output<MinSig, bls12381::PublicKey>,
-        commonware_cryptography::bls12381::primitives::sharing::Sharing<MinSig>,
-        Bytes,
-    ) {
-        let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
-            .collect();
-        keys.sort_by_key(|a| a.public_key().encode());
-
-        let participants: Set<bls12381::PublicKey> =
-            keys.iter().map(|k| k.public_key()).try_collect().unwrap();
-
-        let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            &crate::config::outbe_app_namespace(),
-            7,
-            None,
-            Mode::NonZeroCounter,
-            participants.clone(),
-            participants.clone(),
-        )
-        .unwrap();
-
-        let mut dealers = Vec::new();
-        let mut pub_msgs = Vec::new();
-        let mut all_priv_msgs = Vec::new();
-
-        for key in &keys {
-            let (dealer, pub_msg, priv_msgs) =
-                Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                    rand_core::OsRng,
-                    info.clone(),
-                    key.clone(),
-                    None,
-                )
-                .unwrap();
-            dealers.push(dealer);
-            pub_msgs.push(pub_msg);
-            all_priv_msgs.push(priv_msgs);
-        }
-
-        let mut players: Vec<Player<MinSig, bls12381::PrivateKey>> = keys
-            .iter()
-            .map(|k| Player::new(info.clone(), k.clone()).unwrap())
-            .collect();
-
-        for (dealer_idx, (pub_msg, priv_msgs)) in
-            pub_msgs.iter().zip(all_priv_msgs.iter()).enumerate()
-        {
-            let dealer_pk = keys[dealer_idx].public_key();
-            for (player_pk, priv_msg) in priv_msgs {
-                let player_idx = keys
-                    .iter()
-                    .position(|k| &k.public_key() == player_pk)
-                    .unwrap();
-                if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                    dealer_pk.clone(),
-                    pub_msg.clone(),
-                    priv_msg.clone(),
-                ) {
-                    dealers[dealer_idx]
-                        .receive_player_ack(player_pk.clone(), ack)
-                        .unwrap();
-                }
-            }
-        }
-
-        let mut logs = std::collections::BTreeMap::new();
-        let mut first_log = None;
-        for dealer in dealers {
-            let signed_log = dealer.finalize::<N3f1>();
-            if first_log.is_none() {
-                first_log = Some(Bytes::from(signed_log.encode()));
-            }
-            if let Some((pk, log)) = signed_log.check(&info) {
-                logs.insert(pk, log);
-            }
-        }
-
-        let mut dkg_logs = commonware_cryptography::bls12381::dkg::feldman_desmedt::Logs::<
-            MinSig,
-            bls12381::PublicKey,
-            N3f1,
-        >::new(info.clone());
-        for (dealer_pk, log) in logs {
-            dkg_logs.record(dealer_pk, log);
-        }
-        let (output, _share) = players
-            .remove(0)
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-                &mut rand_core::OsRng,
-                dkg_logs,
-                &Sequential,
-            )
-            .unwrap();
-        let polynomial = output.public().clone();
-
-        (keys, participants, output, polynomial, first_log.unwrap())
-    }
 
     // `valid_metadata_with_supplemental_finalize_vote` and the
     // V1 supplemental-finalize-vote tests below are retired. V2 contract
@@ -3406,268 +2213,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rewards_beneficiary_rejects_non_genesis_mismatch() {
-        let block = block_with_number_and_parent(1, B256::ZERO);
-        let error = validate_rewards_beneficiary(&block)
-            .expect_err("non-genesis beneficiary must be rewards escrow");
-        assert!(error.contains("beneficiary must be REWARDS_ADDRESS"));
-    }
-
-    #[test]
-    fn context_parent_binding_accepts_direct_child() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, parent.block_hash());
-
-        validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-            .expect("direct child extends Simplex context parent");
-    }
-
-    #[test]
-    fn context_parent_binding_rejects_wrong_parent_digest() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, B256::from([0x44; 32]));
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child must bind header parent to Simplex context parent");
-        assert!(error.contains("does not match Simplex context parent"));
-    }
-
-    #[test]
-    fn context_parent_binding_rejects_height_gap() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(9, parent.block_hash());
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child height must be parent height plus one");
-        assert!(error.contains("does not extend Simplex parent height"));
-    }
-
-    #[test]
-    fn context_parent_binding_accepts_genesis_parent_for_block_one() {
-        let genesis_hash = B256::from([0x55; 32]);
-        let child = block_with_number_and_parent(1, genesis_hash);
-
-        validate_context_parent_binding(&child, None, Digest(genesis_hash), genesis_hash)
-            .expect("block 1 extends genesis parent");
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_missing_mandatory_kind_before_engine_status() {
-        let (keys, _) = participants();
-        let validator_set = validator_set_from_keys(&keys);
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_number(1);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("block 1 must carry mandatory CycleTick system tx");
-
-        assert!(error.contains("invalid system tx set"));
-    }
-
-    #[test]
-    fn system_tx_leader_binding_accepts_consensus_leader_address() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect("system tx signer matches consensus leader EVM address");
-    }
-
-    #[test]
-    fn system_tx_leader_binding_uses_epoch_registered_committee() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([9u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[1] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(1), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(1), View::new(1)),
-            &keys[1].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect("epoch-scoped committee maps current leader to EVM signer");
-    }
-
-    #[test]
-    fn system_tx_leader_binding_rejects_non_leader_signer() {
-        let (keys, _) = participants();
-        let leader_signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let non_leader_signer = OutbeEvmSigner::from_secret_bytes([8u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = leader_signer.address();
-        validator_set.addresses[1] = non_leader_signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&non_leader_signer);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("non-leader system tx signer must be rejected");
-        assert!(error.contains("does not match consensus leader EVM address"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_wrong_chain_id_before_engine_status() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let block = block_with_system_tx(&signer);
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID + 1,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("wrong active chain id must be rejected before Engine status");
-        assert!(error.contains("system tx signature_hash mismatch"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_finalization_parent_hash_mismatch_before_engine_status() {
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let parent_hash = B256::from([0x11; 32]);
-        let wrong_hash = B256::from([0x22; 32]);
-        let block = block_with_system_inputs(
-            &signer,
-            2,
-            parent_hash,
-            Bytes::new(),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(wrong_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        );
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err(
-            "CertifiedParentAccounting metadata must bind to header parent hash before Engine status",
-        );
-        assert!(error.contains("CertifiedParentAccounting metadata hash must match block parent"));
-    }
-
-    #[test]
-    fn system_tx_validation_rejects_boundary_calldata_mismatch_before_engine_status() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let header_artifact =
-            dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-                epoch: Epoch::new(0),
-                validator_set: &validator_set,
-                output: &output,
-                is_full_dkg: true,
-                dkg_cycle: 0,
-                freeze_height: 0,
-                planned_activation_height: 0,
-                vrf_material_version: 0,
-                is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
-            })
-            .unwrap();
-        let mut tx_artifact = header_artifact.clone();
-        tx_artifact.planned_activation_height =
-            tx_artifact.planned_activation_height.saturating_add(1);
-
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let parent_hash = B256::from([0x33; 32]);
-        let block = block_with_system_inputs(
-            &signer,
-            2,
-            parent_hash,
-            encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(
-                header_artifact,
-            ))
-            .expect("header artifact encodes"),
-            vec![
-                SystemTxInputV2::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTxInputV2::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::BoundaryOutcome {
-                    artifact: tx_artifact,
-                },
-                SystemTxInputV2::OracleSlashWindow,
-            ],
-            outbe_primitives::chain::CHAIN_ID,
-        );
-
-        let error = validate_system_tx_leader_binding(
-            &block,
-            Round::new(Epoch::new(0), View::new(1)),
-            &keys[0].public_key(),
-            outbe_primitives::chain::CHAIN_ID,
-            &scheme_provider,
-            &committee_provider,
-        )
-        .expect_err("BoundaryOutcome calldata must bind to header artifact before Engine status");
-        assert!(error.contains("BoundaryOutcome system tx artifact mismatch"));
-    }
-
     #[tokio::test]
     async fn boundary_header_artifact_must_match_dkg_manager() {
         let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
@@ -3764,343 +2309,6 @@ mod tests {
         .await
         .unwrap_err();
         assert!(wrong_kind.contains("omitted pending DKG BoundaryOutcome"));
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_is_derived_from_parent_snapshot_not_local_served_flag() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(0),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: true,
-            dkg_cycle: 0,
-            freeze_height: 0,
-            planned_activation_height: 0,
-            vrf_material_version: 0,
-            is_validator_set_change: true,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let parent =
-            block_with_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("parent ancestry should decode"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_no_pending_does_not_read_ancestry() {
-        let parent = block_with_number_and_parent(120, B256::from([0x44; 32]));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), None, &manager, &ancestry)
-                .await
-                .expect("no pending boundary is a normal requirement state"),
-            BoundaryRequirement::NoPending
-        );
-        assert_eq!(ancestry.lookup_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_uses_marshal_ancestry_after_block_cache_eviction() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=120 {
-            let block = block_with_number_and_parent(number, parent_hash);
-            parent_hash = block.block_hash();
-            if number == 120 {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("parent block exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("marshal ancestry should resolve"),
-            BoundaryRequirement::MustEmit
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_finds_deep_committed_boundary() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=120 {
-            let block = if number == 90 {
-                block_with_number_parent_and_header_artifact(
-                    number,
-                    parent_hash,
-                    &ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()),
-                )
-            } else {
-                block_with_number_and_parent(number, parent_hash)
-            };
-            parent_hash = block.block_hash();
-            if number == 120 {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("parent block exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("marshal ancestry should resolve"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-
-        let not_ready = TestAncestryReader::not_ready();
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &not_ready)
-                .await
-                .expect("cached boundary status should avoid cold ancestry reads"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_finds_boundary_committed_at_late_activation_height() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let planned_activation_height: u64 = 120;
-        let late_activation_height = planned_activation_height
-            .saturating_add(crate::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut parent_hash = B256::ZERO;
-        let mut ancestry = TestAncestryReader::ready();
-        let mut parent = None;
-        for number in 90..=late_activation_height {
-            let block = if number == late_activation_height {
-                block_with_number_parent_and_header_artifact(
-                    number,
-                    parent_hash,
-                    &ConsensusHeaderArtifact::BoundaryOutcome(artifact.clone()),
-                )
-            } else {
-                block_with_number_and_parent(number, parent_hash)
-            };
-            parent_hash = block.block_hash();
-            if number == late_activation_height {
-                parent = Some(block.clone());
-            }
-            ancestry = ancestry.with_block(block);
-        }
-        let parent = parent.expect("late activation parent exists");
-        let manager = DkgManagerMailbox::new();
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("late activation boundary should resolve"),
-            BoundaryRequirement::AlreadyCommitted
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_uses_hash_lookup_when_height_lookup_is_stale() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 119,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
-        let canonical_parent = block_with_number_and_parent(119, B256::from([0x22; 32]));
-        let parent = block_with_number_and_parent(120, canonical_parent.block_hash());
-        let ancestry = TestAncestryReader::ready()
-            .with_block(stale_parent)
-            .with_hash_block(canonical_parent);
-        let manager = DkgManagerMailbox::new();
-        let pending_hash = DkgManagerMailbox::boundary_artifact_hash(&artifact).unwrap();
-        let stale_hash = ancestry
-            .blocks_by_height
-            .get(&119)
-            .expect("stale height hit exists")
-            .block_hash();
-        manager.record_boundary_status(
-            stale_hash,
-            pending_hash,
-            crate::dkg_manager::BoundaryStatus::NoBoundarySeen,
-        );
-        assert!(manager
-            .cached_boundary_status(stale_hash, pending_hash)
-            .is_some());
-
-        assert_eq!(
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .expect("hash lookup should recover canonical ancestry after stale height hit"),
-            BoundaryRequirement::MustEmit
-        );
-        assert!(
-            manager
-                .cached_boundary_status(stale_hash, pending_hash)
-                .is_none(),
-            "stale parent status must be explicitly evicted when height lookup returns a non-canonical block"
-        );
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_rejects_missing_canonical_parent_after_stale_height_hit() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 119,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let stale_parent = block_with_number_and_parent(119, B256::from([0x11; 32]));
-        let canonical_parent = block_with_number_and_parent(119, B256::from([0x22; 32]));
-        let parent = block_with_number_and_parent(120, canonical_parent.block_hash());
-        let ancestry = TestAncestryReader::ready().with_block(stale_parent);
-        let manager = DkgManagerMailbox::new();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error.to_string().contains("missing parent"));
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_reports_backfill_not_ready() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let parent = block_with_number_and_parent(120, B256::from([0x33; 32]));
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::not_ready();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error.to_string().contains("not ready"));
-        assert_eq!(ancestry.lookup_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn boundary_requirement_rejects_same_epoch_conflict() {
-        let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
-        let validator_set = validator_set_from_keys(&keys);
-        let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(1),
-            validator_set: &validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 1,
-            freeze_height: 90,
-            planned_activation_height: 120,
-            vrf_material_version: 1,
-            is_validator_set_change: false,
-            tee_reshare_registrations: Vec::new(),
-        })
-        .unwrap();
-        let mut conflicting = artifact.clone();
-        conflicting.vrf_material_version = conflicting.vrf_material_version.saturating_add(1);
-        let parent = block_with_number_parent_and_header_artifact(
-            120,
-            B256::ZERO,
-            &ConsensusHeaderArtifact::BoundaryOutcome(conflicting),
-        );
-        let manager = DkgManagerMailbox::new();
-        let ancestry = TestAncestryReader::ready();
-
-        let error =
-            resolve_boundary_requirement(Some(&parent), Some(&artifact), &manager, &ancestry)
-                .await
-                .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("conflicting DKG BoundaryOutcome"));
     }
 
     #[tokio::test]

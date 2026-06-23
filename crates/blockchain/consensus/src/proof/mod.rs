@@ -15,6 +15,7 @@
 //! and full-node import paths via re-export.
 
 pub mod committee;
+pub(crate) mod committee_keys;
 pub mod constants;
 pub mod error;
 pub mod fingerprint;
