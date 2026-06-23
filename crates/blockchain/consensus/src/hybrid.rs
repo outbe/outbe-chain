@@ -588,20 +588,24 @@ fn neutralize_seed_partial<V: Variant>(
     }
 }
 
-/// Extracts the seed message bytes from a Subject.
-fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
-    match subject {
-        Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round.encode(),
-        Subject::Nullify { round } => round.encode(),
-    }
-}
-
-/// Extracts the consensus round from a Subject (the round the seed partial commits to).
+/// Extracts the consensus round from a Subject (the round the seed partial commits
+/// to). This is the single Subject-matching core; the seed message is derived from
+/// it (see [`seed_message_from_subject`]) so the round and its seed message can
+/// never diverge.
 fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
     match subject {
         Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round,
         Subject::Nullify { round } => *round,
     }
+}
+
+/// The VRF seed message for a Subject: the canonical `Round::encode()` bytes of the
+/// round the seed partial commits to. Derived from [`round_from_subject`], so it
+/// stays byte-identical to the proof-side recipe
+/// (`proof::constants::seed_namespace_and_message`) — pinned by
+/// `seed_message_matches_proof_side_recipe`.
+fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
+    round_from_subject(subject).encode()
 }
 
 impl<V: Variant> certificate::Scheme for HybridScheme<V> {
@@ -1973,5 +1977,28 @@ mod tests {
             result.is_some(),
             "signer with correct share.index must succeed"
         );
+    }
+
+    /// The Subject seed message must be byte-identical to the proof-side canonical
+    /// recipe `proof::constants::seed_namespace_and_message`, so the hybrid signer,
+    /// the hybrid verifier, and the proof-side slashing / next-height-gate verifiers
+    /// all derive the same VRF seed message for a given round. Locks this cross-path
+    /// determinism invariant against drift in either side.
+    #[test]
+    fn seed_message_matches_proof_side_recipe() {
+        let epoch = Epoch::new(7);
+        let view = View::new(42);
+        let subject: Subject<'_, Sha256Digest> = Subject::Nullify {
+            round: Round::new(epoch, view),
+        };
+
+        let hybrid_seed_message = seed_message_from_subject(&subject);
+        let (_, proof_seed_message) =
+            crate::proof::constants::seed_namespace_and_message(epoch.get(), view.get());
+
+        assert_eq!(hybrid_seed_message.as_ref(), proof_seed_message.as_slice());
+        // The seed message is exactly the round's canonical bytes — no path can make
+        // the round and its seed message diverge now that one derives from the other.
+        assert_eq!(hybrid_seed_message, round_from_subject(&subject).encode());
     }
 }
