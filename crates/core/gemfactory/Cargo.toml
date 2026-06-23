@@ -10,7 +10,6 @@ outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-common.workspace = true
 outbe-gem.workspace = true
-outbe-promis.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
@@ -20,6 +19,7 @@ thiserror.workspace = true
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
+outbe-promis.workspace = true
 
 [features]
 default = []

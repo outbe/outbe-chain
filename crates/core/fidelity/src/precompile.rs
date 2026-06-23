@@ -22,7 +22,9 @@ pub fn dispatch(
         use IFidelity::IFidelityCalls::*;
         match call {
             getFidelityIndex(c) => view(c, |c| contract.get_fidelity_index(c.account)),
-            getFidelityIndexAt(c) => view(c, |c| contract.compute_fidelity_index(c.account, c.timestamp)),
+            getFidelityIndexAt(c) => view(c, |c| {
+                contract.compute_fidelity_index(c.account, c.timestamp)
+            }),
             decimals(_) => metadata::<IFidelity::decimalsCall>(|| Ok(DECIMALS)),
             maxFidelityIndexAt(c) => view(c, |c| contract.max_rcfi_at(c.timestamp)),
             minLeague(_) => metadata::<IFidelity::minLeagueCall>(|| Ok(MIN_LEAGUE)),
