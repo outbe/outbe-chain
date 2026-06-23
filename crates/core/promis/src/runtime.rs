@@ -83,34 +83,6 @@ impl Promis<'_> {
 
         Ok(remaining)
     }
-
-    /// Converts promis to coen (native token) at 1:1 ratio.
-    ///
-    /// Burns promis and returns the amount to be minted as native token.
-    /// Actual native minting handled by block executor.
-    pub fn mine_coen(&mut self, account: Address, amount: U256) -> Result<U256> {
-        if amount.is_zero() {
-            return Err(PrecompileError::Revert("amount must be positive".into()));
-        }
-
-        let balance = self.balances.read(&account)?;
-        if balance < amount {
-            return Err(PrecompileError::Revert("insufficient balance".into()));
-        }
-
-        self.balances.write(&account, balance - amount)?;
-
-        let supply = self.total_supply.read()?;
-        self.total_supply.write(supply - amount)?;
-
-        self.emit(IPromis::MineCoen {
-            sender: account,
-            promisAmount: amount,
-            unitAmount: amount,
-        })?;
-
-        Ok(amount)
-    }
 }
 
 /// Overflow-checked `U256` addition for balance / supply accounting paths.

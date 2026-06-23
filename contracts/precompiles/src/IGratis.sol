@@ -10,7 +10,6 @@ interface IGratis {
     // Gratis runtime events.
     event GratisMined(address indexed account, uint256 amount, uint256 newTotalSupply);
     event GratisBurned(address indexed account, uint256 amount, uint256 remainingSupply);
-    event MineCoen(address indexed sender, uint256 gratisAmount, uint256 unitAmount);
     event GratisPledged(address indexed account, uint256 amount, uint256 totalPledged);
     event GratisUnpledged(address indexed account, uint256 amount, uint256 remainingPledged);
 
@@ -30,7 +29,6 @@ interface IGratis {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 
     // gratis-specific
-    function mineCoen(uint256 amount) external returns (uint256);
     function pledgedOf(address account) external view returns (uint256);
 
     // ERC-165

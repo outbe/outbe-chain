@@ -7298,6 +7298,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-promisfactory",
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -7354,7 +7355,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
- "thiserror 2.0.18",
+ "serde_json",
 ]
 
 [[package]]
@@ -7383,6 +7384,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-promisfactory",
  "thiserror 2.0.18",
 ]
 
@@ -7402,6 +7404,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratispool",
  "outbe-primitives",
@@ -7447,7 +7450,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-promis",
+ "outbe-promisfactory",
  "ring",
  "thiserror 2.0.18",
 ]
@@ -7584,6 +7587,7 @@ dependencies = [
  "hex",
  "outbe-common",
  "outbe-gratis",
+ "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
  "ring",
@@ -7657,6 +7661,17 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+]
+
+[[package]]
+name = "outbe-promisfactory"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-fidelity",
+ "outbe-primitives",
+ "outbe-promis",
 ]
 
 [[package]]

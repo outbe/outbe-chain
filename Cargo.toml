@@ -25,6 +25,7 @@ members = [
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
+    "crates/core/promisfactory",
     "crates/core/tribute",
     "crates/core/nod",
     "crates/core/nodfactory",
@@ -100,6 +101,7 @@ outbe-teeregistry = { path = "crates/system/teeregistry" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
+outbe-promisfactory = { path = "crates/core/promisfactory" }
 outbe-tribute = { path = "crates/core/tribute" }
 outbe-nod = { path = "crates/core/nod" }
 outbe-nodfactory = { path = "crates/core/nodfactory" }

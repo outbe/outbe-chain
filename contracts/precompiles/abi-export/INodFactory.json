@@ -35,7 +35,7 @@
   },
   {
     "type": "event",
-    "name": "GratisMined",
+    "name": "NodBurned",
     "inputs": [
       {
         "name": "owner",
@@ -50,7 +50,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "amount",
+        "name": "gratisLoadMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

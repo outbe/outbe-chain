@@ -76,8 +76,10 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 
 /// Atomic mine-gratis path: validate ownership + unlock + PoW + bucket
 /// qualification, pull `cost_amount_minor` from the caller as a vault
-/// deposit (when non-zero), burn the Nod, mint the matching gratis load to
-/// the owner, emit `GratisMined`, return the minted amount.
+/// deposit (when non-zero), burn the Nod (emitting `NodBurned`), then
+/// delegate the matching gratis mint to `gratisfactory` (which mints to the
+/// owner, records the Fidelity cohort, and emits `GratisMined`). Returns the
+/// minted amount.
 ///
 /// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
 /// that amount of `asset` from the caller into the precompile address via
@@ -159,17 +161,16 @@ pub fn mine_gratis(
 
     nod_api::remove_nod(storage, &item)?;
 
-    let mut gratis = outbe_gratis::Gratis::new(storage.clone());
-    gratis.mine(caller, item.gratis_load_minor)?;
-
     emit_event(
         storage,
-        INodFactory::GratisMined {
+        INodFactory::NodBurned {
             owner: caller,
             nodId: nod_id,
-            amount: item.gratis_load_minor,
+            gratisLoadMinor: item.gratis_load_minor,
         },
     )?;
+
+    outbe_gratisfactory::api::mine(storage.clone(), caller, item.gratis_load_minor)?;
 
     Ok(item.gratis_load_minor)
 }
