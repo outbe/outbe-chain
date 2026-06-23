@@ -7586,6 +7586,7 @@ dependencies = [
  "hex",
  "outbe-common",
  "outbe-gratis",
+ "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
  "ring",

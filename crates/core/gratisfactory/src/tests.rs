@@ -196,3 +196,47 @@ fn rejects_msg_value() {
         assert!(err.to_string().contains("non-payable"));
     });
 }
+
+#[test]
+fn mine_mints_gratis_and_records_fidelity_cohort() {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = U256::from(1_000u64);
+        // No cohort yet: RCFI a year out is zero. Asserting this up front is what
+        // makes the post-mine `> 0` check prove `mine` recorded the cohort
+        // (rather than it having pre-existed).
+        let later = CREATED_AT + ONE_YEAR_SECS;
+        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
+            .compute_rcfi_scaled(alice(), later)
+            .unwrap();
+        assert_eq!(rcfi_before, U256::ZERO);
+
+        let new_supply = runtime::mine(storage.clone(), alice(), amount).unwrap();
+
+        // Gratis minted to the recipient and into total supply.
+        let gratis = Gratis::new(storage.clone());
+        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
+        assert_eq!(gratis.total_supply().unwrap(), amount);
+        assert_eq!(new_supply, amount);
+
+        // The acquisition cohort was recorded at the current block time, so the
+        // aged RCFI a year later is now positive. If `mine` stopped calling
+        // `cohort_in`, this would stay zero and fail.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .compute_rcfi_scaled(alice(), later)
+            .unwrap();
+        assert!(rcfi_after > U256::ZERO);
+    });
+}
+
+#[test]
+fn mine_rejects_zero_amount() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let err = runtime::mine(storage, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("amount must be positive"));
+    });
+}

@@ -11,6 +11,11 @@ pragma solidity ^0.8.30;
 ///         a Gratis-transfer channel between addresses — the caller must
 ///         hold the secret AND own the per-pledger ledger entry.
 interface IGratisFactory {
+    /// @notice Emitted when gratis is minted to `account` (e.g. via NodFactory's
+    ///         mine path). The Fidelity acquisition cohort is recorded in the
+    ///         same call.
+    event GratisMined(address indexed account, uint256 amount);
+
     /// @notice Emitted when a user adds a shielded pledge to the pool.
     event GratisPledged(address indexed account, uint8 indexed denomId, uint256 commitment);
 
