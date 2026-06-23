@@ -182,7 +182,7 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION
     );
     assert_eq!(
-        record.proof_type,
+        record.proof_kind(),
         ParentParticipationProof::CertifiedNotarization
     );
     assert_eq!(record.finalized_epoch, 0);
@@ -192,7 +192,7 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
     // — Activity-driven insert always sets the local certification
     // witness flag; remote-fetch fallbacks gate writes on
     // this being true.
-    assert!(record.local_certification_witness);
+    assert!(record.is_certification_witness());
     // The store accepted only the certified-notarization slot — finalization
     // slot is untouched.
     assert!(store.get_finalization(proof_key).is_none());
@@ -250,7 +250,7 @@ async fn reporter_handle_certification_records_witness_flag_true() {
         .get_certified_notarization(CertifiedParentProofKey::new(0, 2, parent_hash))
         .unwrap();
     assert!(
-        record.local_certification_witness,
+        record.is_certification_witness(),
         "Activity-driven inserts must always set local_certification_witness=true"
     );
 }

@@ -27,7 +27,7 @@
 //! storage-handle survey.
 //!
 //! Record schema discriminant: every record carries
-//! [`CertifiedParentProofRecord::format_version`] == 2. Records with any other
+//! [`CertifiedParentProofRecord::format_version`] == 3. Records with any other
 //! version are rejected on read (`Err(UnknownFormatVersion)`).
 
 use std::{
@@ -40,9 +40,8 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, B256};
-use outbe_primitives::{
-    consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    reshare_artifact::FinalizedParentAttestation,
+use outbe_primitives::consensus_metadata::{
+    CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use reth_db::{
     cursor::DbCursorRO,
@@ -58,7 +57,7 @@ use tokio::sync::watch;
 /// On-disk record schema version. Encoded into every persisted
 /// [`CertifiedParentProofRecord`]; reads reject any other value
 ///.
-pub const CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION: u8 = 2;
+pub const CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION: u8 = 3;
 
 /// Exact lookup key for a certified-parent proof.
 ///
@@ -298,73 +297,67 @@ impl std::error::Error for ParentProofStoreError {
     }
 }
 
-/// V2 unified per-parent proof record. One schema, two proof kinds discriminated
-/// by [`ParentParticipationProof`]; see crate docs at the top of this file.
-///
-/// record-schema fields:
-/// - `format_version` — on-disk discriminant; always 1.
-/// - `proof_type` — `Finalization` (written by [`crate::finalization::actor::FinalizationActor`])
-///   or `CertifiedNotarization` (written by [`crate::reporter::OutbeReporter`]).
-/// - `finalized_epoch`, `finalized_view`, `parent_view`, `finalized_block_number`,
-///   `finalized_block_hash` — committee-scope identity.
-/// - `committee_set_hash`, `vrf_material_version` — V2 verifier inputs; populated
-///   by the writer using `outbe_consensus::proof::committee_set_hash_v2` and the
-///   active DKG material version. will consume them via
-///   `get_best_parent_proof`.
-/// - `signer_bitmap`, `ordered_committee` — convenience indexes; the canonical
-///   `encoded_proof` blob is authoritative.
-/// - `encoded_proof` — canonical commonware-codec bytes of the source
-///   `Notarization<S,D>` or `Finalization<S,D>` (the writer never re-encodes).
-/// - `local_certification_witness` — certified-notarization records may
-///   only be persisted after this node has locally observed `Activity::Certification`
-///   for the same `(epoch, view, block_hash)`; bounded remote-fetch fallbacks must
-///   gate writes on this flag.
-/// - `stored_at_height` — age-based pruning bookkeeping.
-///
-/// Legacy compatibility fields (`certificate`, `finalize_votes`, `missed_proposers`)
-/// preserve the V1 [`FinalizedParentAttestation`] surface that
-/// [`crate::finalization::selection::FinalizationSelector`] still reads while
-/// is in flight. drops `encoded_finalize_votes` from the wire
-/// metadata; until then this record retains them to keep the proposer wait loop
-/// compiling without semantic regression.
+/// Which kind of parent proof a record carries, with the variant-specific data
+/// that used to be conflated into shared fields (the former `proof_type`,
+/// sentinel-`finalized_block_number`, and `local_certification_witness`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProofKind {
+    /// A finalized block's exact-parent proof — carries its real on-chain height.
+    Finalization { finalized_block_number: u64 },
+    /// A certified-notarization witness. It carries NO block number (the
+    /// notarization has no block context); the proposer-side selector resolves
+    /// the height to the known `parent_block_number` at read time. A record in
+    /// this variant is, by construction, a local certification witness.
+    CertifiedNotarization,
+}
+
+/// V2 per-parent proof record. One schema for both proof kinds; the
+/// variant-specific data (height for `Finalization`, none for
+/// `CertifiedNotarization`) plus the former `proof_type` and
+/// `local_certification_witness` discriminants now live in [`ProofKind`]. The
+/// canonical `encoded_proof` blob is authoritative; the other V2 fields
+/// (`committee_set_hash`, `vrf_material_version`, `vrf_group_public_key_hash`)
+/// are materialised by the writer so the proposer builds Phase 1 metadata
+/// without a snapshot lookup.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CertifiedParentProofRecord {
     pub format_version: u8,
-    pub proof_type: ParentParticipationProof,
+    /// Proof kind plus its variant-specific data. Replaces the former
+    /// `proof_type`, sentinel `finalized_block_number`, and
+    /// `local_certification_witness` fields (their invariants are now in the type).
+    pub kind: ProofKind,
     pub finalized_epoch: u64,
     pub finalized_view: u64,
     pub parent_view: u64,
-    pub finalized_block_number: u64,
     pub finalized_block_hash: B256,
     pub committee_set_hash: B256,
     pub vrf_material_version: u64,
-    /// keccak256 of the encoded VRF group public key for the
-    /// active epoch's DKG material. Populated by the writer so the
-    /// proposer-side V2 selector can build [`outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata`]
-    /// without a separate snapshot lookup. The verifier checks the same
-    /// hash via `outbe_consensus::proof::verify_v2_proof` rule.
-    #[serde(default)]
+    /// keccak256 of the encoded VRF group public key for the active epoch's DKG
+    /// material. Populated by the writer so the proposer-side V2 selector can
+    /// build [`outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata`]
+    /// without a separate snapshot lookup. The verifier checks the same hash via
+    /// `outbe_consensus::proof::verify_v2_proof` rule 6.
     pub vrf_group_public_key_hash: B256,
     pub ordered_committee: Vec<Address>,
     pub signer_bitmap: Vec<u8>,
+    /// Canonical commonware-codec bytes of the source `Notarization` /
+    /// `Finalization` (the writer never re-encodes).
     pub encoded_proof: Bytes,
-    pub local_certification_witness: bool,
+    /// Age-based pruning key: the finalized block height for `Finalization`, the
+    /// notarization view as a monotone retention proxy for `CertifiedNotarization`.
     pub stored_at_height: u64,
-    // ── V1 selector compatibility ─────────────
-    pub certificate: Bytes,
-    pub finalize_votes: Vec<Bytes>,
-    pub missed_proposers: Vec<Address>,
 }
 
 impl Default for CertifiedParentProofRecord {
     fn default() -> Self {
         Self {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-            proof_type: ParentParticipationProof::Finalization,
+            kind: ProofKind::Finalization {
+                finalized_block_number: 0,
+            },
             finalized_epoch: 0,
             finalized_view: 0,
             parent_view: 0,
-            finalized_block_number: 0,
             finalized_block_hash: B256::ZERO,
             committee_set_hash: B256::ZERO,
             vrf_material_version: 0,
@@ -372,11 +365,7 @@ impl Default for CertifiedParentProofRecord {
             ordered_committee: Vec::new(),
             signer_bitmap: Vec::new(),
             encoded_proof: Bytes::new(),
-            local_certification_witness: false,
             stored_at_height: 0,
-            certificate: Bytes::new(),
-            finalize_votes: Vec::new(),
-            missed_proposers: Vec::new(),
         }
     }
 }
@@ -390,15 +379,40 @@ impl CertifiedParentProofRecord {
         )
     }
 
-    /// build a V2 [`CertifiedParentAccountingMetadata`] from the
-    /// stored record. All V2 fields are populated from the record's own
-    /// state — no additional snapshot lookup is needed at read time
-    /// because the writer (reporter / finalization actor) materialised
-    /// `committee_set_hash`, `vrf_material_version`, and
-    /// `vrf_group_public_key_hash` at write time.
-    pub fn to_v2_metadata(&self) -> CertifiedParentAccountingMetadata {
+    /// The block height this proof binds to: real for `Finalization`, `None` for
+    /// a `CertifiedNotarization` witness (the selector resolves it to the known
+    /// `parent_block_number` at read time).
+    pub fn finalized_block_number(&self) -> Option<u64> {
+        match self.kind {
+            ProofKind::Finalization {
+                finalized_block_number,
+            } => Some(finalized_block_number),
+            ProofKind::CertifiedNotarization => None,
+        }
+    }
+
+    /// The wire-metadata proof-kind discriminant.
+    pub fn proof_kind(&self) -> ParentParticipationProof {
+        match self.kind {
+            ProofKind::Finalization { .. } => ParentParticipationProof::Finalization,
+            ProofKind::CertifiedNotarization => ParentParticipationProof::CertifiedNotarization,
+        }
+    }
+
+    /// Whether this record is a certified-notarization local witness.
+    pub fn is_certification_witness(&self) -> bool {
+        matches!(self.kind, ProofKind::CertifiedNotarization)
+    }
+
+    /// Build the V2 [`CertifiedParentAccountingMetadata`] from the stored record.
+    /// `finalized_block_number` is supplied by the selector (the validated parent
+    /// height): it equals the record's own height for `Finalization` and the
+    /// resolved `parent_block_number` for a promoted `CertifiedNotarization`
+    /// witness. Every other V2 field comes from the record, so no snapshot lookup
+    /// is needed at read time.
+    pub fn to_v2_metadata(&self, finalized_block_number: u64) -> CertifiedParentAccountingMetadata {
         CertifiedParentAccountingMetadata {
-            finalized_block_number: self.finalized_block_number,
+            finalized_block_number,
             finalized_block_hash: self.finalized_block_hash,
             finalized_epoch: self.finalized_epoch,
             finalized_view: self.finalized_view,
@@ -409,50 +423,8 @@ impl CertifiedParentProofRecord {
             committee_set_hash: self.committee_set_hash,
             vrf_material_version: self.vrf_material_version,
             vrf_group_public_key_hash: self.vrf_group_public_key_hash,
-            proof_kind: self.proof_type,
+            proof_kind: self.proof_kind(),
             missed_proposers: Vec::new(),
-        }
-    }
-
-    /// Project this V2 record into the V1 [`FinalizedParentAttestation`] wire
-    /// shape consumed by the proposer-side selector during the
-    /// transition. Returns `None` for `CertifiedNotarization` records — the
-    /// V1 selector cannot interpret notarization-only proofs.
-    pub fn to_finalized_parent_attestation(&self) -> Option<FinalizedParentAttestation> {
-        match self.proof_type {
-            ParentParticipationProof::Finalization => Some(FinalizedParentAttestation {
-                finalized_block_number: self.finalized_block_number,
-                finalized_block_hash: self.finalized_block_hash,
-                finalized_epoch: self.finalized_epoch,
-                finalized_view: self.finalized_view,
-                parent_view: self.parent_view,
-                ordered_committee: self.ordered_committee.clone(),
-                signer_bitmap: self.signer_bitmap.clone(),
-                certificate: self.certificate.clone(),
-                missed_proposers: self.missed_proposers.clone(),
-            }),
-            ParentParticipationProof::CertifiedNotarization => None,
-        }
-    }
-}
-
-/// Adapter retained so existing call sites that take `&FinalizedParentCertRecord`
-/// (now [`CertifiedParentProofRecord`]) keep compiling. Panics-free: for
-/// certified-notarization records the adapter still returns the V1-shaped
-/// attestation built from the in-record fields, but the selector should branch
-/// on `proof_type` first via [`CertifiedParentProofRecord::to_finalized_parent_attestation`].
-impl From<&CertifiedParentProofRecord> for FinalizedParentAttestation {
-    fn from(s: &CertifiedParentProofRecord) -> Self {
-        FinalizedParentAttestation {
-            finalized_block_number: s.finalized_block_number,
-            finalized_block_hash: s.finalized_block_hash,
-            finalized_epoch: s.finalized_epoch,
-            finalized_view: s.finalized_view,
-            parent_view: s.parent_view,
-            ordered_committee: s.ordered_committee.clone(),
-            signer_bitmap: s.signer_bitmap.clone(),
-            certificate: s.certificate.clone(),
-            missed_proposers: s.missed_proposers.clone(),
         }
     }
 }
@@ -521,10 +493,11 @@ pub trait CertifiedParentProofStore: Clone + Send + Sync + 'static {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParentProofSelection {
     Finalization(CertifiedParentProofRecord),
-    CertifiedNotarization {
-        record: CertifiedParentProofRecord,
-        requires_promotion: bool,
-    },
+    /// A certified-notarization witness. It always requires the selector to
+    /// resolve its height to the known `parent_block_number` (it carries no block
+    /// number of its own), so the former `requires_promotion` flag is implied by
+    /// the variant.
+    CertifiedNotarization(CertifiedParentProofRecord),
 }
 
 /// Hash-keyed parent proof store. Cheap to clone — internally
@@ -575,7 +548,7 @@ impl FinalizedParentCertStore {
         }
         for rec in backend.load_all::<tables::OutbeCertifiedParentNotarizationRecords>()? {
             let key = rec.proof_key();
-            if rec.local_certification_witness {
+            if rec.is_certification_witness() {
                 state
                     .seen_certification_keys
                     .insert(key, rec.stored_at_height);
@@ -615,7 +588,7 @@ impl FinalizedParentCertStore {
                 state.finalization.insert(key, record);
             }
             ProofSlot::CertifiedNotarization => {
-                if record.local_certification_witness {
+                if record.is_certification_witness() {
                     state
                         .seen_certification_keys
                         .insert(key, record.stored_at_height);
@@ -686,12 +659,10 @@ impl FinalizedParentCertStore {
         if let Some(record) = state.finalization.get(&key) {
             return Some(ParentProofSelection::Finalization(record.clone()));
         }
-        state.certified_notarization.get(&key).map(|record| {
-            ParentProofSelection::CertifiedNotarization {
-                record: record.clone(),
-                requires_promotion: record.finalized_block_number == 0,
-            }
-        })
+        state
+            .certified_notarization
+            .get(&key)
+            .map(|record| ParentProofSelection::CertifiedNotarization(record.clone()))
     }
 
     /// Subscribe to proof-store writes. The payload is a monotonic revision
@@ -708,6 +679,52 @@ impl FinalizedParentCertStore {
 
     pub fn remove(&self, key: CertifiedParentProofKey) -> Result<bool, ParentProofStoreError> {
         <Self as CertifiedParentProofStore>::remove(self, &key)
+    }
+
+    /// Drop finalization records persisted for heights strictly above `ceiling`.
+    ///
+    /// `process_finalization` durably writes the height-N parent record before it
+    /// advances the finalization view, so a crash in that window can leave an
+    /// ahead-of-recovered-view record on disk. Called once at startup with the
+    /// recovered finalized height, this restores the invariant
+    /// `stored_at_height <= recovered_last_finalized`. Selection already drains
+    /// any height-mismatched record at read time (`validate_parent_record`), so
+    /// this is defensive on-disk hygiene, not a divergence fix.
+    ///
+    /// Only the `Finalization` slot is touched: its `stored_at_height` is the real
+    /// block height. `CertifiedNotarization` records key `stored_at_height` to the
+    /// notarization view (a retention proxy, not a height), so they are not
+    /// comparable to a block-height ceiling and are left untouched.
+    pub fn prune_above_height(&self, ceiling: u64) -> Result<usize, ParentProofStoreError> {
+        let fin_drop: Vec<CertifiedParentProofKey> = {
+            let state = self.lock_read();
+            state
+                .finalization
+                .iter()
+                .filter_map(|(key, r)| (r.stored_at_height > ceiling).then_some(*key))
+                .collect()
+        };
+        if fin_drop.is_empty() {
+            return Ok(0);
+        }
+        if let Some(backend) = &self.backend {
+            for key in &fin_drop {
+                backend.remove_record::<tables::OutbeCertifiedParentFinalizationRecords>(key)?;
+            }
+        }
+        let mut dropped = 0usize;
+        {
+            let mut state = self.lock_write();
+            for key in fin_drop {
+                if state.finalization.remove(&key).is_some() {
+                    dropped += 1;
+                }
+            }
+        }
+        if dropped > 0 {
+            self.bump_revision();
+        }
+        Ok(dropped)
     }
 }
 
@@ -738,7 +755,7 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
         record: CertifiedParentProofRecord,
     ) -> Result<(), ParentProofStoreError> {
         debug_assert_eq!(
-            record.proof_type,
+            record.proof_kind(),
             ParentParticipationProof::Finalization,
             "put_finalization called with non-Finalization record"
         );
@@ -750,7 +767,7 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
         record: CertifiedParentProofRecord,
     ) -> Result<(), ParentProofStoreError> {
         debug_assert_eq!(
-            record.proof_type,
+            record.proof_kind(),
             ParentParticipationProof::CertifiedNotarization,
             "put_certified_notarization called with non-CertifiedNotarization record"
         );
@@ -1066,14 +1083,15 @@ mod tests {
 
     fn finalization_record(hash_byte: u8, height: u64) -> CertifiedParentProofRecord {
         CertifiedParentProofRecord {
-            finalized_block_number: height,
+            kind: ProofKind::Finalization {
+                finalized_block_number: height,
+            },
             finalized_block_hash: B256::with_last_byte(hash_byte),
             finalized_epoch: 1,
             finalized_view: 100,
             parent_view: 99,
             ordered_committee: vec![address!("0x1111111111111111111111111111111111111111")],
             signer_bitmap: vec![1],
-            certificate: Bytes::from_static(b"cert"),
             encoded_proof: Bytes::from_static(b"cert"),
             stored_at_height: height,
             ..CertifiedParentProofRecord::default()
@@ -1082,8 +1100,7 @@ mod tests {
 
     fn notarization_record(hash_byte: u8, height: u64) -> CertifiedParentProofRecord {
         CertifiedParentProofRecord {
-            proof_type: ParentParticipationProof::CertifiedNotarization,
-            finalized_block_number: height,
+            kind: ProofKind::CertifiedNotarization,
             finalized_block_hash: B256::with_last_byte(hash_byte),
             finalized_epoch: 1,
             finalized_view: 100,
@@ -1091,7 +1108,6 @@ mod tests {
             ordered_committee: vec![address!("0x2222222222222222222222222222222222222222")],
             signer_bitmap: vec![3],
             encoded_proof: Bytes::from_static(b"notar"),
-            local_certification_witness: true,
             stored_at_height: height,
             ..CertifiedParentProofRecord::default()
         }
@@ -1099,6 +1115,65 @@ mod tests {
 
     fn key(hash_byte: u8) -> CertifiedParentProofKey {
         CertifiedParentProofKey::new(1, 100, B256::with_last_byte(hash_byte))
+    }
+
+    /// Pins the dual-semantic invariants retired by the per-proof-type `kind`
+    /// split: a `Finalization` record carries its own height; a
+    /// `CertifiedNotarization` witness carries none (the selector resolves it to
+    /// the parent height passed to `to_v2_metadata`, replacing the former
+    /// sentinel-0-then-mutate promotion). `is_certification_witness` and
+    /// `proof_kind` are now derived from the variant, not stored bools/fields.
+    #[test]
+    fn proof_kind_retires_dual_semantic_fields() {
+        let fin = finalization_record(0xAA, 41);
+        assert_eq!(fin.finalized_block_number(), Some(41));
+        assert_eq!(fin.proof_kind(), ParentParticipationProof::Finalization);
+        assert!(!fin.is_certification_witness());
+        assert_eq!(fin.to_v2_metadata(41).finalized_block_number, 41);
+
+        let cn = notarization_record(0xBB, 7);
+        assert_eq!(
+            cn.finalized_block_number(),
+            None,
+            "a certified-notarization witness carries no block number of its own"
+        );
+        assert_eq!(
+            cn.proof_kind(),
+            ParentParticipationProof::CertifiedNotarization
+        );
+        assert!(cn.is_certification_witness());
+        // The selector promotes the witness to the supplied parent height.
+        let meta = cn.to_v2_metadata(99);
+        assert_eq!(meta.finalized_block_number, 99);
+        assert_eq!(
+            meta.proof_kind,
+            ParentParticipationProof::CertifiedNotarization
+        );
+    }
+
+    #[test]
+    fn prune_above_height_drops_only_ahead_finalization_records() {
+        let store = FinalizedParentCertStore::new();
+        store
+            .put_finalization(finalization_record(0xAA, 50))
+            .unwrap();
+        store
+            .put_finalization(finalization_record(0xBB, 100))
+            .unwrap();
+        // CN witness: stored_at_height is a notarization-view proxy, not a height.
+        store
+            .put_certified_notarization(notarization_record(0xCC, 100))
+            .unwrap();
+
+        // Recovered finalized height = 60: the height-100 finalization record is
+        // ahead of the view and is dropped; the height-50 record stays.
+        let dropped = store.prune_above_height(60).unwrap();
+        assert_eq!(dropped, 1);
+        assert!(store.get_finalization(key(0xAA)).is_some());
+        assert!(store.get_finalization(key(0xBB)).is_none());
+        // The CertifiedNotarization slot is view-keyed, not height-comparable, so
+        // an above-height prune never touches it.
+        assert!(store.get_certified_notarization(key(0xCC)).is_some());
     }
 
     #[test]
@@ -1132,23 +1207,19 @@ mod tests {
             .put_finalization(finalization_record(0xAA, 100))
             .unwrap();
         let best = store.get_best_parent_proof(key(0xAA)).unwrap();
-        assert_eq!(best.proof_type, ParentParticipationProof::Finalization);
+        assert_eq!(best.proof_kind(), ParentParticipationProof::Finalization);
     }
 
     #[test]
     fn get_best_for_parent_is_single_snapshot_and_reports_cn_promotion_need() {
         let store = FinalizedParentCertStore::new();
-        let mut witness = notarization_record(0xAA, 0);
-        witness.finalized_block_number = 0;
+        let witness = notarization_record(0xAA, 0);
         store.put_certified_notarization(witness).unwrap();
 
         let best = store.get_best_for_parent(key(0xAA), 100).unwrap();
         assert!(matches!(
             best,
-            ParentProofSelection::CertifiedNotarization {
-                requires_promotion: true,
-                ..
-            }
+            ParentProofSelection::CertifiedNotarization(_)
         ));
 
         store
@@ -1166,7 +1237,7 @@ mod tests {
             .unwrap();
         let best = store.get_best_parent_proof(key(0xAA)).unwrap();
         assert_eq!(
-            best.proof_type,
+            best.proof_kind(),
             ParentParticipationProof::CertifiedNotarization
         );
     }
@@ -1221,11 +1292,12 @@ mod tests {
         // before they reach disk.
         let store = FinalizedParentCertStore::new();
         let mut bad = finalization_record(0xCC, 1);
-        bad.format_version = 3;
+        // 2 is the retired pre-V3 version; the write-side guard must reject it.
+        bad.format_version = 2;
         let err = store.put_finalization(bad).expect_err("must reject");
         assert!(matches!(
             err,
-            ParentProofStoreError::UnknownFormatVersion { version: 3, .. }
+            ParentProofStoreError::UnknownFormatVersion { version: 2, .. }
         ));
     }
 
@@ -1265,28 +1337,6 @@ mod tests {
         store.put_finalization(updated.clone()).unwrap();
         assert_eq!(store.len(), 1);
         assert_eq!(store.get_finalization(key(0xAA)), Some(updated));
-    }
-
-    #[test]
-    fn finalization_record_to_attestation_adapter_drops_only_stored_height() {
-        let r = finalization_record(0xAA, 42);
-        let att = r
-            .to_finalized_parent_attestation()
-            .expect("finalization → attestation");
-        assert_eq!(att.finalized_block_number, r.finalized_block_number);
-        assert_eq!(att.finalized_block_hash, r.finalized_block_hash);
-        assert_eq!(att.finalized_view, r.finalized_view);
-        assert_eq!(att.parent_view, r.parent_view);
-        assert_eq!(att.ordered_committee, r.ordered_committee);
-        assert_eq!(att.signer_bitmap, r.signer_bitmap);
-        // `finalize_votes` removed from `FinalizedParentAttestation`.
-        assert_eq!(att.missed_proposers, r.missed_proposers);
-    }
-
-    #[test]
-    fn certified_notarization_record_does_not_project_to_v1_attestation() {
-        let r = notarization_record(0xAA, 42);
-        assert!(r.to_finalized_parent_attestation().is_none());
     }
 
     #[test]
@@ -1434,24 +1484,25 @@ mod proptests {
     use proptest::collection::vec;
     use proptest::prelude::*;
 
-    fn arb_proof_type() -> impl Strategy<Value = ParentParticipationProof> {
+    /// Strategy: a `ProofKind`. Either a `Finalization` carrying an arbitrary
+    /// block number, or a `CertifiedNotarization` (no block number).
+    fn arb_kind() -> impl Strategy<Value = ProofKind> {
         prop_oneof![
-            Just(ParentParticipationProof::Finalization),
-            Just(ParentParticipationProof::CertifiedNotarization),
+            (0u64..(1 << 32)).prop_map(|finalized_block_number| ProofKind::Finalization {
+                finalized_block_number
+            }),
+            Just(ProofKind::CertifiedNotarization),
         ]
     }
 
-    /// Strategy: arbitrary `CertifiedParentProofRecord` with `format_version
-    /// == 2`. proptest's tuple `Strategy` impl maxes out at 12 elements, so
-    /// the fields are split into two tuples of 7 and 6 that are then
-    /// `prop_map`-ed together. Numeric ranges are kept under realistic
-    /// protocol bounds (epoch < 2^24, view < 2^32, etc.) to keep shrinking
-    /// fast without sacrificing coverage of the encoded layout.
+    /// Strategy: arbitrary `CertifiedParentProofRecord` with the current
+    /// `format_version`. Numeric ranges are kept under realistic protocol
+    /// bounds (epoch < 2^24, view < 2^32, etc.) to keep shrinking fast without
+    /// sacrificing coverage of the encoded layout.
     fn arb_record() -> impl Strategy<Value = CertifiedParentProofRecord> {
         let head = (
-            arb_proof_type(),
+            arb_kind(),
             0u64..(1 << 24),
-            0u64..(1 << 32),
             0u64..(1 << 32),
             0u64..(1 << 32),
             any::<[u8; 32]>(),
@@ -1462,17 +1513,15 @@ mod proptests {
             vec(any::<[u8; 20]>(), 0..8),
             vec(any::<u8>(), 0..8),
             vec(any::<u8>(), 0..128),
-            any::<bool>(),
             0u64..(1 << 40),
         );
         (head, tail).prop_map(
             |(
                 (
-                    proof_type,
+                    kind,
                     finalized_epoch,
                     finalized_view,
                     parent_view,
-                    finalized_block_number,
                     finalized_block_hash,
                     committee_set_hash,
                 ),
@@ -1481,30 +1530,24 @@ mod proptests {
                     ordered_committee,
                     signer_bitmap,
                     proof_bytes,
-                    local_certification_witness,
                     stored_at_height,
                 ),
             )| {
                 let encoded_proof = Bytes::from(proof_bytes);
                 CertifiedParentProofRecord {
                     format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-                    proof_type,
+                    kind,
                     finalized_epoch,
                     finalized_view,
                     parent_view,
-                    finalized_block_number,
                     finalized_block_hash: B256::from(finalized_block_hash),
                     committee_set_hash: B256::from(committee_set_hash),
                     vrf_material_version,
                     vrf_group_public_key_hash: B256::ZERO,
                     ordered_committee: ordered_committee.into_iter().map(Address::from).collect(),
                     signer_bitmap,
-                    encoded_proof: encoded_proof.clone(),
-                    local_certification_witness,
+                    encoded_proof,
                     stored_at_height,
-                    certificate: encoded_proof,
-                    finalize_votes: Vec::new(),
-                    missed_proposers: Vec::new(),
                 }
             },
         )
@@ -1542,7 +1585,7 @@ mod proptests {
         #[test]
         fn proptest_unknown_format_version_is_rejected(
             mut rec in arb_record(),
-            bad_version in prop_oneof![Just(0u8), Just(1u8), 3u8..=255u8],
+            bad_version in prop_oneof![Just(0u8), Just(1u8), Just(2u8), 4u8..=255u8],
         ) {
             rec.format_version = bad_version;
             let bytes = serde_json::to_vec(&rec).expect("encode");
@@ -1561,43 +1604,42 @@ mod proptests {
         }
     }
 
-    /// Cross-version pin: a hand-crafted v1 JSON payload (matching the
-    /// current serde shape, byte-for-byte field-order independent) decodes
-    /// to the expected logical record. If serde renames a field or removes
-    /// one without a `#[serde(default)]`, this test fails and forces an
-    /// explicit migration decision rather than silent data loss.
+    /// Current-format (V3) serde-shape pin: a hand-crafted JSON payload that
+    /// matches the on-disk shape decodes to the expected logical record, and
+    /// the decoded record re-encodes + re-decodes byte-equal. A proptest
+    /// round-trip cannot catch a serde field/variant rename (encode and decode
+    /// rename symmetrically), so this pin forces an explicit migration decision
+    /// if the schema's JSON shape changes. The externally-tagged `ProofKind`
+    /// serializes as `{"Finalization":{"finalized_block_number":N}}`, the kind
+    /// of detail the pin exists to catch.
     #[test]
-    fn cross_version_v1_payload_decodes_to_record() {
-        // `ParentParticipationProof` has `#[serde(rename_all = "camelCase")]`,
-        // so the on-disk variant name is `finalization`, not `Finalization`.
-        // This is the kind of detail the cross-version pin exists to catch.
+    fn current_format_payload_decodes_to_record() {
         let payload = r#"{
-            "format_version": 1,
-            "proof_type": "finalization",
+            "format_version": 3,
+            "kind": { "Finalization": { "finalized_block_number": 42 } },
             "finalized_epoch": 7,
             "finalized_view": 100,
             "parent_view": 99,
-            "finalized_block_number": 42,
             "finalized_block_hash": "0x000000000000000000000000000000000000000000000000000000000000aaaa",
             "committee_set_hash": "0x000000000000000000000000000000000000000000000000000000000000bbbb",
             "vrf_material_version": 3,
+            "vrf_group_public_key_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "ordered_committee": ["0x1111111111111111111111111111111111111111"],
             "signer_bitmap": [1, 0, 1],
             "encoded_proof": "0xdeadbeef",
-            "local_certification_witness": false,
-            "stored_at_height": 42,
-            "certificate": "0xdeadbeef",
-            "finalize_votes": [],
-            "missed_proposers": []
+            "stored_at_height": 42
         }"#;
         let rec: CertifiedParentProofRecord =
-            serde_json::from_str(payload).expect("v1 payload must decode");
-        assert_eq!(rec.format_version, 1);
-        assert_eq!(rec.proof_type, ParentParticipationProof::Finalization);
+            serde_json::from_str(payload).expect("current-format payload must decode");
+        assert_eq!(
+            rec.format_version,
+            CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION
+        );
+        assert_eq!(rec.proof_kind(), ParentParticipationProof::Finalization);
+        assert_eq!(rec.finalized_block_number(), Some(42));
         assert_eq!(rec.finalized_epoch, 7);
         assert_eq!(rec.finalized_view, 100);
         assert_eq!(rec.parent_view, 99);
-        assert_eq!(rec.finalized_block_number, 42);
         let mut expected_hash = [0u8; 32];
         expected_hash[30] = 0xaa;
         expected_hash[31] = 0xaa;
@@ -1606,8 +1648,38 @@ mod proptests {
         assert_eq!(rec.ordered_committee.len(), 1);
         assert_eq!(rec.signer_bitmap, vec![1u8, 0, 1]);
         assert_eq!(rec.encoded_proof.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
-        assert_eq!(rec.certificate.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
-        assert!(!rec.local_certification_witness);
         assert_eq!(rec.stored_at_height, 42);
+
+        // Re-encode + re-decode byte-equal: confirms the decoded record's
+        // serialized shape is stable under the current schema.
+        let encoded = serde_json::to_vec(&rec).expect("re-encode");
+        let decoded: CertifiedParentProofRecord =
+            serde_json::from_slice(&encoded).expect("re-decode");
+        assert_eq!(decoded, rec);
+
+        // A unit-variant `CertifiedNotarization` pins as a bare string tag.
+        let cn_payload = r#"{
+            "format_version": 3,
+            "kind": "CertifiedNotarization",
+            "finalized_epoch": 7,
+            "finalized_view": 100,
+            "parent_view": 99,
+            "finalized_block_hash": "0x000000000000000000000000000000000000000000000000000000000000aaaa",
+            "committee_set_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "vrf_material_version": 0,
+            "vrf_group_public_key_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "ordered_committee": [],
+            "signer_bitmap": [],
+            "encoded_proof": "0x",
+            "stored_at_height": 100
+        }"#;
+        let cn: CertifiedParentProofRecord =
+            serde_json::from_str(cn_payload).expect("CN payload must decode");
+        assert_eq!(
+            cn.proof_kind(),
+            ParentParticipationProof::CertifiedNotarization
+        );
+        assert_eq!(cn.finalized_block_number(), None);
+        assert!(cn.is_certification_witness());
     }
 }

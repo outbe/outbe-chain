@@ -1229,9 +1229,12 @@ impl ApplicationShared {
         // metadata's `ParentProofSelector::select_direct_parent_proof`
         // is the upstream caller that decides which record (if any) to feed
         // into Phase 1.
+        // The selector guarantees the chosen record's height resolves to
+        // `parent_height` (Finalization validated to match; CertifiedNotarization
+        // carries no height of its own and is resolved to the parent here).
         let parent_consensus_metadata = parent_proof_record
             .as_ref()
-            .map(CertifiedParentProofRecord::to_v2_metadata);
+            .map(|record| record.to_v2_metadata(parent_height.get()));
         if parent_consensus_metadata.is_some() {
             crate::metrics::record_parent_cert_included();
         }

@@ -93,22 +93,16 @@ impl ParentProofSelector {
             ParentProofSelection::Finalization(record) => {
                 self.validate_parent_record(key, parent_block_number, record)
             }
-            ParentProofSelection::CertifiedNotarization {
-                record,
-                requires_promotion,
-            } => {
-                if requires_promotion {
-                    tracing::debug!(
-                        target: "outbe::finalization",
-                        parent_block_number,
-                        parent_hash = %key.block_hash,
-                        parent_epoch = key.epoch,
-                        parent_view = key.view,
-                        "certified-notarization parent proof is witness-only until bounded finalization wait expires"
-                    );
-                    return None;
-                }
-                self.validate_parent_record(key, parent_block_number, record)
+            ParentProofSelection::CertifiedNotarization(_) => {
+                tracing::debug!(
+                    target: "outbe::finalization",
+                    parent_block_number,
+                    parent_hash = %key.block_hash,
+                    parent_epoch = key.epoch,
+                    parent_view = key.view,
+                    "certified-notarization parent proof is witness-only until bounded finalization wait expires"
+                );
+                None
             }
         }
     }
@@ -145,14 +139,7 @@ impl ParentProofSelector {
             ParentProofSelection::Finalization(record) => {
                 self.validate_parent_record(key, parent_block_number, record)
             }
-            ParentProofSelection::CertifiedNotarization {
-                record,
-                requires_promotion,
-            } => {
-                if !requires_promotion {
-                    return self.validate_parent_record(key, parent_block_number, record);
-                }
-
+            ParentProofSelection::CertifiedNotarization(record) => {
                 let mut revisions = self.parent_cert_store.subscribe_revisions();
 
                 if let Some(record) = self.parent_cert_store.get_finalization(key) {
@@ -190,9 +177,7 @@ impl ParentProofSelector {
                 crate::metrics::record_phase1_finalization_wait_ms(elapsed);
                 crate::metrics::record_phase1_used_cn_fallback(key.epoch, key.view);
 
-                let mut promoted = record;
-                promoted.finalized_block_number = parent_block_number;
-                self.validate_parent_record(key, parent_block_number, promoted)
+                self.validate_parent_record(key, parent_block_number, record)
             }
         }
     }
@@ -203,27 +188,33 @@ impl ParentProofSelector {
         parent_block_number: u64,
         record: CertifiedParentProofRecord,
     ) -> Option<CertifiedParentProofRecord> {
-        if record.finalized_block_number != parent_block_number {
-            tracing::warn!(
-                target: "outbe::finalization",
-                parent_block_number,
-                record_block_number = record.finalized_block_number,
-                parent_hash = %key.block_hash,
-                parent_epoch = key.epoch,
-                parent_view = key.view,
-                "parent proof record has unexpected finalized_block_number; draining record and returning None"
-            );
-            if let Err(error) = self.parent_cert_store.remove(key) {
+        // A `CertifiedNotarization` witness carries no block number — it is
+        // resolved to `parent_block_number` at metadata time, so it is always
+        // consistent here. A `Finalization` record must match the proposer's
+        // parent height.
+        if let Some(record_block_number) = record.finalized_block_number() {
+            if record_block_number != parent_block_number {
                 tracing::warn!(
                     target: "outbe::finalization",
+                    parent_block_number,
+                    record_block_number,
                     parent_hash = %key.block_hash,
                     parent_epoch = key.epoch,
                     parent_view = key.view,
-                    %error,
-                    "failed to drain block-number-mismatched parent proof record"
+                    "parent proof record has unexpected finalized_block_number; draining record and returning None"
                 );
+                if let Err(error) = self.parent_cert_store.remove(key) {
+                    tracing::warn!(
+                        target: "outbe::finalization",
+                        parent_hash = %key.block_hash,
+                        parent_epoch = key.epoch,
+                        parent_view = key.view,
+                        %error,
+                        "failed to drain block-number-mismatched parent proof record"
+                    );
+                }
+                return None;
             }
-            return None;
         }
 
         Some(record)
@@ -241,7 +232,7 @@ impl ParentProofSelector {
 mod tests {
     use super::*;
     use crate::finalization::parent_cert_store::{
-        CertifiedParentProofRecord, CertifiedParentProofStore,
+        CertifiedParentProofRecord, CertifiedParentProofStore, ProofKind,
     };
     use alloy_primitives::B256;
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
@@ -251,9 +242,14 @@ mod tests {
         block_number: u64,
         proof_type: ParentParticipationProof,
     ) -> CertifiedParentProofRecord {
+        let kind = match proof_type {
+            ParentParticipationProof::Finalization => ProofKind::Finalization {
+                finalized_block_number: block_number,
+            },
+            ParentParticipationProof::CertifiedNotarization => ProofKind::CertifiedNotarization,
+        };
         CertifiedParentProofRecord {
-            proof_type,
-            finalized_block_number: block_number,
+            kind,
             finalized_block_hash: parent_hash,
             stored_at_height: block_number,
             ..CertifiedParentProofRecord::default()
@@ -285,7 +281,7 @@ mod tests {
             .unwrap();
         let selector = ParentProofSelector::new(store);
         let r = selector.select_direct_parent_proof(0, 0, 7, hash).unwrap();
-        assert_eq!(r.proof_type, ParentParticipationProof::Finalization);
+        assert_eq!(r.proof_kind(), ParentParticipationProof::Finalization);
     }
 
     #[test]
@@ -299,13 +295,20 @@ mod tests {
                 ParentParticipationProof::CertifiedNotarization,
             ))
             .unwrap();
-        let selector = ParentProofSelector::new(store);
-        let r = selector.select_direct_parent_proof(0, 0, 9, hash).unwrap();
+        // The store-level fallback returns the CN record when no finalization
+        // is present for the exact key — it is the proposer's fallback slot.
+        let key = CertifiedParentProofKey::new(0, 0, hash);
+        let best = store.get_best_parent_proof(key).unwrap();
         assert_eq!(
-            r.proof_type,
+            best.proof_kind(),
             ParentParticipationProof::CertifiedNotarization
         );
-        assert_eq!(r.finalized_block_number, 9);
+        // A CN witness carries no block number of its own; the selector
+        // resolves its height to the known parent at metadata time.
+        assert_eq!(best.finalized_block_number(), None);
+        // The non-wait selector treats CN as witness-only and returns None.
+        let selector = ParentProofSelector::new(store);
+        assert!(selector.select_direct_parent_proof(0, 0, 9, hash).is_none());
     }
 
     #[test]
@@ -386,18 +389,21 @@ mod tests {
                     .unwrap();
 
                 assert_eq!(
-                    r.proof_type,
+                    r.proof_kind(),
                     ParentParticipationProof::CertifiedNotarization
                 );
-                assert_eq!(r.finalized_block_number, 9);
-                assert_eq!(
-                    selector
-                        .parent_cert_store()
-                        .get_certified_notarization(key)
-                        .unwrap()
-                        .finalized_block_number,
-                    0
-                );
+                // The CN witness carries no block number of its own; the
+                // selector resolves its height to the known parent only at
+                // metadata time.
+                assert_eq!(r.finalized_block_number(), None);
+                assert_eq!(r.to_v2_metadata(9).finalized_block_number, 9);
+                // The store record remains a witness with no block number.
+                let stored = selector
+                    .parent_cert_store()
+                    .get_certified_notarization(key)
+                    .unwrap();
+                assert!(stored.is_certification_witness());
+                assert_eq!(stored.finalized_block_number(), None);
             },
         );
     }
@@ -439,8 +445,8 @@ mod tests {
                     .await
                     .unwrap();
 
-                assert_eq!(r.proof_type, ParentParticipationProof::Finalization);
-                assert_eq!(r.finalized_block_number, 9);
+                assert_eq!(r.proof_kind(), ParentParticipationProof::Finalization);
+                assert_eq!(r.finalized_block_number(), Some(9));
             },
         );
     }
