@@ -476,13 +476,21 @@ impl OutbeReporter {
         // 3. Detect missed proposers from view gaps.
         let missed_proposers = self.detect_missed_proposers(view);
 
-        // 4. Drain pending byzantine evidence (dedup by address).
-        let deferred_byzantine = self.view_state.drain_byzantine_sorted();
+        // 4. Drain the per-finalization buffer of locally-attributed byzantine
+        // signers — operator observability ONLY, not a transport stage. On-chain
+        // slashing is carried by the external watcher (which observes the raw
+        // gossiped votes the node cannot reach — commonware hides the inner votes)
+        // submitting the two conflicting `EvidenceBlock`s to the SlashIndicator
+        // `submitConflicting{Notarize,Finalize}` / `submitNullifyFinalize`
+        // precompile, where both signatures are re-verified on-chain (reproducible
+        // from chain state). This drain does NOT put evidence on-chain.
+        let attributed_byzantine = self.view_state.drain_byzantine_sorted();
 
-        if !deferred_byzantine.is_empty() {
+        if !attributed_byzantine.is_empty() {
             warn!(
-                count = deferred_byzantine.len(),
-                "byzantine evidence observed but not yet transported by finalized-parent certificate tx"
+                target: "outbe::slashing::equivocation",
+                count = attributed_byzantine.len(),
+                "byzantine equivocation attributed this finalization; on-chain slashing requires the external watcher to submit the two conflicting votes to the SlashIndicator precompile"
             );
         }
 
