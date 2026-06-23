@@ -32,7 +32,7 @@ use outbe_consensus::{
     finalization::{
         parent_cert_store::{
             CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-            FinalizedParentCertStore,
+            FinalizedParentCertStore, ProofKind,
         },
         resolver::{
             ParentProofResolver, ParentProofTransport, ProofFetchKey, ProofFetchOutcome,
@@ -41,9 +41,7 @@ use outbe_consensus::{
     },
     hybrid::HybridScheme,
 };
-use outbe_primitives::{
-    consensus_metadata::ParentParticipationProof, protocol_schedule::OutbeProtocolSchedule,
-};
+use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 
 // ── Test fixtures ─────────────────────────────────────────────────────────
 
@@ -406,12 +404,11 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
 /// resolver only checks for the slot's presence under the parent hash.
 fn witness_for(round: Round, parent_view: View, parent_hash: B256) -> CertifiedParentProofRecord {
     CertifiedParentProofRecord {
-        proof_type: ParentParticipationProof::CertifiedNotarization,
+        kind: ProofKind::CertifiedNotarization,
         finalized_epoch: round.epoch().get(),
         finalized_view: round.view().get(),
         parent_view: parent_view.get(),
         finalized_block_hash: parent_hash,
-        local_certification_witness: true,
         stored_at_height: round.view().get(),
         ..CertifiedParentProofRecord::default()
     }

@@ -35,15 +35,13 @@ use commonware_consensus::{
 };
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
-use outbe_primitives::{
-    consensus_metadata::ParentParticipationProof, protocol_schedule::OutbeProtocolSchedule,
-};
+use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 
 use crate::{
     digest::Digest,
     finalization::parent_cert_store::{
         CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-        FinalizedParentCertStore, ParentProofStoreError,
+        FinalizedParentCertStore, ParentProofStoreError, ProofKind,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
     finalization::util::build_signer_bitmap_guarded,
@@ -271,11 +269,10 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             // Phase 1 selector will not promote it without a real block number.
             let record = CertifiedParentProofRecord {
                 format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-                proof_type: ParentParticipationProof::CertifiedNotarization,
+                kind: ProofKind::CertifiedNotarization,
                 finalized_epoch: notarization.epoch().get(),
                 finalized_view: view,
                 parent_view: notarization.proposal.parent.get(),
-                finalized_block_number: 0,
                 finalized_block_hash: notarization.proposal.payload.0,
                 committee_set_hash: prelude.committee_set_hash,
                 vrf_material_version: prelude.vrf_material_version,
@@ -285,11 +282,8 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                     &notarization.certificate,
                     self.validator_addresses.len(),
                 ),
-                certificate: encoded_proof.clone(),
                 encoded_proof,
-                local_certification_witness: true,
                 stored_at_height: view,
-                ..CertifiedParentProofRecord::default()
             };
 
             if let Err(error) = self.proof_store.put_certified_notarization(record.clone()) {
@@ -330,23 +324,20 @@ pub(crate) fn build_finalization_record_from_recovered(
     let prelude = build_committee_prelude(scheme, ordered_committee, finalized_epoch)?;
     Ok(CertifiedParentProofRecord {
         format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-        proof_type: ParentParticipationProof::Finalization,
-        finalized_block_number,
+        kind: ProofKind::Finalization {
+            finalized_block_number,
+        },
         finalized_block_hash,
         finalized_epoch,
         finalized_view,
         parent_view,
         ordered_committee: ordered_committee.to_vec(),
         signer_bitmap: build_signer_bitmap_guarded(certificate, ordered_committee.len()),
-        certificate: encoded_certificate.clone(),
         encoded_proof: encoded_certificate,
         committee_set_hash: prelude.committee_set_hash,
         vrf_material_version: prelude.vrf_material_version,
         vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
-        finalize_votes: Vec::new(),
-        missed_proposers: Vec::new(),
         stored_at_height: finalized_block_number,
-        ..CertifiedParentProofRecord::default()
     })
 }
 
@@ -368,6 +359,7 @@ mod tests {
         ordered::{Quorum as _, Set as OrderedSet},
         N3f1, TryCollect as _,
     };
+    use outbe_primitives::consensus_metadata::ParentParticipationProof;
 
     fn participants(n: u8) -> (Vec<bls12381::PrivateKey>, OrderedSet<bls12381::PublicKey>) {
         let keys: Vec<bls12381::PrivateKey> = (0..n)
@@ -465,18 +457,16 @@ mod tests {
         .expect("recovered record builds from valid 48-byte MinPk pubkeys");
 
         // Field mapping mirrors the finalization + the V2 contract.
-        assert_eq!(record.proof_type, ParentParticipationProof::Finalization);
-        assert_eq!(record.finalized_block_number, block_number);
+        assert_eq!(record.proof_kind(), ParentParticipationProof::Finalization);
+        assert_eq!(record.finalized_block_number(), Some(block_number));
         assert_eq!(record.finalized_block_hash, finalization.proposal.payload.0);
         assert_eq!(record.finalized_epoch, epoch.get());
         assert_eq!(record.finalized_view, view.get());
         assert_eq!(record.parent_view, parent_view.get());
         assert_eq!(record.ordered_committee, addresses);
         assert_eq!(record.signer_bitmap, vec![1u8, 1, 1], "all 3 signed");
-        assert!(record.missed_proposers.is_empty(), "V2: empty");
-        assert!(record.finalize_votes.is_empty(), "V2: empty");
         assert_eq!(record.stored_at_height, block_number);
-        assert_eq!(record.certificate, encoded);
+        assert_eq!(record.encoded_proof, encoded);
 
         // Committee-set-hash parity: rebuild the snapshot exactly as
         // `FinalizationActor::handle_finalized` (actor.rs:458-490) and assert the
@@ -518,7 +508,7 @@ mod tests {
         );
 
         // The record projects to canonical V2 metadata Phase 1 consumes.
-        let metadata = record.to_v2_metadata();
+        let metadata = record.to_v2_metadata(block_number);
         assert_eq!(metadata.finalized_block_number, block_number);
         assert_eq!(
             metadata.finalized_block_hash,

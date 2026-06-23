@@ -31,7 +31,7 @@ use crate::config::{FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_
 use crate::digest::Digest;
 use crate::finalization::ingress::{Finalized, Mailbox, Message};
 use crate::finalization::parent_cert_store::{
-    CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore,
+    CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore, ProofKind,
     CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
 };
 use crate::finalization::state::FinalizationViewHandle;
@@ -40,7 +40,6 @@ use crate::finalization::util::{
     ReplayClassification,
 };
 use commonware_consensus::marshal::core::DigestFallback;
-use outbe_primitives::consensus_metadata::ParentParticipationProof;
 
 /// Bound on consensus-owned exact-parent certificate handoff retention.
 ///
@@ -526,25 +525,20 @@ impl FinalizationActor {
         };
         let snap = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-            proof_type: ParentParticipationProof::Finalization,
-            finalized_block_number: block_number,
+            kind: ProofKind::Finalization {
+                finalized_block_number: block_number,
+            },
             finalized_block_hash: digest.0,
             finalized_epoch,
             finalized_view: finalized.round.view().get(),
             parent_view: consensus_data.finalized_certificate.parent_view,
             ordered_committee,
             signer_bitmap: consensus_data.finalized_certificate.signer_bitmap.clone(),
-            certificate: encoded_certificate.clone(),
             encoded_proof: encoded_certificate,
             committee_set_hash,
             vrf_material_version,
             vrf_group_public_key_hash,
-            // Legacy `finalize_votes` left blank (kept on the record schema for
-            // backward-compat serde decoding of older on-disk data).
-            finalize_votes: Vec::new(),
-            missed_proposers: consensus_data.missed_proposers.clone(),
             stored_at_height: block_number,
-            ..CertifiedParentProofRecord::default()
         };
         self.deps
             .parent_cert_store

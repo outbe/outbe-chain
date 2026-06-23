@@ -36,16 +36,15 @@ use crate::{
     finalization::finalize_verify::FinalizeVerifyMailbox,
     finalization::ingress::{Finalized as FinalizationFinalized, Mailbox as FinalizationMailbox},
     finalization::parent_cert_store::{
-        CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord,
+        CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord, ProofKind,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
     hybrid::{
         bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
     },
 };
-use outbe_primitives::{
-    consensus::{ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData},
-    consensus_metadata::ParentParticipationProof,
+use outbe_primitives::consensus::{
+    ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData,
 };
 
 const MAX_MISSED_PROPOSERS: usize = u8::MAX as usize;
@@ -617,26 +616,18 @@ impl OutbeReporter {
             .mark_local_certification_witness(proof_key);
         let record = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-            proof_type: ParentParticipationProof::CertifiedNotarization,
+            kind: ProofKind::CertifiedNotarization,
             finalized_epoch: notarization.proposal.round.epoch().get(),
             finalized_view: view,
             parent_view: notarization.proposal.parent.get(),
-            finalized_block_number: 0,
             finalized_block_hash: notarization.proposal.payload.0,
             committee_set_hash: prelude.committee_set_hash,
             vrf_material_version: prelude.vrf_material_version,
-            // Batch A: populate the V2 hash field on every
-            // certified-notarization write so the proof store is
-            // self-contained for the V2 metadata adapter
-            // ([`CertifiedParentProofRecord::to_v2_metadata`]).
             vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
             ordered_committee: self.validator_addresses.clone(),
             signer_bitmap,
-            certificate: encoded_proof.clone(),
             encoded_proof,
-            local_certification_witness: true,
             stored_at_height: view,
-            ..CertifiedParentProofRecord::default()
         };
 
         // Step 3 — enqueue the durable write to the FinalizationActor.
