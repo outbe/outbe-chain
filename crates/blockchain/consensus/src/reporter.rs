@@ -16,8 +16,7 @@
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
 use crate::metrics::EquivocationKind;
-use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
     simplex::types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
@@ -578,35 +577,16 @@ impl OutbeReporter {
         // the snapshot from the verifier scheme so the proposer-side hash
         // matches what `apply_boundary_outcome` writes to `CommitteeSnapshotStore`
         // and what the executor Phase 1 verifier recomputes.
-        let vrf_material_version = self.verifier_scheme.active_vrf_material_version();
-        let vrf_group_public_key_bytes: Vec<u8> = self
-            .verifier_scheme
-            .identity()
-            .map(|pk| pk.encode().as_ref().to_vec())
-            .unwrap_or_default();
-        let vrf_group_pk_hash = if vrf_group_public_key_bytes.is_empty() {
-            B256::ZERO
-        } else {
-            keccak256(&vrf_group_public_key_bytes)
-        };
-        let encoded_pubkeys: Vec<Vec<u8>> = self
-            .verifier_scheme
-            .participants()
-            .iter()
-            .map(|pubkey| pubkey.encode().as_ref().to_vec())
-            .collect();
         // Defence-in-depth path: a snapshot build failure is an encode-invariant
         // violation; drop the certification deterministically (metered, never
         // panic) rather than write a record whose committee_set_hash would
         // diverge from the writer's.
-        let snapshot = match build_committee_snapshot(
+        let prelude = match crate::finalization::committee_prelude::build_committee_prelude(
+            &self.verifier_scheme,
             &self.validator_addresses,
-            &encoded_pubkeys,
-            vrf_material_version,
-            vrf_group_public_key_bytes,
-            alloy_primitives::B256::ZERO,
+            notarization.proposal.round.epoch().get(),
         ) {
-            Ok(snapshot) => snapshot,
+            Ok(prelude) => prelude,
             Err(error) => {
                 crate::metrics::record_certification_dropped(
                     crate::metrics::CertificationDropReason::SnapshotBuildFailed,
@@ -620,8 +600,6 @@ impl OutbeReporter {
                 return;
             }
         };
-        let committee_set_hash =
-            committee_set_hash_v2(notarization.proposal.round.epoch().get(), &snapshot);
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
         let encoded_proof: Bytes = notarization.encode().into();
         // The notarization carries no block-number context. Store `0` so this
@@ -645,13 +623,13 @@ impl OutbeReporter {
             parent_view: notarization.proposal.parent.get(),
             finalized_block_number: 0,
             finalized_block_hash: notarization.proposal.payload.0,
-            committee_set_hash,
-            vrf_material_version,
+            committee_set_hash: prelude.committee_set_hash,
+            vrf_material_version: prelude.vrf_material_version,
             // Batch A: populate the V2 hash field on every
             // certified-notarization write so the proof store is
             // self-contained for the V2 metadata adapter
             // ([`CertifiedParentProofRecord::to_v2_metadata`]).
-            vrf_group_public_key_hash: vrf_group_pk_hash,
+            vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
             ordered_committee: self.validator_addresses.clone(),
             signer_bitmap,
             certificate: encoded_proof.clone(),

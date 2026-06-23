@@ -16,10 +16,8 @@
 //! the exact-parent certificate needed for the successor block's Phase 1 system
 //! transaction.
 
-use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
-use alloy_primitives::keccak256;
-use commonware_codec::Encode;
-use commonware_cryptography::certificate::{Provider as _, Scheme as _};
+use crate::finalization::committee_prelude::build_committee_prelude;
+use commonware_cryptography::certificate::Provider as _;
 use commonware_runtime::{Clock, Spawner};
 use futures::{channel::mpsc, StreamExt};
 use outbe_primitives::{
@@ -494,43 +492,21 @@ impl FinalizationActor {
             .scoped(finalized.round.epoch())
         {
             Some(scheme) => {
-                let participants = scheme.participants();
-                let encoded_pubkeys: Vec<Vec<u8>> = participants
-                    .iter()
-                    .map(|pubkey| pubkey.encode().as_ref().to_vec())
-                    .collect();
-                let vrf_group_public_key_bytes: Vec<u8> = scheme
-                    .identity()
-                    .map(|pk| pk.encode().as_ref().to_vec())
-                    .unwrap_or_default();
-                let vrf_group_public_key_hash = if vrf_group_public_key_bytes.is_empty() {
-                    alloy_primitives::B256::ZERO
-                } else {
-                    keccak256(&vrf_group_public_key_bytes)
-                };
-                let vrf_material_version = scheme.active_vrf_material_version();
-                // Single canonical builder (shared with the resolver, reporter,
-                // and DKG proposer). Reconstructed from finalized metadata, so no
-                // full polynomial is available; `B256::ZERO` is the unused
-                // `vrf_public_polynomial_hash` (excluded from committee_set_hash_v2).
-                let snapshot = build_committee_snapshot(
-                    &ordered_committee,
-                    &encoded_pubkeys,
-                    vrf_material_version,
-                    vrf_group_public_key_bytes,
-                    alloy_primitives::B256::ZERO,
-                )
-                .map_err(|e| {
-                    eyre::eyre!(
-                        "finalization committee snapshot build failed at epoch \
-                         {finalized_epoch}: {e}"
-                    )
-                })?;
-                let committee_set_hash = committee_set_hash_v2(finalized_epoch, &snapshot);
+                // Single canonical builder (shared with the resolver and reporter;
+                // the DKG proposer is distinct — it carries a real polynomial hash).
+                // Reconstructed from finalized metadata, so the snapshot's unused
+                // `vrf_public_polynomial_hash` is `B256::ZERO` inside the helper.
+                let prelude = build_committee_prelude(&scheme, &ordered_committee, finalized_epoch)
+                    .map_err(|e| {
+                        eyre::eyre!(
+                            "finalization committee snapshot build failed at epoch \
+                                 {finalized_epoch}: {e}"
+                        )
+                    })?;
                 (
-                    committee_set_hash,
-                    vrf_material_version,
-                    vrf_group_public_key_hash,
+                    prelude.committee_set_hash,
+                    prelude.vrf_material_version,
+                    prelude.vrf_group_public_key_hash,
                 )
             }
             None => {
