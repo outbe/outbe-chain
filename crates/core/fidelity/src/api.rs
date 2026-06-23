@@ -30,7 +30,7 @@ pub fn cohort_out(
 }
 
 /// Fidelity league for `account` at the current block time, a tier in
-/// `[MIN_LEAGUE, MAX_LEAGUE]`. See [`FidelityContract::league`].
+/// `[MIN_LEAGUE, MAX_LEAGUE]`.
 pub fn league(storage: StorageHandle<'_>, account: Address) -> Result<u16> {
     FidelityContract::new(storage).league(account)
 }

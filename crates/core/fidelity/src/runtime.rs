@@ -106,11 +106,7 @@ impl FidelityContract<'_> {
         Ok(())
     }
 
-    /// RCFI for `account` at block time `timestamp` (seconds) as the fixed-point
-    /// value the precompile exposes: decayed days scaled by `10^DECIMALS`
-    /// (`SCALE`), so `SCALE` is one decayed day — the full `rcfi` from
-    /// [`Self::compute_rcfi_fp`] without flooring.
-    pub fn compute_rcfi_scaled(&self, account: Address, timestamp: u64) -> Result<U256> {
+    pub fn compute_fidelity_index(&self, account: Address, timestamp: u64) -> Result<U256> {
         let (rcfi_fp, _, _) = self.compute_rcfi_fp(account, timestamp)?;
         Ok(rcfi_fp)
     }
@@ -161,11 +157,9 @@ impl FidelityContract<'_> {
         Ok((rcfi, efficiency, d_dec_age))
     }
 
-    /// RCFI for `account` at the current block time as the fixed-point value the
-    /// precompile exposes (`10^DECIMALS`-scaled decayed days).
-    pub fn get_rcfi_scaled(&self, account: Address) -> Result<U256> {
+    pub fn get_fidelity_index(&self, account: Address) -> Result<U256> {
         let now = self.storage.timestamp()?.to::<u64>();
-        self.compute_rcfi_scaled(account, now)
+        self.compute_fidelity_index(account, now)
     }
 
     /// Synthetic maximum (saturating) RCFI at `timestamp`: the decayed age of
@@ -193,7 +187,7 @@ impl FidelityContract<'_> {
         if max.is_zero() {
             return Ok(MIN_LEAGUE);
         }
-        let rcfi = self.compute_rcfi_scaled(account, timestamp)?;
+        let rcfi = self.compute_fidelity_index(account, timestamp)?;
         // slot = floor(rcfi / (max / LEAGUE_COUNT)) = floor(rcfi · LEAGUE_COUNT / max).
         // The 10^18 scale cancels, so this is an exact floor. `rcfi ≤ max` keeps
         // the result in 0..=LEAGUE_COUNT; clamp the rcfi == max boundary to the

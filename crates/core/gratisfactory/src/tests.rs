@@ -209,7 +209,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
         // (rather than it having pre-existed).
         let later = CREATED_AT + ONE_YEAR_SECS;
         let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_rcfi_scaled(alice(), later)
+            .compute_fidelity_index(alice(), later)
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
@@ -225,7 +225,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
         // aged RCFI a year later is now positive. If `mine` stopped calling
         // `cohort_in`, this would stay zero and fail.
         let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_rcfi_scaled(alice(), later)
+            .compute_fidelity_index(alice(), later)
             .unwrap();
         assert!(rcfi_after > U256::ZERO);
     });
@@ -261,7 +261,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         )
         .unwrap();
         let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_rcfi_scaled(alice())
+            .get_fidelity_index(alice())
             .unwrap();
         assert!(rcfi_before > U256::ZERO);
 
@@ -282,7 +282,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         // The active cohort was fully sold via cohort_out, so RCFI is now zero.
         // If the sale hook were dropped, this would stay positive and fail.
         let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_rcfi_scaled(alice())
+            .get_fidelity_index(alice())
             .unwrap();
         assert_eq!(rcfi_after, U256::ZERO);
     });

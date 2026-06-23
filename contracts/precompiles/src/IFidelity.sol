@@ -3,33 +3,28 @@ pragma solidity ^0.8.30;
 
 interface IFidelity {
 
-    /// Retention Component of Fidelity Index for `account`, in decayed days.
-    /// Computed on-demand from the account's cohort ledger at
-    /// the current block timestamp.
-    function getRcfi(address account) external view returns (uint256);
+    /// Fidelity Index for `account`.
+    /// Computed on-demand on Retention Component at
+    /// the current block timestamp
+    function getFidelityIndex(address account) external view returns (uint256);
 
-    /// Retention Component of Fidelity Index for `account`, in decayed days.
-    /// Computed on-demand from the account's cohort ledger at
-    /// the given timestamp.
-    function getRcfiAt(address account, uint64 timestamp) external view returns (uint256);
+    /// Fidelity Index for `account`.
+    /// Computed on-demand on Retention Component at
+    /// the given timestamp
+    function getFidelityIndexAt(address account, uint64 timestamp) external view returns (uint256);
 
     /// Returns fidelity index decimals precision
     function decimals() external view returns (uint8);
 
-    /// Synthetic maximum (saturating) RCFI at `timestamp`: the decayed age of
-    /// the earliest-qualified account on the chain. An upper bound on every
-    /// account's RCFI at that time; defines the top of the league range
-    /// `[0, maxRcfiAt(timestamp)]`. Same `decimals()` scale as `getRcfi`.
-    function maxRcfiAt(uint64 timestamp) external view returns (uint256);
+    /// Synthetic maximum Fidelity Index (saturating RCFI) at `timestamp`
+    function maxFidelityIndexAt(uint64 timestamp) external view returns (uint256);
 
-    /// Lowest league id (inclusive).
+    /// Lowest league (inclusive)
     function minLeague() external view returns (uint16);
 
-    /// Highest league id (inclusive). Leagues span `[minLeague, maxLeague]`.
+    /// Highest league (inclusive)
     function maxLeague() external view returns (uint16);
 
-    /// League tier for `account` at the current block timestamp: the slot its
-    /// RCFI lands in when `[0, maxRcfiAt(now)]` is split into equal tiers.
-    /// In `[minLeague, maxLeague]`.
+    /// League for `account` at the current block timestamp
     function league(address account) external view returns (uint16);
 }

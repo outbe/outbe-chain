@@ -21,10 +21,10 @@ pub fn dispatch(
         let contract = FidelityContract::new(storage);
         use IFidelity::IFidelityCalls::*;
         match call {
-            getRcfi(c) => view(c, |c| contract.get_rcfi_scaled(c.account)),
-            getRcfiAt(c) => view(c, |c| contract.compute_rcfi_scaled(c.account, c.timestamp)),
+            getFidelityIndex(c) => view(c, |c| contract.get_fidelity_index(c.account)),
+            getFidelityIndexAt(c) => view(c, |c| contract.compute_fidelity_index(c.account, c.timestamp)),
             decimals(_) => metadata::<IFidelity::decimalsCall>(|| Ok(DECIMALS)),
-            maxRcfiAt(c) => view(c, |c| contract.max_rcfi_at(c.timestamp)),
+            maxFidelityIndexAt(c) => view(c, |c| contract.max_rcfi_at(c.timestamp)),
             minLeague(_) => metadata::<IFidelity::minLeagueCall>(|| Ok(MIN_LEAGUE)),
             maxLeague(_) => metadata::<IFidelity::maxLeagueCall>(|| Ok(MAX_LEAGUE)),
             league(c) => view(c, |c| contract.league(c.account)),

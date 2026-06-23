@@ -38,7 +38,7 @@ fn u(v: u64) -> U256 {
 fn no_history_returns_zero_rcfi() {
     with_contract(|c| {
         // get_rcfi_scaled reads the (zero) block timestamp; no cohorts → 0.
-        assert_eq!(c.get_rcfi_scaled(ALICE).unwrap(), U256::ZERO);
+        assert_eq!(c.get_fidelity_index(ALICE).unwrap(), U256::ZERO);
     });
 }
 
@@ -221,7 +221,7 @@ fn days(fp: U256) -> f64 {
 /// Floored whole decayed-days RCFI at `ts`, derived from the scaled value the
 /// precompile exposes (`SCALE` == one decayed day).
 fn rcfi_days(c: &FidelityContract, account: Address, ts: u64) -> u64 {
-    (c.compute_rcfi_scaled(account, ts).unwrap() / SCALE).to::<u64>()
+    (c.compute_fidelity_index(account, ts).unwrap() / SCALE).to::<u64>()
 }
 
 #[test]
@@ -236,14 +236,14 @@ fn compute_rcfi_scaled_equals_t_dec_for_holding_at_historical_times() {
         for age in [0u64, 1, 365, 730, 1460, 3650] {
             let ts = T0 + age * DAY;
             assert_eq!(
-                c.compute_rcfi_scaled(ALICE, ts).unwrap(),
+                c.compute_fidelity_index(ALICE, ts).unwrap(),
                 t_dec(age * DAY),
                 "scaled RCFI must equal t_dec(age) at +{age}d",
             );
         }
         // A timestamp before the wallet's first acquisition has zero retention.
         assert_eq!(
-            c.compute_rcfi_scaled(ALICE, T0 - 100 * DAY).unwrap(),
+            c.compute_fidelity_index(ALICE, T0 - 100 * DAY).unwrap(),
             U256::ZERO,
             "pre-acquisition timestamp must be zero",
         );
@@ -262,7 +262,7 @@ fn compute_rcfi_scaled_is_unfloored_fp() {
 
         for age in [50u64, 150, 365, 1000, 1460] {
             let ts = T0 + age * DAY;
-            let scaled = c.compute_rcfi_scaled(ALICE, ts).unwrap();
+            let scaled = c.compute_fidelity_index(ALICE, ts).unwrap();
             let (raw_fp, _, _) = c.compute_rcfi_fp(ALICE, ts).unwrap();
             assert_eq!(
                 scaled, raw_fp,
@@ -279,7 +279,7 @@ fn compute_rcfi_scaled_preserves_subday_precision() {
     // variant discards.
     with_contract(|c| {
         c.cohort_in(ALICE, u(100), T0).unwrap();
-        let scaled = c.compute_rcfi_scaled(ALICE, T0 + 365 * DAY).unwrap();
+        let scaled = c.compute_fidelity_index(ALICE, T0 + 365 * DAY).unwrap();
         assert_eq!(scaled / SCALE, u(263), "integer part is 263 decayed days");
         assert!(
             scaled % SCALE != U256::ZERO,
@@ -300,7 +300,7 @@ fn compute_rcfi_scaled_is_monotonic_across_historical_timestamps() {
         c.cohort_in(ALICE, u(100), T0).unwrap();
         let mut prev = U256::ZERO;
         for age in [1u64, 30, 365, 730, 1460, 3650, 36500] {
-            let cur = c.compute_rcfi_scaled(ALICE, T0 + age * DAY).unwrap();
+            let cur = c.compute_fidelity_index(ALICE, T0 + age * DAY).unwrap();
             assert!(cur > prev, "scaled RCFI must increase at +{age}d");
             assert!(cur <= L_FP, "scaled RCFI must not exceed L at +{age}d");
             prev = cur;
@@ -313,7 +313,7 @@ fn compute_rcfi_scaled_no_history_is_zero_at_any_timestamp() {
     with_contract(|c| {
         for age in [0u64, 365, 3650] {
             assert_eq!(
-                c.compute_rcfi_scaled(ALICE, T0 + age * DAY).unwrap(),
+                c.compute_fidelity_index(ALICE, T0 + age * DAY).unwrap(),
                 U256::ZERO,
                 "no cohorts ⇒ zero RCFI at +{age}d",
             );
@@ -379,7 +379,7 @@ fn oldest_full_holder_reaches_max_league() {
         c.cohort_in(BOB, u(100), T0).unwrap();
         let ts = T0 + 730 * DAY;
         assert_eq!(
-            c.compute_rcfi_scaled(BOB, ts).unwrap(),
+            c.compute_fidelity_index(BOB, ts).unwrap(),
             c.max_rcfi_at(ts).unwrap(),
             "anchor 100%-holder sits exactly at the ceiling",
         );
