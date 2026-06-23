@@ -2045,9 +2045,8 @@ mod tests {
     use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
     use crate::dkg_manager::{self, Mailbox as DkgManagerMailbox};
-    use crate::finalization::util::{
-        build_signer_bitmap, validate_consensus_metadata, AttestationVerdict,
-    };
+    use crate::finalization::attestation::{validate_consensus_metadata, AttestationVerdict};
+    use crate::finalization::util::build_signer_bitmap;
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
     use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest};
