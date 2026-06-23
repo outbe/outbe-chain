@@ -9,7 +9,7 @@ publish.workspace = true
 outbe-common.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
-outbe-gratis.workspace = true
+outbe-gratisfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -18,6 +18,7 @@ hex.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-gratis.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 
 [features]

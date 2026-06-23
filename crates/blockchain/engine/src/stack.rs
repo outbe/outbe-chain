@@ -71,7 +71,8 @@ use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
     application::{
         actor::OutbeApplication,
-        handler::{ApplicationDeps, ApplicationEpochFence, ApplicationHandler},
+        handler::{ApplicationDeps, ApplicationHandler},
+        ApplicationEpochFence,
     },
     bls,
     committee_provider::CommitteeProvider,
@@ -85,8 +86,8 @@ use outbe_consensus::{
         state::new_finalization_view,
     },
     hybrid::{
-        HybridElectorConfigProvider, HybridRandom, HybridScheme, HybridSchemeProvider,
-        VrfMaterialProvider,
+        election::{HybridElectorConfigProvider, HybridRandom},
+        HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
     },
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
@@ -3140,9 +3141,7 @@ where
             let deadline = ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
             loop {
                 let (height, hash, round_ready) = {
-                    let view = finalization_view.read().map_err(|_| {
-                        eyre::eyre!("FinalizationView lock poisoned before epoch restart")
-                    })?;
+                    let view = finalization_view.read();
                     (
                         view.last_finalized_number,
                         view.forkchoice.finalized_block_hash,
@@ -3777,11 +3776,7 @@ where
                                 ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
-                                    let view = finalization_view.read().map_err(|_| {
-                                        eyre::eyre!(
-                                            "FinalizationView lock poisoned during verifier DKG activation wait"
-                                        )
-                                    })?;
+                                    let view = finalization_view.read();
                                     (
                                         view.last_finalized_number,
                                         view.forkchoice.finalized_block_hash,
@@ -4009,11 +4004,7 @@ where
                                 ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
-                                    let view = finalization_view.read().map_err(|_| {
-                                        eyre::eyre!(
-                                            "FinalizationView lock poisoned during DKG activation race wait"
-                                        )
-                                    })?;
+                                    let view = finalization_view.read();
                                     (
                                         view.last_finalized_number,
                                         view.forkchoice.finalized_block_hash,
@@ -4155,11 +4146,7 @@ where
                                     ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                                 loop {
                                     let (finalized, finalized_hash, round_ready) = {
-                                        let view = finalization_view.read().map_err(|_| {
-                                            eyre::eyre!(
-                                                "FinalizationView lock poisoned during exited-validator demotion wait"
-                                            )
-                                        })?;
+                                        let view = finalization_view.read();
                                         (
                                             view.last_finalized_number,
                                             view.forkchoice.finalized_block_hash,

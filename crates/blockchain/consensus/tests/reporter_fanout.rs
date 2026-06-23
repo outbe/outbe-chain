@@ -38,7 +38,7 @@ use outbe_consensus::{
             CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         },
     },
-    hybrid::{HybridRandom, HybridScheme},
+    hybrid::{election::HybridRandom, HybridScheme},
     reporter::{OutbeReporter, ReporterContinuity},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;

@@ -39,16 +39,19 @@ use std::{
 
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
-use crate::finalization::util::{
-    build_signer_bitmap, validate_consensus_metadata_for_verify, AttestationValidationContext,
-    AttestationVerdict,
+use crate::finalization::attestation::{
+    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
-use crate::hybrid::{HybridElectorConfigProvider, HybridRandom};
+use crate::finalization::util::build_signer_bitmap;
+use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
-use super::{ApplicationEpochFence, ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use crate::application::epoch_boundary::{
+    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+};
 
 static MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -706,7 +709,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
                 .await;
 
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.forkchoice.safe_block_hash = parent_digest.0;
@@ -715,11 +718,17 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let anchor = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await
-                .unwrap()
-                .unwrap();
+            let anchor = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             let expected_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
                 finalized_round.epoch().get(),
                 finalized_round.view().get(),
@@ -772,16 +781,22 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             // `marshal.proposed(parent_block)` — the marshal store lags behind
             // FinalizationView (the epoch-boundary first-slot race).
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.last_finalized_round = Some(finalized_round);
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let outcome = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await;
+            let outcome = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await;
 
             drop(resolver_keepalive);
             actor_handle.abort();
@@ -795,7 +810,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
     assert!(
         matches!(
             outcome,
-            Err(super::EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
+            Err(EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
         ),
         "epoch-boundary anchor miss must forfeit via MissingMarshalBlock; got {outcome:?}"
     );
@@ -1516,16 +1531,25 @@ fn resolve_for_verify_timeout_logs_full_context() {
 
         let round = Round::new(Epoch::new(0), View::new(1201));
         let digest = Digest(B256::repeat_byte(0xA7));
-        let result = shared
-            .resolve_for_verify(&clock, round, digest, super::VerifyResolveTarget::Block)
-            .await;
+        let result = crate::application::verify_resolution::resolve_for_verify(
+            &shared.block_cache,
+            &shared.marshal_mailbox,
+            &clock,
+            round,
+            digest,
+            crate::application::verify_resolution::VerifyResolveTarget::Block,
+        )
+        .await;
 
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
 
         (
-            matches!(result, Err(super::VerifyResolveError::Timeout)),
+            matches!(
+                result,
+                Err(crate::application::verify_resolution::VerifyResolveError::Timeout)
+            ),
             log_writer.contents(),
         )
     });

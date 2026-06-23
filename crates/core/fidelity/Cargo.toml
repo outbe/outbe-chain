@@ -10,7 +10,9 @@ outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

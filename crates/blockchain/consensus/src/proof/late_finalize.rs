@@ -25,18 +25,16 @@
 
 use crate::digest::Digest as OutbeDigest;
 use crate::proof::committee::{committee_set_hash_v2, CommitteeSnapshot};
+use crate::proof::committee_keys::{committee_ordered_set, decode_committee_participants};
 use crate::proof::constants::finalize_namespace;
 use crate::proof::error::V2VerifyError;
 use bytes::Bytes;
 use commonware_codec::{DecodeExt, Encode};
 use commonware_consensus::simplex::types::Proposal;
 use commonware_consensus::types::{Epoch, Round, View};
-use commonware_cryptography::bls12381::{
-    self,
-    primitives::{
-        ops::aggregate,
-        variant::{MinPk, Variant},
-    },
+use commonware_cryptography::bls12381::primitives::{
+    ops::aggregate,
+    variant::{MinPk, Variant},
 };
 use outbe_primitives::reshare_artifact::PerBlockCredit;
 
@@ -57,16 +55,7 @@ pub fn verify_late_finalize_proof(
         });
     }
 
-    let participants: Vec<bls12381::PublicKey> = snapshot
-        .committee
-        .iter()
-        .map(|entry| {
-            <bls12381::PublicKey as DecodeExt<()>>::decode(Bytes::copy_from_slice(
-                &entry.consensus_pubkey,
-            ))
-            .map_err(V2VerifyError::Decode)
-        })
-        .collect::<Result<_, _>>()?;
+    let participants = decode_committee_participants(snapshot)?;
     let n = participants.len();
 
     // Dense bit-packed bitmap (1 bit per committee member); length = ceil(N/8).
@@ -119,11 +108,10 @@ pub fn verify_late_finalize_proof(
     ))
     .map_err(V2VerifyError::Decode)?;
 
-    // the late-finalize aggregate is over finalize votes, so it verifies
-    // under the committee-bound finalize namespace. Build the canonical `Set` from
-    // the same snapshot committee the signers used.
-    let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
-        commonware_utils::ordered::Set::from_iter_dedup(participants.iter().cloned());
+    // the late-finalize aggregate is over finalize votes, so it verifies under
+    // the committee-bound finalize namespace, built from the same snapshot
+    // committee the signers used.
+    let committee_set = committee_ordered_set(&participants);
     let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
     aggregate::verify_same_message::<MinPk>(
         &aggregate_pk,
@@ -141,7 +129,7 @@ mod tests {
     use super::*;
     use crate::proof::committee::CommitteeEntry;
     use alloy_primitives::{Address, B256};
-    use commonware_cryptography::Signer as _;
+    use commonware_cryptography::{bls12381, Signer as _};
     use commonware_math::algebra::Random;
 
     fn keys(n: usize) -> Vec<bls12381::PrivateKey> {

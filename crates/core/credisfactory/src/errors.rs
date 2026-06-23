@@ -18,8 +18,6 @@ pub enum CredisFactoryError {
     PositionCompleted,
     #[error("address has overdue anadosis")]
     OverduePayments,
-    #[error("fidelity index not eligible")]
-    FidelityNotEligible,
     #[error("oracle COEN/USD rate unavailable")]
     OracleRateUnavailable,
     #[error("oracle COEN/USD rate too small (rounds to zero at 1e18 precision)")]

@@ -208,9 +208,33 @@ pub fn record_vrf_degraded_leader_selection() {
     counter!("outbe_vrf_degraded_leader_selection_total").increment(1);
 }
 
-/// Record a byzantine evidence detection event.
-pub fn record_byzantine_evidence(evidence_type: &str) {
-    counter!("outbe_byzantine_evidence_total", "type" => evidence_type.to_string()).increment(1);
+/// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
+/// label, so the `outbe_byzantine_evidence_total{type=...}` metric and the
+/// `outbe::slashing::equivocation` warn! field can only ever take one of these
+/// three values — closing the unbounded label-cardinality hole that a free `&str`
+/// parameter left open on a slashing-path counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquivocationKind {
+    ConflictingNotarize,
+    ConflictingFinalize,
+    NullifyFinalize,
+}
+
+impl EquivocationKind {
+    /// The stable telemetry label (metric `type` value and warn! field). These
+    /// strings are an external, operator-facing surface — do not change them.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ConflictingNotarize => "conflicting_notarize",
+            Self::ConflictingFinalize => "conflicting_finalize",
+            Self::NullifyFinalize => "nullify_finalize",
+        }
+    }
+}
+
+/// Record a byzantine evidence detection event under its typed, closed-set label.
+pub fn record_byzantine_evidence(kind: EquivocationKind) {
+    counter!("outbe_byzantine_evidence_total", "type" => kind.label()).increment(1);
 }
 
 /// Record an invalid threshold-VRF seed partial that was excluded from
@@ -395,7 +419,27 @@ pub fn record_block_wait_time(duration: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::consensus_reth_readiness_gap_blocks;
+    use super::{consensus_reth_readiness_gap_blocks, EquivocationKind};
+
+    /// Pins the byzantine-evidence telemetry labels. These strings are an external,
+    /// operator-facing surface (the `outbe_byzantine_evidence_total{type=...}` metric
+    /// and the `outbe::slashing::equivocation` warn! field) shared with dashboards,
+    /// so a change must be deliberate, not an accidental rename.
+    #[test]
+    fn equivocation_kind_labels_are_stable() {
+        assert_eq!(
+            EquivocationKind::ConflictingNotarize.label(),
+            "conflicting_notarize"
+        );
+        assert_eq!(
+            EquivocationKind::ConflictingFinalize.label(),
+            "conflicting_finalize"
+        );
+        assert_eq!(
+            EquivocationKind::NullifyFinalize.label(),
+            "nullify_finalize"
+        );
+    }
 
     #[test]
     fn readiness_gap_is_zero_when_provider_has_consensus_tip_hash() {

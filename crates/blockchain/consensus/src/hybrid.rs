@@ -29,16 +29,16 @@ use bytes::{Buf, BufMut};
 use commonware_codec::{Encode, Error, FixedSize, Read, ReadExt, Write};
 use commonware_consensus::{
     simplex::{scheme::Namespace, types::Subject},
-    types::Round,
+    types::{Epoch, Round},
 };
 use commonware_cryptography::{
     bls12381::{
         self,
         primitives::{
             group::Share,
-            ops::{aggregate, batch, threshold},
+            ops::aggregate,
             sharing::Sharing,
-            variant::{MinPk, MinSig, PartialSignature, Variant},
+            variant::{MinPk, PartialSignature, Variant},
         },
     },
     certificate::{self, Attestation, Signers, Subject as CertificateSubject, Verification},
@@ -46,15 +46,20 @@ use commonware_cryptography::{
 };
 use commonware_parallel::Strategy;
 use commonware_utils::{
-    modulo,
     ordered::{Quorum, Set},
     Faults, Participant,
 };
 use rand_core::{CryptoRngCore, OsRng};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
+
+/// VRF-based leader election for the hybrid scheme (lifted out of this file).
+pub mod election;
+#[cfg(test)]
+pub(crate) mod test_support;
+mod vrf_material;
+
+pub use vrf_material::VrfMaterialProvider;
+use vrf_material::VrfPartialVerification;
 
 /// CSPRNG allowed only for Commonware BLS batch-verification weights.
 ///
@@ -135,14 +140,6 @@ impl<V: Variant> FixedSize for HybridSignature<V> {
 // (enforced by `audit_targets` / `codec_reuse` tests).
 pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
 
-struct VrfPartialVerification<'a, V: Variant> {
-    version: u64,
-    signer: Participant,
-    namespace: &'a [u8],
-    seed_message: &'a [u8],
-    signature: V::Signature,
-}
-
 /// Sentinel VRF material version used to neutralize a byzantine seed partial.
 ///
 /// When attestation verification finds a `bls_seed_partial` that claims the
@@ -155,185 +152,37 @@ struct VrfPartialVerification<'a, V: Variant> {
 /// value is never a live version and the exclusion is unambiguous.
 const VRF_PARTIAL_REJECTED_VERSION: u64 = u64::MAX;
 
+/// The committee binding shared by both roles: the ordered participant set, the
+/// versioned VRF threshold material, and the pre-computed committee-bound
+/// namespaces. These three always travel together — embedding them as one value
+/// makes that invariant structural (a `Signer` cannot carry a different
+/// shared-field shape than a `Verifier`) instead of re-stating it at every match
+/// site. The signer-only capability fields (`individual_key`, `index`) stay on
+/// `Signer`, so "only a signer can sign" remains enforced by the variant.
 #[derive(Clone, Debug)]
-struct VrfMaterial<V: Variant> {
-    polynomial: Sharing<V>,
-    share: Option<Share>,
-}
-
-/// Shared, versioned threshold material used by the VRF sidecar path.
-#[derive(Clone, Debug)]
-pub struct VrfMaterialProvider<V: Variant> {
-    inner: Arc<Mutex<VrfMaterialState<V>>>,
-}
-
-#[derive(Clone, Debug)]
-struct VrfMaterialState<V: Variant> {
-    active_version: u64,
-    materials: HashMap<u64, VrfMaterial<V>>,
-}
-
-impl<V: Variant> VrfMaterialProvider<V> {
-    pub fn new(active_version: u64, polynomial: Sharing<V>, share: Option<Share>) -> Self {
-        polynomial.precompute_partial_publics();
-        let mut materials = HashMap::new();
-        materials.insert(active_version, VrfMaterial { polynomial, share });
-        Self {
-            inner: Arc::new(Mutex::new(VrfMaterialState {
-                active_version,
-                materials,
-            })),
-        }
-    }
-
-    pub fn active_version(&self) -> u64 {
-        self.with_state(|state| state.active_version)
-    }
-
-    pub fn active_polynomial_total(&self) -> Option<u32> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .map(|material| material.polynomial.total().get())
-        })
-    }
-
-    pub fn active_share(&self) -> Option<Share> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .and_then(|material| material.share.clone())
-        })
-    }
-
-    pub fn active_public(&self) -> Option<V::Public> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .map(|material| *material.polynomial.public())
-        })
-    }
-
-    pub fn activate(&self, version: u64, polynomial: Sharing<V>, share: Option<Share>) {
-        polynomial.precompute_partial_publics();
-        self.with_state(|state| {
-            state
-                .materials
-                .insert(version, VrfMaterial { polynomial, share });
-            state.active_version = version;
-        });
-    }
-
-    fn sign_seed(&self, namespace: &[u8], seed_message: &[u8]) -> Option<(u64, V::Signature)> {
-        self.with_state(|state| {
-            let material = state.materials.get(&state.active_version)?;
-            let share = material.share.as_ref()?;
-            let partial = threshold::sign_message::<V>(share, namespace, seed_message).value;
-            Some((state.active_version, partial))
-        })
-    }
-
-    fn recover_proof<M: Faults>(
-        &self,
-        version: u64,
-        seed_partials: &[PartialSignature<V>],
-        strategy: &impl Strategy,
-    ) -> Option<VrfProof<V>> {
-        self.with_state(|state| {
-            let material = state.materials.get(&version)?;
-            let signature =
-                threshold::recover::<V, _, M>(&material.polynomial, seed_partials.iter(), strategy)
-                    .ok()?;
-            Some(VrfProof {
-                material_version: version,
-                threshold_signature: signature,
-            })
-        })
-    }
-
-    fn verify_partial<R: CryptoRngCore>(
-        &self,
-        rng: &mut R,
-        input: VrfPartialVerification<'_, V>,
-        strategy: &impl Strategy,
-    ) -> bool {
-        let VrfPartialVerification {
-            version,
-            signer,
-            namespace,
-            seed_message,
-            signature,
-        } = input;
-
-        self.with_state(|state| {
-            let Some(material) = state.materials.get(&version) else {
-                return false;
-            };
-            let Ok(evaluated) = material.polynomial.partial_public(signer) else {
-                return false;
-            };
-            let entries = &[(namespace, seed_message, signature)];
-            batch::verify_same_signer::<_, V, _>(rng, &evaluated, entries, strategy).is_ok()
-        })
-    }
-
-    fn verify_proof<R: CryptoRngCore>(
-        &self,
-        rng: &mut R,
-        proof: &VrfProof<V>,
-        namespace: &[u8],
-        seed_message: &[u8],
-        strategy: &impl Strategy,
-    ) -> bool {
-        self.with_state(|state| {
-            let Some(material) = state.materials.get(&proof.material_version) else {
-                return false;
-            };
-            let entries = &[(namespace, seed_message, proof.threshold_signature)];
-            batch::verify_same_signer::<_, V, _>(
-                rng,
-                material.polynomial.public(),
-                entries,
-                strategy,
-            )
-            .is_ok()
-        })
-    }
-
-    fn with_state<T>(&self, f: impl FnOnce(&mut VrfMaterialState<V>) -> T) -> T {
-        let mut state = self.inner.lock().unwrap_or_else(|poisoned| {
-            tracing::error!("VrfMaterialProvider mutex poisoned, recovering");
-            poisoned.into_inner()
-        });
-        f(&mut state)
-    }
+struct RoleFields<V: Variant> {
+    /// Participants in the committee (BLS MinPk identity keys).
+    participants: Set<bls12381::PublicKey>,
+    /// Shared versioned VRF threshold material.
+    vrf_materials: VrfMaterialProvider<V>,
+    /// Pre-computed namespaces.
+    namespace: Namespace,
 }
 
 /// The role-specific data for a hybrid scheme participant.
 #[derive(Clone, Debug)]
 enum Role<V: Variant> {
     Signer {
-        /// Participants in the committee (BLS MinPk identity keys).
-        participants: Set<bls12381::PublicKey>,
+        /// Committee binding shared with the verifier role.
+        fields: RoleFields<V>,
         /// BLS individual private key (MinPk) for signing votes.
         individual_key: bls12381::PrivateKey,
         /// Participant index in the ordered set.
         index: Participant,
-        /// Shared versioned VRF threshold material.
-        vrf_materials: VrfMaterialProvider<V>,
-        /// Pre-computed namespaces.
-        namespace: Namespace,
     },
     Verifier {
-        /// Participants in the committee.
-        participants: Set<bls12381::PublicKey>,
-        /// Shared versioned VRF threshold material.
-        vrf_materials: VrfMaterialProvider<V>,
-        /// Pre-computed namespaces.
-        namespace: Namespace,
+        /// Committee binding shared with the signer role.
+        fields: RoleFields<V>,
     },
 }
 
@@ -422,12 +271,7 @@ impl<V: Variant> HybridScheme<V> {
         }
 
         // Verify BLS threshold share matches polynomial
-        let expected_public = vrf_materials.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .and_then(|material| material.polynomial.partial_public(share.index).ok())
-        })?;
+        let expected_public = vrf_materials.active_partial_public(share.index)?;
         if expected_public != share.public::<V>() {
             return None;
         }
@@ -435,11 +279,13 @@ impl<V: Variant> HybridScheme<V> {
         let scheme_namespace = committee_bound_namespace(namespace, &participants);
         Some(Self {
             role: Role::Signer {
-                participants,
+                fields: RoleFields {
+                    participants,
+                    vrf_materials,
+                    namespace: scheme_namespace,
+                },
                 individual_key,
                 index,
-                vrf_materials,
-                namespace: scheme_namespace,
             },
         })
     }
@@ -473,32 +319,33 @@ impl<V: Variant> HybridScheme<V> {
         let scheme_namespace = committee_bound_namespace(namespace, &participants);
         Some(Self {
             role: Role::Verifier {
-                participants,
-                vrf_materials,
-                namespace: scheme_namespace,
+                fields: RoleFields {
+                    participants,
+                    vrf_materials,
+                    namespace: scheme_namespace,
+                },
             },
         })
     }
 
-    fn participants_ref(&self) -> &Set<bls12381::PublicKey> {
+    /// The committee binding for this scheme, regardless of role — the single
+    /// owner of the `Signer`/`Verifier` discrimination for shared-field access.
+    fn fields(&self) -> &RoleFields<V> {
         match &self.role {
-            Role::Signer { participants, .. } => participants,
-            Role::Verifier { participants, .. } => participants,
+            Role::Signer { fields, .. } | Role::Verifier { fields, .. } => fields,
         }
+    }
+
+    fn participants_ref(&self) -> &Set<bls12381::PublicKey> {
+        &self.fields().participants
     }
 
     fn vrf_materials(&self) -> &VrfMaterialProvider<V> {
-        match &self.role {
-            Role::Signer { vrf_materials, .. } => vrf_materials,
-            Role::Verifier { vrf_materials, .. } => vrf_materials,
-        }
+        &self.fields().vrf_materials
     }
 
     fn namespace_ref(&self) -> &Namespace {
-        match &self.role {
-            Role::Signer { namespace, .. } => namespace,
-            Role::Verifier { namespace, .. } => namespace,
-        }
+        &self.fields().namespace
     }
 
     /// Returns the public identity of the committee (BLS MinSig group public key).
@@ -741,20 +588,24 @@ fn neutralize_seed_partial<V: Variant>(
     }
 }
 
-/// Extracts the seed message bytes from a Subject.
-fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
-    match subject {
-        Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round.encode(),
-        Subject::Nullify { round } => round.encode(),
-    }
-}
-
-/// Extracts the consensus round from a Subject (the round the seed partial commits to).
+/// Extracts the consensus round from a Subject (the round the seed partial commits
+/// to). This is the single Subject-matching core; the seed message is derived from
+/// it (see [`seed_message_from_subject`]) so the round and its seed message can
+/// never diverge.
 fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
     match subject {
         Subject::Notarize { proposal } | Subject::Finalize { proposal } => proposal.round,
         Subject::Nullify { round } => *round,
     }
+}
+
+/// The VRF seed message for a Subject: the canonical `Round::encode()` bytes of the
+/// round the seed partial commits to. Derived from [`round_from_subject`], so it
+/// stays byte-identical to the proof-side recipe
+/// (`proof::constants::seed_namespace_and_message`) — pinned by
+/// `seed_message_matches_proof_side_recipe`.
+fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
+    round_from_subject(subject).encode()
 }
 
 impl<V: Variant> certificate::Scheme for HybridScheme<V> {
@@ -777,12 +628,15 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
     fn sign<D: Digest>(&self, subject: Subject<'_, D>) -> Option<Attestation<Self>> {
         let (individual_key, index, vrf_materials, namespace) = match &self.role {
             Role::Signer {
+                fields,
                 individual_key,
                 index,
-                vrf_materials,
-                namespace,
-                ..
-            } => (individual_key, *index, vrf_materials, namespace),
+            } => (
+                individual_key,
+                *index,
+                &fields.vrf_materials,
+                &fields.namespace,
+            ),
             Role::Verifier { .. } => return None,
         };
 
@@ -1048,168 +902,6 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
 // live in `outbe_consensus::proof::hybrid_wire` alongside the type definition.
 
 // ---------------------------------------------------------------------------
-// HybridElector — VRF-based leader election for HybridScheme
-// ---------------------------------------------------------------------------
-
-use commonware_consensus::{simplex::elector, types::Epoch};
-
-/// Configuration for hybrid VRF-based leader election.
-///
-/// Uses the BLS seed from `HybridCertificate` for unpredictable leader selection.
-/// The very first produced view after chain genesis has no previous certificate and
-/// therefore falls back to round-robin. Epoch restarts can provide a bootstrap seed
-/// from the last finalized certificate of the previous epoch so that view 1 of later
-/// epochs keeps using VRF-derived leader selection.
-#[derive(Clone, Debug)]
-pub struct HybridRandom<V: Variant = MinSig> {
-    bootstrap_seed: Option<Vec<u8>>,
-    vrf_materials: Option<VrfMaterialProvider<V>>,
-}
-
-impl<V: Variant> Default for HybridRandom<V> {
-    fn default() -> Self {
-        Self {
-            bootstrap_seed: None,
-            vrf_materials: None,
-        }
-    }
-}
-
-impl<V: Variant> HybridRandom<V> {
-    pub fn with_vrf_materials(vrf_materials: VrfMaterialProvider<V>) -> Self {
-        Self {
-            bootstrap_seed: None,
-            vrf_materials: Some(vrf_materials),
-        }
-    }
-
-    /// Use a previous finalized certificate's seed bytes to bootstrap view 1
-    /// leader selection for a newly started epoch.
-    pub fn with_bootstrap_seed(seed: Vec<u8>) -> Self {
-        Self {
-            bootstrap_seed: Some(seed),
-            vrf_materials: None,
-        }
-    }
-
-    pub fn with_bootstrap_seed_and_vrf_materials(
-        seed: Vec<u8>,
-        vrf_materials: VrfMaterialProvider<V>,
-    ) -> Self {
-        Self {
-            bootstrap_seed: Some(seed),
-            vrf_materials: Some(vrf_materials),
-        }
-    }
-}
-
-impl<V: Variant> elector::Config<HybridScheme<V>> for HybridRandom<V> {
-    type Elector = HybridRandomElector<V>;
-
-    fn build(self, participants: &Set<bls12381::PublicKey>) -> HybridRandomElector<V> {
-        assert!(!participants.is_empty(), "no participants");
-        HybridRandomElector {
-            n: participants.len() as u32,
-            bootstrap_seed: self.bootstrap_seed,
-            vrf_materials: self.vrf_materials,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-/// Initialized hybrid random elector.
-#[derive(Clone, Debug)]
-pub struct HybridRandomElector<V: Variant> {
-    n: u32,
-    bootstrap_seed: Option<Vec<u8>>,
-    vrf_materials: Option<VrfMaterialProvider<V>>,
-    _phantom: std::marker::PhantomData<V>,
-}
-
-impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
-    fn elect(&self, round: Round, certificate: Option<&HybridCertificate<V>>) -> Participant {
-        let verified_seed = match (certificate, &self.vrf_materials) {
-            (Some(certificate), Some(provider)) => {
-                let proof = certificate.vrf_proof.as_ref();
-                proof.and_then(|proof| {
-                    let seed_round = round
-                        .view()
-                        .previous()
-                        .map(|view| Round::new(round.epoch(), view))?;
-                    let namespace = crate::config::simplex_namespace();
-                    let seed_message = seed_round.encode();
-                    let mut rng = bls_batch_verification_rng();
-                    provider
-                        .verify_proof(
-                            &mut rng,
-                            proof,
-                            &namespace.seed,
-                            seed_message.as_ref(),
-                            &commonware_parallel::Sequential,
-                        )
-                        .then(|| proof.threshold_signature.encode().to_vec())
-                })
-            }
-            _ => None,
-        };
-
-        let seed_bytes = verified_seed
-            .or_else(|| {
-                (round.view() == commonware_consensus::types::View::new(1))
-                    .then(|| self.bootstrap_seed.clone())
-                    .flatten()
-            })
-            .or_else(|| self.degraded_seed(round, certificate));
-
-        let Some(seed_bytes) = seed_bytes else {
-            let leader = Participant::new(
-                (round.epoch().get().wrapping_add(round.view().get())) as u32 % self.n,
-            );
-            tracing::debug!(
-                epoch = round.epoch().get(),
-                view = round.view().get(),
-                leader = leader.get(),
-                "leader elected via round-robin (no usable VRF seed)"
-            );
-            return leader;
-        };
-
-        let leader = Participant::new(modulo(seed_bytes.as_ref(), self.n as u64) as u32);
-        tracing::debug!(
-            epoch = round.epoch().get(),
-            view = round.view().get(),
-            leader = leader.get(),
-            has_certificate = certificate.is_some(),
-            has_bootstrap_seed = self.bootstrap_seed.is_some(),
-            "leader elected via verified/degraded VRF seed"
-        );
-        leader
-    }
-}
-
-impl<V: Variant> HybridRandomElector<V> {
-    fn degraded_seed(
-        &self,
-        round: Round,
-        certificate: Option<&HybridCertificate<V>>,
-    ) -> Option<Vec<u8>> {
-        let _certificate = certificate?;
-        crate::metrics::record_vrf_degraded_leader_selection();
-        let mut seed = self.bootstrap_seed.clone().unwrap_or_default();
-        if seed.is_empty() {
-            return None;
-        }
-        seed.extend_from_slice(&round.encode());
-        tracing::warn!(
-            epoch = round.epoch().get(),
-            view = round.view().get(),
-            "verified VRF proof missing or invalid; using deterministic degraded leader seed"
-        );
-        Some(seed)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // SchemeProvider for HybridScheme
 // ---------------------------------------------------------------------------
 
@@ -1255,51 +947,10 @@ impl<V: Variant> certificate::Provider for HybridSchemeProvider<V> {
     }
 }
 
-/// Epoch-scoped provider of leader elector configs.
-///
-/// The config includes the epoch bootstrap seed used by the Simplex elector.
-/// Metadata validation uses this to recompute missed-proposer attribution with
-/// the same deterministic inputs as the reporter path.
-#[derive(Clone, Debug)]
-pub struct HybridElectorConfigProvider<V: Variant> {
-    inner: crate::epoch_registry::EpochRegistry<HybridRandom<V>>,
-}
-
-impl<V: Variant> HybridElectorConfigProvider<V> {
-    /// Create an empty provider.
-    pub fn new() -> Self {
-        Self {
-            inner: crate::epoch_registry::EpochRegistry::new(),
-        }
-    }
-
-    /// Register the elector config for the given epoch (insert-once).
-    pub fn register(&self, epoch: Epoch, config: HybridRandom<V>) -> bool {
-        self.inner.register(epoch, config)
-    }
-
-    /// Remove the config for the given epoch.
-    pub fn remove(&self, epoch: &Epoch) -> bool {
-        self.inner.remove(epoch)
-    }
-
-    /// Return the registered config for an epoch.
-    pub fn scoped(&self, epoch: Epoch) -> Option<Arc<HybridRandom<V>>> {
-        self.inner.get(&epoch)
-    }
-}
-
-impl<V: Variant> Default for HybridElectorConfigProvider<V> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bls::bootstrap_dkg;
-    use commonware_consensus::simplex::elector::{Config as _, Elector as _};
     use commonware_consensus::{
         simplex::types::{Proposal, Subject},
         types::{Epoch, View},
@@ -1309,24 +960,9 @@ mod tests {
         sha256::Digest as Sha256Digest, Hasher, Sha256,
     };
     use commonware_parallel::Sequential;
-    use commonware_utils::{N3f1, TryCollect as _};
+    use commonware_utils::N3f1;
 
-    const NAMESPACE: &[u8] = b"hybrid-test";
-
-    type TestScheme = HybridScheme<MinSig>;
-
-    /// Generate `n` BLS MinPk identity keys and return them as an ordered Set.
-    fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
-        let keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
-            .collect();
-        let participants: Set<bls12381::PublicKey> = keys
-            .iter()
-            .map(|sk| bls12381::PublicKey::from(sk.clone()))
-            .try_collect()
-            .unwrap();
-        (keys, participants)
-    }
+    use super::test_support::{test_participants, TestScheme, NAMESPACE};
 
     fn sample_proposal(epoch: Epoch, view: View, tag: u8) -> Proposal<Sha256Digest> {
         Proposal::new(
@@ -2124,64 +1760,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hybrid_elector() {
-        let (_, participants) = test_participants(3);
-
-        let elector: HybridRandomElector<MinSig> = HybridRandom::default().build(&participants);
-
-        // View 1 should fall back to round-robin (no certificate)
-        let round = Round::new(Epoch::new(0), View::new(1));
-        let leader = elector.elect(round, None);
-        assert!(leader.get() < 3);
-    }
-
-    #[test]
-    fn test_hybrid_elector_epoch_view_one_uses_bootstrap_seed() {
-        let (keys, participants) = test_participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
-
-        let epoch = Epoch::new(0);
-        let view = View::new(2);
-        let subject = Subject::Nullify {
-            round: Round::new(epoch, view),
-        };
-
-        let attestations: Vec<_> = schemes
-            .iter()
-            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
-            .collect();
-
-        let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
-            .unwrap();
-        let seed = certificate.raw_vrf_seed_bytes().unwrap();
-
-        let elector: HybridRandomElector<MinSig> =
-            HybridRandom::with_bootstrap_seed(seed.clone()).build(&participants);
-
-        let leader = elector.elect(Round::new(Epoch::new(1), View::new(1)), None);
-        let expected = Participant::new(modulo(seed.as_ref(), participants.len() as u64) as u32);
-
-        assert_eq!(leader, expected);
-    }
-
-    #[test]
     fn test_hybrid_scheme_provider() {
         let (_, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
@@ -2205,51 +1783,6 @@ mod tests {
         // Remove
         assert!(provider.remove(&epoch));
         assert!(certificate::Provider::scoped(&provider, epoch).is_none());
-    }
-
-    #[test]
-    fn test_hybrid_elector_with_certificate() {
-        let (keys, participants) = test_participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-
-        let schemes: Vec<TestScheme> = keys
-            .iter()
-            .map(|key| {
-                let pk = bls12381::PublicKey::from(key.clone());
-                let idx = participants.index(&pk).unwrap();
-                HybridScheme::signer(
-                    NAMESPACE,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
-            })
-            .collect();
-
-        let epoch = Epoch::new(1);
-        let view = View::new(2);
-        let subject = Subject::Nullify {
-            round: Round::new(epoch, view),
-        };
-
-        let attestations: Vec<_> = schemes
-            .iter()
-            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
-            .collect();
-
-        let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
-            .unwrap();
-
-        let elector: HybridRandomElector<MinSig> = HybridRandom::default().build(&participants);
-
-        // With certificate, should get deterministic leader
-        let round = Round::new(epoch, View::new(3));
-        let leader1 = elector.elect(round, Some(&certificate));
-        let leader2 = elector.elect(round, Some(&certificate));
-        assert_eq!(leader1, leader2, "same certificate should give same leader");
     }
 
     #[test]
@@ -2444,5 +1977,28 @@ mod tests {
             result.is_some(),
             "signer with correct share.index must succeed"
         );
+    }
+
+    /// The Subject seed message must be byte-identical to the proof-side canonical
+    /// recipe `proof::constants::seed_namespace_and_message`, so the hybrid signer,
+    /// the hybrid verifier, and the proof-side slashing / next-height-gate verifiers
+    /// all derive the same VRF seed message for a given round. Locks this cross-path
+    /// determinism invariant against drift in either side.
+    #[test]
+    fn seed_message_matches_proof_side_recipe() {
+        let epoch = Epoch::new(7);
+        let view = View::new(42);
+        let subject: Subject<'_, Sha256Digest> = Subject::Nullify {
+            round: Round::new(epoch, view),
+        };
+
+        let hybrid_seed_message = seed_message_from_subject(&subject);
+        let (_, proof_seed_message) =
+            crate::proof::constants::seed_namespace_and_message(epoch.get(), view.get());
+
+        assert_eq!(hybrid_seed_message.as_ref(), proof_seed_message.as_slice());
+        // The seed message is exactly the round's canonical bytes — no path can make
+        // the round and its seed message diverge now that one derives from the other.
+        assert_eq!(hybrid_seed_message, round_from_subject(&subject).encode());
     }
 }
