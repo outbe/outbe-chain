@@ -1442,6 +1442,14 @@ def main():
         )
         seed_external_contracts(alloc, seed["contracts"], contracts_dir)
 
+    # reth v2.2 `GenesisAccount` requires an explicit `balance` on every alloc
+    # entry, including code/storage-only marker accounts (the `0xef` markers and
+    # system storage accounts) that the seeders above leave balance-less. Default
+    # any such account to zero so the chain spec parses; accounts that already
+    # carry a real balance keep it (setdefault is a no-op for them).
+    for account in alloc.values():
+        account.setdefault("balance", "0x0")
+
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)
 
