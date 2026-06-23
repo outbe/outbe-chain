@@ -10,10 +10,7 @@
 //! - Non-proposers resolve blocks via `marshal::resolver` (on-demand P2P)
 //! - No ad-hoc block propagation channel or local cache admission
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 /// Maximum retry attempts for marshal block resolution before structured application failure.
 pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
@@ -316,6 +313,7 @@ use crate::application::validation::{
     validate_context_parent_binding, validate_rewards_beneficiary,
     validate_system_tx_leader_binding,
 };
+use crate::application::verify_resolution::{resolve_for_verify, VerifyResolveTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProposeOutcome {
@@ -1538,15 +1536,23 @@ impl ApplicationShared {
              resolve to Some(EpochBoundaryParent) or return an explicit error"
         );
 
-        let block_resolution =
-            self.resolve_for_verify(clock, round, payload_digest, VerifyResolveTarget::Block);
+        let block_resolution = resolve_for_verify(
+            &self.block_cache,
+            &self.marshal_mailbox,
+            clock,
+            round,
+            payload_digest,
+            VerifyResolveTarget::Block,
+        );
         let parent_resolution = async {
             if let Some(anchor) = maybe_epoch_anchor {
                 Ok(Some(anchor.block))
             } else if parent_digest.0 == self.genesis_hash {
                 Ok(None)
             } else {
-                self.resolve_for_verify(
+                resolve_for_verify(
+                    &self.block_cache,
+                    &self.marshal_mailbox,
                     clock,
                     parent_round(round, parent_view),
                     parent_digest,
@@ -1850,84 +1856,6 @@ impl ApplicationShared {
 
         Ok(())
     }
-
-    async fn resolve_for_verify(
-        &self,
-        clock: &impl commonware_runtime::Clock,
-        round: Round,
-        digest: Digest,
-        target: VerifyResolveTarget,
-    ) -> Result<ConsensusBlock, VerifyResolveError> {
-        let started_at = Instant::now();
-        debug!(
-            %round,
-            digest = %digest.0,
-            target = target.as_str(),
-            "verify resolve started"
-        );
-        let cached = self
-            .block_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&digest)
-            .cloned();
-        if let Some(block) = cached {
-            debug!(
-                %round,
-                digest = %digest.0,
-                target = target.as_str(),
-                source = "cache",
-                result = "Resolved",
-                elapsed_ms = started_at.elapsed().as_millis(),
-                "verify resolve finished"
-            );
-            return Ok(block);
-        }
-
-        let marshal = self.marshal_mailbox.clone();
-        let block_future = marshal.subscribe_by_digest(
-            digest,
-            commonware_consensus::marshal::core::DigestFallback::FetchByRound { round },
-        );
-        match clock.timeout(VERIFY_RESOLUTION_TIMEOUT, block_future).await {
-            Ok(Ok(block)) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Resolved",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Ok(block)
-            }
-            Ok(Err(_)) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Unavailable",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Err(VerifyResolveError::Unavailable)
-            }
-            Err(_) => {
-                debug!(
-                    %round,
-                    digest = %digest.0,
-                    target = target.as_str(),
-                    source = "marshal",
-                    result = "Timeout",
-                    elapsed_ms = started_at.elapsed().as_millis(),
-                    "verify resolve finished"
-                );
-                Err(VerifyResolveError::Timeout)
-            }
-        }
-    }
 }
 
 // Marshal-based block resolution tests are in `crate::marshal_tests`.
@@ -1938,27 +1866,6 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 
 // `retry_with_backoff`, `RetryFailure`, `RetryFailureKind` moved to
 // `crate::finalization::util` in step 17. Imported at the top of this file.
-
-#[derive(Debug, Clone, Copy)]
-enum VerifyResolveError {
-    Timeout,
-    Unavailable,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum VerifyResolveTarget {
-    Block,
-    Parent,
-}
-
-impl VerifyResolveTarget {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Block => "block",
-            Self::Parent => "parent",
-        }
-    }
-}
 
 // `extract_consensus_metadata_from_block` and
 // `extract_header_artifact_from_block` moved to

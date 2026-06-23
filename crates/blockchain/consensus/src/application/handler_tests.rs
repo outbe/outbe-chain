@@ -1531,16 +1531,25 @@ fn resolve_for_verify_timeout_logs_full_context() {
 
         let round = Round::new(Epoch::new(0), View::new(1201));
         let digest = Digest(B256::repeat_byte(0xA7));
-        let result = shared
-            .resolve_for_verify(&clock, round, digest, super::VerifyResolveTarget::Block)
-            .await;
+        let result = crate::application::verify_resolution::resolve_for_verify(
+            &shared.block_cache,
+            &shared.marshal_mailbox,
+            &clock,
+            round,
+            digest,
+            crate::application::verify_resolution::VerifyResolveTarget::Block,
+        )
+        .await;
 
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
 
         (
-            matches!(result, Err(super::VerifyResolveError::Timeout)),
+            matches!(
+                result,
+                Err(crate::application::verify_resolution::VerifyResolveError::Timeout)
+            ),
             log_writer.contents(),
         )
     });
