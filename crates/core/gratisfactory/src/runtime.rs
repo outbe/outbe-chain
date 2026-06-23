@@ -109,8 +109,7 @@ pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> 
         GRATIS_FACTORY_ADDRESS,
         alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::CoenMined {
             sender: account,
-            gratisAmount: amount,
-            unitAmount: amount,
+            amount,
         }),
     )?;
 

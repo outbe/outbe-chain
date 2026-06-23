@@ -61,8 +61,7 @@ pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> 
         PROMIS_FACTORY_ADDRESS,
         alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::CoenMined {
             sender: account,
-            promisAmount: amount,
-            unitAmount: amount,
+            amount,
         }),
     )?;
 

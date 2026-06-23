@@ -112,13 +112,7 @@
         "internalType": "address"
       },
       {
-        "name": "gratisAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "unitAmount",
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

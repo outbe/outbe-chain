@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 interface IFidelity {
-
     /// Fidelity Index for `account`.
     /// Computed on-demand on Retention Component at
     /// the current block timestamp
