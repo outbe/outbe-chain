@@ -37,7 +37,7 @@ use crate::{
     finalization::finalize_verify::FinalizeVerifyMailbox,
     finalization::ingress::{Finalized as FinalizationFinalized, Mailbox as FinalizationMailbox},
     finalization::parent_cert_store::{
-        CertifiedParentProofKey, CertifiedParentProofRecord, FinalizedParentCertStore,
+        CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
     hybrid::{
@@ -88,13 +88,12 @@ pub struct OutbeReporter {
     /// inline on the Simplex voter task; the actor verifies and admits the
     /// verified votes to `late_sig_store`.
     finalize_verify_mailbox: FinalizeVerifyMailbox,
-    /// Durable certified-parent proof store. wires
-    /// `Activity::Certification(notarization)` directly into this store with
-    /// the `local_certification_witness` flag set, so the proposer
-    /// path can later read a V2 fallback proof via
-    /// [`CertifiedParentProofStore::get_best_parent_proof`] when finalization
-    /// is pending.
-    proof_store: FinalizedParentCertStore,
+    /// Narrow, write-only capability onto the certified-parent proof store: the
+    /// reporter records the `local_certification_witness` mark for each observed
+    /// `Activity::Certification`, but structurally cannot durably write — durable
+    /// persistence goes off-thread through the FinalizationActor mailbox (see
+    /// `handle_certification`), which stays the single durable writer.
+    witness_sink: Arc<dyn CertificationWitnessSink>,
 }
 
 /// Mutable per-view state owned by a single `OutbeReporter` instance, separated
@@ -189,7 +188,7 @@ impl OutbeReporter {
         verifier_scheme: HybridScheme<MinSig>,
         elector: HybridRandomElector<MinSig>,
         epoch: Epoch,
-        proof_store: FinalizedParentCertStore,
+        witness_sink: Arc<dyn CertificationWitnessSink>,
         finalize_verify_mailbox: FinalizeVerifyMailbox,
     ) -> Self {
         let persisted = continuity.snapshot();
@@ -207,7 +206,7 @@ impl OutbeReporter {
                 last_certificate: persisted.last_certificate,
                 pending_byzantine: Vec::new(),
             },
-            proof_store,
+            witness_sink,
         }
     }
 }
@@ -630,7 +629,8 @@ impl OutbeReporter {
             view,
             notarization.proposal.payload.0,
         );
-        self.proof_store.mark_local_certification_witness(proof_key);
+        self.witness_sink
+            .mark_local_certification_witness(proof_key);
         let record = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
             proof_type: ParentParticipationProof::CertifiedNotarization,
@@ -954,7 +954,7 @@ mod tests {
             verifier,
             HybridRandom::default().build(&participants),
             Epoch::new(0),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             verify_mailbox,
         );
 
@@ -1011,7 +1011,7 @@ mod tests {
             sample_verifier_scheme(),
             HybridRandom::default().build(&test_participants(3).1),
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 
@@ -1084,7 +1084,7 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 
@@ -1127,7 +1127,7 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 

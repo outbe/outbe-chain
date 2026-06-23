@@ -3099,7 +3099,7 @@ where
             verifier_scheme,
             reporter_elector,
             current_epoch,
-            finalized_parent_cert_store.clone(),
+            std::sync::Arc::new(finalized_parent_cert_store.clone()),
             finalize_verify_mailbox.clone(),
         );
 

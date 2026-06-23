@@ -701,12 +701,6 @@ impl FinalizedParentCertStore {
         self.revision_tx.subscribe()
     }
 
-    /// Record local observation of `Activity::Certification` for
-    pub fn mark_local_certification_witness(&self, key: CertifiedParentProofKey) {
-        let mut state = self.lock_write();
-        state.seen_certification_keys.insert(key, key.view);
-    }
-
     /// True only if this node locally observed certification for the exact key.
     pub fn has_local_certification_witness(&self, key: CertifiedParentProofKey) -> bool {
         self.lock_read().seen_certification_keys.contains_key(&key)
@@ -714,6 +708,27 @@ impl FinalizedParentCertStore {
 
     pub fn remove(&self, key: CertifiedParentProofKey) -> Result<bool, ParentProofStoreError> {
         <Self as CertifiedParentProofStore>::remove(self, &key)
+    }
+}
+
+/// Narrow, write-only capability to record a local `Activity::Certification`
+/// observation. This is the *only* surface the consensus voter side
+/// (`OutbeReporter`) is given onto the store, so the reporter structurally
+/// cannot reach the durable-write methods (`put_*` / `remove` / `prune`). Durable
+/// writes stay the `FinalizationActor`'s responsibility (single durable writer) —
+/// the capability narrowing makes that invariant type-enforced instead of
+/// convention, preventing a future reporter edit from regressing the off-thread
+/// persistence boundary established for the certified-notarization path.
+pub trait CertificationWitnessSink: Send + Sync {
+    /// Record that this node locally observed certification for `key`
+    /// (in-memory; cheap locked insert into `seen_certification_keys`).
+    fn mark_local_certification_witness(&self, key: CertifiedParentProofKey);
+}
+
+impl CertificationWitnessSink for FinalizedParentCertStore {
+    fn mark_local_certification_witness(&self, key: CertifiedParentProofKey) {
+        let mut state = self.lock_write();
+        state.seen_certification_keys.insert(key, key.view);
     }
 }
 

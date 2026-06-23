@@ -174,7 +174,7 @@ fn build_reporter(
         verifier_scheme_from(fx),
         HybridRandom::default().build(&fx.participants),
         Epoch::new(0),
-        store,
+        std::sync::Arc::new(store.clone()),
         verify_mailbox,
     );
     (reporter, rx)
