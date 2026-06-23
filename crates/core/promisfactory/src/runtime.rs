@@ -17,15 +17,15 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_promis::Promis;
 
 /// Mint `amount` promis to `account`, record the Fidelity acquisition cohort,
-/// and emit `PromisMined`. Returns the new total promis supply.
+/// and emit `PromisMined`.
 ///
 /// Internal cross-module API (not exposed on the precompile ABI). The
 /// production callers are GemFactory's and IntexFactory's mine paths, which
 /// delegate the matching promis mint here. Amount/address validation is
 /// delegated to [`outbe_promis::Promis::mine`].
-pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
+pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut promis = Promis::new(storage.clone());
-    let new_supply = promis.mine(account, amount)?;
+    promis.mine(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
@@ -38,7 +38,7 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
         }),
     )?;
 
-    Ok(new_supply)
+    Ok(())
 }
 
 /// Burn `amount` promis from `account`, record the Fidelity sale cohort (LIFO

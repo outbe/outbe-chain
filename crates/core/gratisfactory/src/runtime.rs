@@ -64,9 +64,9 @@ pub fn unpledge_gratis(
     Ok(amount)
 }
 
-pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
+pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut gratis = Gratis::new(storage.clone());
-    let new_supply = gratis.mine(account, amount)?;
+    gratis.mine(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
@@ -79,7 +79,7 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
         }),
     )?;
 
-    Ok(new_supply)
+    Ok(())
 }
 
 pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {

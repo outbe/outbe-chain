@@ -36,13 +36,12 @@ fn mine_mints_promis_and_records_fidelity_cohort() {
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        let new_supply = runtime::mine(storage.clone(), alice(), amount).unwrap();
+        runtime::mine(storage.clone(), alice(), amount).unwrap();
 
         // Promis minted to the recipient and into total supply.
         let promis = Promis::new(storage.clone());
         assert_eq!(promis.balance_of(alice()).unwrap(), amount);
         assert_eq!(promis.total_supply().unwrap(), amount);
-        assert_eq!(new_supply, amount);
 
         // The acquisition cohort was recorded at the current block time, so the
         // aged RCFI a year later is now positive. If `mine` stopped calling

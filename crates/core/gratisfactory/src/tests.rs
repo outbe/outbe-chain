@@ -213,13 +213,12 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        let new_supply = runtime::mine(storage.clone(), alice(), amount).unwrap();
+        runtime::mine(storage.clone(), alice(), amount).unwrap();
 
         // Gratis minted to the recipient and into total supply.
         let gratis = Gratis::new(storage.clone());
         assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
         assert_eq!(gratis.total_supply().unwrap(), amount);
-        assert_eq!(new_supply, amount);
 
         // The acquisition cohort was recorded at the current block time, so the
         // aged RCFI a year later is now positive. If `mine` stopped calling

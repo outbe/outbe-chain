@@ -2,14 +2,6 @@
 pragma solidity ^0.8.30;
 
 /// @title IGratisFactory — shielded Gratis orchestration entry point (0x2003).
-/// @notice Bridges the public Gratis token (0x1003) to the shielded gratis
-///         pool (0x2004). pledgeGratis moves the caller's Gratis into the
-///         credis escrow and appends the supplied commitment to the pool;
-///         unpledgeGratis consumes a pool commitment via a ZK proof and
-///         releases the matching escrowed amount back to the caller. The
-///         destination is fixed to msg.sender so the pool cannot be used as
-///         a Gratis-transfer channel between addresses — the caller must
-///         hold the secret AND own the per-pledger ledger entry.
 interface IGratisFactory {
     /// @notice Emitted when gratis is minted to `account`.
     event GratisMined(address indexed account, uint256 amount);
@@ -66,9 +58,7 @@ interface IGratisFactory {
     ///         the released Gratis to a different address.
     function unpledgeGratis(SpendArgs calldata args) external;
 
-    /// @notice Convert `amount` gratis to native COEN at 1:1. Burns the gratis,
-    ///         records the Fidelity sale cohort, and mints the native COEN to
-    ///         `msg.sender`. Returns the minted native amount.
+    /// @notice Convert `amount` gratis to native COEN at 1:1.
     function mineCoen(uint256 amount) external returns (uint256);
 
     /// @notice ERC-165 conformance check.
