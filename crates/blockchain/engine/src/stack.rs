@@ -757,8 +757,6 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
     status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
     status.next_planned_activation_height = snapshot.next_planned_activation_height;
     status.vrf_expiry_height = snapshot.vrf_expiry_height;
-    status.is_active = snapshot.randomness_status.is_consensus_active();
-    status.has_threshold_shares = snapshot.randomness_status.has_threshold_shares();
     info!(
         randomness_status = ?snapshot.randomness_status,
         vrf_material_version = snapshot.vrf_material_version,

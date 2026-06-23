@@ -715,8 +715,6 @@ impl FinalizationActor {
             bridge.set_consensus_status(ConsensusStatus {
                 current_view: finalized.round.view().get(),
                 connected_peers,
-                is_active: vrf_safety.randomness_status.is_consensus_active(),
-                has_threshold_shares: vrf_safety.randomness_status.has_threshold_shares(),
                 last_finalized_block: block_number,
                 last_vrf_seed: finalized.vrf_seed,
                 randomness_status: vrf_safety.randomness_status,

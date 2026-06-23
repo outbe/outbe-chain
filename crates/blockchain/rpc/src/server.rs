@@ -196,8 +196,8 @@ where
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
             connected_peers: status.connected_peers,
-            is_active: status.is_active,
-            has_threshold_shares: status.has_threshold_shares,
+            is_active: status.is_active(),
+            has_threshold_shares: status.has_threshold_shares(),
             last_finalized_block: status.last_finalized_block,
             last_vrf_seed: status.last_vrf_seed,
             randomness_status: status.randomness_status,
@@ -274,10 +274,10 @@ where
             Some(b) => {
                 let consensus = b.consensus_status();
                 Ok(SyncStatusInfo {
-                    is_syncing: !consensus.is_active,
+                    is_syncing: !consensus.is_active(),
                     current_block: consensus.last_finalized_block,
                     highest_block: consensus.last_finalized_block,
-                    consensus_active: consensus.is_active,
+                    consensus_active: consensus.is_active(),
                     connected_peers: consensus.connected_peers,
                 })
             }
