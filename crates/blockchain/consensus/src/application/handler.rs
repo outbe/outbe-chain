@@ -45,112 +45,6 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-struct MarshalAncestryReader<C: commonware_runtime::Clock> {
-    marshal: crate::marshal_types::MarshalMailbox,
-    block_cache: BlockCacheHandle,
-    readiness: AncestryReadiness,
-    round: Option<Round>,
-    timeout: Duration,
-    // Owned runtime clock used to bound the marshal lookups. Cloned cheaply from
-    // the spawn's context so the trait methods (which carry no context) can apply
-    // a runtime-agnostic timeout without pulling in the tokio reactor.
-    clock: C,
-}
-
-impl<C: commonware_runtime::Clock> MarshalAncestryReader<C> {
-    fn new(
-        marshal: crate::marshal_types::MarshalMailbox,
-        block_cache: BlockCacheHandle,
-        readiness: AncestryReadiness,
-        round: Option<Round>,
-        timeout: Duration,
-        clock: C,
-    ) -> Self {
-        Self {
-            marshal,
-            block_cache,
-            readiness,
-            round,
-            timeout,
-            clock,
-        }
-    }
-}
-
-impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
-    fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a> {
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache
-                .values()
-                .find(|block| block.number() == height)
-                .cloned(),
-            Err(error) => {
-                warn!(%error, height, "block cache unavailable while resolving ancestry by height");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        // `Clock::sleep` returns an owned `'static` future, so we build it from the
-        // borrowed clock here and move it into the lookup future — no clone of the
-        // (non-`Clone`) runtime context needed.
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            // `marshal.get_block(..)` borrows `marshal`, so it is not `'static` and
-            // cannot use `Clock::timeout`. Inline the same biased race the default
-            // `Clock::timeout` uses: prefer the resolved block over the timeout.
-            let lookup = marshal.get_block(Height::new(height));
-            let mut lookup = std::pin::pin!(lookup);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                block = &mut lookup => block,
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a> {
-        let digest = Digest(hash);
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache.get(&digest).cloned(),
-            Err(error) => {
-                warn!(%error, %hash, "block cache unavailable while resolving ancestry by hash");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        let round = self.round;
-        // Owned `'static` sleep future built from the borrowed clock (no clone).
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            let fallback = match round {
-                Some(round) => {
-                    commonware_consensus::marshal::core::DigestFallback::FetchByRound { round }
-                }
-                None => commonware_consensus::marshal::core::DigestFallback::Wait,
-            };
-            let block_future = marshal.subscribe_by_digest(digest, fallback);
-            // Biased race, preferring the resolved block over the timeout
-            // (the `block_future` borrows `marshal`, so it is not `'static`).
-            let mut block_future = std::pin::pin!(block_future);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                result = &mut block_future => result.ok(),
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn is_ready(&self) -> bool {
-        self.readiness.is_ready()
-    }
-}
-
 fn unix_now_millis() -> eyre::Result<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -268,7 +162,7 @@ use crate::{
     block::ConsensusBlock,
     committee_provider::CommitteeProvider,
     digest::Digest,
-    dkg_manager::{AncestryReader, BlockLookupFuture, BoundaryRequirement},
+    dkg_manager::{AncestryReader, BoundaryRequirement},
     executor,
     finalization::{
         actor::BlockCacheHandle,
@@ -728,6 +622,21 @@ impl ApplicationHandler {
             }
         }
     }
+}
+
+/// Outcome of a `new_payload` execution validation with SYNCING retry. The single
+/// source of truth for how a verify path classifies execution status, so the
+/// parent and block validations can never drift in their SYNCING/retry policy.
+enum PayloadVerification {
+    /// Execution accepted the payload. `saw_syncing` is true if SYNCING was
+    /// observed before acceptance — in that case the verify request may have been
+    /// superseded by a view timeout, so the caller skips its side effects.
+    Valid { saw_syncing: bool },
+    /// Execution rejected the payload; the caller votes `false`.
+    Invalid,
+    /// The single-shot verify response channel closed while waiting; the caller
+    /// returns without side effects.
+    ChannelClosed,
 }
 
 impl ApplicationShared {
@@ -1240,7 +1149,7 @@ impl ApplicationShared {
             .dkg_manager
             .pending_boundary_artifact(round.epoch())
             .await;
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
@@ -1455,6 +1364,58 @@ impl ApplicationShared {
         Ok(BuildBlockOutcome::Built(digest, consensus_block))
     }
 
+    /// Drive `engine.new_payload` to a terminal verdict, retrying while execution
+    /// reports SYNCING. Owns the SYNCING/retry policy for both verify paths
+    /// (parent and proposed block) so they cannot diverge. Bails to
+    /// [`PayloadVerification::ChannelClosed`] if the single-shot verify response
+    /// channel closes mid-wait; `kind`/`digest` only scope the diagnostics.
+    async fn verify_payload_with_syncing_retry(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        kind: &'static str,
+        digest: Digest,
+        execution_data: OutbeExecutionData,
+        response: &oneshot::Sender<bool>,
+    ) -> eyre::Result<PayloadVerification> {
+        let mut saw_syncing = false;
+        loop {
+            if response.is_closed() {
+                debug!(
+                    kind,
+                    target = %digest.0,
+                    "verify response channel closed while waiting for execution validation"
+                );
+                return Ok(PayloadVerification::ChannelClosed);
+            }
+            match self.engine.new_payload(execution_data.clone()).await {
+                Ok(status) if status.is_valid() => {
+                    debug!(kind, target = %digest.0, ?status, "payload accepted during verify");
+                    return Ok(PayloadVerification::Valid { saw_syncing });
+                }
+                Ok(status) if status.is_syncing() => {
+                    saw_syncing = true;
+                    warn!(
+                        kind,
+                        target = %digest.0,
+                        ?status,
+                        "new_payload returned SYNCING during verify; keeping verification pending until execution validates"
+                    );
+                    clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
+                }
+                Ok(status) => {
+                    warn!(kind, target = %digest.0, ?status, "payload rejected during verify");
+                    return Ok(PayloadVerification::Invalid);
+                }
+                Err(e) => {
+                    return Err(eyre::eyre!(
+                        "new_payload failed in verify: kind={kind} target={} error={e}",
+                        digest.0
+                    ));
+                }
+            }
+        }
+    }
+
     /// Handle verify request.
     ///
     /// 1. Resolve proposed block (cache or marshal)
@@ -1619,7 +1580,7 @@ impl ApplicationShared {
             return Ok(());
         }
 
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
@@ -1683,50 +1644,33 @@ impl ApplicationShared {
                 block: std::sync::Arc::new(parent_block.clone().into_inner()),
             };
 
-            let mut parent_saw_syncing = false;
-            if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
-                warn!(
-                    height = %parent_height,
-                    parent = %parent_digest.0,
-                    "test-marshal-drop: skipping verify parent new_payload"
-                );
-            } else {
-                loop {
-                    if response.is_closed() {
-                        debug!(
-                            parent = %parent_digest.0,
-                            "verify response channel closed while waiting for parent execution validation"
-                        );
-                        return Ok(());
-                    }
-                    match self.engine.new_payload(execution_data.clone()).await {
-                        Ok(status) if status.is_valid() => {
-                            debug!(parent = %parent_digest.0, ?status, "parent accepted during verify");
-                            break;
-                        }
-                        Ok(status) if status.is_syncing() => {
-                            parent_saw_syncing = true;
-                            warn!(
-                                parent = %parent_digest.0,
-                                ?status,
-                                "parent new_payload returned SYNCING during verify; keeping verification pending"
-                            );
-                            clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
-                        }
-                        Ok(status) => {
-                            warn!(parent = %parent_digest.0, ?status, "parent rejected during verify");
+            let parent_saw_syncing =
+                if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
+                    warn!(
+                        height = %parent_height,
+                        parent = %parent_digest.0,
+                        "test-marshal-drop: skipping verify parent new_payload"
+                    );
+                    false
+                } else {
+                    match self
+                        .verify_payload_with_syncing_retry(
+                            clock,
+                            "parent",
+                            parent_digest,
+                            execution_data,
+                            &response,
+                        )
+                        .await?
+                    {
+                        PayloadVerification::ChannelClosed => return Ok(()),
+                        PayloadVerification::Invalid => {
                             let _ = response.send(false);
                             return Ok(());
                         }
-                        Err(e) => {
-                            return Err(eyre::eyre!(
-                                "new_payload for parent failed in verify: parent={} error={e}",
-                                parent_digest.0
-                            ));
-                        }
+                        PayloadVerification::Valid { saw_syncing } => saw_syncing,
                     }
-                }
-            }
+                };
 
             if response.is_closed() || parent_saw_syncing {
                 debug!(
@@ -1765,47 +1709,30 @@ impl ApplicationShared {
         };
 
         let block_height = Height::new(block.number());
-        let mut block_saw_syncing = false;
-        let valid = if crate::test_faults::should_drop_new_payload_for_test(block_height) {
-            warn!(
-                height = %block_height,
-                digest = %payload_digest.0,
-                "test-marshal-drop: skipping verify block new_payload"
-            );
-            true
-        } else {
-            loop {
-                if response.is_closed() {
-                    debug!(
-                        digest = %payload_digest.0,
-                        "verify response channel closed while waiting for execution validation"
-                    );
-                    return Ok(());
+        let (valid, block_saw_syncing) =
+            if crate::test_faults::should_drop_new_payload_for_test(block_height) {
+                warn!(
+                    height = %block_height,
+                    digest = %payload_digest.0,
+                    "test-marshal-drop: skipping verify block new_payload"
+                );
+                (true, false)
+            } else {
+                match self
+                    .verify_payload_with_syncing_retry(
+                        clock,
+                        "block",
+                        payload_digest,
+                        execution_data,
+                        &response,
+                    )
+                    .await?
+                {
+                    PayloadVerification::ChannelClosed => return Ok(()),
+                    PayloadVerification::Invalid => (false, false),
+                    PayloadVerification::Valid { saw_syncing } => (true, saw_syncing),
                 }
-                match self.engine.new_payload(execution_data.clone()).await {
-                    Ok(status) if status.is_valid() => break true,
-                    Ok(status) if status.is_syncing() => {
-                        block_saw_syncing = true;
-                        warn!(
-                            digest = %payload_digest.0,
-                            ?status,
-                            "new_payload returned SYNCING during verify; keeping verification pending until execution validates"
-                        );
-                        clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
-                    }
-                    Ok(status) => {
-                        debug!(digest = %payload_digest.0, ?status, "block invalid in verify");
-                        break false;
-                    }
-                    Err(e) => {
-                        return Err(eyre::eyre!(
-                            "new_payload failed in verify: digest={} error={e}",
-                            payload_digest.0
-                        ));
-                    }
-                }
-            }
-        };
+            };
 
         // Step 4: If valid, canonicalize the proposed block only while the
         // single-shot Simplex verify request is still live. A SYNCING retry can

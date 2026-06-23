@@ -505,17 +505,7 @@ pub async fn run_initial_dkg(
 
             // Broadcast our finalized log to all peers.
             unsent_shares.clear();
-            let payload = DkgMessage::FinalizedLog {
-                ceremony_id,
-                signed_log,
-            }
-            .encode();
-            if sender.send(Recipients::All, payload, true).is_empty() {
-                // commonware 2026.5.0 `Sender::send` returns the accepting peers; an
-                // empty Vec means none accepted THIS attempt — which includes benign
-                // rate-limit/backpressure, not just "no peers". The DKG retry tick
-                // re-gossips finalized logs (and peers also pull), so this is
-                // informational, not a hard failure.
+            if !send_finalized_log(&mut sender, ceremony_id, signed_log) {
                 debug!("finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the DKG retry tick");
             }
         }
@@ -811,15 +801,7 @@ pub async fn run_reshare_dealer_only(
         )))
         .map_err(|_| eyre::eyre!("failed to publish dealer-only DKG local dealer log"))?;
 
-    let payload = DkgMessage::FinalizedLog {
-        ceremony_id,
-        signed_log,
-    }
-    .encode();
-    if sender.send(Recipients::All, payload, true).is_empty() {
-        // Empty = no peers accepted this attempt (rate-limit/backpressure under
-        // 2026.5.0 sync send), not necessarily a hard failure; recovered by the
-        // retry tick and peer gossip/pull.
+    if !send_finalized_log(&mut sender, ceremony_id, signed_log) {
         debug!("dealer-only finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the retry tick");
     }
 
@@ -865,6 +847,43 @@ fn handle_dealer_bundle(
     DealerBundleAction::SendAck(ack)
 }
 
+/// Encode and send one DKG message over the P2P sender. The single owner of the
+/// `encode → send → "empty accepted-set is benign backpressure"` recipe, so every
+/// DKG send interprets the result identically.
+///
+/// Returns `true` if at least one recipient accepted this attempt. An empty
+/// accepted-set (commonware 2026.5.0 sync `Sender::send` returns the accepting
+/// peers) means none accepted *this attempt* — benign rate-limit/backpressure,
+/// recovered by the ceremony retry tick and peer pull — never a hard failure.
+/// `#[must_use]`: callers must observe acceptance (typically to log backpressure).
+#[must_use]
+fn send_dkg_message(
+    sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
+    recipients: Recipients<bls12381::PublicKey>,
+    message: DkgMessage,
+) -> bool {
+    !sender.send(recipients, message.encode(), true).is_empty()
+}
+
+/// Broadcast one finalized dealer log to all peers. The single site that encodes
+/// `DkgMessage::FinalizedLog` to `Recipients::All`, shared by the gossip loop and
+/// the two one-shot post-finalize broadcasts.
+#[must_use]
+fn send_finalized_log(
+    sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
+    ceremony_id: DkgCeremonyId,
+    signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+) -> bool {
+    send_dkg_message(
+        sender,
+        Recipients::All,
+        DkgMessage::FinalizedLog {
+            ceremony_id,
+            signed_log,
+        },
+    )
+}
+
 async fn send_ack(
     sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
     ceremony_id: DkgCeremonyId,
@@ -872,14 +891,14 @@ async fn send_ack(
     ack: PlayerAck<bls12381::PublicKey>,
     success_message: &'static str,
 ) {
-    let payload = DkgMessage::Ack { ceremony_id, ack }.encode();
-    if sender
-        .send(Recipients::One(dealer.clone()), payload, true)
-        .is_empty()
-    {
-        debug!(?dealer, "ack had no accepting recipient this attempt (rate-limited/backpressure); retried by the ceremony loop");
-    } else {
+    if send_dkg_message(
+        sender,
+        Recipients::One(dealer.clone()),
+        DkgMessage::Ack { ceremony_id, ack },
+    ) {
         debug!(?dealer, message = success_message, "sent DKG ack");
+    } else {
+        debug!(?dealer, "ack had no accepting recipient this attempt (rate-limited/backpressure); retried by the ceremony loop");
     }
 }
 
@@ -967,12 +986,7 @@ async fn gossip_finalized_logs(
     signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PrivateKey>>,
 ) {
     for (dealer, signed_log) in signed_logs {
-        let payload = DkgMessage::FinalizedLog {
-            ceremony_id,
-            signed_log: signed_log.clone(),
-        }
-        .encode();
-        if sender.send(Recipients::All, payload, true).is_empty() {
+        if !send_finalized_log(sender, ceremony_id, signed_log.clone()) {
             debug!(
                 ?dealer,
                 "finalized-log gossip had no accepting recipients this attempt \
@@ -993,23 +1007,19 @@ async fn send_shares(
     >,
 ) {
     for (player_pk, priv_msg) in unsent {
-        let msg = DkgMessage::DealerBundle {
+        let message = DkgMessage::DealerBundle {
             ceremony_id,
             pub_msg: pub_msg.clone(),
             priv_msg: priv_msg.clone(),
         };
-        let payload = msg.encode();
-        if sender
-            .send(Recipients::One(player_pk.clone()), payload, true)
-            .is_empty()
-        {
+        if send_dkg_message(sender, Recipients::One(player_pk.clone()), message) {
+            debug!(?player_pk, "sent share to player");
+        } else {
             debug!(
                 ?player_pk,
                 "share send had no accepting recipient this attempt \
                  (rate-limited/backpressure); retried by send_shares"
             );
-        } else {
-            debug!(?player_pk, "sent share to player");
         }
     }
 }

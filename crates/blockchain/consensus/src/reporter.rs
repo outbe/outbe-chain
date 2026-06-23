@@ -15,6 +15,7 @@
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
+use crate::metrics::EquivocationKind;
 use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::Encode;
@@ -260,7 +261,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingNotarize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_notarize",
+                    EquivocationKind::ConflictingNotarize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -269,7 +270,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_finalize",
+                    EquivocationKind::ConflictingFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -278,7 +279,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::NullifyFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "nullify_finalize",
+                    EquivocationKind::NullifyFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -357,11 +358,12 @@ impl OutbeReporter {
     /// the log must not claim it does.
     fn handle_byzantine_evidence(
         &mut self,
-        evidence_type: &str,
+        kind: EquivocationKind,
         signer: commonware_utils::Participant,
         epoch: Epoch,
         view: View,
     ) {
+        let evidence_type = kind.label();
         let signer_idx = signer.get() as usize;
         if let Some(&addr) = self.validator_addresses.get(signer_idx) {
             let signer_pubkey = self
@@ -381,7 +383,7 @@ impl OutbeReporter {
                 "BYZANTINE: consensus equivocation detected — slashable; external watcher should submit the two conflicting votes"
             );
             self.view_state.buffer_byzantine(addr);
-            crate::metrics::record_byzantine_evidence(evidence_type);
+            crate::metrics::record_byzantine_evidence(kind);
         } else {
             warn!(
                 evidence_type,
