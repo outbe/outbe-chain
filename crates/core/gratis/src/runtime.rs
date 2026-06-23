@@ -192,7 +192,6 @@ impl Gratis<'_> {
 
         Ok(remaining_pledged)
     }
-
 }
 
 /// Overflow-checked `U256` addition for balance / supply accounting paths.

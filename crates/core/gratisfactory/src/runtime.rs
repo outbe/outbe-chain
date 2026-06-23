@@ -80,7 +80,10 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisMined { account, amount }),
+        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisMined {
+            account,
+            amount,
+        }),
     )?;
 
     Ok(new_supply)

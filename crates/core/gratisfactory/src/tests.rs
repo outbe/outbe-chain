@@ -253,8 +253,13 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         // acquired a year ago, so it has positive RCFI now and is fully
         // consumed by the sale.
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
-        outbe_fidelity::api::cohort_in(storage.clone(), alice(), amount, CREATED_AT - ONE_YEAR_SECS)
-            .unwrap();
+        outbe_fidelity::api::cohort_in(
+            storage.clone(),
+            alice(),
+            amount,
+            CREATED_AT - ONE_YEAR_SECS,
+        )
+        .unwrap();
         let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .get_rcfi_scaled(alice())
             .unwrap();
