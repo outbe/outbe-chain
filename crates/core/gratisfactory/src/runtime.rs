@@ -64,13 +64,6 @@ pub fn unpledge_gratis(
     Ok(amount)
 }
 
-/// Mint `amount` gratis to `account`, record the Fidelity acquisition cohort,
-/// and emit `GratisMined`. Returns the new total gratis supply.
-///
-/// Internal cross-module API (not exposed on the precompile ABI). The
-/// production caller is NodFactory's mine path, which burns a Nod and then
-/// delegates the matching gratis mint here. Amount/address validation is
-/// delegated to [`outbe_gratis::Gratis::mine`].
 pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
     let mut gratis = Gratis::new(storage.clone());
     let new_supply = gratis.mine(account, amount)?;
@@ -89,12 +82,6 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
     Ok(new_supply)
 }
 
-/// Burn `amount` gratis from `account`, record the Fidelity sale cohort (LIFO
-/// via `cohort_out`), mint the matching native COEN to `account` 1:1, and emit
-/// `CoenMined`. Returns the minted native amount.
-///
-/// The `mineCoen` precompile entry point delegates here. Amount/balance
-/// validation is delegated to [`outbe_gratis::Gratis::burn`].
 pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
     let mut gratis = Gratis::new(storage.clone());
     gratis.burn(account, amount)?;

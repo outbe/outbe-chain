@@ -174,8 +174,6 @@ pub fn mine_gem_promis(
 
     gem_api::burn(storage, gem_id)?;
 
-    // Delegate the matching promis mint to promisfactory (which mints to the
-    // owner, records the Fidelity acquisition cohort, and emits PromisMined).
     outbe_promisfactory::api::mine(storage.clone(), caller, item.gem_load)?;
 
     emit_event(
