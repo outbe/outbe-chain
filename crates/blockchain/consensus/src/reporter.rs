@@ -515,7 +515,9 @@ impl OutbeReporter {
                 }) {
                 Ok(()) => commonware_actor::Feedback::Ok,
                 Err(_closed) => {
-                    crate::metrics::record_finalization_dropped("mailbox_closed");
+                    crate::metrics::record_finalization_dropped(
+                        crate::metrics::FinalizationDropReason::MailboxClosed,
+                    );
                     tracing::error!(
                         round = %finalization.proposal.round,
                         view,
@@ -552,7 +554,9 @@ impl OutbeReporter {
         // requires explicit re-verification before write.
         let mut rng = bls_batch_verification_rng();
         if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-            crate::metrics::record_certification_dropped("verify_failed");
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::VerifyFailed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
@@ -604,7 +608,9 @@ impl OutbeReporter {
         ) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                crate::metrics::record_certification_dropped("snapshot_build_failed");
+                crate::metrics::record_certification_dropped(
+                    crate::metrics::CertificationDropReason::SnapshotBuildFailed,
+                );
                 warn!(
                     target: "outbe::reporter",
                     epoch = notarization.proposal.round.epoch().get(),
@@ -669,7 +675,9 @@ impl OutbeReporter {
             .finalization_mailbox
             .persist_certified_notarization(record)
         {
-            crate::metrics::record_certification_dropped("mailbox_closed");
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::MailboxClosed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),

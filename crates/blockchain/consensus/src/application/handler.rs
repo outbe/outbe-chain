@@ -1163,7 +1163,9 @@ impl ApplicationShared {
             .await
         {
             Ok(BoundaryRequirement::AlreadyCommitted) => {
-                crate::metrics::record_dkg_boundary_requirement("already_committed");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+                );
                 None
             }
             Ok(BoundaryRequirement::MustEmit) => {
@@ -1172,7 +1174,9 @@ impl ApplicationShared {
                         "boundary requirement requested emission without pending artifact"
                     ));
                 };
-                crate::metrics::record_dkg_boundary_requirement("must_emit");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::MustEmit,
+                );
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))
             }
             Ok(BoundaryRequirement::NoPending) if proposed_height == 1 => {
@@ -1182,11 +1186,15 @@ impl ApplicationShared {
                     "block 1 proposal forfeited: DKG boundary artifact for epoch 0 not ready"
                 );
                 crate::metrics::record_genesis_dkg_boundary_not_ready_forfeit();
-                crate::metrics::record_dkg_boundary_unavailable("genesis_boundary_not_ready");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::GenesisBoundaryNotReady,
+                );
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
             Ok(BoundaryRequirement::NoPending) => {
-                crate::metrics::record_dkg_boundary_requirement("no_pending");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::NoPending,
+                );
                 self.dkg_manager
                     .get_dealer_log(round.epoch())
                     .await
@@ -1200,7 +1208,9 @@ impl ApplicationShared {
                     "block proposal forfeited: DKG boundary requirement unavailable"
                 );
                 if error.is_unavailable() {
-                    crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                    crate::metrics::record_dkg_boundary_unavailable(
+                        crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                    );
                 }
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
@@ -1605,7 +1615,9 @@ impl ApplicationShared {
             if error.contains("DKG boundary ancestry unavailable")
                 || error.contains("DKG boundary ancestry scan exceeded")
             {
-                crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                );
                 return Err(eyre::eyre!("DKG boundary requirement unavailable: {error}"));
             }
             warn!(
@@ -1850,7 +1862,9 @@ async fn validate_header_consensus_artifacts(
                         .to_string(),
                 );
             }
-            crate::metrics::record_dkg_boundary_requirement("already_committed");
+            crate::metrics::record_dkg_boundary_requirement(
+                crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+            );
             return Ok(());
         }
         BoundaryRequirement::MustEmit => {

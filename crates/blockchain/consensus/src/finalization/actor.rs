@@ -211,7 +211,9 @@ impl FinalizationActor {
                     {
                         Ok(()) => crate::metrics::record_certification_persisted(),
                         Err(error) => {
-                            crate::metrics::record_certification_dropped("store_error");
+                            crate::metrics::record_certification_dropped(
+                                crate::metrics::CertificationDropReason::StoreError,
+                            );
                             tracing::warn!(
                                 target: "outbe::finalization",
                                 %error,
@@ -241,7 +243,9 @@ impl FinalizationActor {
             let view_snapshot = self.deps.view.read();
             if let Some(last_round) = view_snapshot.last_finalized_round {
                 if round < last_round {
-                    crate::metrics::record_finalization_dropped("stale_round");
+                    crate::metrics::record_finalization_dropped(
+                        crate::metrics::FinalizationDropReason::StaleRound,
+                    );
                     info!(
                         ?round,
                         ?last_round,
@@ -252,7 +256,9 @@ impl FinalizationActor {
                 }
                 if round == last_round {
                     if digest.0 != view_snapshot.forkchoice.finalized_block_hash {
-                        crate::metrics::record_finalization_dropped("same_round_inconsistency");
+                        crate::metrics::record_finalization_dropped(
+                            crate::metrics::FinalizationDropReason::SameRoundInconsistency,
+                        );
                         tracing::error!(
                             ?round,
                             %digest,
@@ -279,7 +285,9 @@ impl FinalizationActor {
                         .get_finalization(proof_key)
                         .is_some()
                     {
-                        crate::metrics::record_finalization_dropped("duplicate_round");
+                        crate::metrics::record_finalization_dropped(
+                            crate::metrics::FinalizationDropReason::DuplicateRound,
+                        );
                         debug!(
                             ?round,
                             %digest,
