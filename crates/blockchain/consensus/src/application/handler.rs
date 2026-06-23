@@ -12,25 +12,13 @@
 
 use std::{sync::Arc, time::Duration};
 
-/// Maximum retry attempts for marshal block resolution before structured application failure.
-pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
-/// Delay between retry attempts for marshal block resolution.
-pub(crate) const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
-/// Maximum time to wait for marshal block resolution during verify.
-pub(crate) const VERIFY_RESOLUTION_TIMEOUT: Duration = crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
+// Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
+// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` — they are read cross-module
+// by the finalization actor, verify, and epoch-boundary resolution paths.
+use crate::config::{PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT};
+
 /// Delay between Engine API retries while execution reports temporary SYNCING.
 pub(crate) const VERIFY_SYNCING_RETRY_DELAY: Duration = Duration::from_millis(100);
-/// Maximum time to wait for marshal parent resolution during proposal.
-pub(crate) const PROPOSE_RESOLUTION_TIMEOUT: Duration =
-    crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
-/// Per-attempt time budget for marshal block resolution during finalization.
-///
-/// Without this bound, a `subscribe_by_digest` waiter that never completes can
-/// wedge the application handler's serial event loop, blocking propose/verify
-/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
-/// Exhaustion is surfaced as a structured application failure, not a direct
-/// process kill from inside the handler.
-pub(crate) const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Log-rate window for repeated critical proposal failures.
 pub(crate) const PROPOSAL_FAILURE_LOG_WINDOW: Duration = Duration::from_secs(5);
 /// epoch boundary: bounded wait inside `handle_genesis` for the

@@ -33,10 +33,8 @@ use outbe_primitives::{
 };
 use tracing::{debug, info, warn};
 
-use crate::application::handler::{
-    FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY,
-};
 use crate::block::ConsensusBlock;
+use crate::config::{FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY};
 use crate::digest::Digest;
 use crate::finalization::ingress::{Finalized, Mailbox, Message};
 use crate::finalization::parent_cert_store::{

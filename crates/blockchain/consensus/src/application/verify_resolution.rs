@@ -12,8 +12,8 @@ use std::time::Instant;
 use commonware_consensus::types::Round;
 use tracing::debug;
 
-use crate::application::handler::VERIFY_RESOLUTION_TIMEOUT;
 use crate::block::ConsensusBlock;
+use crate::config::VERIFY_RESOLUTION_TIMEOUT;
 use crate::digest::Digest;
 use crate::finalization::actor::BlockCacheHandle;
 use crate::marshal_types::MarshalMailbox;
