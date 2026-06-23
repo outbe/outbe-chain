@@ -45,6 +45,7 @@ use crate::{
         FinalizedParentCertStore, ParentProofStoreError,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
+    finalization::util::build_signer_bitmap_guarded,
     hybrid::{bls_batch_verification_rng, HybridCertificate, HybridScheme},
 };
 
@@ -289,7 +290,7 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 committee_set_hash,
                 vrf_material_version,
                 ordered_committee: self.validator_addresses.clone(),
-                signer_bitmap: build_signer_bitmap(
+                signer_bitmap: build_signer_bitmap_guarded(
                     &notarization.certificate,
                     self.validator_addresses.len(),
                 ),
@@ -367,7 +368,7 @@ pub(crate) fn build_finalization_record_from_recovered(
         finalized_view,
         parent_view,
         ordered_committee: ordered_committee.to_vec(),
-        signer_bitmap: build_signer_bitmap(certificate, ordered_committee.len()),
+        signer_bitmap: build_signer_bitmap_guarded(certificate, ordered_committee.len()),
         certificate: encoded_certificate.clone(),
         encoded_proof: encoded_certificate,
         committee_set_hash,
@@ -378,27 +379,6 @@ pub(crate) fn build_finalization_record_from_recovered(
         stored_at_height: finalized_block_number,
         ..CertifiedParentProofRecord::default()
     })
-}
-
-/// Mirror of `OutbeReporter::build_signer_bitmap` for resolver use. Held
-/// locally to avoid making the reporter helper part of the public crate
-/// surface; the input contract is identical (1 byte per participant, ones
-/// where the certificate signers set carries the participant index).
-fn build_signer_bitmap(
-    certificate: &crate::hybrid::HybridCertificate<MinSig>,
-    committee_size: usize,
-) -> Vec<u8> {
-    if certificate.signers.len() != committee_size {
-        return Vec::new();
-    }
-    let mut signed = vec![0u8; committee_size];
-    for signer in certificate.signers.iter() {
-        let idx = signer.get() as usize;
-        if idx < committee_size {
-            signed[idx] = 1;
-        }
-    }
-    signed
 }
 
 #[cfg(test)]

@@ -460,6 +460,18 @@ fn canonical_missed_proposers(
     Some(missed)
 }
 
+/// Canonical one-byte-per-participant signer bitmap from a certificate.
+///
+/// Core (unguarded) form: the caller MUST guarantee
+/// `certificate.signers.len() == committee_len`. On the verify path this holds
+/// by construction — the certificate is decoded with
+/// `Finalization::read_cfg(.., &committee_len)`, which binds the `Signers`
+/// width to `committee_len` (see [`validate_consensus_metadata`]).
+/// `Signers::len()` is the committee size (bitmap width); `Signers::count()` is
+/// the number that actually signed (`hybrid.rs`: `Signers::from(participants.len(), ..)`).
+///
+/// Producer paths holding a live certificate against an independently-sourced
+/// committee snapshot must use [`build_signer_bitmap_guarded`] instead.
 pub(crate) fn build_signer_bitmap(
     certificate: &HybridCertificate<MinSig>,
     committee_len: usize,
@@ -472,6 +484,25 @@ pub(crate) fn build_signer_bitmap(
         }
     }
     bitmap
+}
+
+/// Producer-side guarded wrapper around [`build_signer_bitmap`].
+///
+/// Returns the empty sentinel (`Vec::new()`) when the live certificate's signer
+/// width does not match `committee_len` — i.e. the certificate was formed
+/// against a different committee than the producer's snapshot. The empty
+/// sentinel is rejected downstream by the `signer_bitmap.len() != committee.len()`
+/// structural check in [`validate_consensus_metadata`], so a size skew can never
+/// be silently accepted. Honest proposer/validator paths never reach this branch:
+/// `committee_set_hash_v2` binds both to the same committee.
+pub(crate) fn build_signer_bitmap_guarded(
+    certificate: &HybridCertificate<MinSig>,
+    committee_len: usize,
+) -> Vec<u8> {
+    if certificate.signers.len() != committee_len {
+        return Vec::new();
+    }
+    build_signer_bitmap(certificate, committee_len)
 }
 
 #[cfg(test)]
