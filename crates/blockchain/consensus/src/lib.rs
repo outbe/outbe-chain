@@ -21,6 +21,7 @@ pub mod epoch_subchannels;
 pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
+pub(crate) mod missed_proposers;
 pub mod participation;
 pub mod proof;
 pub mod timing;
@@ -50,4 +51,6 @@ pub mod executor;
 pub mod finalization;
 pub mod reporter;
 pub(crate) mod test_faults;
+#[cfg(test)]
+mod test_fixtures;
 pub(crate) mod util;
