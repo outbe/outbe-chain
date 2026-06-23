@@ -1604,7 +1604,7 @@ impl ApplicationShared {
             round,
             &context.leader,
             self.chain_id,
-            self.proposer_evm_address.is_none(),
+            ValidatorRole::from_proposer_evm_address(self.proposer_evm_address),
             &self.certificate_scheme_provider,
             &self.committee_provider,
             &self.dkg_manager,
@@ -1810,6 +1810,27 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 // `extract_header_artifact_from_block` moved to
 // `crate::finalization::util` in step 17. Imported at the top of this file.
 
+/// Whether the local node validates live proposals. A share-less verifier (a TEE
+/// full-node with no proposer EVM address) follows FINALIZED blocks only and skips
+/// the leader-binding / DKG-boundary checks (polynomial/DKG-view-dependent, would
+/// diverge on a verifier's stale post-rotation state). Replaces a boolean-blind
+/// `is_verifier` flag so the role choice is explicit in the type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValidatorRole {
+    Signer,
+    VerifierOnly,
+}
+
+impl ValidatorRole {
+    /// A node with no proposer EVM address is a share-less verifier-only follower.
+    fn from_proposer_evm_address(proposer_evm_address: Option<Address>) -> Self {
+        match proposer_evm_address {
+            Some(_) => Self::Signer,
+            None => Self::VerifierOnly,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn validate_header_consensus_artifacts(
     block: &ConsensusBlock,
@@ -1817,7 +1838,7 @@ async fn validate_header_consensus_artifacts(
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
-    is_verifier: bool,
+    role: ValidatorRole,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
@@ -1832,7 +1853,7 @@ async fn validate_header_consensus_artifacts(
     // consensus safety for the follower comes from the finalization certificate, not
     // from re-deriving the live proposal's leader. The verifier never votes (`me()`
     // is None), so accepting the proposal here cannot affect the committee's quorum.
-    if is_verifier {
+    if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }
     validate_rewards_beneficiary(block)?;
@@ -1990,7 +2011,7 @@ mod tests {
     use crate::finalization::util::build_signer_bitmap;
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
-    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest};
+    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest, ValidatorRole};
     use crate::test_fixtures::*;
 
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
@@ -2184,7 +2205,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2223,7 +2244,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2241,7 +2262,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2271,7 +2292,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2285,7 +2306,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2314,7 +2335,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
