@@ -82,7 +82,8 @@ use outbe_consensus::{
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
     executor::actor::ExecutorActor,
     finalization::{
-        actor::{BlockCacheHandle, FinalizationActor, FinalizationActorDeps},
+        actor::{FinalizationActor, FinalizationActorDeps},
+        block_cache::BlockCache,
         state::new_finalization_view,
     },
     hybrid::{
@@ -757,8 +758,6 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
     status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
     status.next_planned_activation_height = snapshot.next_planned_activation_height;
     status.vrf_expiry_height = snapshot.vrf_expiry_height;
-    status.is_active = snapshot.randomness_status.is_consensus_active();
-    status.has_threshold_shares = snapshot.randomness_status.has_threshold_shares();
     info!(
         randomness_status = ?snapshot.randomness_status,
         vrf_material_version = snapshot.vrf_material_version,
@@ -2836,8 +2835,7 @@ where
         last_execution_height,
         recovered_finalized_round,
     );
-    let finalization_block_cache: BlockCacheHandle =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let finalization_block_cache = BlockCache::new();
 
     // Construct the consensus-owned exact-parent certificate handoff store
     // before either the application handler (consumer-side waiter) or the
@@ -3099,7 +3097,7 @@ where
             verifier_scheme,
             reporter_elector,
             current_epoch,
-            finalized_parent_cert_store.clone(),
+            std::sync::Arc::new(finalized_parent_cert_store.clone()),
             finalize_verify_mailbox.clone(),
         );
 

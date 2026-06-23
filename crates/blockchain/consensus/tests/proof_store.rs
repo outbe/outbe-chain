@@ -35,7 +35,8 @@ use outbe_consensus::{
     bls::bootstrap_dkg,
     digest::Digest as OutbeDigest,
     finalization::{
-        actor::{BLOCK_CACHE_KEEP_DEPTH, PARENT_CERT_KEEP_DEPTH},
+        actor::PARENT_CERT_KEEP_DEPTH,
+        block_cache::BLOCK_CACHE_KEEP_DEPTH,
         ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
         parent_cert_store::{
             CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
@@ -174,7 +175,7 @@ fn build_reporter(
         verifier_scheme_from(fx),
         HybridRandom::default().build(&fx.participants),
         Epoch::new(0),
-        store,
+        std::sync::Arc::new(store.clone()),
         verify_mailbox,
     );
     (reporter, rx)

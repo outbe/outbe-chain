@@ -53,8 +53,8 @@ pub fn record_view_nullified() {
 }
 
 /// Record a finalized event dropped before block resolution.
-pub fn record_finalization_dropped(reason: &str) {
-    counter!("outbe_finalization_dropped_total", "reason" => reason.to_string()).increment(1);
+pub fn record_finalization_dropped(reason: FinalizationDropReason) {
+    counter!("outbe_finalization_dropped_total", "reason" => reason.label()).increment(1);
 }
 
 /// Record a full marshal-resolution retry cycle that exhausted without
@@ -237,6 +237,89 @@ pub fn record_byzantine_evidence(kind: EquivocationKind) {
     counter!("outbe_byzantine_evidence_total", "type" => kind.label()).increment(1);
 }
 
+/// Reason a finalized event was dropped before block resolution. Closed set so the
+/// `outbe_finalization_dropped_total{reason=...}` label cannot drift or typo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalizationDropReason {
+    MailboxClosed,
+    StaleRound,
+    SameRoundInconsistency,
+    DuplicateRound,
+}
+
+impl FinalizationDropReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::MailboxClosed => "mailbox_closed",
+            Self::StaleRound => "stale_round",
+            Self::SameRoundInconsistency => "same_round_inconsistency",
+            Self::DuplicateRound => "duplicate_round",
+        }
+    }
+}
+
+/// Reason an `Activity::Certification` was dropped by the reporter before
+/// persistence. Closed set behind `outbe_certification_dropped_total{reason=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificationDropReason {
+    VerifyFailed,
+    SnapshotBuildFailed,
+    MailboxClosed,
+    StoreError,
+}
+
+impl CertificationDropReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VerifyFailed => "verify_failed",
+            Self::SnapshotBuildFailed => "snapshot_build_failed",
+            Self::MailboxClosed => "mailbox_closed",
+            Self::StoreError => "store_error",
+        }
+    }
+}
+
+/// DKG boundary requirement decision, for proposer/verifier observability behind
+/// `outbe_dkg_boundary_requirement_total{decision=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DkgBoundaryDecision {
+    AlreadyCommitted,
+    MustEmit,
+    NoPending,
+}
+
+impl DkgBoundaryDecision {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AlreadyCommitted => "already_committed",
+            Self::MustEmit => "must_emit",
+            Self::NoPending => "no_pending",
+        }
+    }
+}
+
+/// Reason a DKG boundary requirement could not be derived from the parent
+/// snapshot and bounded ancestry. Closed set behind
+/// `outbe_dkg_boundary_unavailable_total{reason=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DkgBoundaryUnavailableReason {
+    GenesisBoundaryNotReady,
+    AncestryUnavailable,
+}
+
+impl DkgBoundaryUnavailableReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GenesisBoundaryNotReady => "genesis_boundary_not_ready",
+            Self::AncestryUnavailable => "ancestry_unavailable",
+        }
+    }
+}
+
 /// Record an invalid threshold-VRF seed partial that was excluded from
 /// recovery during attestation verification AND is identity-attributable to its
 /// author (the rider identity signature verified). A non-zero value means a
@@ -275,12 +358,6 @@ pub fn record_parent_cert_missing() {
     counter!("outbe_parent_cert_missing_total").increment(1);
 }
 
-/// Builder skipped a candidate because exact-parent validation did not accept it.
-pub fn record_parent_cert_invalid_omitted(verdict: &str) {
-    counter!("outbe_parent_cert_invalid_omitted_total", "verdict" => verdict.to_string())
-        .increment(1);
-}
-
 /// Current exact-parent certificate handoff store entry count.
 pub fn record_parent_cert_store_size(size: usize) {
     gauge!("outbe_parent_cert_store_size").set(size as f64);
@@ -305,12 +382,6 @@ pub fn record_parent_cert_retained_depth(depth: u64) {
     gauge!("outbe_parent_cert_retained_depth").set(depth as f64);
 }
 
-/// Verifier-side exact-parent certificate rejection.
-pub fn record_parent_cert_verify_rejected(verdict: &str) {
-    counter!("outbe_parent_cert_verify_rejected_total", "verdict" => verdict.to_string())
-        .increment(1);
-}
-
 /// `Activity::Certification` admitted by the reporter and persisted to the
 /// certified-parent proof store.
 pub fn record_certification_persisted() {
@@ -321,8 +392,8 @@ pub fn record_certification_persisted() {
 /// Reasons:
 /// - `"verify_failed"` — Notarization signature did not verify.
 /// - `"store_error"` — durable proof-store write returned an error.
-pub fn record_certification_dropped(reason: &str) {
-    counter!("outbe_certification_dropped_total", "reason" => reason.to_string()).increment(1);
+pub fn record_certification_dropped(reason: CertificationDropReason) {
+    counter!("outbe_certification_dropped_total", "reason" => reason.label()).increment(1);
 }
 
 /// deterministic proposer-forfeit metric. See
@@ -374,15 +445,14 @@ pub fn record_phase1_finalization_record_arrived_after_cn(duration: Duration) {
 }
 
 /// DKG boundary requirement decision for proposer/verifier observability.
-pub fn record_dkg_boundary_requirement(decision: &str) {
-    counter!("outbe_dkg_boundary_requirement_total", "decision" => decision.to_string())
-        .increment(1);
+pub fn record_dkg_boundary_requirement(decision: DkgBoundaryDecision) {
+    counter!("outbe_dkg_boundary_requirement_total", "decision" => decision.label()).increment(1);
 }
 
 /// Boundary requirement could not be derived from the parent snapshot and
 /// bounded ancestry.
-pub fn record_dkg_boundary_unavailable(reason: &str) {
-    counter!("outbe_dkg_boundary_unavailable_total", "reason" => reason.to_string()).increment(1);
+pub fn record_dkg_boundary_unavailable(reason: DkgBoundaryUnavailableReason) {
+    counter!("outbe_dkg_boundary_unavailable_total", "reason" => reason.label()).increment(1);
 }
 
 /// A block carried a DKG boundary artifact after the same pending boundary had
@@ -419,7 +489,10 @@ pub fn record_block_wait_time(duration: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::{consensus_reth_readiness_gap_blocks, EquivocationKind};
+    use super::{
+        consensus_reth_readiness_gap_blocks, CertificationDropReason, DkgBoundaryDecision,
+        DkgBoundaryUnavailableReason, EquivocationKind, FinalizationDropReason,
+    };
 
     /// Pins the byzantine-evidence telemetry labels. These strings are an external,
     /// operator-facing surface (the `outbe_byzantine_evidence_total{type=...}` metric
@@ -438,6 +511,57 @@ mod tests {
         assert_eq!(
             EquivocationKind::NullifyFinalize.label(),
             "nullify_finalize"
+        );
+    }
+
+    /// Pins the drop/decision telemetry labels — external operator-facing surface
+    /// (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
+    /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
+    /// A change must be deliberate, not an accidental rename.
+    #[test]
+    fn telemetry_label_strings_are_stable() {
+        assert_eq!(
+            FinalizationDropReason::MailboxClosed.label(),
+            "mailbox_closed"
+        );
+        assert_eq!(FinalizationDropReason::StaleRound.label(), "stale_round");
+        assert_eq!(
+            FinalizationDropReason::SameRoundInconsistency.label(),
+            "same_round_inconsistency"
+        );
+        assert_eq!(
+            FinalizationDropReason::DuplicateRound.label(),
+            "duplicate_round"
+        );
+
+        assert_eq!(
+            CertificationDropReason::VerifyFailed.label(),
+            "verify_failed"
+        );
+        assert_eq!(
+            CertificationDropReason::SnapshotBuildFailed.label(),
+            "snapshot_build_failed"
+        );
+        assert_eq!(
+            CertificationDropReason::MailboxClosed.label(),
+            "mailbox_closed"
+        );
+        assert_eq!(CertificationDropReason::StoreError.label(), "store_error");
+
+        assert_eq!(
+            DkgBoundaryDecision::AlreadyCommitted.label(),
+            "already_committed"
+        );
+        assert_eq!(DkgBoundaryDecision::MustEmit.label(), "must_emit");
+        assert_eq!(DkgBoundaryDecision::NoPending.label(), "no_pending");
+
+        assert_eq!(
+            DkgBoundaryUnavailableReason::GenesisBoundaryNotReady.label(),
+            "genesis_boundary_not_ready"
+        );
+        assert_eq!(
+            DkgBoundaryUnavailableReason::AncestryUnavailable.label(),
+            "ancestry_unavailable"
         );
     }
 

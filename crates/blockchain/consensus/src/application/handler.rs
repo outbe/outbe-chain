@@ -12,25 +12,13 @@
 
 use std::{sync::Arc, time::Duration};
 
-/// Maximum retry attempts for marshal block resolution before structured application failure.
-pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
-/// Delay between retry attempts for marshal block resolution.
-pub(crate) const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
-/// Maximum time to wait for marshal block resolution during verify.
-pub(crate) const VERIFY_RESOLUTION_TIMEOUT: Duration = crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
+// Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
+// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` — they are read cross-module
+// by the finalization actor, verify, and epoch-boundary resolution paths.
+use crate::config::{PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT};
+
 /// Delay between Engine API retries while execution reports temporary SYNCING.
 pub(crate) const VERIFY_SYNCING_RETRY_DELAY: Duration = Duration::from_millis(100);
-/// Maximum time to wait for marshal parent resolution during proposal.
-pub(crate) const PROPOSE_RESOLUTION_TIMEOUT: Duration =
-    crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
-/// Per-attempt time budget for marshal block resolution during finalization.
-///
-/// Without this bound, a `subscribe_by_digest` waiter that never completes can
-/// wedge the application handler's serial event loop, blocking propose/verify
-/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
-/// Exhaustion is surfaced as a structured application failure, not a direct
-/// process kill from inside the handler.
-pub(crate) const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Log-rate window for repeated critical proposal failures.
 pub(crate) const PROPOSAL_FAILURE_LOG_WINDOW: Duration = Duration::from_secs(5);
 /// epoch boundary: bounded wait inside `handle_genesis` for the
@@ -165,7 +153,7 @@ use crate::{
     dkg_manager::{AncestryReader, BoundaryRequirement},
     executor,
     finalization::{
-        actor::BlockCacheHandle,
+        block_cache::BlockCache,
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
@@ -382,7 +370,7 @@ pub(crate) struct ApplicationShared {
 
     /// Shared block cache: proposer inserts on local build, the
     /// FinalizationActor evicts entries below the new finalized height.
-    block_cache: BlockCacheHandle,
+    block_cache: BlockCache,
 
     /// Proposer-side exact-parent certificate selector.
     ///
@@ -430,7 +418,7 @@ pub struct ApplicationDeps {
     pub epoch_fence: ApplicationEpochFence,
     pub ancestry_readiness: AncestryReadiness,
     pub finalization_view: FinalizationViewHandle,
-    pub block_cache: BlockCacheHandle,
+    pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
     pub payload_resolve_time: std::time::Duration,
     pub payload_return_time: std::time::Duration,
@@ -778,11 +766,7 @@ impl ApplicationShared {
             } else if parent_digest.0 == self.genesis_hash {
                 (Height::zero(), None, None)
             } else {
-                let cached_parent = self
-                    .block_cache
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&parent_digest);
+                let cached_parent = self.block_cache.get_and_remove(&parent_digest);
                 let parent_block = if let Some(block) = cached_parent {
                     block
                 } else {
@@ -1163,7 +1147,9 @@ impl ApplicationShared {
             .await
         {
             Ok(BoundaryRequirement::AlreadyCommitted) => {
-                crate::metrics::record_dkg_boundary_requirement("already_committed");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+                );
                 None
             }
             Ok(BoundaryRequirement::MustEmit) => {
@@ -1172,7 +1158,9 @@ impl ApplicationShared {
                         "boundary requirement requested emission without pending artifact"
                     ));
                 };
-                crate::metrics::record_dkg_boundary_requirement("must_emit");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::MustEmit,
+                );
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))
             }
             Ok(BoundaryRequirement::NoPending) if proposed_height == 1 => {
@@ -1182,11 +1170,15 @@ impl ApplicationShared {
                     "block 1 proposal forfeited: DKG boundary artifact for epoch 0 not ready"
                 );
                 crate::metrics::record_genesis_dkg_boundary_not_ready_forfeit();
-                crate::metrics::record_dkg_boundary_unavailable("genesis_boundary_not_ready");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::GenesisBoundaryNotReady,
+                );
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
             Ok(BoundaryRequirement::NoPending) => {
-                crate::metrics::record_dkg_boundary_requirement("no_pending");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::NoPending,
+                );
                 self.dkg_manager
                     .get_dealer_log(round.epoch())
                     .await
@@ -1200,7 +1192,9 @@ impl ApplicationShared {
                     "block proposal forfeited: DKG boundary requirement unavailable"
                 );
                 if error.is_unavailable() {
-                    crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                    crate::metrics::record_dkg_boundary_unavailable(
+                        crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                    );
                 }
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
@@ -1349,17 +1343,8 @@ impl ApplicationShared {
 
         crate::metrics::record_block_proposed(block_number);
 
-        {
-            let mut guard = self
-                .block_cache
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            crate::finalization::actor::insert_block_cache_bounded(
-                &mut guard,
-                digest,
-                consensus_block.clone(),
-            );
-        }
+        self.block_cache
+            .insert_bounded(digest, consensus_block.clone());
 
         Ok(BuildBlockOutcome::Built(digest, consensus_block))
     }
@@ -1594,7 +1579,7 @@ impl ApplicationShared {
             round,
             &context.leader,
             self.chain_id,
-            self.proposer_evm_address.is_none(),
+            ValidatorRole::from_proposer_evm_address(self.proposer_evm_address),
             &self.certificate_scheme_provider,
             &self.committee_provider,
             &self.dkg_manager,
@@ -1605,7 +1590,9 @@ impl ApplicationShared {
             if error.contains("DKG boundary ancestry unavailable")
                 || error.contains("DKG boundary ancestry scan exceeded")
             {
-                crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                );
                 return Err(eyre::eyre!("DKG boundary requirement unavailable: {error}"));
             }
             warn!(
@@ -1798,6 +1785,27 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 // `extract_header_artifact_from_block` moved to
 // `crate::finalization::util` in step 17. Imported at the top of this file.
 
+/// Whether the local node validates live proposals. A share-less verifier (a TEE
+/// full-node with no proposer EVM address) follows FINALIZED blocks only and skips
+/// the leader-binding / DKG-boundary checks (polynomial/DKG-view-dependent, would
+/// diverge on a verifier's stale post-rotation state). Replaces a boolean-blind
+/// `is_verifier` flag so the role choice is explicit in the type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValidatorRole {
+    Signer,
+    VerifierOnly,
+}
+
+impl ValidatorRole {
+    /// A node with no proposer EVM address is a share-less verifier-only follower.
+    fn from_proposer_evm_address(proposer_evm_address: Option<Address>) -> Self {
+        match proposer_evm_address {
+            Some(_) => Self::Signer,
+            None => Self::VerifierOnly,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn validate_header_consensus_artifacts(
     block: &ConsensusBlock,
@@ -1805,7 +1813,7 @@ async fn validate_header_consensus_artifacts(
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
-    is_verifier: bool,
+    role: ValidatorRole,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
@@ -1820,7 +1828,7 @@ async fn validate_header_consensus_artifacts(
     // consensus safety for the follower comes from the finalization certificate, not
     // from re-deriving the live proposal's leader. The verifier never votes (`me()`
     // is None), so accepting the proposal here cannot affect the committee's quorum.
-    if is_verifier {
+    if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }
     validate_rewards_beneficiary(block)?;
@@ -1850,7 +1858,9 @@ async fn validate_header_consensus_artifacts(
                         .to_string(),
                 );
             }
-            crate::metrics::record_dkg_boundary_requirement("already_committed");
+            crate::metrics::record_dkg_boundary_requirement(
+                crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+            );
             return Ok(());
         }
         BoundaryRequirement::MustEmit => {
@@ -1976,7 +1986,7 @@ mod tests {
     use crate::finalization::util::build_signer_bitmap;
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
-    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest};
+    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest, ValidatorRole};
     use crate::test_fixtures::*;
 
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
@@ -2170,7 +2180,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2209,7 +2219,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2227,7 +2237,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2257,7 +2267,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2271,7 +2281,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2300,7 +2310,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
