@@ -45,112 +45,6 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-struct MarshalAncestryReader<C: commonware_runtime::Clock> {
-    marshal: crate::marshal_types::MarshalMailbox,
-    block_cache: BlockCacheHandle,
-    readiness: AncestryReadiness,
-    round: Option<Round>,
-    timeout: Duration,
-    // Owned runtime clock used to bound the marshal lookups. Cloned cheaply from
-    // the spawn's context so the trait methods (which carry no context) can apply
-    // a runtime-agnostic timeout without pulling in the tokio reactor.
-    clock: C,
-}
-
-impl<C: commonware_runtime::Clock> MarshalAncestryReader<C> {
-    fn new(
-        marshal: crate::marshal_types::MarshalMailbox,
-        block_cache: BlockCacheHandle,
-        readiness: AncestryReadiness,
-        round: Option<Round>,
-        timeout: Duration,
-        clock: C,
-    ) -> Self {
-        Self {
-            marshal,
-            block_cache,
-            readiness,
-            round,
-            timeout,
-            clock,
-        }
-    }
-}
-
-impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
-    fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a> {
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache
-                .values()
-                .find(|block| block.number() == height)
-                .cloned(),
-            Err(error) => {
-                warn!(%error, height, "block cache unavailable while resolving ancestry by height");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        // `Clock::sleep` returns an owned `'static` future, so we build it from the
-        // borrowed clock here and move it into the lookup future — no clone of the
-        // (non-`Clone`) runtime context needed.
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            // `marshal.get_block(..)` borrows `marshal`, so it is not `'static` and
-            // cannot use `Clock::timeout`. Inline the same biased race the default
-            // `Clock::timeout` uses: prefer the resolved block over the timeout.
-            let lookup = marshal.get_block(Height::new(height));
-            let mut lookup = std::pin::pin!(lookup);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                block = &mut lookup => block,
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a> {
-        let digest = Digest(hash);
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache.get(&digest).cloned(),
-            Err(error) => {
-                warn!(%error, %hash, "block cache unavailable while resolving ancestry by hash");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        let round = self.round;
-        // Owned `'static` sleep future built from the borrowed clock (no clone).
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            let fallback = match round {
-                Some(round) => {
-                    commonware_consensus::marshal::core::DigestFallback::FetchByRound { round }
-                }
-                None => commonware_consensus::marshal::core::DigestFallback::Wait,
-            };
-            let block_future = marshal.subscribe_by_digest(digest, fallback);
-            // Biased race, preferring the resolved block over the timeout
-            // (the `block_future` borrows `marshal`, so it is not `'static`).
-            let mut block_future = std::pin::pin!(block_future);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                result = &mut block_future => result.ok(),
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn is_ready(&self) -> bool {
-        self.readiness.is_ready()
-    }
-}
-
 fn unix_now_millis() -> eyre::Result<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -268,7 +162,7 @@ use crate::{
     block::ConsensusBlock,
     committee_provider::CommitteeProvider,
     digest::Digest,
-    dkg_manager::{AncestryReader, BlockLookupFuture, BoundaryRequirement},
+    dkg_manager::{AncestryReader, BoundaryRequirement},
     executor,
     finalization::{
         actor::BlockCacheHandle,
@@ -1240,7 +1134,7 @@ impl ApplicationShared {
             .dkg_manager
             .pending_boundary_artifact(round.epoch())
             .await;
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
@@ -1619,7 +1513,7 @@ impl ApplicationShared {
             return Ok(());
         }
 
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
