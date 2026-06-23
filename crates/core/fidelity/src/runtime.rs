@@ -5,13 +5,11 @@ use crate::schema::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-/// Number of league tiers the `[0, synthetic_max]` RCFI range is split into.
-pub(crate) const LEAGUE_COUNT: u16 = 4096;
 /// Lowest league id (1-based). Assigned to the bottom slot and to accounts with
 /// no retention / before any account has qualified.
 pub(crate) const MIN_LEAGUE: u16 = 1;
 /// Highest league id, assigned to the top slot. `4096` leagues span `1..=4096`.
-pub(crate) const MAX_LEAGUE: u16 = MIN_LEAGUE + LEAGUE_COUNT - 1;
+pub(crate) const MAX_LEAGUE: u16 = 4096;
 
 impl FidelityContract<'_> {
     /// ACQUISITION hook ("mine Gratis from nod"): records a new active cohort.
@@ -177,23 +175,18 @@ impl FidelityContract<'_> {
     }
 
     /// League for `account` at `timestamp`: the `[0, max_rcfi_at(timestamp)]`
-    /// range split into [`LEAGUE_COUNT`] equal slots, returning the 1-based slot
-    /// (`[MIN_LEAGUE, MAX_LEAGUE]`) the account's RCFI lands in. The account's
-    /// RCFI never exceeds the synthetic max, so the top slot is reached only by
-    /// the global-oldest 100%-holder; the clamp guards equality/skew. Returns
-    /// [`MIN_LEAGUE`] when no account has qualified yet (max is zero).
+    /// range split into equal slots, returning the 1-based slot the account's RCFI lands in.
+    /// The account's RCFI never exceeds the synthetic max, so the top slot is reached only by
+    /// the global-oldest 100%-holder.
+    /// Returns [`MIN_LEAGUE`] when no account has qualified yet (max is zero).
     pub fn league_at(&self, account: Address, timestamp: u64) -> Result<u16> {
         let max = self.max_rcfi_at(timestamp)?;
         if max.is_zero() {
             return Ok(MIN_LEAGUE);
         }
         let rcfi = self.compute_fidelity_index(account, timestamp)?;
-        // slot = floor(rcfi / (max / LEAGUE_COUNT)) = floor(rcfi · LEAGUE_COUNT / max).
-        // The 10^18 scale cancels, so this is an exact floor. `rcfi ≤ max` keeps
-        // the result in 0..=LEAGUE_COUNT; clamp the rcfi == max boundary to the
-        // last slot (LEAGUE_COUNT - 1).
-        let slot = rcfi * U256::from(LEAGUE_COUNT) / max;
-        let slot = slot.min(U256::from(LEAGUE_COUNT - 1)).to::<u16>();
+        let slot = rcfi * U256::from(MAX_LEAGUE) / max;
+        let slot = slot.min(U256::from(MAX_LEAGUE - 1)).to::<u16>();
         Ok(MIN_LEAGUE + slot)
     }
 
