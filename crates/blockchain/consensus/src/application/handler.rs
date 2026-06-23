@@ -153,7 +153,7 @@ use crate::{
     dkg_manager::{AncestryReader, BoundaryRequirement},
     executor,
     finalization::{
-        actor::BlockCacheHandle,
+        block_cache::BlockCache,
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
@@ -370,7 +370,7 @@ pub(crate) struct ApplicationShared {
 
     /// Shared block cache: proposer inserts on local build, the
     /// FinalizationActor evicts entries below the new finalized height.
-    block_cache: BlockCacheHandle,
+    block_cache: BlockCache,
 
     /// Proposer-side exact-parent certificate selector.
     ///
@@ -418,7 +418,7 @@ pub struct ApplicationDeps {
     pub epoch_fence: ApplicationEpochFence,
     pub ancestry_readiness: AncestryReadiness,
     pub finalization_view: FinalizationViewHandle,
-    pub block_cache: BlockCacheHandle,
+    pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
     pub payload_resolve_time: std::time::Duration,
     pub payload_return_time: std::time::Duration,
@@ -766,11 +766,7 @@ impl ApplicationShared {
             } else if parent_digest.0 == self.genesis_hash {
                 (Height::zero(), None, None)
             } else {
-                let cached_parent = self
-                    .block_cache
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&parent_digest);
+                let cached_parent = self.block_cache.get_and_remove(&parent_digest);
                 let parent_block = if let Some(block) = cached_parent {
                     block
                 } else {
@@ -1347,17 +1343,8 @@ impl ApplicationShared {
 
         crate::metrics::record_block_proposed(block_number);
 
-        {
-            let mut guard = self
-                .block_cache
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            crate::finalization::actor::insert_block_cache_bounded(
-                &mut guard,
-                digest,
-                consensus_block.clone(),
-            );
-        }
+        self.block_cache
+            .insert_bounded(digest, consensus_block.clone());
 
         Ok(BuildBlockOutcome::Built(digest, consensus_block))
     }

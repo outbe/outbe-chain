@@ -455,8 +455,7 @@ fn finalizer_test_shared(
     let payload_builder: super::PayloadBuilder = super::PayloadBuilder::noop();
     let (executor_tx, _executor_rx) = futures::channel::mpsc::unbounded();
     let finalization_view = crate::finalization::state::new_finalization_view(B256::ZERO, 0, None);
-    let finalization_block_cache: crate::finalization::actor::BlockCacheHandle =
-        Arc::new(StdMutex::new(Default::default()));
+    let finalization_block_cache = crate::finalization::block_cache::BlockCache::new();
 
     let elector_config_provider = HybridElectorConfigProvider::new();
     let committee_provider = CommitteeProvider::new();

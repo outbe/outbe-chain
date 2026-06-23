@@ -15,7 +15,7 @@ use tracing::debug;
 use crate::block::ConsensusBlock;
 use crate::config::VERIFY_RESOLUTION_TIMEOUT;
 use crate::digest::Digest;
-use crate::finalization::actor::BlockCacheHandle;
+use crate::finalization::block_cache::BlockCache;
 use crate::marshal_types::MarshalMailbox;
 
 #[derive(Debug, Clone, Copy)]
@@ -42,7 +42,7 @@ impl VerifyResolveTarget {
 /// Resolve a block needed during verify: local cache first, then marshal by
 /// digest (fallback fetch-by-round) under [`VERIFY_RESOLUTION_TIMEOUT`].
 pub(crate) async fn resolve_for_verify(
-    block_cache: &BlockCacheHandle,
+    block_cache: &BlockCache,
     marshal_mailbox: &MarshalMailbox,
     clock: &impl commonware_runtime::Clock,
     round: Round,
@@ -56,11 +56,7 @@ pub(crate) async fn resolve_for_verify(
         target = target.as_str(),
         "verify resolve started"
     );
-    let cached = block_cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&digest)
-        .cloned();
+    let cached = block_cache.get(&digest);
     if let Some(block) = cached {
         debug!(
             %round,

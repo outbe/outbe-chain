@@ -17,12 +17,11 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use commonware_consensus::types::{Height, Round};
-use tracing::warn;
 
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::digest::Digest;
 use crate::dkg_manager::{AncestryReader, BlockLookupFuture};
-use crate::finalization::actor::BlockCacheHandle;
+use crate::finalization::block_cache::BlockCache;
 use crate::marshal_types::MarshalMailbox;
 
 /// Production [`AncestryReader`]: block cache first, marshal on miss, bounded by
@@ -37,7 +36,7 @@ use crate::marshal_types::MarshalMailbox;
 /// resolves deterministically to `None` (unresolvable), never blocking.
 struct MarshalAncestryReader<C: commonware_runtime::Clock> {
     marshal: Option<MarshalMailbox>,
-    block_cache: BlockCacheHandle,
+    block_cache: BlockCache,
     readiness: AncestryReadiness,
     round: Option<Round>,
     timeout: Duration,
@@ -49,16 +48,7 @@ struct MarshalAncestryReader<C: commonware_runtime::Clock> {
 
 impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
     fn get_block_by_height(&self, height: u64) -> BlockLookupFuture<'_> {
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache
-                .values()
-                .find(|block| block.number() == height)
-                .cloned(),
-            Err(error) => {
-                warn!(%error, height, "block cache unavailable while resolving ancestry by height");
-                None
-            }
-        };
+        let cached = self.block_cache.get_by_number(height);
         if cached.is_some() {
             return Box::pin(async move { cached });
         }
@@ -87,13 +77,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
 
     fn get_block_by_hash(&self, hash: B256) -> BlockLookupFuture<'_> {
         let digest = Digest(hash);
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache.get(&digest).cloned(),
-            Err(error) => {
-                warn!(%error, %hash, "block cache unavailable while resolving ancestry by hash");
-                None
-            }
-        };
+        let cached = self.block_cache.get(&digest);
         if cached.is_some() {
             return Box::pin(async move { cached });
         }
@@ -136,7 +120,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
 /// `resolve_boundary`) learn one function instead of a six-field constructor.
 pub(crate) fn marshal_ancestry_reader<C: commonware_runtime::Clock>(
     marshal: MarshalMailbox,
-    block_cache: BlockCacheHandle,
+    block_cache: BlockCache,
     readiness: AncestryReadiness,
     round: Option<Round>,
     timeout: Duration,
@@ -157,14 +141,12 @@ mod tests {
     use super::*;
     use crate::block::ConsensusBlock;
     use commonware_runtime::Runner as _;
-    use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
 
     /// Build a `marshal: None` adapter over a preloaded cache + readiness gate.
     /// Exercises the fast paths (cache hit / degraded miss / `is_ready`) without
     /// standing up a marshal actor. `clock` is unused on these paths.
     fn reader_without_marshal<C: commonware_runtime::Clock>(
-        cache: BlockCacheHandle,
+        cache: BlockCache,
         readiness: AncestryReadiness,
         clock: C,
     ) -> MarshalAncestryReader<C> {
@@ -178,12 +160,12 @@ mod tests {
         }
     }
 
-    fn cache_with(blocks: &[ConsensusBlock]) -> BlockCacheHandle {
-        let mut map = BTreeMap::new();
+    fn cache_with(blocks: &[ConsensusBlock]) -> BlockCache {
+        let cache = BlockCache::new();
         for block in blocks {
-            map.insert(Digest(block.block_hash()), block.clone());
+            cache.insert_bounded(Digest(block.block_hash()), block.clone());
         }
-        Arc::new(Mutex::new(map))
+        cache
     }
 
     #[test]

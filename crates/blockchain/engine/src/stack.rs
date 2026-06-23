@@ -82,7 +82,8 @@ use outbe_consensus::{
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
     executor::actor::ExecutorActor,
     finalization::{
-        actor::{BlockCacheHandle, FinalizationActor, FinalizationActorDeps},
+        actor::{FinalizationActor, FinalizationActorDeps},
+        block_cache::BlockCache,
         state::new_finalization_view,
     },
     hybrid::{
@@ -2834,8 +2835,7 @@ where
         last_execution_height,
         recovered_finalized_round,
     );
-    let finalization_block_cache: BlockCacheHandle =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let finalization_block_cache = BlockCache::new();
 
     // Construct the consensus-owned exact-parent certificate handoff store
     // before either the application handler (consumer-side waiter) or the

@@ -16,11 +16,6 @@
 //! the exact-parent certificate needed for the successor block's Phase 1 system
 //! transaction.
 
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex as StdMutex},
-};
-
 use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
 use alloy_primitives::keccak256;
 use commonware_codec::Encode;
@@ -58,68 +53,13 @@ pub const PARENT_CERT_KEEP_DEPTH: u64 = 256;
 use crate::marshal_types::MarshalMailbox;
 use crate::vrf_safety::VrfSafetyGate;
 
-/// Shared block cache between the proposer (writer) and the
-/// finalization actor (evicts on finalize). Wrapped in
-/// `Arc<StdMutex<...>>` so both producers and the
-/// actor can use it without async-mutex contention.
-pub type BlockCacheHandle = Arc<StdMutex<BTreeMap<Digest, ConsensusBlock>>>;
-
-/// Sliding-window depth for `block_cache`.
-///
-/// This process-local availability/performance cache is intentionally
-/// independent from exact-parent certificate handoff retention so changes to
-/// `PARENT_CERT_KEEP_DEPTH` do not make block-cache retention unbounded or
-/// semantically tied to settlement transport.
-pub const BLOCK_CACHE_KEEP_DEPTH: u64 = 256;
-
-/// Hard cap on `block_cache` entries. The cache is keyed by [`Digest`],
-/// not height, so a height-only window does not bound count under fork
-/// spam at the same height. This cap is the safety floor.
-pub const BLOCK_CACHE_MAX_ENTRIES: usize = 1024;
-
-/// Insert `block` keyed by `digest` and prune the cache to enforce
-/// height-window and hard-entry-cap invariants.
-///
-/// Bounded by height window so the cache cannot grow during a chain
-/// stall, and by hard entry cap so fork spam at a single height
-/// (which is keyed by digest, not height) cannot grow the cache.
-pub(crate) fn insert_block_cache_bounded(
-    cache: &mut BTreeMap<Digest, ConsensusBlock>,
-    digest: Digest,
-    block: ConsensusBlock,
-) {
-    let inserted_number = block.number();
-    cache.insert(digest, block);
-
-    // Step 1: height window — drop entries below the keep-depth floor.
-    if let Some(floor) = inserted_number.checked_sub(BLOCK_CACHE_KEEP_DEPTH) {
-        cache.retain(|_, b| b.number() > floor);
-    }
-
-    // Step 2: hard entry cap — under fork spam at the same height, the
-    // height window cannot bound `len()`. Drop the entry with the
-    // lowest `(number, digest)` until `len() <= MAX_ENTRIES`.
-    while cache.len() > BLOCK_CACHE_MAX_ENTRIES {
-        let victim = cache
-            .iter()
-            .min_by(|(d1, b1), (d2, b2)| b1.number().cmp(&b2.number()).then(d1.cmp(d2)))
-            .map(|(d, _)| *d);
-        match victim {
-            Some(d) => {
-                cache.remove(&d);
-            }
-            None => break,
-        }
-    }
-
-    crate::metrics::record_block_cache_size(cache.len());
-}
+use crate::finalization::block_cache::BlockCache;
 
 /// Constructor inputs for the finalization actor. Bundled into a
 /// single struct so the spawn site in `stack.rs` can be ergonomic.
 pub struct FinalizationActorDeps {
     pub view: FinalizationViewHandle,
-    pub block_cache: BlockCacheHandle,
+    pub block_cache: BlockCache,
     /// Marshal mailbox for resolving a finalized block not in the local cache.
     /// `Some` in production; only the rekey unit test (which calls
     /// `process_finalization` directly with an already-resolved block, never
@@ -303,14 +243,7 @@ impl FinalizationActor {
         }
 
         // Fast path: proposer's own block in the shared cache.
-        if let Some(block) = {
-            let mut cache = self
-                .deps
-                .block_cache
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            cache.remove(&digest)
-        } {
+        if let Some(block) = self.deps.block_cache.get_and_remove(&digest) {
             return self.process_finalization(finalized, block).await;
         }
 
@@ -755,25 +688,17 @@ impl FinalizationActor {
     /// short read lock (the write lock was already released).
     fn evict_finalized_block_cache(&self) {
         let finalized_num = self.deps.view.read().last_finalized_number;
-        let mut cache = self
-            .deps
-            .block_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cache.retain(|_, cached_block| cached_block.number() > finalized_num);
-        crate::metrics::record_block_cache_size(cache.len());
+        self.deps.block_cache.evict_at_or_below(finalized_num);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{insert_block_cache_bounded, BLOCK_CACHE_KEEP_DEPTH, BLOCK_CACHE_MAX_ENTRIES};
     use crate::block::ConsensusBlock;
     use crate::digest::Digest;
     use alloy_primitives::B256;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::{primitives::SealedBlock, Block};
-    use std::collections::BTreeMap;
 
     /// Build a minimal `ConsensusBlock` with the given height and a salt
     /// stored in `extra_data` so distinct salts produce distinct sealed
@@ -788,122 +713,6 @@ mod tests {
 
     fn digest_of(block: &ConsensusBlock) -> Digest {
         block.digest()
-    }
-
-    #[test]
-    fn insert_block_cache_bounded_height_progression() {
-        // Drive 10_000 inserts with monotonically increasing block
-        // numbers and distinct digests; the height window must keep
-        // `cache.len()` bounded by `BLOCK_CACHE_KEEP_DEPTH`.
-        let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
-        for n in 0..10_000_u64 {
-            let block = make_block(n, n);
-            let digest = digest_of(&block);
-            insert_block_cache_bounded(&mut cache, digest, block);
-        }
-        assert!(
-            cache.len() <= BLOCK_CACHE_KEEP_DEPTH as usize,
-            "height window failed to bound cache: len={}, keep_depth={}",
-            cache.len(),
-            BLOCK_CACHE_KEEP_DEPTH
-        );
-        // All survivors must lie in the keep-depth window above the
-        // final inserted number (9999).
-        let floor = 9_999 - BLOCK_CACHE_KEEP_DEPTH;
-        assert!(
-            cache.values().all(|b| b.number() > floor),
-            "survivor outside keep-depth window: floor={floor}"
-        );
-    }
-
-    #[test]
-    fn insert_block_cache_bounded_fork_spam() {
-        // Drive 10_000 inserts all at the SAME height with distinct
-        // digests (fork spam). Height window cannot bound this — the
-        // hard entry cap must kick in.
-        const SAME_HEIGHT: u64 = BLOCK_CACHE_KEEP_DEPTH + 100;
-        let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
-        for salt in 0..10_000_u64 {
-            let block = make_block(SAME_HEIGHT, salt);
-            let digest = digest_of(&block);
-            insert_block_cache_bounded(&mut cache, digest, block);
-        }
-        assert!(
-            cache.len() <= BLOCK_CACHE_MAX_ENTRIES,
-            "hard cap failed under fork spam: len={}, max_entries={}",
-            cache.len(),
-            BLOCK_CACHE_MAX_ENTRIES
-        );
-    }
-
-    #[test]
-    fn insert_block_cache_bounded_below_keep_depth_does_not_drop() {
-        // When inserted_number < KEEP_DEPTH the height window is a
-        // no-op; verify that small chains under MAX_ENTRIES retain
-        // every entry.
-        let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
-        for n in 0..16_u64 {
-            let block = make_block(n, 0);
-            let digest = digest_of(&block);
-            insert_block_cache_bounded(&mut cache, digest, block);
-        }
-        assert_eq!(cache.len(), 16);
-    }
-
-    #[test]
-    fn insert_block_cache_bounded_emits_size_metric() {
-        // Verifies the helper emits `outbe_block_cache_size` on every
-        // insert. Uses a thread-local recorder so the assertion is
-        // independent of the global recorder used in production.
-        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-        let recorder = DebuggingRecorder::new();
-        let snapshotter = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
-            for n in 0..3_u64 {
-                let block = make_block(n, 0);
-                let digest = digest_of(&block);
-                insert_block_cache_bounded(&mut cache, digest, block);
-            }
-        });
-
-        let snapshot = snapshotter.snapshot().into_vec();
-        let entry = snapshot
-            .iter()
-            .find(|(key, _, _, _)| key.key().name() == "outbe_block_cache_size")
-            .expect("outbe_block_cache_size gauge should be emitted");
-        // Final gauge value reflects post-3rd-insert size = 3.
-        match &entry.3 {
-            DebugValue::Gauge(v) => {
-                assert!(
-                    (v.into_inner() - 3.0).abs() < f64::EPSILON,
-                    "expected gauge=3.0 after 3 inserts, got {v:?}"
-                );
-            }
-            other => panic!("expected gauge value, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn insert_block_cache_bounded_overlapping_height_and_fork() {
-        // Mixed scenario: a moving height plus same-height forks at
-        // each step. Must stay within MAX_ENTRIES regardless.
-        let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
-        for n in 0..2_000_u64 {
-            for fork_salt in 0..3_u64 {
-                let block = make_block(n, fork_salt + 1);
-                let digest = digest_of(&block);
-                insert_block_cache_bounded(&mut cache, digest, block);
-            }
-        }
-        assert!(
-            cache.len() <= BLOCK_CACHE_MAX_ENTRIES,
-            "mixed height+fork exceeded max: len={}",
-            cache.len()
-        );
-        // Sanity: distinct B256 hashes confirm forks really diverged.
-        let unique_hashes: std::collections::HashSet<B256> = cache.keys().map(|d| d.0).collect();
-        assert_eq!(unique_hashes.len(), cache.len());
     }
 
     /// `FinalizationActor::process_finalization` rekeys the
@@ -972,7 +781,7 @@ mod tests {
 
         let deps = FinalizationActorDeps {
             view: new_finalization_view(B256::ZERO, 0, None),
-            block_cache: std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            block_cache: crate::finalization::block_cache::BlockCache::new(),
             marshal_mailbox: None,
             bridge: None,
             dkg_manager: crate::dkg_manager::Mailbox::new(),
