@@ -368,7 +368,9 @@ pub fn mine_promis(
         .into(),
     )?;
 
-    outbe_promis::Promis::new(storage.clone()).mine(holder, promis_amount)?;
+    // Delegate the promis mint to promisfactory (records the Fidelity
+    // acquisition cohort and emits PromisMined alongside the mint).
+    outbe_promisfactory::api::mine(storage.clone(), holder, promis_amount)?;
 
     emit_event(
         storage,

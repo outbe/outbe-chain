@@ -1,23 +1,16 @@
 [package]
-name = "outbe-intexfactory"
+name = "outbe-promisfactory"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-intex.workspace = true
 outbe-promis.workspace = true
-outbe-promisfactory.workspace = true
-outbe-oracle.workspace = true
-outbe-common.workspace = true
+outbe-fidelity.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-ring.workspace = true
-hex.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true

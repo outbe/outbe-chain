@@ -64,13 +64,18 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 33] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
+        // PromisFactory is a live stateful precompile (in
+        // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
+        // per-block runtime marker is its only EIP-161 preservation path —
+        // mirroring GRATIS_FACTORY / GEM_FACTORY above.
+        PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,

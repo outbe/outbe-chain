@@ -7298,6 +7298,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-promisfactory",
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -7384,6 +7385,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-promisfactory",
  "thiserror 2.0.18",
 ]
 
@@ -7450,6 +7452,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-promisfactory",
  "ring",
  "thiserror 2.0.18",
 ]
@@ -7660,6 +7663,17 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+]
+
+[[package]]
+name = "outbe-promisfactory"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-fidelity",
+ "outbe-primitives",
+ "outbe-promis",
 ]
 
 [[package]]
