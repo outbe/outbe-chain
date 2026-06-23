@@ -36,7 +36,7 @@ use commonware_cryptography::{
         self,
         primitives::{
             group::Share,
-            ops::{aggregate, batch, threshold},
+            ops::aggregate,
             sharing::Sharing,
             variant::{MinPk, PartialSignature, Variant},
         },
@@ -50,15 +50,16 @@ use commonware_utils::{
     Faults, Participant,
 };
 use rand_core::{CryptoRngCore, OsRng};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 /// VRF-based leader election for the hybrid scheme (lifted out of this file).
 pub mod election;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod vrf_material;
+
+pub use vrf_material::VrfMaterialProvider;
+use vrf_material::VrfPartialVerification;
 
 /// CSPRNG allowed only for Commonware BLS batch-verification weights.
 ///
@@ -139,14 +140,6 @@ impl<V: Variant> FixedSize for HybridSignature<V> {
 // (enforced by `audit_targets` / `codec_reuse` tests).
 pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
 
-struct VrfPartialVerification<'a, V: Variant> {
-    version: u64,
-    signer: Participant,
-    namespace: &'a [u8],
-    seed_message: &'a [u8],
-    signature: V::Signature,
-}
-
 /// Sentinel VRF material version used to neutralize a byzantine seed partial.
 ///
 /// When attestation verification finds a `bls_seed_partial` that claims the
@@ -158,163 +151,6 @@ struct VrfPartialVerification<'a, V: Variant> {
 /// material versions are small monotonic `dkg_cycle` counters, so this maximum
 /// value is never a live version and the exclusion is unambiguous.
 const VRF_PARTIAL_REJECTED_VERSION: u64 = u64::MAX;
-
-#[derive(Clone, Debug)]
-struct VrfMaterial<V: Variant> {
-    polynomial: Sharing<V>,
-    share: Option<Share>,
-}
-
-/// Shared, versioned threshold material used by the VRF sidecar path.
-#[derive(Clone, Debug)]
-pub struct VrfMaterialProvider<V: Variant> {
-    inner: Arc<Mutex<VrfMaterialState<V>>>,
-}
-
-#[derive(Clone, Debug)]
-struct VrfMaterialState<V: Variant> {
-    active_version: u64,
-    materials: HashMap<u64, VrfMaterial<V>>,
-}
-
-impl<V: Variant> VrfMaterialProvider<V> {
-    pub fn new(active_version: u64, polynomial: Sharing<V>, share: Option<Share>) -> Self {
-        polynomial.precompute_partial_publics();
-        let mut materials = HashMap::new();
-        materials.insert(active_version, VrfMaterial { polynomial, share });
-        Self {
-            inner: Arc::new(Mutex::new(VrfMaterialState {
-                active_version,
-                materials,
-            })),
-        }
-    }
-
-    pub fn active_version(&self) -> u64 {
-        self.with_state(|state| state.active_version)
-    }
-
-    pub fn active_polynomial_total(&self) -> Option<u32> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .map(|material| material.polynomial.total().get())
-        })
-    }
-
-    pub fn active_share(&self) -> Option<Share> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .and_then(|material| material.share.clone())
-        })
-    }
-
-    pub fn active_public(&self) -> Option<V::Public> {
-        self.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .map(|material| *material.polynomial.public())
-        })
-    }
-
-    pub fn activate(&self, version: u64, polynomial: Sharing<V>, share: Option<Share>) {
-        polynomial.precompute_partial_publics();
-        self.with_state(|state| {
-            state
-                .materials
-                .insert(version, VrfMaterial { polynomial, share });
-            state.active_version = version;
-        });
-    }
-
-    fn sign_seed(&self, namespace: &[u8], seed_message: &[u8]) -> Option<(u64, V::Signature)> {
-        self.with_state(|state| {
-            let material = state.materials.get(&state.active_version)?;
-            let share = material.share.as_ref()?;
-            let partial = threshold::sign_message::<V>(share, namespace, seed_message).value;
-            Some((state.active_version, partial))
-        })
-    }
-
-    fn recover_proof<M: Faults>(
-        &self,
-        version: u64,
-        seed_partials: &[PartialSignature<V>],
-        strategy: &impl Strategy,
-    ) -> Option<VrfProof<V>> {
-        self.with_state(|state| {
-            let material = state.materials.get(&version)?;
-            let signature =
-                threshold::recover::<V, _, M>(&material.polynomial, seed_partials.iter(), strategy)
-                    .ok()?;
-            Some(VrfProof {
-                material_version: version,
-                threshold_signature: signature,
-            })
-        })
-    }
-
-    fn verify_partial<R: CryptoRngCore>(
-        &self,
-        rng: &mut R,
-        input: VrfPartialVerification<'_, V>,
-        strategy: &impl Strategy,
-    ) -> bool {
-        let VrfPartialVerification {
-            version,
-            signer,
-            namespace,
-            seed_message,
-            signature,
-        } = input;
-
-        self.with_state(|state| {
-            let Some(material) = state.materials.get(&version) else {
-                return false;
-            };
-            let Ok(evaluated) = material.polynomial.partial_public(signer) else {
-                return false;
-            };
-            let entries = &[(namespace, seed_message, signature)];
-            batch::verify_same_signer::<_, V, _>(rng, &evaluated, entries, strategy).is_ok()
-        })
-    }
-
-    fn verify_proof<R: CryptoRngCore>(
-        &self,
-        rng: &mut R,
-        proof: &VrfProof<V>,
-        namespace: &[u8],
-        seed_message: &[u8],
-        strategy: &impl Strategy,
-    ) -> bool {
-        self.with_state(|state| {
-            let Some(material) = state.materials.get(&proof.material_version) else {
-                return false;
-            };
-            let entries = &[(namespace, seed_message, proof.threshold_signature)];
-            batch::verify_same_signer::<_, V, _>(
-                rng,
-                material.polynomial.public(),
-                entries,
-                strategy,
-            )
-            .is_ok()
-        })
-    }
-
-    fn with_state<T>(&self, f: impl FnOnce(&mut VrfMaterialState<V>) -> T) -> T {
-        let mut state = self.inner.lock().unwrap_or_else(|poisoned| {
-            tracing::error!("VrfMaterialProvider mutex poisoned, recovering");
-            poisoned.into_inner()
-        });
-        f(&mut state)
-    }
-}
 
 /// The role-specific data for a hybrid scheme participant.
 #[derive(Clone, Debug)]
@@ -426,12 +262,7 @@ impl<V: Variant> HybridScheme<V> {
         }
 
         // Verify BLS threshold share matches polynomial
-        let expected_public = vrf_materials.with_state(|state| {
-            state
-                .materials
-                .get(&state.active_version)
-                .and_then(|material| material.polynomial.partial_public(share.index).ok())
-        })?;
+        let expected_public = vrf_materials.active_partial_public(share.index)?;
         if expected_public != share.public::<V>() {
             return None;
         }
