@@ -214,4 +214,6 @@ Full nodes sync and serve RPC without consensus key material; validators additio
 ## Documentation
 
 - `docs/becoming-a-validator.md` — validator lifecycle and operator flow.
+- `docs/launching-with-sgx.md` — running the TEE localnet under real gramine-sgx
+  (self-generated enclave keys, sealing, offer-key verification).
 - `docker-compose.yml`, `deploy/` — local testnet and deployment
