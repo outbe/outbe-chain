@@ -328,7 +328,7 @@ pub async fn run_tee_dkg_at_startup<S, R>(
     connect_policy: &QuotePolicy,
     sender: S,
     receiver: R,
-) -> eyre::Result<[u8; 32]>
+) -> eyre::Result<([u8; 32], Vec<u8>)>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
@@ -370,7 +370,10 @@ where
     .await
     .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
 
-    Ok(outcome.tribute_offer_public)
+    Ok((
+        outcome.tribute_offer_public,
+        outcome.tribute_offer_group_public_key,
+    ))
 }
 
 /// Run the one-time TEE bootstrap coordination at startup and return the signed
@@ -391,6 +394,7 @@ pub async fn run_tee_bootstrap_at_startup<S, R>(
     my_validator: Address,
     committee: BTreeSet<Address>,
     tribute_offer_public_key: B256,
+    tribute_offer_group_public_key: Vec<u8>,
     policy: outbe_primitives::tee_bootstrap::TeePolicy,
     evm_signer: &OutbeEvmSigner,
     sender: S,
@@ -430,9 +434,11 @@ where
         dkg_transcript_hash: B256::ZERO,
         committee_snapshot_block: TEE_BOOTSTRAP_BLOCK,
         committee_snapshot_hash: B256::ZERO,
-        // Populated with the enclave's DKG group public key + the V2 committee hash
-        // in a follow-up producer slice; empty here keeps the payload byte-stable.
-        tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
+        // The enclave's DKG group public key (constant term), recovered alongside the
+        // offer key — the verification key persisted on-chain for reshare endorsements.
+        tribute_offer_group_public_key: alloy_primitives::Bytes::from(
+            tribute_offer_group_public_key,
+        ),
     };
 
     let mut gossip = CommonwareBootstrapGossip { sender, receiver };

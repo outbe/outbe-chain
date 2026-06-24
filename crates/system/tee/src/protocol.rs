@@ -341,6 +341,11 @@ pub enum EnclaveResponse {
     /// group signature (the secret stays resident in the enclave).
     DkgTributeOfferKey {
         tribute_offer_public: [u8; 32],
+        /// The committee's DKG group public KEY (constant term) — the public
+        /// verification key for this committee's threshold group signatures.
+        /// Carried into the bootstrap payload so a later reshare endorsement can be
+        /// verified on-chain against this committee's key.
+        group_public_key: Vec<u8>,
     },
     /// Key-handoff SERVER result: the resident group signature sealed to the
     /// newcomer's X25519 key (an opaque `EncryptedShare` blob the host relays).

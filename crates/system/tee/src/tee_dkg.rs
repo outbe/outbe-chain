@@ -350,8 +350,10 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     }
 
     let partials: Vec<Vec<u8>> = sealed_for_me.into_values().collect();
-    outcome.tribute_offer_public =
+    let (tribute_offer_public, tribute_offer_group_public_key) =
         coord.recover_tribute_offer(enclave, &partials, chain_id, tribute_offer_epoch)?;
+    outcome.tribute_offer_public = tribute_offer_public;
+    outcome.tribute_offer_group_public_key = tribute_offer_group_public_key;
     Ok(outcome)
 }
 
@@ -374,6 +376,11 @@ pub struct CeremonyOutcome {
     /// for all honest parties; clients encrypt offers to it. Set by
     /// [`run_tee_dkg_ceremony`]; `[0u8; 32]` until Seam F completes.
     pub tribute_offer_public: [u8; 32],
+    /// The committee's DKG group public KEY (constant term, encoded) — the public
+    /// verification key for its threshold group signatures. Set alongside
+    /// `tribute_offer_public` at Seam F; carried into the bootstrap payload so a
+    /// later reshare endorsement verifies against this committee's key.
+    pub tribute_offer_group_public_key: Vec<u8>,
 }
 
 /// Coordinator errors: a transport failure, or an unexpected enclave response.
@@ -527,6 +534,7 @@ impl CeremonyCoordinator {
                 share_commitment,
                 // Filled by `run_tee_dkg_ceremony` after Seam F.
                 tribute_offer_public: [0u8; 32],
+                tribute_offer_group_public_key: Vec::new(),
             }),
             _ => Err(CeremonyError::UnexpectedResponse("DkgPlayerFinalize")),
         }
@@ -558,7 +566,7 @@ impl CeremonyCoordinator {
         sealed_partials: &[Vec<u8>],
         chain_id: B256,
         tribute_offer_epoch: u64,
-    ) -> Result<[u8; 32]> {
+    ) -> Result<([u8; 32], Vec<u8>)> {
         match ch.request(&EnclaveRequest::DkgRecoverTributeOffer {
             ceremony_id: self.ceremony_id,
             sealed_partials: sealed_partials.to_vec(),
@@ -567,7 +575,8 @@ impl CeremonyCoordinator {
         })? {
             EnclaveResponse::DkgTributeOfferKey {
                 tribute_offer_public,
-            } => Ok(tribute_offer_public),
+                group_public_key,
+            } => Ok((tribute_offer_public, group_public_key)),
             EnclaveResponse::Error { message } => Err(CeremonyError::EnclaveError(message)),
             _ => Err(CeremonyError::UnexpectedResponse("DkgRecoverTributeOffer")),
         }

@@ -538,10 +538,19 @@ pub fn dispatch(
             // (`group_sig`, Seam F): it seals for restart and is the key-handoff
             // payload that onboards a new committee member.
             let result = dkg.get_mut(&ceremony_id.0).and_then(|s| {
-                s.recover_tribute_offer_secret(&sealed_partials, chain_id, tribute_offer_epoch)
+                // The group public KEY (constant term) is the public verification key
+                // carried into the bootstrap payload for later reshare-endorsement
+                // checks; capture it while the session is still resident.
+                let group_public_key = s.group_public_key_bytes()?;
+                let (secret, public, group_sig) = s.recover_tribute_offer_secret(
+                    &sealed_partials,
+                    chain_id,
+                    tribute_offer_epoch,
+                )?;
+                Ok((secret, public, group_sig, group_public_key))
             });
             match result {
-                Ok((secret, public, group_sig)) => {
+                Ok((secret, public, group_sig, group_public_key)) => {
                     let derived =
                         DerivedTributeOfferKey::from_parts(secret, public, group_sig.to_vec());
                     // Write-once: the first ceremony's key is canonical. A re-run
@@ -560,6 +569,7 @@ pub fn dispatch(
                     dkg.remove(&ceremony_id.0);
                     EnclaveResponse::DkgTributeOfferKey {
                         tribute_offer_public: public,
+                        group_public_key,
                     }
                 }
                 Err(e) => EnclaveResponse::Error {
@@ -984,7 +994,14 @@ mod tests {
             }) {
                 EnclaveResponse::DkgTributeOfferKey {
                     tribute_offer_public,
-                } => tribute_offer_keys.push(tribute_offer_public),
+                    group_public_key,
+                } => {
+                    assert!(
+                        !group_public_key.is_empty(),
+                        "group public key must be emitted at offer recovery"
+                    );
+                    tribute_offer_keys.push(tribute_offer_public);
+                }
                 other => panic!("DkgRecoverTributeOffer: {other:?}"),
             }
         }
