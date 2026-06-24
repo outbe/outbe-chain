@@ -14,7 +14,8 @@ pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
 
-pub use api::issue;
+pub use api::{issue, read_params};
+pub use config::IntexParams;
 pub use errors::IntexFactoryError;
 pub use qualified::IntexLifecycle;
 pub use schema::{IntexFactoryContract, IssuanceParams};

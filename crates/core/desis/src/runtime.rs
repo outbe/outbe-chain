@@ -8,6 +8,8 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_promislimit::PromisLimitContract;
 
+use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
+
 use crate::constants::{
     BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
     QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, REVEAL_WINDOW_SECONDS,
@@ -73,13 +75,25 @@ pub fn start_auction(
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
-    let entry_floor = config
+    // Source floor%/call%/call-trigger from the IntexFactory protocol profile
+    // (single source of truth) instead of hardcoding; floor/call derive from entry.
+    let iparams = outbe_intexfactory::read_params(&storage)?;
+    let floor_price = config
         .entry_price
-        .checked_mul(U256::from(108u64))
-        .map(|v| v / U256::from(100u64))
-        .ok_or_else(|| PrecompileError::Revert("entry price floor overflow".into()))?;
-    let entry_floor_u64 = u64::try_from(entry_floor)
-        .map_err(|_| PrecompileError::Revert("entry price floor exceeds u64".into()))?;
+        .checked_mul(U256::from(iparams.floor_price_num))
+        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
+    let call_price = config
+        .entry_price
+        .checked_mul(U256::from(iparams.call_price_num))
+        .map(|v| v / U256::from(CALL_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
+    let entry_price_u64 = u64::try_from(config.entry_price)
+        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
+    let floor_price_u64 = u64::try_from(floor_price)
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
+    let call_price_u64 = u64::try_from(call_price)
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let stage_params = IOriginMessenger::AuctionStageStartParams {
         seriesId: series_id,
         commitEnd: commit_end,
@@ -87,8 +101,12 @@ pub fn start_auction(
         issuanceEnd: issuance_end,
         promisLoadMinor: config.promis_load_minor,
         minIntexBidPrice: config.min_intex_bid_price,
-        costAmountMinor: config.cost_amount_minor,
-        floorPriceMinor: entry_floor_u64,
+        entryPrice: entry_price_u64,
+        floorPriceMinor: floor_price_u64,
+        callPriceMinor: call_price_u64,
+        intexCallPeriod: iparams.intex_call_period_secs,
+        callWindowDays: iparams.call_window_days,
+        callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
     };
     let quote_ret = storage.staticcall(

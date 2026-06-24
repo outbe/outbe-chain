@@ -18,8 +18,12 @@ sol! {
             uint32 issuanceEnd;
             uint128 promisLoadMinor;
             uint64 minIntexBidPrice;
-            uint64 costAmountMinor;
+            uint64 entryPrice;
             uint64 floorPriceMinor;
+            uint64 callPriceMinor;
+            uint32 intexCallPeriod;
+            uint16 callWindowDays;
+            uint16 callThresholdDays;
             uint16 minIntexBidQuantity;
         }
 
