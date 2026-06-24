@@ -125,31 +125,10 @@ pub const TEE_DKG_NAMESPACE: &[u8] = b"outbe-tee-dkg";
 pub const TEE_OFFER_NAMESPACE: &[u8] = b"outbe-tee-offer";
 pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
 
-/// Namespace for the reshare AUTHORITY endorsement: the prior (outgoing) committee
-/// threshold-signs a commitment to the incoming committee's roster so a new
-/// committee cannot self-authorize its own TEE re-registrations. Distinct from
-/// [`TEE_OFFER_NAMESPACE`] so an endorsement partial can never be replayed as an
-/// offer-key partial. The recovered GROUP signature is PUBLIC (it becomes the
-/// on-chain authority), unlike the offer-key group signature which stays secret.
-pub const TEE_ENDORSE_NAMESPACE: &[u8] = b"outbe-tee-reshare-endorse";
-
-/// The commitment a prior committee endorses to authorize a reshared committee:
-/// `keccak256("outbe/tee/reshare-endorse/v1" || chain_id || new_committee_set_hash
-/// || tribute_offer_public)`. Binds the chain, the canonical V2 committee identity
-/// of the incoming set, and the preserved offer key, so an endorsement authorizes
-/// exactly one (chain, new committee, offer key) triple.
-pub fn reshare_endorsement_message(
-    chain_id: B256,
-    new_committee_set_hash: B256,
-    tribute_offer_public: [u8; 32],
-) -> B256 {
-    let mut buf = Vec::with_capacity(28 + 32 + 32 + 32);
-    buf.extend_from_slice(b"outbe/tee/reshare-endorse/v1");
-    buf.extend_from_slice(chain_id.as_slice());
-    buf.extend_from_slice(new_committee_set_hash.as_slice());
-    buf.extend_from_slice(&tribute_offer_public);
-    keccak256(&buf)
-}
+// The reshare endorsement namespace + message are a PUBLIC message contract shared
+// with the on-chain verifier, so they live in `outbe_tee` (not the enclave binary)
+// to guarantee signing here and verification in `begin_block_precompile` agree.
+pub use outbe_tee::endorsement::{reshare_endorsement_message, TEE_ENDORSE_NAMESPACE};
 
 fn dkg_err(context: &str, error: impl core::fmt::Debug) -> TeeError {
     TeeError::Dkg(format!("{context}: {error:?}"))
@@ -406,16 +385,19 @@ impl DkgSession {
         Ok(partial.encode().to_vec())
     }
 
-    /// The encoded DKG group public polynomial (`output.public()`). PUBLIC — it is
-    /// the verification key for this committee's threshold group signatures
-    /// (offer-key recovery and reshare endorsements). Carried into the bootstrap
-    /// payload so a later committee's reshare endorsement can be verified on-chain
-    /// against the endorsing committee's group key. Requires `player_finalize`.
+    /// The encoded DKG group public KEY — the constant term of the public
+    /// polynomial (`output.public().public()`), a single fixed-size point. PUBLIC:
+    /// it is the verification key for this committee's threshold group signatures
+    /// (offer-key recovery and reshare endorsements), and matches the byte layout of
+    /// the consensus VRF `vrf_group_public_key_bytes` (constant term, not the whole
+    /// polynomial). Carried into the bootstrap payload so a later committee's reshare
+    /// endorsement can be verified on-chain against the endorsing committee's group
+    /// key via `verify_message::<MinSig>`. Requires `player_finalize`.
     pub fn group_public_key_bytes(&self) -> Result<Vec<u8>> {
         let output = self.group_output.as_ref().ok_or(TeeError::DkgSeamOrder(
             "group_public_key_bytes before player_finalize",
         ))?;
-        Ok(output.public().encode().to_vec())
+        Ok(output.public().public().encode().to_vec())
     }
 }
 

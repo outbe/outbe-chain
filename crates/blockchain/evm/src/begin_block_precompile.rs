@@ -331,6 +331,7 @@ pub(crate) fn run_tee_bootstrap(
         dkg_transcript_hash: payload.dkg_transcript_hash,
         committee_snapshot_block: payload.committee_snapshot_block,
         committee_snapshot_hash: payload.committee_snapshot_hash,
+        tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
         registrations,
     })
 }
@@ -518,6 +519,31 @@ pub(crate) fn run_boundary_outcome(
     // state deterministically. The offer key itself is preserved across the
     // reshare, so it is NOT touched here. Empty for non-reshare boundaries.
     if !artifact.tee_reshare_registrations.is_empty() {
+        // Reshare authority (prior-committee endorsement): the OUTGOING committee must
+        // have threshold-signed this incoming committee + the preserved offer key.
+        // This is the only check a malicious supermajority of the NEW committee cannot
+        // forge (the membership gate below is self-certifying for a >2/3-new attacker).
+        // Verified against the stored prior group public key via deterministic plain
+        // pairing, so every validator reaches the same verdict.
+        let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+        let prior_group_pub = registry.prior_group_public_key()?;
+        let offer_pub = registry.offer_public_key()?;
+        let chain_id = alloy_primitives::B256::left_padding_from(&ctx.block.chain_id.to_be_bytes());
+        let endorsement_msg = outbe_tee::endorsement::reshare_endorsement_message(
+            chain_id,
+            artifact.committee_set_hash,
+            offer_pub.0,
+        );
+        if !outbe_consensus::proof::seed_partial::verify_group_signature(
+            &prior_group_pub,
+            outbe_tee::endorsement::TEE_ENDORSE_NAMESPACE,
+            endorsement_msg.as_slice(),
+            &artifact.endorsement_signature,
+        ) {
+            return Err(PrecompileError::Revert(
+                "reshare TEE registrations lack a valid prior-committee endorsement".to_string(),
+            ));
+        }
         // Reshare authority (membership gate): every re-registered enclave key must
         // belong to a validator in the committee this boundary activates. The host
         // relays the artifact; an injected registration for a non-member would

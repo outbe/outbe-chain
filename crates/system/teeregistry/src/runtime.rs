@@ -57,6 +57,9 @@ pub struct TeeBootstrapData {
     pub dkg_transcript_hash: B256,
     pub committee_snapshot_block: u64,
     pub committee_snapshot_hash: B256,
+    /// Encoded DKG group public key (constant term) of the bootstrapping committee.
+    /// The verification key for reshare endorsements; stored chunked on-chain.
+    pub tribute_offer_group_public_key: alloy_primitives::Bytes,
     pub registrations: Vec<TeeRegistration>,
 }
 
@@ -119,6 +122,43 @@ impl TeeRegistry<'_> {
         self.announced_recipient_x25519.read(&validator)
     }
 
+    /// Store the active committee's DKG group public key (constant term), chunked
+    /// into 32-byte words plus a byte length. The reshare endorsement verify reads
+    /// it back via [`Self::prior_group_public_key`]. Written at bootstrap and updated
+    /// on each reshare activation so the NEXT reshare verifies against this set.
+    pub fn set_group_public_key(&mut self, bytes: &[u8]) -> Result<()> {
+        let len = u32::try_from(bytes.len())
+            .map_err(|_| PrecompileError::Revert("group public key too large".to_string()))?;
+        self.group_public_key_len.write(len)?;
+        for (i, chunk) in bytes.chunks(32).enumerate() {
+            let mut word = [0u8; 32];
+            word[..chunk.len()].copy_from_slice(chunk);
+            let idx = u32::try_from(i)
+                .map_err(|_| PrecompileError::Revert("group public key too large".to_string()))?;
+            self.group_public_key.write(&idx, B256::from(word))?;
+        }
+        Ok(())
+    }
+
+    /// The active committee's stored group public key bytes (empty until set). The
+    /// verification key for a prior-committee reshare endorsement.
+    pub fn prior_group_public_key(&self) -> Result<Vec<u8>> {
+        let len = self.group_public_key_len.read()? as usize;
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let words = len.div_ceil(32);
+        let mut out = Vec::with_capacity(words * 32);
+        for i in 0..words {
+            let idx = u32::try_from(i).map_err(|_| {
+                PrecompileError::Revert("group public key index overflow".to_string())
+            })?;
+            out.extend_from_slice(self.group_public_key.read(&idx)?.as_slice());
+        }
+        out.truncate(len);
+        Ok(out)
+    }
+
     /// Write the one-time bootstrap result.
     ///
     /// Native-only: the `TeeBootstrap` system-tx handler calls this
@@ -145,6 +185,7 @@ impl TeeRegistry<'_> {
             .write(data.committee_snapshot_block)?;
         self.committee_snapshot_hash
             .write(data.committee_snapshot_hash)?;
+        self.set_group_public_key(&data.tribute_offer_group_public_key)?;
 
         for reg in &data.registrations {
             self.recipient_x25519
