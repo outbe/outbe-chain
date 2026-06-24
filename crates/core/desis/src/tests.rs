@@ -34,8 +34,9 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 fn default_config() -> AuctionConfig {
     AuctionConfig {
         promis_load_minor: PROMIS_LOAD_MINOR,
-        min_intex_bid_price: 100,
-        cost_amount_minor: 500,
+        min_intex_bid_rate: 100,
+        // strike = RATE_SCALE so that lock = qty * rate (keeps test amounts simple).
+        cost_amount_minor: 1_000_000,
         entry_price: U256::ZERO,
     }
 }
@@ -119,7 +120,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
             (0..100u8)
                 .map(|i| BidData {
                     bidder_address: bidder(i),
-                    intex_bid_price: 200,
+                    intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
                 })
@@ -209,11 +210,11 @@ fn clear_auction_rejects_non_origin_caller() {
 
 // --- Bid ingestion ---
 
-fn bids(n: u8, price: u64) -> Vec<BidData> {
+fn bids(n: u8, rate: u32) -> Vec<BidData> {
     (0..n)
         .map(|i| BidData {
             bidder_address: bidder(i),
-            intex_bid_price: price,
+            intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
         })
@@ -406,19 +407,19 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         let three_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(2),
-                intex_bid_price: 150,
+                intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
             },
@@ -435,8 +436,8 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         .unwrap();
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
-        // Supply 2 → top 2 bids win (300 and 200); clearing price = 200.
-        assert_eq!(result.clearing_price, 200);
+        // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
+        assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
     });
 }
@@ -450,13 +451,13 @@ fn clear_bids_below_min_price_skipped() {
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 50,
+                intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
@@ -489,13 +490,13 @@ fn clear_refunds_equal_locked_minus_paid() {
         let two_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
@@ -528,6 +529,66 @@ fn clear_refunds_equal_locked_minus_paid() {
         assert_eq!(result.refunded_amounts[w_idx], 0);
         assert_eq!(result.refunded_amounts[l_idx], 200);
         assert_eq!(supply, result.issued_intex_count);
+    });
+}
+
+#[test]
+fn clear_rate_escrow_scales_by_strike() {
+    // strike != RATE_SCALE, so this exercises the * strike / RATE_SCALE.
+    with_storage(|s| {
+        let cfg = AuctionConfig {
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            min_intex_bid_rate: 0,
+            cost_amount_minor: 2_000_000, // strike = 2 x RATE_SCALE
+            entry_price: U256::ZERO,
+        };
+        runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        let supply = 2u32;
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
+        let rate_bids = vec![
+            BidData {
+                bidder_address: bidder(0),
+                intex_bid_rate: 800_000,
+                timestamp: 0,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(1),
+                intex_bid_rate: 600_000,
+                timestamp: 1,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(2),
+                intex_bid_rate: 400_000,
+                timestamp: 2,
+                intex_quantity: 1,
+            },
+        ];
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            rate_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+
+        assert_eq!(result.clearing_rate, 600_000);
+        // lock/pay = qty * strike(2e6) * rate / 1e6; clearing rate 60%.
+        let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
+        assert_eq!(result.paid_amounts[idx(bidder(0))], 1_200_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(0))], 400_000);
+        assert_eq!(result.paid_amounts[idx(bidder(1))], 1_200_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
+        assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
+        assert_eq!(result.refunded_amounts[idx(bidder(2))], 800_000);
     });
 }
 

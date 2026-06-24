@@ -17,7 +17,7 @@ sol! {
             uint32 revealEnd;
             uint32 issuanceEnd;
             uint128 promisLoadMinor;
-            uint64 minIntexBidPrice;
+            uint32 minIntexBidRate;
             uint64 entryPrice;
             uint64 floorPriceMinor;
             uint64 callPriceMinor;
@@ -71,7 +71,7 @@ sol! {
         function quoteSendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingPrice,
+            uint64 auctionIntexClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             bool payInLzToken
@@ -80,7 +80,7 @@ sol! {
         function sendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingPrice,
+            uint64 auctionIntexClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             MessagingFee calldata fee,

@@ -24,7 +24,7 @@ impl DesisContract<'_> {
         Ok(AuctionConfig {
             promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidSeriesId(series_id))?,
-            min_intex_bid_price: self.config_min_bid_price.read(&series_id)?,
+            min_intex_bid_rate: self.config_min_bid_rate.read(&series_id)?,
             cost_amount_minor: self.config_cost_amount_minor.read(&series_id)?,
             entry_price: self.config_entry_price.read(&series_id)?,
         })
@@ -33,8 +33,8 @@ impl DesisContract<'_> {
     pub(crate) fn write_auction_config(&self, series_id: u32, cfg: &AuctionConfig) -> Result<()> {
         self.config_promis_load_minor
             .write(&series_id, U256::from(cfg.promis_load_minor))?;
-        self.config_min_bid_price
-            .write(&series_id, cfg.min_intex_bid_price)?;
+        self.config_min_bid_rate
+            .write(&series_id, cfg.min_intex_bid_rate)?;
         self.config_cost_amount_minor
             .write(&series_id, cfg.cost_amount_minor)?;
         self.config_entry_price.write(&series_id, cfg.entry_price)
@@ -67,7 +67,7 @@ impl DesisContract<'_> {
         let limbs = packed.as_limbs();
         Ok(BidData {
             bidder_address: self.bid_bidder.read(&key)?,
-            intex_bid_price: limbs[0],
+            intex_bid_rate: limbs[0] as u32,
             timestamp: limbs[1] as u32,
             intex_quantity: (limbs[1] >> 32) as u16,
         })
@@ -77,7 +77,7 @@ impl DesisContract<'_> {
         let key = Self::bid_key(series_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
         let packed = U256::from_limbs([
-            bid.intex_bid_price,
+            u64::from(bid.intex_bid_rate),
             (u64::from(bid.intex_quantity) << 32) | u64::from(bid.timestamp),
             0,
             0,
