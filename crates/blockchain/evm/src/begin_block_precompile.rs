@@ -323,6 +323,31 @@ pub(crate) fn run_tee_bootstrap(
         })
         .collect();
 
+    // B2: bind the bootstrap to the on-chain committee snapshot. Block 1's mandatory
+    // BoundaryOutcome (Phase 3) runs before this Phase 3b tx and is the single writer
+    // of the epoch-0 CommitteeSnapshotStore, so recompute that committee's canonical
+    // V2 identity hash and bind it as the source of truth. Genesis-safe: a ZERO payload
+    // value (the producer does not yet compute it) is accepted; a non-zero payload value
+    // must match the on-chain snapshot, so a forged committee binding is rejected.
+    let committee_snapshot_hash =
+        match outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
+        {
+            Some(snapshot) => {
+                let recomputed = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+                if payload.committee_snapshot_hash != B256::ZERO
+                    && payload.committee_snapshot_hash != recomputed
+                {
+                    return Err(PrecompileError::Revert(
+                        "TeeBootstrap committee_snapshot_hash does not match the on-chain \
+                         committee snapshot"
+                            .to_string(),
+                    ));
+                }
+                recomputed
+            }
+            None => payload.committee_snapshot_hash,
+        };
+
     registry.write_bootstrap(&TeeBootstrapData {
         tribute_offer_public_key: payload.tribute_offer_public_key,
         policy_hash: payload.policy_hash,
@@ -330,7 +355,7 @@ pub(crate) fn run_tee_bootstrap(
         tribute_offer_epoch: payload.tribute_offer_epoch,
         dkg_transcript_hash: payload.dkg_transcript_hash,
         committee_snapshot_block: payload.committee_snapshot_block,
-        committee_snapshot_hash: payload.committee_snapshot_hash,
+        committee_snapshot_hash,
         tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
         registrations,
     })
@@ -519,10 +544,29 @@ pub(crate) fn run_boundary_outcome(
     // state deterministically. The offer key itself is preserved across the
     // reshare, so it is NOT touched here. Empty for non-reshare boundaries.
     if !artifact.tee_reshare_registrations.is_empty() {
+        // Reshare authority (membership gate): every re-registered enclave key must
+        // belong to a validator in the committee this boundary activates. The host
+        // relays the artifact; an injected registration for a non-member would
+        // otherwise place an attacker-controlled enclave key into the registry (and
+        // let it request the offer-key handoff). `new_active_set` is part of the
+        // hash-committed artifact, so this gate is byte-deterministic across
+        // validators. This bounds a malicious host / below-quorum collusion; the
+        // prior-committee endorsement below is still required to bound a malicious
+        // supermajority of the new committee itself.
+        let authorized: std::collections::BTreeSet<alloy_primitives::Address> =
+            artifact.reshare.new_active_set.iter().copied().collect();
+        for r in &artifact.tee_reshare_registrations {
+            if !authorized.contains(&r.validator) {
+                return Err(PrecompileError::Revert(format!(
+                    "reshare TEE registration for validator {} is not in the activated committee",
+                    r.validator
+                )));
+            }
+        }
         // Reshare authority (prior-committee endorsement): the OUTGOING committee must
         // have threshold-signed this incoming committee + the preserved offer key.
         // This is the only check a malicious supermajority of the NEW committee cannot
-        // forge (the membership gate below is self-certifying for a >2/3-new attacker).
+        // forge (the membership gate above is self-certifying for a >2/3-new attacker).
         // Verified against the stored prior group public key via deterministic plain
         // pairing, so every validator reaches the same verdict.
         let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
@@ -543,25 +587,6 @@ pub(crate) fn run_boundary_outcome(
             return Err(PrecompileError::Revert(
                 "reshare TEE registrations lack a valid prior-committee endorsement".to_string(),
             ));
-        }
-        // Reshare authority (membership gate): every re-registered enclave key must
-        // belong to a validator in the committee this boundary activates. The host
-        // relays the artifact; an injected registration for a non-member would
-        // otherwise place an attacker-controlled enclave key into the registry (and
-        // let it request the offer-key handoff). `new_active_set` is part of the
-        // hash-committed artifact, so this gate is byte-deterministic across
-        // validators. This bounds a malicious host / below-quorum collusion; a
-        // prior-committee endorsement is still required to bound a malicious
-        // supermajority of the new committee itself.
-        let authorized: std::collections::BTreeSet<alloy_primitives::Address> =
-            artifact.reshare.new_active_set.iter().copied().collect();
-        for r in &artifact.tee_reshare_registrations {
-            if !authorized.contains(&r.validator) {
-                return Err(PrecompileError::Revert(format!(
-                    "reshare TEE registration for validator {} is not in the activated committee",
-                    r.validator
-                )));
-            }
         }
         let regs: Vec<(
             alloy_primitives::Address,
@@ -1205,7 +1230,14 @@ mod tests {
     }
 
     #[test]
-    fn boundary_outcome_accepts_reshare_registration_for_committee_validator() {
+    fn boundary_outcome_rejects_reshare_registration_without_endorsement() {
+        // Even for a committee member (VALIDATOR is in `new_active_set`, so the
+        // membership gate passes), a reshare registration is rejected unless the
+        // artifact carries a valid prior-committee endorsement (B3). Here no group key
+        // is stored and the endorsement is empty, so the authority check fails closed.
+        // The happy path (a real recovered group signature) is exercised end-to-end on
+        // the SGX localnet, since constructing a threshold group signature needs the
+        // DKG primitives, not a unit fixture.
         let mut provider = configured_storage(2, 2);
         provider.enter(|storage| {
             let mut artifact = boundary_noop();
@@ -1213,8 +1245,12 @@ mod tests {
             let input = SystemTxInputV2::BoundaryOutcome { artifact }
                 .encode()
                 .unwrap();
-            dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
-                .expect("reshare registration for a committee member is accepted");
+            let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
+                .expect_err("a reshare registration without an endorsement must be rejected");
+            assert!(
+                format!("{err:?}").contains("endorsement"),
+                "must fail on the missing prior-committee endorsement, got: {err:?}"
+            );
         });
     }
 

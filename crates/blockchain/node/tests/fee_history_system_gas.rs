@@ -162,6 +162,7 @@ fn boundary_for_single_validator(proposer: Address) -> DkgBoundaryArtifact {
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: ReshareResult {
             active_set_hash: boundary_active_set_hash(&new_active_set),
             new_active_set,
