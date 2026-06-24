@@ -76,6 +76,8 @@ async fn pubkey(
         EnclaveClient::connect_endpoint(enclave_socket, &QuotePolicy::dev_accept_any())
             .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
     let label = enclave.attestation_label().to_string();
+    let (mrenclave, mrsigner, isv_svn) = enclave.measurements();
+    let remote_attested = enclave.is_hardware_attested();
     let (offer_pub, tee_bls_pub) = match enclave.request(&EnclaveRequest::GetPublicKeys) {
         Ok(EnclaveResponse::PublicKeys {
             recipient_x25519_pub,
@@ -88,6 +90,10 @@ async fn pubkey(
     println!("enclave offer pubkey (recipient_x25519): 0x{}", hex::encode(offer_pub));
     println!("enclave tee_bls_pub (DKG identity):      0x{}", hex::encode(&tee_bls_pub));
     println!("attestation:                             {label}");
+    println!("remote-attested (real quote):            {remote_attested}");
+    println!("mrenclave:                               0x{}", hex::encode(mrenclave));
+    println!("mrsigner:                                0x{}", hex::encode(mrsigner));
+    println!("isv_svn:                                 {isv_svn}");
     if !diff_chain {
         return Ok(());
     }

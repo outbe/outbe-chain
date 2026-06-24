@@ -140,12 +140,26 @@ impl EnclaveKeys {
                     quote,
                 )
             }
-            Err(_) => (
-                UNATTESTED_MEASUREMENT,
-                UNATTESTED_MEASUREMENT,
-                0u16,
-                Vec::new(),
-            ),
+            // No DCAP quote. Under gramine-sgx with remote attestation disabled
+            // (manifest "none") the hardware is still present, so read the REAL
+            // MRENCLAVE/MRSIGNER from a local SGX report — measured + confidential,
+            // but NOT remote-attested (quote_body stays empty). Under
+            // gramine-direct/bare there is no SGX at all, so this also fails and we
+            // report zero measurements, never fabricated.
+            Err(_) => match gramine::local_report_measurements(&report_data_64) {
+                Ok(m) => (
+                    B256::from(m.mrenclave),
+                    B256::from(m.mrsigner),
+                    m.isv_svn,
+                    Vec::new(),
+                ),
+                Err(_) => (
+                    UNATTESTED_MEASUREMENT,
+                    UNATTESTED_MEASUREMENT,
+                    0u16,
+                    Vec::new(),
+                ),
+            },
         };
 
         Ok(Self {
