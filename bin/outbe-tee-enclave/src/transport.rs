@@ -751,6 +751,95 @@ mod tests {
         }
     }
 
+    // --- Fix A (C1) adversarial: DkgOpen must reject host tampering of the
+    // (bls, enc, sig) bundle before trusting any pairing ----------------------
+
+    fn honest_announces(n: usize) -> (Vec<Enclave>, Vec<outbe_tee::protocol::ParticipantAnnounce>) {
+        let mut enclaves: Vec<Enclave> = (0..n).map(|i| Enclave::new(i as u8 + 1)).collect();
+        let participants = enclaves.iter_mut().map(|e| e.identity()).collect();
+        (enclaves, participants)
+    }
+
+    fn open_on(
+        enclave: &mut Enclave,
+        participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
+    ) -> EnclaveResponse {
+        enclave.call(EnclaveRequest::DkgOpen {
+            ceremony_id: B256::repeat_byte(0x11),
+            round: 0,
+            participants,
+        })
+    }
+
+    #[test]
+    fn dkg_open_rejects_forged_enc_signature() {
+        let (mut enclaves, mut participants) = honest_announces(4);
+        // Honest list opens fine.
+        assert!(matches!(
+            open_on(&mut enclaves[0], participants.clone()),
+            EnclaveResponse::Ack
+        ));
+        // Corrupt one binding signature: the enclave must reject the whole open.
+        participants[1].enc_sig[0] ^= 0xff;
+        assert!(
+            matches!(
+                open_on(&mut enclaves[0], participants),
+                EnclaveResponse::Error { .. }
+            ),
+            "forged enc_sig must be rejected"
+        );
+    }
+
+    #[test]
+    fn dkg_open_rejects_mispaired_enc_signature() {
+        let (mut enclaves, mut participants) = honest_announces(4);
+        // Swap two participants' signatures: each now pairs a (bls, enc) with the
+        // OTHER party's signature, so neither binding verifies.
+        participants.swap(0, 1);
+        let s0 = participants[0].enc_sig.clone();
+        participants[0].enc_sig = participants[1].enc_sig.clone();
+        participants[1].enc_sig = s0;
+        assert!(
+            matches!(
+                open_on(&mut enclaves[2], participants),
+                EnclaveResponse::Error { .. }
+            ),
+            "mispaired enc signature must be rejected"
+        );
+    }
+
+    #[test]
+    fn dkg_open_rejects_duplicate_enc_key() {
+        let (mut enclaves, mut participants) = honest_announces(4);
+        // A host replays one party's full announce into another slot: the enc key
+        // (and identity) now collide. The dedup guard must reject before open.
+        participants[1] = participants[0].clone();
+        assert!(
+            matches!(
+                open_on(&mut enclaves[3], participants),
+                EnclaveResponse::Error { .. }
+            ),
+            "duplicate enc key must be rejected"
+        );
+    }
+
+    #[test]
+    fn dkg_open_rejects_wrong_chain_binding() {
+        let (mut enclaves, mut participants) = honest_announces(4);
+        // A participant whose enc binding was signed under a DIFFERENT chain_id
+        // than the verifier's must be rejected (cross-chain replay defense).
+        let mut foreign = Enclave::new(9);
+        foreign.chain_id = B256::repeat_byte(0xEE);
+        participants[0] = foreign.identity();
+        assert!(
+            matches!(
+                open_on(&mut enclaves[1], participants),
+                EnclaveResponse::Error { .. }
+            ),
+            "enc binding signed under a foreign chain_id must be rejected"
+        );
+    }
+
     /// Drive a full n-party TEE DKG ceremony through `dispatch` (the real protocol
     /// request/response path), exercising the byte serialization of every seam.
     /// Validates that the protocol-level ceremony converges to one group key with

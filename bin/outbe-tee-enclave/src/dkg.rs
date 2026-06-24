@@ -724,6 +724,71 @@ mod tests {
     }
 
     #[test]
+    fn player_finalize_encoded_rejects_incomplete_dealer_set() {
+        // Fix A (C2): a host feeding fewer than all-n dealer logs would diverge the
+        // group key across enclaves, so the byte finalize must reject an incomplete
+        // set. Drive a 4-party ceremony to per-dealer encoded logs, then finalize.
+        let n = 4usize;
+        let (info, keys, pubkeys) = setup(n as u32);
+        let (enc_secrets, enc_keys) = enc_material(&pubkeys);
+        let mut sessions: Vec<DkgSession> = keys
+            .iter()
+            .zip(&enc_secrets)
+            .map(|(k, sk)| {
+                DkgSession::new(info.clone(), k.clone(), *sk, enc_keys.clone()).expect("session")
+            })
+            .collect();
+
+        let mut pub_msgs: Vec<CeremonyPubMsg> = Vec::with_capacity(n);
+        let mut sealed_shares: Vec<BTreeMap<PubKey, EncryptedShare>> = Vec::with_capacity(n);
+        for s in sessions.iter_mut() {
+            let (pm, blobs) = s.start_dealer(None).expect("start_dealer");
+            pub_msgs.push(pm);
+            sealed_shares.push(blobs.into_iter().collect());
+        }
+        for i in 0..n {
+            let dealer_pk = pubkeys[i].clone();
+            let pm = pub_msgs[i].clone();
+            let mut acks: Vec<(PubKey, CeremonyAck)> = Vec::new();
+            for (j, s) in sessions.iter_mut().enumerate() {
+                let blob = sealed_shares[i].remove(&pubkeys[j]).expect("sealed share");
+                if let Some(ack) = s
+                    .player_ingest(dealer_pk.clone(), pm.clone(), &blob)
+                    .expect("player_ingest")
+                {
+                    acks.push((pubkeys[j].clone(), ack));
+                }
+            }
+            for (pk, ack) in acks {
+                sessions[i]
+                    .dealer_receive_ack(pk, ack)
+                    .expect("dealer_receive_ack");
+            }
+        }
+
+        let logs: Vec<Vec<u8>> = sessions
+            .iter_mut()
+            .map(|s| {
+                s.dealer_finalize_encoded()
+                    .expect("dealer_finalize_encoded")
+            })
+            .collect();
+
+        // Complete set finalizes; the incomplete subset (n-1 dealers) is rejected.
+        assert!(
+            sessions[1].player_finalize_encoded(&logs).is_ok(),
+            "complete dealer set must finalize"
+        );
+        let err = sessions[0]
+            .player_finalize_encoded(&logs[..n - 1])
+            .unwrap_err();
+        assert!(
+            matches!(err, TeeError::Dkg(_)),
+            "incomplete dealer set must be rejected: {err:?}"
+        );
+    }
+
+    #[test]
     fn player_ingest_rejects_share_sealed_to_another_enclave() {
         // A share sealed to a DIFFERENT recipient must not open in this session.
         let (info, keys, pubkeys) = setup(4);
