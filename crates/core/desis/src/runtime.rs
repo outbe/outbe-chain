@@ -73,13 +73,13 @@ pub fn start_auction(
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
-    let coen_floor = config
-        .coen_price
+    let entry_floor = config
+        .entry_price
         .checked_mul(U256::from(108u64))
         .map(|v| v / U256::from(100u64))
-        .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))?;
-    let coen_floor_u64 = u64::try_from(coen_floor)
-        .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("entry price floor overflow".into()))?;
+    let entry_floor_u64 = u64::try_from(entry_floor)
+        .map_err(|_| PrecompileError::Revert("entry price floor exceeds u64".into()))?;
     let stage_params = IOriginMessenger::AuctionStageStartParams {
         seriesId: series_id,
         commitEnd: commit_end,
@@ -88,7 +88,7 @@ pub fn start_auction(
         promisLoadMinor: config.promis_load_minor,
         minIntexBidPrice: config.min_intex_bid_price,
         costAmountMinor: config.cost_amount_minor,
-        floorPriceMinor: coen_floor_u64,
+        floorPriceMinor: entry_floor_u64,
         minIntexBidQuantity: min_bid_qty,
     };
     let quote_ret = storage.staticcall(
@@ -371,7 +371,7 @@ pub fn clear_auction(
         issued_intex_count: result.issued_intex_count,
         promis_load_minor: config.promis_load_minor,
         cost_amount_minor: config.cost_amount_minor,
-        coen_price: config.coen_price,
+        coen_price: config.entry_price,
         issuance_currency: QUALIFIER_ISSUANCE_ISO,
         reference_currency: QUALIFIER_REFERENCE_ISO,
         recipients: result.winners.clone(),

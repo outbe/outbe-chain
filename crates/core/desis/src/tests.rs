@@ -36,7 +36,7 @@ fn default_config() -> AuctionConfig {
         promis_load_minor: PROMIS_LOAD_MINOR,
         min_intex_bid_price: 100,
         cost_amount_minor: 500,
-        coen_price: U256::ZERO,
+        entry_price: U256::ZERO,
     }
 }
 
@@ -562,8 +562,8 @@ fn test_iface_id_matches_selector_xor() {
 // --- Config construction ---
 
 #[test]
-fn from_coen_price_rounds_cost_amount_up_to_100() {
-    let cfg = AuctionConfig::from_coen_price(U256::from(1_000_000_150_000_000u128));
+fn from_entry_price_rounds_cost_amount_up_to_100() {
+    let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
     assert_eq!(
         cfg.cost_amount_minor % 100,
         0,
@@ -571,13 +571,13 @@ fn from_coen_price_rounds_cost_amount_up_to_100() {
     );
     assert_eq!(cfg.cost_amount_minor, 100_000_100);
 
-    let exact = AuctionConfig::from_coen_price(U256::from(2_000_000_000_000_000u128));
+    let exact = AuctionConfig::from_entry_price(U256::from(2_000_000_000_000_000u128));
     assert_eq!(exact.cost_amount_minor, 200_000_000);
 }
 
 // --- Best-effort dispatch API ---
 
-const COEN_PRICE: u128 = 2_000_000_000_000_000; // 2e15 → cost_amount_minor = 200_000_000
+const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 → cost_amount_minor = 200_000_000
 
 #[test]
 fn dispatch_stage_start_success_returns_true() {
@@ -585,7 +585,7 @@ fn dispatch_stage_start_success_returns_true() {
         let accepted = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         assert!(accepted, "valid start should be accepted");
@@ -616,13 +616,13 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
         let first = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         let second = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         (first, second)

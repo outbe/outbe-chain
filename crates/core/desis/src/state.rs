@@ -26,7 +26,7 @@ impl DesisContract<'_> {
                 .map_err(|_| crate::DesisError::InvalidSeriesId(series_id))?,
             min_intex_bid_price: self.config_min_bid_price.read(&series_id)?,
             cost_amount_minor: self.config_cost_amount_minor.read(&series_id)?,
-            coen_price: self.config_coen_price.read(&series_id)?,
+            entry_price: self.config_entry_price.read(&series_id)?,
         })
     }
 
@@ -37,7 +37,7 @@ impl DesisContract<'_> {
             .write(&series_id, cfg.min_intex_bid_price)?;
         self.config_cost_amount_minor
             .write(&series_id, cfg.cost_amount_minor)?;
-        self.config_coen_price.write(&series_id, cfg.coen_price)
+        self.config_entry_price.write(&series_id, cfg.entry_price)
     }
 
     // --- bid storage ---
