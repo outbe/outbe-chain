@@ -373,6 +373,13 @@ fn process_metadosis(
     // a zero remainder keeps the per-WWD accounting consistent with
     // the Cycle handler's already-committed allocation.
     if !metadosis.has_day_limit(wwd)? {
+        let dtype = metadosis.get_day_type(wwd)?;
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()?;
+        dispatch_auction_clearing(ctx, dtype, auction_ts, U256::ZERO)?;
         metadosis.mark_failed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
             worldwideDay: wwd.into(),
@@ -385,6 +392,13 @@ fn process_metadosis(
 
     let day_limit = metadosis.get_day_limit(wwd)?;
     if day_limit.is_zero() {
+        let dtype = metadosis.get_day_type(wwd)?;
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()?;
+        dispatch_auction_clearing(ctx, dtype, auction_ts, U256::ZERO)?;
         metadosis.mark_failed(wwd)?;
         metadosis.mark_day_limit_used(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
