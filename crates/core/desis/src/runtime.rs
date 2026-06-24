@@ -195,13 +195,11 @@ pub fn begin_clearing(
     }
 
     let supply_intex = supply_promis / config.promis_load_minor;
-    if supply_intex == 0 {
-        return Err(DesisError::InvalidSeriesId(series_id).into());
-    }
     let supply_intex32 =
         u32::try_from(supply_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
     let rounding_remainder = supply_promis % config.promis_load_minor;
 
+    contract.clearing_initiated.write(&series_id, 1u8)?;
     contract
         .pending_supply_intex
         .write(&series_id, supply_intex32)?;
@@ -320,7 +318,7 @@ pub fn clear_auction(
     require_stage(&contract, series_id, AuctionStage::BidsReceived)?;
 
     let supply = contract.pending_supply_intex.read(&series_id)?;
-    if supply == 0 {
+    if contract.clearing_initiated.read(&series_id)? == 0 {
         return Err(DesisError::PendingClearingDataMissing(series_id).into());
     }
 
@@ -345,13 +343,21 @@ pub fn clear_auction(
     // Clear bid working-set and pending inputs (CEI: state writes before external calls).
     contract.bid_count.write(&series_id, 0)?;
     contract.pending_supply_intex.write(&series_id, 0)?;
+    contract.clearing_initiated.write(&series_id, 0u8)?;
 
-    contract.emit(IDesis::AuctionCleared {
-        seriesId: series_id,
-        issuedIntexCount: result.issued_intex_count,
-        clearingPrice: result.clearing_price,
-        totalDemand: total_demand,
-    })?;
+    if result.issued_intex_count == 0 {
+        contract.emit(IDesis::AuctionClearedEmpty {
+            seriesId: series_id,
+            totalDemand: total_demand,
+        })?;
+    } else {
+        contract.emit(IDesis::AuctionCleared {
+            seriesId: series_id,
+            issuedIntexCount: result.issued_intex_count,
+            clearingPrice: result.clearing_price,
+            totalDemand: total_demand,
+        })?;
+    }
 
     // Return unused Promis to PromisLimit.
     let remaining_supply = supply - result.issued_intex_count;
@@ -365,19 +371,22 @@ pub fn clear_auction(
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
     }
 
-    // Hand issuance to IntexFactory.
-    let params = outbe_intexfactory::schema::IssuanceParams {
-        series_id,
-        issued_intex_count: result.issued_intex_count,
-        promis_load_minor: config.promis_load_minor,
-        cost_amount_minor: config.cost_amount_minor,
-        coen_price: config.coen_price,
-        issuance_currency: QUALIFIER_ISSUANCE_ISO,
-        reference_currency: QUALIFIER_REFERENCE_ISO,
-        recipients: result.winners.clone(),
-        quantities: result.winner_quantities.clone(),
-    };
-    outbe_intexfactory::api::issue(&storage, params)?;
+    // Hand issuance to IntexFactory; an empty clearing issues nothing and
+    // creates no series.
+    if result.issued_intex_count > 0 {
+        let params = outbe_intexfactory::schema::IssuanceParams {
+            series_id,
+            issued_intex_count: result.issued_intex_count,
+            promis_load_minor: config.promis_load_minor,
+            cost_amount_minor: config.cost_amount_minor,
+            coen_price: config.coen_price,
+            issuance_currency: QUALIFIER_ISSUANCE_ISO,
+            reference_currency: QUALIFIER_REFERENCE_ISO,
+            recipients: result.winners.clone(),
+            quantities: result.winner_quantities.clone(),
+        };
+        outbe_intexfactory::api::issue(&storage, params)?;
+    }
 
     // Send AUCTION_RESULT to BNB.
     let won_bids_count = u32::try_from(result.winners.len())

@@ -45,6 +45,7 @@ interface IDesis {
     event AuctionCancelledNoBids(uint32 indexed seriesId);
     event AuctionCancelledRedDay(uint32 indexed seriesId);
     event AuctionCleared(uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingPrice, uint64 totalDemand);
+    event AuctionClearedEmpty(uint32 indexed seriesId, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed seriesId, uint256 unusedPromis);
     /// @notice A best-effort auction-stage dispatch from Metadosis failed; the caller
     /// falls back (e.g. routes supply to PromisLimit) instead of halting the block.
