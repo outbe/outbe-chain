@@ -72,6 +72,34 @@ Operators must rotate the consensus key of any revealed validator; the set is
 surfaced at `WARN` on the `outbe::dkg` log target and via the
 `outbe_dkg_revealed_shares` metric.
 
+**TEE key authority.** The shared tribute-offer key is established by an
+in-enclave DKG and registered on-chain in a one-time block-1 `TeeBootstrap`
+system transaction. The host relaying that transaction is untrusted, so the
+registration is bound to consensus state by three deterministic gates, identical
+on every validator:
+
+- *Bootstrap supermajority + snapshot binding.* The payload must be signed by a
+  strict `> 2/3` of the active consensus set, and its `committee_snapshot_hash`
+  is bound to the epoch-0 committee snapshot that the same block's
+  `BoundaryOutcome` wrote: the gate recomputes `committee_set_hash_v2` from
+  on-chain state and rejects a value that disagrees.
+- *Reshare membership gate.* When a reshare re-registers per-validator enclave
+  keys, every re-registered validator must belong to the committee that boundary
+  activates, so a malicious host cannot inject a key for a non-member.
+- *Reshare prior-committee endorsement.* The re-registrations must additionally
+  carry a threshold group signature from the **outgoing** committee over the
+  incoming committee's identity and the preserved offer key. This is the only
+  check a malicious supermajority of the *new* committee cannot forge by itself.
+
+The offer key is preserved across a reshare (key-handoff, not a fresh DKG), and
+the enclave binds each X25519 share-encryption key to its BLS identity so the
+host cannot mispair or duplicate ceremony inputs.
+
+Current implementation note(s): the reshare key re-registration path is not yet
+wired end-to-end, so the membership and endorsement gates are enforced but
+dormant (every produced boundary artifact currently carries no re-registrations);
+they activate with the reshare re-registration feature.
+
 **Block-timestamp drift band.** A normative consensus rule: every validator
 rejects a non-genesis block whose `timestamp_millis` advances its parent by less
 than `MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS` (1 s) or more than

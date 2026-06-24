@@ -153,12 +153,13 @@ pub fn dispatch(
 ///   != ZERO) — the allowlist matches that genesis hash and every registration's
 ///   MRSIGNER/MRENCLAVE/isv_svn satisfies the AND-policy. The policy hash is read
 ///   from EVM storage so the gate is deterministic on proposer + verifier.
-///
-/// Deferred (does not block writing a verified payload; `tee_bootstrap_policy_and_snapshot_binding`,
-/// label `arch_debt`):
-///
-/// - binding `committee_snapshot_hash` to the frozen V2 `committee_set_hash`
-///   (the producing tribute-DKG slice fixes the snapshot identity it
+/// - `committee_snapshot_hash` binds the bootstrap to the epoch-0
+///   `CommitteeSnapshotStore` that Phase 3's `BoundaryOutcome` wrote earlier in
+///   this block: the gate recomputes `committee_set_hash_v2(0, snapshot)`, stores
+///   it as the authoritative value, and rejects a non-zero payload value that
+///   disagrees. Resolves `arch_debt` `tee_bootstrap_policy_and_snapshot_binding`
+///   (commit `af7cdb8`); the producer still sends `ZERO`, which the verifier
+///   recompute accepts and overwrites — cosmetic, not a binding gap.
 pub(crate) fn run_tee_bootstrap(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap::TeeBootstrapPayload,
@@ -1512,6 +1513,75 @@ mod tests {
         // 3 of 4 sign: 3*3 = 9 > 4*2 = 8.
         let payload = tee_payload(5, &ks[..3]);
         run_bootstrap(&mut provider, &payload).expect("supermajority accepted");
+        assert!(is_bootstrapped(&mut provider));
+    }
+
+    /// Write an epoch-0 `CommitteeSnapshot` (as block 1's `BoundaryOutcome` would)
+    /// and return its canonical V2 identity hash.
+    fn write_epoch0_snapshot(provider: &mut HashMapStorageProvider, members: &[Address]) -> B256 {
+        use outbe_consensus::proof::{CommitteeEntry, CommitteeSnapshot};
+        let snapshot = CommitteeSnapshot {
+            committee: members
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let mut pk = [7u8; 48];
+                    pk[0] = i as u8;
+                    CommitteeEntry {
+                        address: *a,
+                        consensus_pubkey: pk,
+                    }
+                })
+                .collect(),
+            vrf_material_version: 1,
+            vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        provider.enter(|storage| {
+            outbe_validatorset::state::write_committee_snapshot(storage, 0, &snapshot).unwrap();
+        });
+        outbe_validatorset::committee_set_hash_v2(0, &snapshot)
+    }
+
+    /// B2: a non-zero `committee_snapshot_hash` that disagrees with the on-chain
+    /// epoch-0 snapshot must revert (forged committee binding rejected).
+    #[test]
+    fn tee_bootstrap_rejects_committee_snapshot_hash_mismatch() {
+        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
+        let mut provider = tee_committee_storage(5, &members(&ks));
+        write_epoch0_snapshot(&mut provider, &members(&ks));
+        // `tee_payload` sets committee_snapshot_hash = 0x71, which cannot equal the
+        // recomputed snapshot hash, so the bind must reject.
+        let payload = tee_payload(5, &ks[..3]);
+        let err = run_bootstrap(&mut provider, &payload).expect_err(
+            "a committee_snapshot_hash disagreeing with the on-chain snapshot must revert",
+        );
+        assert!(
+            format!("{err:?}").contains("committee_snapshot_hash does not match"),
+            "must reject on the snapshot bind, got: {err:?}"
+        );
+        assert!(!is_bootstrapped(&mut provider));
+    }
+
+    /// B2: a `committee_snapshot_hash` equal to the recomputed on-chain snapshot
+    /// hash is accepted and the bootstrap completes.
+    #[test]
+    fn tee_bootstrap_accepts_matching_committee_snapshot_hash() {
+        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
+        let mut provider = tee_committee_storage(5, &members(&ks));
+        let csh = write_epoch0_snapshot(&mut provider, &members(&ks));
+        let mut payload = tee_payload(5, &ks[..3]);
+        payload.committee_snapshot_hash = csh;
+        // Re-sign: committee_snapshot_hash is part of the signed body.
+        let signing_hash = payload.signing_hash();
+        payload.validator_signatures = ks[..3]
+            .iter()
+            .map(|key| TeeValidatorSignature {
+                validator: tee_evm_address(key),
+                signature: tee_sign(key, &signing_hash),
+            })
+            .collect();
+        run_bootstrap(&mut provider, &payload).expect("matching snapshot hash accepted");
         assert!(is_bootstrapped(&mut provider));
     }
 
