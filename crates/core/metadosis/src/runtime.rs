@@ -412,7 +412,7 @@ fn process_metadosis(
             .entry(wwd)
             .scheduled_process_time()
             .read()?;
-        let to_promis_limit = settle_auction_clearing(ctx, dtype, auction_ts, day_limit)?;
+        let to_promis_limit = dispatch_auction_clearing(ctx, dtype, auction_ts, day_limit)?;
         metadosis.mark_completed(wwd)?;
         metadosis.mark_day_limit_used(wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -446,7 +446,7 @@ fn process_metadosis(
                 .entry(wwd)
                 .scheduled_process_time()
                 .read()?;
-            let to_promis_limit = settle_auction_clearing(ctx, dtype, auction_ts, remainder)?;
+            let to_promis_limit = dispatch_auction_clearing(ctx, dtype, auction_ts, remainder)?;
             metadosis.mark_completed(wwd)?;
             metadosis.mark_day_limit_used(wwd)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -481,7 +481,7 @@ fn process_metadosis(
                 .scheduled_process_time()
                 .read()?;
             let to_promis_limit =
-                settle_auction_clearing(ctx, dtype, auction_ts, effective_day_limit)?;
+                dispatch_auction_clearing(ctx, dtype, auction_ts, effective_day_limit)?;
             metadosis.mark_failed(wwd)?;
             metadosis.mark_day_limit_used(wwd)?;
             emit_failed_execution(
@@ -496,7 +496,7 @@ fn process_metadosis(
     }
 }
 
-fn settle_auction_clearing(
+fn dispatch_auction_clearing(
     ctx: &BlockRuntimeContext,
     dtype: u8,
     auction_ts: u64,
