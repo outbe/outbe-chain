@@ -407,6 +407,12 @@ fn process_metadosis(
     let day_totals = tribute.get_day_totals(wwd)?;
     if day_totals.tribute_count == 0 {
         let dtype = metadosis.get_day_type(wwd)?;
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()?;
+        let to_promis_limit = settle_auction_clearing(ctx, dtype, auction_ts, day_limit)?;
         metadosis.mark_completed(wwd)?;
         metadosis.mark_day_limit_used(wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -417,7 +423,7 @@ fn process_metadosis(
             dayState: day_state_label(dtype).into(),
             action: "no tributes".into(),
         })?;
-        return Ok(day_limit);
+        return Ok(to_promis_limit);
     }
 
     // AgentReward distribution is owned by the daily Cycle
@@ -435,30 +441,12 @@ fn process_metadosis(
         Ok(lysis_result) => {
             let remainder = lysis_result.remaining_gratis + calc.day_metadosis_limit_remainder;
             let dtype = metadosis.get_day_type(wwd)?;
-            // Green day: ship today's remainder to Desis as auction supply. If Desis
-            // sub-call reverts (not deployed / underfunded / on-chain bug), the
-            // remainder falls back to PromisLimit so no budget is lost.
-            // Red day: auction was cancelled by the reveal(false) signal, remainder
-            // always goes to PromisLimit.
-            let to_promis_limit = if dtype == day_type::GREEN {
-                let auction_ts = metadosis
-                    .worldwide_days
-                    .entry(wwd)
-                    .scheduled_process_time()
-                    .read()?;
-                let delivered = outbe_desis::api::dispatch_stage_clearing(
-                    ctx.storage.clone(),
-                    auction_ts,
-                    remainder,
-                )?;
-                if delivered {
-                    U256::ZERO
-                } else {
-                    remainder
-                }
-            } else {
-                remainder
-            };
+            let auction_ts = metadosis
+                .worldwide_days
+                .entry(wwd)
+                .scheduled_process_time()
+                .read()?;
+            let to_promis_limit = settle_auction_clearing(ctx, dtype, auction_ts, remainder)?;
             metadosis.mark_completed(wwd)?;
             metadosis.mark_day_limit_used(wwd)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -486,6 +474,14 @@ fn process_metadosis(
             Ok(to_promis_limit)
         }
         Err(_) => {
+            let dtype = metadosis.get_day_type(wwd)?;
+            let auction_ts = metadosis
+                .worldwide_days
+                .entry(wwd)
+                .scheduled_process_time()
+                .read()?;
+            let to_promis_limit =
+                settle_auction_clearing(ctx, dtype, auction_ts, effective_day_limit)?;
             metadosis.mark_failed(wwd)?;
             metadosis.mark_day_limit_used(wwd)?;
             emit_failed_execution(
@@ -495,9 +491,23 @@ fn process_metadosis(
                 tribute_nominal_total,
                 effective_day_limit,
             )?;
-            Ok(effective_day_limit)
+            Ok(to_promis_limit)
         }
     }
+}
+
+fn settle_auction_clearing(
+    ctx: &BlockRuntimeContext,
+    dtype: u8,
+    auction_ts: u64,
+    supply: U256,
+) -> Result<U256> {
+    if dtype != day_type::GREEN {
+        return Ok(supply);
+    }
+    let delivered =
+        outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), auction_ts, supply)?;
+    Ok(if delivered { U256::ZERO } else { supply })
 }
 
 fn emit_failed_execution(

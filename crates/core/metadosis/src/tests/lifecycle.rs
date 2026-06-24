@@ -708,6 +708,64 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
 }
 
 #[test]
+fn no_tributes_green_day_clears_started_auction() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 64]),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        let wwd = outbe_common::WorldwideDay::new(20260401u32);
+        let day_limit = U256::from(10u64).pow(U256::from(26u64));
+        let forming_start = wwd.start_timestamp();
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                DEFAULT_LOOKBACK_DELAY_HOURS,
+                DEFAULT_OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.record_day_limit(wwd, day_limit).unwrap();
+
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()
+            .unwrap();
+
+        assert!(outbe_desis::api::dispatch_stage_start(
+            storage.clone(),
+            auction_ts,
+            U256::from(10u64).pow(U256::from(18u64)),
+        )
+        .unwrap());
+        assert!(
+            outbe_desis::api::dispatch_stage_reveal(storage.clone(), auction_ts, true).unwrap()
+        );
+
+        run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_status(wwd).unwrap(), status::COMPLETED);
+
+        let promis = PromisLimitContract::new(storage);
+        assert!(promis.get_total_unallocated().unwrap() < day_limit);
+    });
+}
+
+#[test]
 fn test_events_emitted_for_accumulation_and_lifecycle() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
