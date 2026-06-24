@@ -518,6 +518,25 @@ pub(crate) fn run_boundary_outcome(
     // state deterministically. The offer key itself is preserved across the
     // reshare, so it is NOT touched here. Empty for non-reshare boundaries.
     if !artifact.tee_reshare_registrations.is_empty() {
+        // Reshare authority (membership gate): every re-registered enclave key must
+        // belong to a validator in the committee this boundary activates. The host
+        // relays the artifact; an injected registration for a non-member would
+        // otherwise place an attacker-controlled enclave key into the registry (and
+        // let it request the offer-key handoff). `new_active_set` is part of the
+        // hash-committed artifact, so this gate is byte-deterministic across
+        // validators. This bounds a malicious host / below-quorum collusion; a
+        // prior-committee endorsement is still required to bound a malicious
+        // supermajority of the new committee itself.
+        let authorized: std::collections::BTreeSet<alloy_primitives::Address> =
+            artifact.reshare.new_active_set.iter().copied().collect();
+        for r in &artifact.tee_reshare_registrations {
+            if !authorized.contains(&r.validator) {
+                return Err(PrecompileError::Revert(format!(
+                    "reshare TEE registration for validator {} is not in the activated committee",
+                    r.validator
+                )));
+            }
+        }
         let regs: Vec<(
             alloy_primitives::Address,
             alloy_primitives::B256,
@@ -1125,6 +1144,50 @@ mod tests {
         provider.enter(|storage| {
             let reg = outbe_teeregistry::TeeRegistry::new(storage);
             assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), recipient);
+        });
+    }
+
+    fn reshare_registration(
+        validator: alloy_primitives::Address,
+    ) -> outbe_primitives::consensus::TeeReshareRegistration {
+        outbe_primitives::consensus::TeeReshareRegistration {
+            validator,
+            recipient_x25519: B256::repeat_byte(0x01),
+            attestation_pub: B256::repeat_byte(0x02),
+            noise_static_pub: B256::repeat_byte(0x03),
+        }
+    }
+
+    #[test]
+    fn boundary_outcome_rejects_reshare_registration_for_non_committee_validator() {
+        // `boundary_noop` activates new_active_set = [VALIDATOR]; a registration for
+        // any other address is not authorized by the committee and must revert.
+        let mut provider = configured_storage(2, 2);
+        provider.enter(|storage| {
+            let outsider = alloy_primitives::Address::repeat_byte(0xBE);
+            let mut artifact = boundary_noop();
+            artifact.tee_reshare_registrations = vec![reshare_registration(outsider)];
+            let input = SystemTxInputV2::BoundaryOutcome { artifact }
+                .encode()
+                .unwrap();
+            assert!(
+                dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).is_err(),
+                "reshare registration for a non-committee validator must be rejected"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_outcome_accepts_reshare_registration_for_committee_validator() {
+        let mut provider = configured_storage(2, 2);
+        provider.enter(|storage| {
+            let mut artifact = boundary_noop();
+            artifact.tee_reshare_registrations = vec![reshare_registration(VALIDATOR)];
+            let input = SystemTxInputV2::BoundaryOutcome { artifact }
+                .encode()
+                .unwrap();
+            dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
+                .expect("reshare registration for a committee member is accepted");
         });
     }
 
