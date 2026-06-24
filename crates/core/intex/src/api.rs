@@ -29,7 +29,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         series_id: params.series_id,
         // u128 -> U256 widening is always lossless (see schema docs).
         promis_load_minor: U256::from(params.promis_load_minor),
-        cost_amount_minor: params.cost_amount_minor,
+        entry_price_minor: params.entry_price_minor,
         floor_price_minor: params.floor_price_minor,
         issued_intex_count: params.issued_intex_count,
         call_window_days: params.call_trigger.window_days,

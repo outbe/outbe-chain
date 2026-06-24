@@ -23,7 +23,7 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
         series_id,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
-        cost_amount_minor: 2_000,
+        entry_price_minor: U256::from(2_000u64),
         floor_price_minor: U256::from(1_500u64),
         intex_call_period: CALL_PERIOD,
         call_trigger: IntexCallTrigger {
@@ -50,7 +50,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.series_id, 7);
         // u128 -> U256 widening preserved.
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
-        assert_eq!(r.cost_amount_minor, 2_000);
+        assert_eq!(r.entry_price_minor, U256::from(2_000u64));
         assert_eq!(r.floor_price_minor, U256::from(1_500u64));
         assert_eq!(r.issued_intex_count, 100);
         assert_eq!(
@@ -229,7 +229,7 @@ fn precompile_series_data_round_trip() {
 
         assert_eq!(data.seriesId, 7);
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
-        assert_eq!(data.costAmountMinor, 2_000);
+        assert_eq!(data.entryPriceMinor, U256::from(2_000u64));
         assert_eq!(data.floorPriceMinor, U256::from(1_500u64));
         assert_eq!(data.issuedIntexCount, 100);
         assert_eq!(data.callWindowDays, 30);

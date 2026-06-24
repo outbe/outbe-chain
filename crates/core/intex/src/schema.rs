@@ -46,9 +46,10 @@ pub struct CreateSeriesParams {
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,
-    /// Cost amount (payment-token decimals).
-    pub cost_amount_minor: u64,
-    /// COEN price floor (1e18, oracle scale).
+    /// Entry price (per-unit, reference currency, 1e18 oracle scale). Primary
+    /// anchor; cost/floor/call derive from it.
+    pub entry_price_minor: U256,
+    /// Price floor (1e18, oracle scale).
     pub floor_price_minor: U256,
     /// Seconds between `called_at` and the settlement deadline.
     pub intex_call_period: u32,
@@ -71,7 +72,7 @@ pub struct SeriesRecord {
     pub promis_load_minor: U256,
 
     #[attribute(order = 1)]
-    pub cost_amount_minor: u64,
+    pub entry_price_minor: U256,
 
     #[attribute(order = 2)]
     pub floor_price_minor: U256,
