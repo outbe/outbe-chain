@@ -6,66 +6,63 @@ import {console2} from "forge-std/console2.sol";
 import {Scope} from "the-compact/src/types/Scope.sol";
 import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 
-import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
+import {CreateX} from "./0_DeployCreateX.s.sol";
+import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
-import {ICreateX} from "./utils/ICreateX.sol";
 
-/// @dev Deploys RouterAllocator + LayerZeroRouter via CreateX.
-///
-/// 1. Deploys RouterAllocator and builds the lockTag.
-/// 2. Deploys LayerZeroRouter via CreateX (compact, lockTag, escrow are immutables).
-///
-/// Standalone usage deploys with escrow=address(0).
-/// Full deployment with all deps should use DeployAll.
+/// @dev Deploys RouterAllocator + the composition {Router} via CreateX. The Router talks to the `crosschain` hub's
+///      `ERC7786Bridge` (no LayerZero endpoint / eids here — the protocol lives on the bridge).
 ///
 /// Required env vars:
 ///   DEPLOYER_PK      — deployer private key
 ///   CREATEX_ADDRESS  — deployed CreateX factory
 ///   CONTRACT_SALT    — salt string for deterministic deployment
 ///   COMPACT_ADDRESS  — The Compact address
-///   AUCTION_ADDRESS  — deployed Auction address (immutable on the router)
-///   LZ_ENDPOINT      — LayerZero V2 endpoint address
+///   AUCTION_ADDRESS  — deployed Auction (immutable on the router)
+///   BRIDGE_ADDRESS   — deployed ERC7786Bridge (the cross-chain hub facade)
 ///   ROUTER_OWNER     — contract owner (admin)
-contract DeployLayerZeroRouter is Script {
+/// Optional: ESCROW_ADDRESS (address(0) disables collateral).
+contract DeployRouter is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
         address createX = vm.envAddress("CREATEX_ADDRESS");
         string memory salt = vm.envString("CONTRACT_SALT");
         address compact = vm.envAddress("COMPACT_ADDRESS");
         address auction = vm.envAddress("AUCTION_ADDRESS");
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
+        address escrow = vm.envOr("ESCROW_ADDRESS", address(0));
 
         vm.startBroadcast(deployerPrivateKey);
-        (address router, address allocator) = deployRouter(createX, salt, compact, address(0), auction);
+        (address router, address allocator) = deployRouter(createX, salt, bridge, compact, escrow, auction);
         vm.stopBroadcast();
 
-        console2.log("RouterAllocator deployed at:", allocator);
-        console2.log("LayerZeroRouter deployed at:", router);
+        console2.log("RouterAllocator:", allocator);
+        console2.log("Router:", router);
     }
 
     function getRouterSaltHash(string memory salt) public view returns (bytes32) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        return keccak256(abi.encodePacked("LayerZeroRouter", salt, vm.addr(deployerPrivateKey)));
+        return keccak256(abi.encodePacked("Router", salt, vm.addr(deployerPrivateKey)));
     }
 
-    function deployRouter(address createX, string memory salt, address compact, address escrow, address auction)
-        public
-        returns (address router, address allocatorAddr)
-    {
-        // Deploy allocator and build lockTag
+    function deployRouter(
+        address createX,
+        string memory salt,
+        address bridge,
+        address compact,
+        address escrow,
+        address auction
+    ) public returns (address router, address allocatorAddr) {
         RouterAllocator allocator = new RouterAllocator(compact);
         bytes12 lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays);
         allocatorAddr = address(allocator);
-        console2.log("  RouterAllocator:", allocatorAddr);
 
-        // Deploy router via CreateX
-        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         address routerOwner = vm.envAddress("ROUTER_OWNER");
-
         bytes32 saltHash = getRouterSaltHash(salt);
         bytes memory bytecode = abi.encodePacked(
-            type(LayerZeroRouter).creationCode, abi.encode(lzEndpoint, routerOwner, compact, lockTag, escrow, auction)
+            type(Router).creationCode, abi.encode(bridge, routerOwner, compact, lockTag, escrow, auction)
         );
 
-        router = ICreateX(createX).deployCreate3(saltHash, bytecode);
+        router = CreateX(createX).deployCreate3(saltHash, bytecode);
     }
 }

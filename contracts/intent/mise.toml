@@ -69,13 +69,6 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/2_DeployAuction.s.sol:DeployAuction --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
 '''
 
-[tasks.deploy-lz-router]
-description = "Deploy LayerZeroRouter"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/3_DeployLayerZeroRouter.s.sol:DeployLayerZeroRouter --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
-'''
-
 [tasks.configure-all]
 description = "Run ConfigureAll"
 run = '''
@@ -83,16 +76,23 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/4_ConfigureAll.s.sol:ConfigureAll --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''
 
-[tasks.configure-lz-peers]
-description = "Set up LayerZero peers"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/SetupLZPeers.s.sol:SetupLZPeers --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
-'''
-
 [tasks.deploy-all]
 description = "Deploy everything"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/DeployAll.s.sol:DeployAll --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
+'''
+
+[tasks.deploy-router]
+description = "Deploy composition Router (talks to the ERC7786Bridge hub)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/3_DeployRouter.s.sol:DeployRouter --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
+'''
+
+[tasks.configure-router]
+description = "Register remote Routers (per REMOTE_CHAIN_IDS)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/ConfigureRouter.s.sol:ConfigureRouter --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''

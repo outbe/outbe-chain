@@ -45,10 +45,8 @@
   sepolia = { key = "${API_KEY_ETHERSCAN}" }
 
 [rpc_endpoints]
-  outbe-priv="https://eth.p.outbe.net"
   outbe-dev="https://eth.d.outbe.net"
   bsc-testnet="https://cosmopolitan-solemn-emerald.bsc-testnet.quiknode.pro/10f3eba8ae928e9655a53773651d528c78a45b4c/"
-  outbe-testnet-old="https://eth.testnet.outbe.net"
   outbe-testnet="https://rpc.testnet.outbe.net"
 
 [lint]
