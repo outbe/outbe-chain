@@ -4,14 +4,14 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {ERC7786Router} from "src/ERC7786Router.sol";
+import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {ERC7786RecipientMock} from "@openzeppelin/contracts/mocks/crosschain/ERC7786RecipientMock.sol";
 import {IERC7786GatewaySource} from "src/interfaces/IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-/// @dev Full-stack test: facade (ERC7786Router) -> LayerZeroGatewayAdapter -> mock endpoint, both sides on
+/// @dev Full-stack test: facade (ERC7786Bridge) -> LayerZeroGatewayAdapter -> mock endpoint, both sides on
 /// `block.chainid` but distinguished by LayerZero eid (the intent E2E simulation pattern).
 contract LayerZeroGatewayAdapterTest is Test {
     address internal owner = makeAddr("owner");
@@ -24,8 +24,8 @@ contract LayerZeroGatewayAdapterTest is Test {
     EndpointV2Mock internal endpointB;
     LayerZeroGatewayAdapter internal adapterA;
     LayerZeroGatewayAdapter internal adapterB;
-    ERC7786Router internal facadeA;
-    ERC7786Router internal facadeB;
+    ERC7786Bridge internal facadeA;
+    ERC7786Bridge internal facadeB;
     ERC7786RecipientMock internal recipient;
 
     function setUp() public {
@@ -35,8 +35,8 @@ contract LayerZeroGatewayAdapterTest is Test {
         adapterA = new LayerZeroGatewayAdapter(address(endpointA), owner);
         adapterB = new LayerZeroGatewayAdapter(address(endpointB), owner);
 
-        facadeA = new ERC7786Router(owner, address(adapterA));
-        facadeB = new ERC7786Router(owner, address(adapterB));
+        facadeA = new ERC7786Bridge(owner, address(adapterA));
+        facadeB = new ERC7786Bridge(owner, address(adapterB));
 
         recipient = new ERC7786RecipientMock(address(facadeB));
 
@@ -49,8 +49,8 @@ contract LayerZeroGatewayAdapterTest is Test {
         // Both logical chains share block.chainid here; each adapter binds it to the peer's eid.
         adapterA.setPeerWithChain(bEid, _b32(address(adapterB)), block.chainid);
         adapterB.setPeerWithChain(aEid, _b32(address(adapterA)), block.chainid);
-        facadeA.registerRemoteRouter(_interop(address(facadeB)));
-        facadeB.registerRemoteRouter(_interop(address(facadeA)));
+        facadeA.registerRemoteBridge(_interop(address(facadeB)));
+        facadeB.registerRemoteBridge(_interop(address(facadeA)));
         vm.stopPrank();
     }
 

@@ -11,7 +11,7 @@ import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
  * @dev ERC-7786 gateway adapter for Hyperlane.
  *
  * Wraps a Hyperlane `Mailbox` behind the ERC-7786 `IERC7786GatewaySource` interface so a protocol-agnostic facade
- * (e.g. {ERC7786Router}) can route messages through Hyperlane without knowing about Hyperlane domains or routers.
+ * (e.g. {ERC7786Bridge}) can route messages through Hyperlane without knowing about Hyperlane domains or routers.
  * All Hyperlane-specific concerns live here:
  *
  * * chainId <-> Hyperlane domain equivalence,
@@ -68,7 +68,14 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
     // ============================================ IERC7786GatewaySource ============================================
 
     /// @inheritdoc IERC7786GatewaySource
-    function supportsAttribute(bytes4 /*selector*/ ) public pure virtual returns (bool) {
+    function supportsAttribute(
+        bytes4 /*selector*/
+    )
+        public
+        pure
+        virtual
+        returns (bool)
+    {
         return false;
     }
 

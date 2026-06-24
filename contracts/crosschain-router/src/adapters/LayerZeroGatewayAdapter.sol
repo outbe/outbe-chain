@@ -12,7 +12,7 @@ import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interf
  * @dev ERC-7786 gateway adapter for LayerZero V2.
  *
  * Wraps a LayerZero `OApp` behind the ERC-7786 `IERC7786GatewaySource` interface so that a protocol-agnostic facade
- * (e.g. {ERC7786Router}) can route messages through LayerZero without knowing anything about endpoint ids or peers.
+ * (e.g. {ERC7786Bridge}) can route messages through LayerZero without knowing anything about endpoint ids or peers.
  * All LayerZero-specific concerns live here:
  *
  * * chainId <-> LayerZero endpoint id (eid) equivalence,
