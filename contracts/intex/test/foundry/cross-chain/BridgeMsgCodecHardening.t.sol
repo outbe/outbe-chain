@@ -14,11 +14,11 @@ contract BridgeMsgCodecHardeningHarness {
         uint32 relayGeneration,
         address[] calldata bidders,
         uint16[] calldata quantities,
-        uint64[] calldata prices,
+        uint32[] calldata rates,
         uint32[] calldata timestamps
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, isLast, relayGeneration, bidders, quantities, prices, timestamps
+            seriesId, srcEid, isLast, relayGeneration, bidders, quantities, rates, timestamps
         );
     }
 
@@ -50,7 +50,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeBidsBatch(bytes calldata m)
         external
         pure
-        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint64[] memory, uint32[] memory)
+        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint32[] memory, uint32[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(m);
     }
@@ -84,7 +84,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         bidders[1] = address(0xB2);
         uint16[] memory quantities = new uint16[](1); // one short
         quantities[0] = 1;
-        uint64[] memory prices = new uint64[](2);
+        uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
 
         vm.expectRevert(
@@ -92,7 +92,7 @@ contract BridgeMsgCodecHardeningTest is Test {
                 BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2), uint256(2)
             )
         );
-        harness.encodeBidsBatch(1, 1, true, 1, bidders, quantities, prices, timestamps);
+        harness.encodeBidsBatch(1, 1, true, 1, bidders, quantities, rates, timestamps);
     }
 
     function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {

@@ -29,7 +29,15 @@ contract IntexAuctionUupsTest is Test {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            promisLoadMinor: 1000, minIntexBidPrice: 1, costAmountMinor: 1, floorPriceMinor: 1, minIntexBidQuantity: 1
+            promisLoadMinor: 1000,
+            minIntexBidRate: 1,
+            entryPrice: 1,
+            floorPriceMinor: 1,
+            callPriceMinor: 1,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
+            minIntexBidQuantity: 1
         });
         vm.prank(bridger);
         auction.auctionStart(seriesId, schedule, params);

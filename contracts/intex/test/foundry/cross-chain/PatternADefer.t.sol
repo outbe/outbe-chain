@@ -49,7 +49,7 @@ contract StubAuctionWithBids {
             bids[i] = IIntexAuction.SubmittedBidData({
                 bidderAddress: address(uint160(0xCAFE + i)),
                 intexQuantity: 1,
-                intexBidPrice: 100e6,
+                intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp)
             });
         }

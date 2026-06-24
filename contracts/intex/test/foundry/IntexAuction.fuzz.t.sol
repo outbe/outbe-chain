@@ -21,7 +21,7 @@ contract IntexAuctionFuzzTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)");
+        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -30,8 +30,12 @@ contract IntexAuctionFuzzTest is Test {
     uint32 internal constant ISSUANCE_OFFSET = 300;
 
     uint16 internal constant MIN_QTY = 1;
-    uint64 internal constant MIN_PRICE = 10;
-    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
+    uint32 internal constant MIN_RATE = 10;
+    uint32 internal constant RATE_SCALE = 1_000_000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
+    // `_strike(ENTRY_PRICE, PROMIS_LOAD_MINOR) == STRIKE`; lock = qty * STRIKE * rate / RATE_SCALE.
+    uint64 internal constant ENTRY_PRICE = 1e19;
+    uint64 internal constant STRIKE = 1e12;
 
     function setUp() public {
         iba1 = vm.addr(iba1Pk);
@@ -46,70 +50,77 @@ contract IntexAuctionFuzzTest is Test {
         vm.stopPrank();
     }
 
-    function test_Fuzz_RevealBid_OverflowGuardFiresAboveUint64Max(uint256 qSeed, uint256 pSeed) public {
-        uint16 quantity = uint16(bound(qSeed, 2, type(uint16).max));
-        uint64 lo = uint64(type(uint64).max / quantity) + 1;
-        uint64 bidPrice = uint64(bound(pSeed, lo, type(uint64).max));
-        assertGt(uint256(quantity) * bidPrice, type(uint64).max, "precondition: product overflows uint64");
+    function test_Fuzz_RevealBid_OverflowGuardFiresAboveUint64Max(uint256 qSeed, uint256 rSeed) public {
+        // qty large enough that an in-range uint32 rate can push the lock past uint64.
+        uint16 quantity = uint16(bound(qSeed, 5000, type(uint16).max));
+        // Smallest rate that overflows: qty * STRIKE * rate / RATE_SCALE > uint64 max.
+        uint256 loRate = (uint256(type(uint64).max) * RATE_SCALE) / (uint256(quantity) * STRIKE) + 1;
+        uint32 rate = uint32(bound(rSeed, loRate, type(uint32).max));
+        assertGt(
+            uint256(quantity) * STRIKE * rate / RATE_SCALE, type(uint64).max, "precondition: product overflows uint64"
+        );
 
         uint32 seriesId = 20260201;
         _start(seriesId);
-        bytes memory sig = _signFor(iba1Pk, seriesId, iba1, quantity, bidPrice);
+        bytes memory sig = _signFor(iba1Pk, seriesId, iba1, quantity, rate);
         _commit(seriesId, iba1, sig);
         _enterReveal(seriesId);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidAmountOverflow.selector, quantity, bidPrice));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidAmountOverflow.selector, quantity, rate));
         vm.prank(iba1);
-        auction.revealBid(seriesId, quantity, bidPrice, uint64(block.chainid), sig);
+        auction.revealBid(seriesId, quantity, rate, uint64(block.chainid), sig);
     }
 
-    function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 pSeed) public {
+    function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
-        uint64 hi = uint64(type(uint64).max / quantity);
-        uint64 bidPrice = uint64(bound(pSeed, MIN_PRICE, hi));
-        uint64 product = uint64(uint256(quantity) * bidPrice);
+        // Largest rate that does NOT overflow uint64.
+        uint256 hiRate = (uint256(type(uint64).max) * RATE_SCALE) / (uint256(quantity) * STRIKE);
+        if (hiRate > type(uint32).max) hiRate = type(uint32).max;
+        vm.assume(hiRate >= MIN_RATE);
+        uint32 rate = uint32(bound(rSeed, MIN_RATE, hiRate));
+        uint64 expected = uint64(uint256(quantity) * STRIKE * rate / RATE_SCALE);
 
         uint32 seriesId = 20260202;
         _start(seriesId);
-        bytes memory sig = _signFor(iba1Pk, seriesId, iba1, quantity, bidPrice);
+        bytes memory sig = _signFor(iba1Pk, seriesId, iba1, quantity, rate);
         _commit(seriesId, iba1, sig);
         _enterReveal(seriesId);
 
         vm.prank(iba1);
-        auction.revealBid(seriesId, quantity, bidPrice, uint64(block.chainid), sig);
+        auction.revealBid(seriesId, quantity, rate, uint64(block.chainid), sig);
 
-        assertEq(escrow.lockedFunds(seriesId, iba1), product, "locked amount must equal quantity * bidPrice");
+        assertEq(escrow.lockedFunds(seriesId, iba1), expected, "locked == qty * strike * rate / RATE_SCALE");
     }
 
-    function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 priceSeed, uint256 wonSeed) public {
+    function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 rateSeed, uint256 wonSeed) public {
         uint32 seriesId = 20260203;
         uint32 revealed = _setupIssuanceWithTwoReveals(seriesId);
 
-        uint64 clearingPrice = uint64(bound(priceSeed, 0, type(uint64).max));
+        uint64 clearingRate = uint64(bound(rateSeed, 0, type(uint64).max));
         uint32 wonBidsCount = uint32(bound(wonSeed, 0, revealed + 3));
 
-        if (clearingPrice == 0) {
-            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionIntexClearingPrice"));
+        if (clearingRate == 0) {
+            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionIntexClearingRate"));
             vm.prank(bridger);
-            auction.executeAuctionClearing(seriesId, issued, clearingPrice, wonBidsCount);
+            auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
         } else if (wonBidsCount > revealed) {
             vm.expectRevert(
                 abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, wonBidsCount, revealed)
             );
             vm.prank(bridger);
-            auction.executeAuctionClearing(seriesId, issued, clearingPrice, wonBidsCount);
-        } else if (clearingPrice < MIN_PRICE) {
+            auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
+        } else if (clearingRate < MIN_RATE) {
             vm.expectRevert(
-                abi.encodeWithSelector(IIntexAuction.ClearingPriceBelowMin.selector, clearingPrice, MIN_PRICE)
+                abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE)
             );
             vm.prank(bridger);
-            auction.executeAuctionClearing(seriesId, issued, clearingPrice, wonBidsCount);
+            auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
         } else {
             vm.prank(bridger);
-            auction.executeAuctionClearing(seriesId, issued, clearingPrice, wonBidsCount);
+            auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
             IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
             assertEq(a.result.issuedIntexCount, issued, "issuedIntexCount");
-            assertEq(a.result.auctionIntexClearingPrice, clearingPrice, "clearingPrice");
+            assertEq(a.result.auctionIntexClearingRate, clearingRate, "clearingRate");
             assertEq(a.result.wonBidsCount, wonBidsCount, "wonBidsCount");
         }
     }
@@ -119,7 +130,7 @@ contract IntexAuctionFuzzTest is Test {
         uint32 revealed = _setupIssuanceWithTwoReveals(seriesId);
 
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, type(uint32).max, MIN_PRICE, revealed);
+        auction.executeAuctionClearing(seriesId, type(uint32).max, MIN_RATE, revealed);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
         assertEq(a.result.issuedIntexCount, type(uint32).max, "issuedIntexCount accepted unbounded");
@@ -139,12 +150,12 @@ contract IntexAuctionFuzzTest is Test {
         );
     }
 
-    function _signFor(uint256 pk, uint32 seriesId, address bidder, uint16 qty, uint64 price)
+    function _signFor(uint256 pk, uint32 seriesId, address bidder, uint16 qty, uint32 rate)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, price));
+        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, rate));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
@@ -158,9 +169,13 @@ contract IntexAuctionFuzzTest is Test {
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            minIntexBidPrice: MIN_PRICE,
-            costAmountMinor: 100,
+            minIntexBidRate: MIN_RATE,
+            entryPrice: ENTRY_PRICE,
             floorPriceMinor: 100,
+            callPriceMinor: 200,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
             minIntexBidQuantity: MIN_QTY
         });
         vm.prank(bridger);

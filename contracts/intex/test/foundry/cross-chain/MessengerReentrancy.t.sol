@@ -66,7 +66,7 @@ contract ReentrancyProbeDesis {
         uint32, /* relayGeneration */
         address[] calldata, /* bidders */
         uint16[] calldata, /* quantities */
-        uint64[] calldata, /* prices */
+        uint32[] calldata, /* rates */
         uint32[] calldata /* timestamps */
     ) external {
         observedGuardSlot = uint256(VM.load(bridge, REENTRANCY_GUARD_STORAGE));
@@ -145,7 +145,8 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         // but `wire` rejects address(0). Reuse the probe so all four wires are non-zero.
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 3);
+        bytes memory packet =
+            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
 
         _deliver(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger), packet);
 
@@ -158,7 +159,7 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         outbeMessenger.wire(address(probeDesis), makeAddr("factory"));
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
 
         _deliver(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger), packet);

@@ -176,9 +176,13 @@ contract OriginMessenger is
             p.revealEnd,
             p.issuanceEnd,
             p.promisLoadMinor,
-            p.minIntexBidPrice,
-            p.costAmountMinor,
+            p.minIntexBidRate,
+            p.entryPrice,
             p.floorPriceMinor,
+            p.callPriceMinor,
+            p.intexCallPeriod,
+            p.callWindowDays,
+            p.callThresholdDays,
             p.minIntexBidQuantity
         );
     }
@@ -210,13 +214,13 @@ contract OriginMessenger is
     function quoteSendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionIntexClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         bool payInLzToken
     ) external view returns (MessagingFee memory fee) {
         bytes memory message = BridgeMsgCodec.encodeAuctionResult(
-            seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount
+            seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount
         );
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_AUCTION_RESULT, extraOptions);
         return _quote(BNB_EID, message, options, payInLzToken);
@@ -353,19 +357,19 @@ contract OriginMessenger is
     function sendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionIntexClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         MessagingFee calldata fee,
         address refundAddress
     ) external payable onlyRole(DESIS_ROLE) returns (MessagingReceipt memory receipt) {
         bytes memory message = BridgeMsgCodec.encodeAuctionResult(
-                seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount
+                seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount
             );
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_AUCTION_RESULT, extraOptions);
 
         receipt = _lzSend(BNB_EID, message, options, fee, refundAddress);
-        emit AuctionResultSent(receipt.guid, seriesId, issuedIntexCount, auctionIntexClearingPrice);
+        emit AuctionResultSent(receipt.guid, seriesId, issuedIntexCount, auctionIntexClearingRate);
     }
 
     /// @inheritdoc IOriginMessenger
@@ -513,7 +517,7 @@ contract OriginMessenger is
             uint32 relayGeneration,
             address[] memory bidderAddresses,
             uint16[] memory intexQuantities,
-            uint64[] memory intexBidPrices,
+            uint32[] memory intexBidRates,
             uint32[] memory timestamps
         ) = BridgeMsgCodec.decodeBidsBatch(_message);
 
@@ -528,7 +532,7 @@ contract OriginMessenger is
                 relayGeneration,
                 bidderAddresses,
                 intexQuantities,
-                intexBidPrices,
+                intexBidRates,
                 timestamps
             );
 

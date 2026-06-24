@@ -248,7 +248,7 @@ contract TargetMessenger is
         uint256 len = params.bidderAddresses.length;
         if (len == 0) revert EmptyArray();
         if (
-            len != params.intexQuantities.length || len != params.intexBidPrices.length
+            len != params.intexQuantities.length || len != params.intexBidRates.length
                 || len != params.timestamps.length
         ) {
             revert ArrayLengthMismatch();
@@ -278,7 +278,7 @@ contract TargetMessenger is
             gen,
             params.bidderAddresses,
             params.intexQuantities,
-            params.intexBidPrices,
+            params.intexBidRates,
             params.timestamps
         );
         options = _bidsReceiveOption(params.bidderAddresses.length);
@@ -362,9 +362,13 @@ contract TargetMessenger is
             uint32 revealEnd,
             uint32 issuanceEnd,
             uint128 promisLoadMinor,
-            uint64 minIntexBidPrice,
-            uint64 costAmountMinor,
+            uint32 minIntexBidRate,
+            uint64 entryPrice,
             uint64 floorPriceMinor,
+            uint64 callPriceMinor,
+            uint32 intexCallPeriod,
+            uint16 callWindowDays,
+            uint16 callThresholdDays,
             uint16 minIntexBidQuantity
         ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
 
@@ -372,9 +376,13 @@ contract TargetMessenger is
             IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd});
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: promisLoadMinor,
-            minIntexBidPrice: minIntexBidPrice,
-            costAmountMinor: costAmountMinor,
+            minIntexBidRate: minIntexBidRate,
+            entryPrice: entryPrice,
             floorPriceMinor: floorPriceMinor,
+            callPriceMinor: callPriceMinor,
+            intexCallPeriod: intexCallPeriod,
+            callWindowDays: callWindowDays,
+            callThresholdDays: callThresholdDays,
             minIntexBidQuantity: minIntexBidQuantity
         });
         _s().auction.auctionStart(seriesId, schedule, params);
@@ -462,7 +470,7 @@ contract TargetMessenger is
 
         if (bidsCount == 0) {
             _sendOneBidsBatch(
-                seriesId, srcEid, true, gen, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+                seriesId, srcEid, true, gen, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
             );
             return;
         }
@@ -475,19 +483,19 @@ contract TargetMessenger is
 
             address[] memory bidderAddresses = new address[](chunkLen);
             uint16[] memory intexQuantities = new uint16[](chunkLen);
-            uint64[] memory intexBidPrices = new uint64[](chunkLen);
+            uint32[] memory intexBidRates = new uint32[](chunkLen);
             uint32[] memory timestamps = new uint32[](chunkLen);
 
             for (uint256 i = 0; i < chunkLen; i++) {
                 IIntexAuction.SubmittedBidData memory bid = bids[start + i];
                 bidderAddresses[i] = bid.bidderAddress;
                 intexQuantities[i] = bid.intexQuantity;
-                intexBidPrices[i] = bid.intexBidPrice;
+                intexBidRates[i] = bid.intexBidRate;
                 timestamps[i] = bid.timestamp;
             }
 
             _sendOneBidsBatch(
-                seriesId, srcEid, end == bidsCount, gen, bidderAddresses, intexQuantities, intexBidPrices, timestamps
+                seriesId, srcEid, end == bidsCount, gen, bidderAddresses, intexQuantities, intexBidRates, timestamps
             );
         }
     }
@@ -502,11 +510,11 @@ contract TargetMessenger is
         uint32 relayGeneration,
         address[] memory bidderAddresses,
         uint16[] memory intexQuantities,
-        uint64[] memory intexBidPrices,
+        uint32[] memory intexBidRates,
         uint32[] memory timestamps
     ) internal {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, isLast, relayGeneration, bidderAddresses, intexQuantities, intexBidPrices, timestamps
+            seriesId, srcEid, isLast, relayGeneration, bidderAddresses, intexQuantities, intexBidRates, timestamps
         );
         bytes memory options = _bidsReceiveOption(bidderAddresses.length);
 
@@ -526,12 +534,12 @@ contract TargetMessenger is
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded auction result payload
     function _handleAuctionResult(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingPrice, uint32 wonBidsCount) =
+        (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(_message);
 
-        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount);
+        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount);
 
-        emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionIntexClearingPrice);
+        emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionIntexClearingRate);
     }
 
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.

@@ -94,9 +94,13 @@ contract OriginMessengerTest is TestHelperOz5 {
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
             promisLoadMinor: 1000,
-            minIntexBidPrice: 50e6,
-            costAmountMinor: 100e6,
+            minIntexBidRate: 50e6,
+            entryPrice: 100e6,
             floorPriceMinor: 50e6,
+            callPriceMinor: 25e6,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
             minIntexBidQuantity: 1
         });
     }

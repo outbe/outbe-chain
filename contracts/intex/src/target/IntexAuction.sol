@@ -8,6 +8,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
+import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 
 /// @title IntexAuction
 /// @author Outbe
@@ -28,9 +29,9 @@ contract IntexAuction is
     /// @notice Role identifier for bridge operations (stage ops driven by the relayer).
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
-    /// @dev EIP-712 type hash for `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)`.
+    /// @dev EIP-712 type hash for `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`.
     bytes32 private constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)");
+        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
 
     /// @custom:storage-location erc7201:outbe.intex.IntexAuction
     struct IntexAuctionStorage {
@@ -136,10 +137,10 @@ contract IntexAuction is
     function revealedBids(uint32 seriesId, uint256 index)
         external
         view
-        returns (address bidderAddress, uint64 intexBidPrice, uint32 timestamp, uint16 intexQuantity)
+        returns (address bidderAddress, uint32 intexBidRate, uint32 timestamp, uint16 intexQuantity)
     {
         IIntexAuction.SubmittedBidData storage b = _s().revealedBids[seriesId][index];
-        return (b.bidderAddress, b.intexBidPrice, b.timestamp, b.intexQuantity);
+        return (b.bidderAddress, b.intexBidRate, b.timestamp, b.intexQuantity);
     }
 
     // --- Admin ---
@@ -178,7 +179,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
-                issuedIntexLoadedPromis: 0, auctionIntexClearingPrice: 0, issuedIntexCount: 0, wonBidsCount: 0
+                issuedIntexLoadedPromis: 0, auctionIntexClearingRate: 0, issuedIntexCount: 0, wonBidsCount: 0
             })
         });
 
@@ -235,7 +236,7 @@ contract IntexAuction is
     function executeAuctionClearing(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionIntexClearingRate,
         uint32 wonBidsCount
     ) external override onlyRole(RELAYER_ROLE) nonReentrant {
         IntexAuctionStorage storage $ = _s();
@@ -246,25 +247,25 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        if (auctionIntexClearingPrice == 0) revert ZeroValue("auctionIntexClearingPrice");
+        if (auctionIntexClearingRate == 0) revert ZeroValue("auctionIntexClearingRate");
 
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
-        // against on-chain counters — winners cannot exceed revealed bids, and the clearing price
+        // against on-chain counters — winners cannot exceed revealed bids, and the clearing rate
         // cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[seriesId].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
-        if (auctionIntexClearingPrice < a.params.minIntexBidPrice) {
-            revert ClearingPriceBelowMin(auctionIntexClearingPrice, a.params.minIntexBidPrice);
+        if (auctionIntexClearingRate < a.params.minIntexBidRate) {
+            revert ClearingRateBelowMin(auctionIntexClearingRate, a.params.minIntexBidRate);
         }
 
         // Final data provided by Outbe; `issuedIntexLoadedPromis` is derived on-chain.
         a.result.issuedIntexCount = issuedIntexCount;
-        a.result.auctionIntexClearingPrice = auctionIntexClearingPrice;
+        a.result.auctionIntexClearingRate = auctionIntexClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
-        emit AuctionClearingExecuted(seriesId, auctionIntexClearingPrice, issuedIntexCount);
+        emit AuctionClearingExecuted(seriesId, auctionIntexClearingRate, issuedIntexCount);
     }
 
     // --- User Actions ---
@@ -317,7 +318,7 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function revealBid(uint32 seriesId, uint16 quantity, uint64 bidPrice, uint64 chainId, bytes memory signature)
+    function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
         external
         override
         nonReentrant
@@ -335,17 +336,20 @@ contract IntexAuction is
         bytes32 committedHash = $.committedBidsByHash[seriesId][msg.sender];
         if (committedHash == bytes32(0)) revert BidNotFound();
         if ($.revealedBidsByBidder[seriesId][msg.sender]) revert BidAlreadyRevealed();
-        if (quantity == 0 || bidPrice == 0) revert ZeroValue("quantity/bidPrice");
+        if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
-        if (bidPrice < a.params.minIntexBidPrice) revert BidBelowMinIntexBidPrice();
+        if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
 
-        // Compute the lock amount in 256-bit space so an over-range product surfaces as a typed
-        // error rather than a bare arithmetic Panic(0x11); lockFunds takes a uint64 amount.
-        uint256 lockAmount = uint256(quantity) * bidPrice;
-        if (lockAmount > type(uint64).max) revert BidAmountOverflow(quantity, bidPrice);
+        // Escrow the rate against the per-Intex strike: lock = qty * strike * rate / RATE_SCALE.
+        // Computed in 256-bit space so an over-range product surfaces as a typed error rather than
+        // a bare Panic(0x11); lockFunds takes a uint64 amount. The strike derives from entryPrice
+        // identically to the Outbe clearing side, so the lock matches bit-for-bit.
+        uint256 strike = _strike(a.params.entryPrice, a.params.promisLoadMinor);
+        uint256 lockAmount = uint256(quantity) * strike * bidRate / BridgeMsgCodec.RATE_SCALE;
+        if (lockAmount > type(uint64).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.
-        _verifyRevealSignature(seriesId, quantity, bidPrice, signature, committedHash);
+        _verifyRevealSignature(seriesId, quantity, bidRate, signature, committedHash);
 
         // Effects: record the reveal before the external lockFunds call (CEI).
         // If lockFunds reverts the whole tx is rolled back, so atomicity is preserved.
@@ -354,7 +358,7 @@ contract IntexAuction is
         $.revealedBids[seriesId].push(
             IIntexAuction.SubmittedBidData({
                 bidderAddress: msg.sender,
-                intexBidPrice: bidPrice,
+                intexBidRate: bidRate,
                 timestamp: uint32(block.timestamp),
                 intexQuantity: quantity
             })
@@ -362,7 +366,7 @@ contract IntexAuction is
 
         $.auctionRunningCounts[seriesId].revealedBidsCount += 1;
 
-        emit BidRevealed(seriesId, msg.sender, quantity, bidPrice);
+        emit BidRevealed(seriesId, msg.sender, quantity, bidRate);
 
         // Interactions
         // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
@@ -375,20 +379,35 @@ contract IntexAuction is
     ///      `keccak256(signature)` does not equal the stored commit hash.
     /// @param seriesId Auction series id (yyyymmdd as uint32).
     /// @param quantity Requested Intex quantity.
-    /// @param bidPrice Bid price per unit (payment-token decimals).
+    /// @param bidRate Bid rate (`1e6` fixed-point, % of strike).
     /// @param signature 65-byte ECDSA signature over the EIP-712 typed data.
     /// @param committedHash The `keccak256(signature)` previously stored by `commitBid`.
     function _verifyRevealSignature(
         uint32 seriesId,
         uint16 quantity,
-        uint64 bidPrice,
+        uint32 bidRate,
         bytes memory signature,
         bytes32 committedHash
     ) internal view {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, msg.sender, quantity, bidPrice));
+        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, msg.sender, quantity, bidRate));
         bytes32 digest = _hashTypedDataV4(structHash);
         address signer = ECDSA.recover(digest, signature);
         if (signer != msg.sender || keccak256(signature) != committedHash) revert RevealHashMismatch();
+    }
+
+    /// @notice Per-Intex strike (payment-token minor units) the bid rate applies against.
+    /// @dev Mirrors Desis `from_entry_price` bit-for-bit so the BNB escrow lock equals the Outbe
+    ///      clearing computation: `strike = entryPrice * PROMIS_LOAD / 1e12`, truncated to uint64,
+    ///      then rounded up to the next multiple of 100. `PROMIS_LOAD = promisLoadMinor / 1e18`.
+    /// @param entryPrice Per-unit entry price (reference ccy).
+    /// @param promisLoadMinor Promis tokens per Intex unit (18 decimals).
+    /// @return The per-Intex strike, saturated to uint64.
+    function _strike(uint64 entryPrice, uint128 promisLoadMinor) internal pure returns (uint64) {
+        uint256 promisLoad = uint256(promisLoadMinor) / 1e18;
+        uint256 raw = uint256(entryPrice) * promisLoad / 1e12;
+        uint64 rawU64 = raw > type(uint64).max ? type(uint64).max : uint64(raw);
+        uint256 rounded = (uint256(rawU64) + 99) / 100 * 100;
+        return rounded > type(uint64).max ? type(uint64).max : uint64(rounded);
     }
 
     // --- Views ---
@@ -437,7 +456,7 @@ contract IntexAuction is
             return IIntexAuction.AuctionStage.Cancelled;
         }
 
-        if (a.result.auctionIntexClearingPrice > 0) {
+        if (a.result.auctionIntexClearingRate > 0) {
             return IIntexAuction.AuctionStage.Completed;
         }
 

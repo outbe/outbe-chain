@@ -124,12 +124,12 @@ contract DuplicateProtectionTest is TestHelperOz5 {
     /// @dev `STAGE_START` has the simplest downstream — single `auction.auctionStart` call with
     ///      no return values. NoOp fallback accepts it without needing typed stubs.
     function _stageStartPacket(uint32 seriesId) internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeAuctionStageStart(seriesId, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 3);
+        return BridgeMsgCodec.encodeAuctionStageStart(seriesId, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
     }
 
     function _bidsBatchPacket(uint32 seriesId, uint32 srcEid) internal pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            seriesId, srcEid, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
     }
 

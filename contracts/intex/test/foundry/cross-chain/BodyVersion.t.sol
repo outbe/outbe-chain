@@ -18,15 +18,15 @@ contract BodyVersionTest is Test {
         bytes memory encoded;
 
         encoded = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            1, 30101, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsBatch.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
-        encoded = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 1);
+        encoded = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
-        assertEq(encoded.length, 60, "stageStart.length"); // 2 header + 58 body
+        assertEq(encoded.length, 72, "stageStart.length"); // 2 header + 70 body
 
         encoded = BridgeMsgCodec.encodeAuctionStageReveal(1, true);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageReveal.version");
@@ -62,16 +62,21 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: round-trip ---
 
     function test_BridgeCodec_AuctionStageStart_RoundTrip() public view {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 3);
+        bytes memory packet =
+            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3);
         (
             uint32 seriesId,
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
             uint128 promisLoadMinor,
-            uint64 minBid,
-            uint64 strike,
+            uint32 minBidRate,
+            uint64 entryPrice,
             uint64 floor,
+            uint64 callPrice,
+            uint32 callPeriod,
+            uint16 callWindowDays,
+            uint16 callThresholdDays,
             uint16 minQty
         ) = this.exposedDecodeAuctionStageStart(packet);
 
@@ -80,9 +85,13 @@ contract BodyVersionTest is Test {
         assertEq(revealEnd, 200);
         assertEq(issuanceEnd, 300);
         assertEq(promisLoadMinor, 1e18);
-        assertEq(minBid, 5e6);
-        assertEq(strike, 7e6);
+        assertEq(minBidRate, 5e6);
+        assertEq(entryPrice, 7e6);
         assertEq(floor, 11e6);
+        assertEq(callPrice, 13e6);
+        assertEq(callPeriod, 5);
+        assertEq(callWindowDays, 6);
+        assertEq(callThresholdDays, 7);
         assertEq(minQty, 3);
     }
 
@@ -112,7 +121,7 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: unknown version reverts ---
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageStart_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 1);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
         packet[0] = 0xFF;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xFF));
         this.exposedDecodeAuctionStageStart(packet);
@@ -141,7 +150,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_UnknownBodyVersion_BidsBatch_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            1, 30101, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         packet[0] = 0x99;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x99));
@@ -219,12 +228,12 @@ contract BodyVersionTest is Test {
         // encoder change.
         address[] memory bidders = new address[](2);
         uint16[] memory quantities = new uint16[](1); // short
-        uint64[] memory prices = new uint64[](2);
+        uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(uint32(42), uint32(30101), true, uint32(1), bidders, quantities, prices, timestamps)
+            abi.encode(uint32(42), uint32(30101), true, uint32(1), bidders, quantities, rates, timestamps)
         );
 
         vm.expectRevert(
@@ -277,19 +286,19 @@ contract BodyVersionTest is Test {
         bidders[0] = address(0xB1);
         uint16[] memory quantities = new uint16[](1);
         quantities[0] = 7;
-        uint64[] memory prices = new uint64[](1);
-        prices[0] = 100;
+        uint32[] memory rates = new uint32[](1);
+        rates[0] = 100;
         uint32[] memory timestamps = new uint32[](1);
         timestamps[0] = 42;
 
         bytes memory lastPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, true, 7, bidders, quantities, prices, timestamps);
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, true, 7, bidders, quantities, rates, timestamps);
         (,, bool isLastTrue, uint32 genTrue,,,,) = this.exposedDecodeBidsBatch(lastPacket);
         assertTrue(isLastTrue, "isLast=true should round-trip");
         assertEq(genTrue, 7, "relayGeneration should round-trip");
 
         bytes memory midPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, false, 7, bidders, quantities, prices, timestamps);
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, false, 7, bidders, quantities, rates, timestamps);
         (,, bool isLastFalse,,,,,) = this.exposedDecodeBidsBatch(midPacket);
         assertFalse(isLastFalse, "isLast=false should round-trip");
     }
@@ -299,7 +308,7 @@ contract BodyVersionTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint64[] memory, uint32[] memory)
+        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint32[] memory, uint32[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
@@ -307,7 +316,7 @@ contract BodyVersionTest is Test {
     function exposedDecodeAuctionStageStart(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, uint32, uint32, uint128, uint64, uint64, uint64, uint16)
+        returns (uint32, uint32, uint32, uint32, uint128, uint32, uint64, uint64, uint64, uint32, uint16, uint16, uint16)
     {
         return BridgeMsgCodec.decodeAuctionStageStart(p);
     }

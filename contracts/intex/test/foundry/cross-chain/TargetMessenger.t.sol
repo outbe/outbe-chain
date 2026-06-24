@@ -101,13 +101,13 @@ contract TargetMessengerTest is TestHelperOz5 {
     {
         address[] memory bidderAddresses = new address[](count);
         uint16[] memory intexQuantities = new uint16[](count);
-        uint64[] memory intexBidPrices = new uint64[](count);
+        uint32[] memory intexBidRates = new uint32[](count);
         uint32[] memory timestamps = new uint32[](count);
 
         for (uint256 i = 0; i < count; i++) {
             bidderAddresses[i] = address(uint160(0x1000 + i));
             intexQuantities[i] = uint16(10 + i);
-            intexBidPrices[i] = uint64(100e6 + i);
+            intexBidRates[i] = uint32(100e6 + i);
             timestamps[i] = uint32(block.timestamp);
         }
 
@@ -115,7 +115,7 @@ contract TargetMessengerTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             bidderAddresses: bidderAddresses,
             intexQuantities: intexQuantities,
-            intexBidPrices: intexBidPrices,
+            intexBidRates: intexBidRates,
             timestamps: timestamps,
             extraOptions: options,
             refundAddress: user

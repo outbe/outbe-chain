@@ -29,12 +29,12 @@ interface IIntexAuction {
     }
 
     /// @notice Revealed bid payload. Slot-packed: slot 0 holds
-    ///         `bidderAddress` (20B) + `intexBidPrice` (8B) + `timestamp` (4B) = 32B.
+    ///         `bidderAddress` (20B) + `intexBidRate` (4B) + `timestamp` (4B) + `intexQuantity` (2B) = 30B.
     struct SubmittedBidData {
         /// @notice Bidder IBA address.
         address bidderAddress;
-        /// @notice Bid price per Intex unit the bidder accepts (payment-token decimals).
-        uint64 intexBidPrice;
+        /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of strike).
+        uint32 intexBidRate;
         /// @notice Timestamp assigned at reveal (ordering only).
         uint32 timestamp;
         /// @notice Requested quantity (Intex units).
@@ -53,15 +53,24 @@ interface IIntexAuction {
     }
 
     /// @notice Auction input parameters, stored per auction.
+    /// @dev Field order mirrors the AUCTION_STAGE_START wire body (minus the schedule).
     struct AuctionParams {
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
-        /// @notice Minimum allowed bid price per Intex unit; rejects bids below this on reveal.
-        uint64 minIntexBidPrice;
-        /// @notice Cost amount (payment-token minor units).
-        uint64 costAmountMinor;
+        /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of strike); rejects bids below it on reveal.
+        uint32 minIntexBidRate;
+        /// @notice Per-unit entry price (reference ccy); the escrow strike derives from it.
+        uint64 entryPrice;
         /// @notice Floor price (payment-token minor units).
         uint64 floorPriceMinor;
+        /// @notice Call price (payment-token minor units).
+        uint64 callPriceMinor;
+        /// @notice Called→deadline window in seconds (0 = default).
+        uint32 intexCallPeriod;
+        /// @notice Call-trigger observation window in days.
+        uint16 callWindowDays;
+        /// @notice Call-trigger threshold in days.
+        uint16 callThresholdDays;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
     }
@@ -70,8 +79,8 @@ interface IIntexAuction {
     struct AuctionResult {
         /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * promisLoadMinor`); derived on-chain at clearing.
         uint128 issuedIntexLoadedPromis;
-        /// @notice Uniform auction clearing price used to issue Intex.
-        uint64 auctionIntexClearingPrice;
+        /// @notice Uniform auction clearing rate (`1e6` fixed-point) used to issue Intex.
+        uint64 auctionIntexClearingRate;
         /// @notice Number of Intex units issued.
         uint32 issuedIntexCount;
         /// @notice Number of winning bids (provided by Outbe).
@@ -103,9 +112,9 @@ interface IIntexAuction {
 
     /// @notice Emitted when an auction is cleared.
     /// @param seriesId Auction series id.
-    /// @param auctionIntexClearingPrice Uniform auction clearing price.
+    /// @param auctionIntexClearingRate Uniform auction clearing rate (`1e6` fixed-point).
     /// @param issuedIntexCount Total number of issued Intex units.
-    event AuctionClearingExecuted(uint32 indexed seriesId, uint64 auctionIntexClearingPrice, uint32 issuedIntexCount);
+    event AuctionClearingExecuted(uint32 indexed seriesId, uint64 auctionIntexClearingRate, uint32 issuedIntexCount);
 
     /// @notice Emitted on `commitBid` with the sealed commit hash.
     /// @param seriesId Auction series id.
@@ -117,8 +126,8 @@ interface IIntexAuction {
     /// @param seriesId Auction series id.
     /// @param bidder Bidder address.
     /// @param quantity Revealed Intex quantity.
-    /// @param bidPrice Revealed bid price per unit.
-    event BidRevealed(uint32 indexed seriesId, address indexed bidder, uint16 indexed quantity, uint64 bidPrice);
+    /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of strike).
+    event BidRevealed(uint32 indexed seriesId, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
 
     /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
     /// @param seriesId Auction series id.
@@ -148,20 +157,20 @@ interface IIntexAuction {
     error BidAlreadyRevealed();
     /// @notice Reveal payload does not match the commit hash.
     error RevealHashMismatch();
-    /// @notice Bid price is below `minIntexBidPrice`.
-    error BidBelowMinIntexBidPrice();
+    /// @notice Bid rate is below `minIntexBidRate`.
+    error BidBelowMinIntexBidRate();
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice `quantity * bidPrice` exceeds the uint64 lock-amount range.
-    error BidAmountOverflow(uint16 quantity, uint64 bidPrice);
+    /// @notice `quantity * strike * bidRate / RATE_SCALE` exceeds the uint64 lock-amount range.
+    error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice Auction does not exist.
     error AuctionNotFound();
     /// @notice Auction already exists.
     error AuctionAlreadyExists();
     /// @notice Clearing result claims more winners than were revealed on-chain.
     error WonBidsExceedRevealed(uint32 wonBidsCount, uint32 revealedBidsCount);
-    /// @notice Clearing price is below the configured minimum bid price.
-    error ClearingPriceBelowMin(uint64 clearingPrice, uint64 minIntexBidPrice);
+    /// @notice Clearing rate is below the configured minimum bid rate.
+    error ClearingRateBelowMin(uint64 clearingRate, uint32 minIntexBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
     /// @notice Commit hash must be non-zero.
@@ -203,12 +212,12 @@ interface IIntexAuction {
     /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedIntexCount * promisLoadMinor`).
     /// @param seriesId Auction series id.
     /// @param issuedIntexCount Final number of issued Intex units.
-    /// @param auctionIntexClearingPrice Uniform clearing price calculated by Outbe.
+    /// @param auctionIntexClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
     /// @param wonBidsCount Number of winning bids (from Outbe).
     function executeAuctionClearing(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionIntexClearingRate,
         uint32 wonBidsCount
     ) external;
 
@@ -217,7 +226,7 @@ interface IIntexAuction {
     /// @notice Commit a sealed bid hash for an auction.
     /// @param seriesId Auction series id.
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
-    ///                   signature over `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)`
+    ///                   signature over `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`
     ///                   under the `IntexAuction` v1 domain (`chainId`, `verifyingContract = address(this)`).
     function commitBid(uint32 seriesId, bytes32 commitHash) external;
 
@@ -230,11 +239,11 @@ interface IIntexAuction {
     /// @notice Reveal a bid.
     /// @param seriesId Auction series id.
     /// @param quantity Requested quantity (Intex units).
-    /// @param bidPrice Bid price per unit (payment-token decimals).
+    /// @param bidRate Bid rate (`1e6` fixed-point, % of strike).
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(uint32 seriesId, uint16 quantity, uint64 bidPrice, uint64 chainId, bytes memory signature)
+    function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
         external;
 
     // --- Views ---

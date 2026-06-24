@@ -38,9 +38,13 @@ contract IntexAuctionScheduleSnapTest is Test {
         });
         IIntexAuction.AuctionParams memory p = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
-            minIntexBidPrice: 10,
-            costAmountMinor: 100,
+            minIntexBidRate: 10,
+            entryPrice: 100,
             floorPriceMinor: 100,
+            callPriceMinor: 100,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
             minIntexBidQuantity: 1
         });
         vm.prank(bridger);
