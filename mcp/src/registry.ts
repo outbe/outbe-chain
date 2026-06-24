@@ -169,9 +169,9 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   fidelity: {
     address: A("0x000000000000000000000000000000000000100C"),
-    note: "Fidelity index",
+    note: "Fidelity RCFI",
     abi: parseAbi([
-      "function getFidelityIndex(address account) view returns (uint64)",
+      "function getRcfi(address account) view returns (uint64)",
     ]),
   },
 

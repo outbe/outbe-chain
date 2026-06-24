@@ -17,9 +17,10 @@ use outbe_primitives::addresses::{
     DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS, GRATIS_POOL_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
     METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
-    PROMIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS,
-    STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-    VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
+    SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
+    ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
@@ -79,6 +80,11 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
         a if a == PROMIS_ADDRESS => (
             "promis",
             outbe_promis::precompile::dispatch,
+            default_base_gas,
+        ),
+        a if a == PROMIS_FACTORY_ADDRESS => (
+            "promisfactory",
+            outbe_promisfactory::precompile::dispatch,
             default_base_gas,
         ),
         a if a == TRIBUTE_ADDRESS => (
@@ -262,6 +268,7 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
         PROMIS_ADDRESS,
+        PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,

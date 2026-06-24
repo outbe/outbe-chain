@@ -107,6 +107,31 @@ pub const WRITE_BUFFER: usize = 64 * 1024;
 pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
+// Marshal block-resolution timing
+//
+// Read cross-module by the application handler, finalization actor, and the
+// verify / epoch-boundary resolution paths — so they live here rather than
+// inside the handler implementation module.
+// ---------------------------------------------------------------------------
+
+/// Maximum retry attempts for marshal block resolution before structured application failure.
+pub const FINALIZE_MAX_RETRIES: u32 = 5;
+/// Delay between retry attempts for marshal block resolution.
+pub const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// Maximum time to wait for marshal block resolution during verify.
+pub const VERIFY_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
+/// Maximum time to wait for marshal parent resolution during proposal.
+pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
+/// Per-attempt time budget for marshal block resolution during finalization.
+///
+/// Without this bound, a `subscribe_by_digest` waiter that never completes can
+/// wedge the application handler's serial event loop, blocking propose/verify
+/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
+/// Exhaustion is surfaced as a structured application failure, not a direct
+/// process kill from inside the handler.
+pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+// ---------------------------------------------------------------------------
 // Marshal storage constants (matching Tempo's production defaults)
 // ---------------------------------------------------------------------------
 

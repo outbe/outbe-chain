@@ -12,6 +12,9 @@
 //! through steps 16-21.
 
 pub mod actor;
+pub mod attestation;
+pub mod block_cache;
+pub mod committee_prelude;
 pub mod finalize_verify;
 pub mod ingress;
 pub mod late_sig_store;

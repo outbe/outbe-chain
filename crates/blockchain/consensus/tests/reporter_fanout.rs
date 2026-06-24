@@ -34,14 +34,18 @@ use outbe_consensus::{
     finalization::{
         ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
         parent_cert_store::{
-            CertifiedParentProofKey, CertifiedParentProofStore, FinalizedParentCertStore,
-            CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
+            CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofStore,
+            FinalizedParentCertStore, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         },
     },
-    hybrid::{HybridRandom, HybridScheme},
+    hybrid::{election::HybridRandom, HybridScheme},
     reporter::{OutbeReporter, ReporterContinuity},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
     let keys: Vec<bls12381::PrivateKey> = (0..n)
@@ -115,7 +119,7 @@ fn verifier_scheme() -> HybridScheme<MinSig> {
 }
 
 fn build_reporter(
-    store: FinalizedParentCertStore,
+    witness_sink: Arc<dyn CertificationWitnessSink>,
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     let (_, participants) = test_participants(3);
     // certified-notarization persistence is enqueued to the
@@ -139,7 +143,7 @@ fn build_reporter(
         verifier_scheme(),
         HybridRandom::default().build(&participants),
         Epoch::new(0),
-        store,
+        witness_sink,
         verify_mailbox,
     );
     (reporter, rx)
@@ -162,7 +166,7 @@ fn drain_certification_writes(
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_fanout_persists_certification_activity_before_marshal_filter() {
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
     let notarization = valid_notarization();
     let parent_hash = notarization.proposal.payload.0;
     let proof_key = CertifiedParentProofKey::new(0, 2, parent_hash);
@@ -178,7 +182,7 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION
     );
     assert_eq!(
-        record.proof_type,
+        record.proof_kind(),
         ParentParticipationProof::CertifiedNotarization
     );
     assert_eq!(record.finalized_epoch, 0);
@@ -188,7 +192,7 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
     // — Activity-driven insert always sets the local certification
     // witness flag; remote-fetch fallbacks gate writes on
     // this being true.
-    assert!(record.local_certification_witness);
+    assert!(record.is_certification_witness());
     // The store accepted only the certified-notarization slot — finalization
     // slot is untouched.
     assert!(store.get_finalization(proof_key).is_none());
@@ -210,7 +214,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     assert_ne!(original_hash, tampered_hash);
 
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
 
     let _ = reporter.report(Activity::Certification(notarization));
     // A verify failure drops on-thread before enqueue, so draining finds
@@ -237,7 +241,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_handle_certification_records_witness_flag_true() {
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(store.clone());
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
     let notarization = valid_notarization();
     let parent_hash = notarization.proposal.payload.0;
     let _ = reporter.report(Activity::Certification(notarization));
@@ -246,7 +250,52 @@ async fn reporter_handle_certification_records_witness_flag_true() {
         .get_certified_notarization(CertifiedParentProofKey::new(0, 2, parent_hash))
         .unwrap();
     assert!(
-        record.local_certification_witness,
+        record.is_certification_witness(),
         "Activity-driven inserts must always set local_certification_witness=true"
+    );
+}
+
+/// A fake `CertificationWitnessSink` recording every mark — exercises the narrow
+/// capability seam the reporter is given (instead of the full store), which is the
+/// reason the seam is a trait rather than a newtype.
+#[derive(Default)]
+struct CountingWitnessSink {
+    count: AtomicUsize,
+    keys: Mutex<Vec<CertifiedParentProofKey>>,
+}
+
+impl CertificationWitnessSink for CountingWitnessSink {
+    fn mark_local_certification_witness(&self, key: CertifiedParentProofKey) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        self.keys.lock().unwrap().push(key);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reporter_marks_witness_through_narrow_sink() {
+    // The reporter's only capability onto the proof store is the
+    // `CertificationWitnessSink`. A valid `Activity::Certification` must drive
+    // exactly one witness mark for the `(epoch, view, parent)` it observed —
+    // proving the narrow seam is the path, and that the reporter is mockable
+    // without standing up a real store.
+    let sink = Arc::new(CountingWitnessSink::default());
+    let (mut reporter, mut rx) = build_reporter(sink.clone());
+    let notarization = valid_notarization();
+    let parent_hash = notarization.proposal.payload.0;
+
+    let _ = reporter.report(Activity::Certification(notarization));
+    // Drain the off-thread persistence enqueue so no sender is left dangling.
+    while rx.try_recv().is_ok() {}
+
+    assert_eq!(
+        sink.count.load(Ordering::SeqCst),
+        1,
+        "a valid Activity::Certification must mark the witness exactly once"
+    );
+    let keys = sink.keys.lock().unwrap();
+    assert_eq!(keys.len(), 1);
+    assert!(
+        keys[0] == CertifiedParentProofKey::new(0, 2, parent_hash),
+        "marked key must match the observed (epoch=0, view=2, parent)"
     );
 }

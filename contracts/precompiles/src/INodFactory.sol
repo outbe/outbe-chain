@@ -13,7 +13,7 @@ interface INodFactory {
         uint256 costAmountMinor
     );
 
-    event GratisMined(address indexed owner, uint256 nodId, uint256 amount);
+    event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
     function mineGratis(uint256 nodId, uint256 nonce, address asset, address vaultProvider) external returns (uint256);
 }

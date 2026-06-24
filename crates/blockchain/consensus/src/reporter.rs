@@ -15,15 +15,12 @@
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
-use crate::proof::{build_committee_snapshot, committee_set_hash_v2};
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use crate::metrics::EquivocationKind;
+use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
-    simplex::{
-        elector::Elector as _,
-        types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
-    },
-    types::{Epoch, Round, View},
+    simplex::types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
+    types::{Epoch, View},
     Epochable as _, Reporter, Viewable,
 };
 use commonware_cryptography::{
@@ -39,14 +36,15 @@ use crate::{
     finalization::finalize_verify::FinalizeVerifyMailbox,
     finalization::ingress::{Finalized as FinalizationFinalized, Mailbox as FinalizationMailbox},
     finalization::parent_cert_store::{
-        CertifiedParentProofKey, CertifiedParentProofRecord, FinalizedParentCertStore,
+        CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord, ProofKind,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridRandomElector, HybridScheme},
+    hybrid::{
+        bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
+    },
 };
-use outbe_primitives::{
-    consensus::{ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData},
-    consensus_metadata::ParentParticipationProof,
+use outbe_primitives::consensus::{
+    ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData,
 };
 
 const MAX_MISSED_PROPOSERS: usize = u8::MAX as usize;
@@ -88,13 +86,12 @@ pub struct OutbeReporter {
     /// inline on the Simplex voter task; the actor verifies and admits the
     /// verified votes to `late_sig_store`.
     finalize_verify_mailbox: FinalizeVerifyMailbox,
-    /// Durable certified-parent proof store. wires
-    /// `Activity::Certification(notarization)` directly into this store with
-    /// the `local_certification_witness` flag set, so the proposer
-    /// path can later read a V2 fallback proof via
-    /// [`CertifiedParentProofStore::get_best_parent_proof`] when finalization
-    /// is pending.
-    proof_store: FinalizedParentCertStore,
+    /// Narrow, write-only capability onto the certified-parent proof store: the
+    /// reporter records the `local_certification_witness` mark for each observed
+    /// `Activity::Certification`, but structurally cannot durably write — durable
+    /// persistence goes off-thread through the FinalizationActor mailbox (see
+    /// `handle_certification`), which stays the single durable writer.
+    witness_sink: Arc<dyn CertificationWitnessSink>,
 }
 
 /// Mutable per-view state owned by a single `OutbeReporter` instance, separated
@@ -189,7 +186,7 @@ impl OutbeReporter {
         verifier_scheme: HybridScheme<MinSig>,
         elector: HybridRandomElector<MinSig>,
         epoch: Epoch,
-        proof_store: FinalizedParentCertStore,
+        witness_sink: Arc<dyn CertificationWitnessSink>,
         finalize_verify_mailbox: FinalizeVerifyMailbox,
     ) -> Self {
         let persisted = continuity.snapshot();
@@ -207,7 +204,7 @@ impl OutbeReporter {
                 last_certificate: persisted.last_certificate,
                 pending_byzantine: Vec::new(),
             },
-            proof_store,
+            witness_sink,
         }
     }
 }
@@ -261,7 +258,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingNotarize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_notarize",
+                    EquivocationKind::ConflictingNotarize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -270,7 +267,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_finalize",
+                    EquivocationKind::ConflictingFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -279,7 +276,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::NullifyFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "nullify_finalize",
+                    EquivocationKind::NullifyFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -358,11 +355,12 @@ impl OutbeReporter {
     /// the log must not claim it does.
     fn handle_byzantine_evidence(
         &mut self,
-        evidence_type: &str,
+        kind: EquivocationKind,
         signer: commonware_utils::Participant,
         epoch: Epoch,
         view: View,
     ) {
+        let evidence_type = kind.label();
         let signer_idx = signer.get() as usize;
         if let Some(&addr) = self.validator_addresses.get(signer_idx) {
             let signer_pubkey = self
@@ -382,7 +380,7 @@ impl OutbeReporter {
                 "BYZANTINE: consensus equivocation detected — slashable; external watcher should submit the two conflicting votes"
             );
             self.view_state.buffer_byzantine(addr);
-            crate::metrics::record_byzantine_evidence(evidence_type);
+            crate::metrics::record_byzantine_evidence(kind);
         } else {
             warn!(
                 evidence_type,
@@ -478,13 +476,21 @@ impl OutbeReporter {
         // 3. Detect missed proposers from view gaps.
         let missed_proposers = self.detect_missed_proposers(view);
 
-        // 4. Drain pending byzantine evidence (dedup by address).
-        let deferred_byzantine = self.view_state.drain_byzantine_sorted();
+        // 4. Drain the per-finalization buffer of locally-attributed byzantine
+        // signers — operator observability ONLY, not a transport stage. On-chain
+        // slashing is carried by the external watcher (which observes the raw
+        // gossiped votes the node cannot reach — commonware hides the inner votes)
+        // submitting the two conflicting `EvidenceBlock`s to the SlashIndicator
+        // `submitConflicting{Notarize,Finalize}` / `submitNullifyFinalize`
+        // precompile, where both signatures are re-verified on-chain (reproducible
+        // from chain state). This drain does NOT put evidence on-chain.
+        let attributed_byzantine = self.view_state.drain_byzantine_sorted();
 
-        if !deferred_byzantine.is_empty() {
+        if !attributed_byzantine.is_empty() {
             warn!(
-                count = deferred_byzantine.len(),
-                "byzantine evidence observed but not yet transported by finalized-parent certificate tx"
+                target: "outbe::slashing::equivocation",
+                count = attributed_byzantine.len(),
+                "byzantine equivocation attributed this finalization; on-chain slashing requires the external watcher to submit the two conflicting votes to the SlashIndicator precompile"
             );
         }
 
@@ -515,7 +521,9 @@ impl OutbeReporter {
                 }) {
                 Ok(()) => commonware_actor::Feedback::Ok,
                 Err(_closed) => {
-                    crate::metrics::record_finalization_dropped("mailbox_closed");
+                    crate::metrics::record_finalization_dropped(
+                        crate::metrics::FinalizationDropReason::MailboxClosed,
+                    );
                     tracing::error!(
                         round = %finalization.proposal.round,
                         view,
@@ -552,7 +560,9 @@ impl OutbeReporter {
         // requires explicit re-verification before write.
         let mut rng = bls_batch_verification_rng();
         if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-            crate::metrics::record_certification_dropped("verify_failed");
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::VerifyFailed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
@@ -574,37 +584,20 @@ impl OutbeReporter {
         // the snapshot from the verifier scheme so the proposer-side hash
         // matches what `apply_boundary_outcome` writes to `CommitteeSnapshotStore`
         // and what the executor Phase 1 verifier recomputes.
-        let vrf_material_version = self.verifier_scheme.active_vrf_material_version();
-        let vrf_group_public_key_bytes: Vec<u8> = self
-            .verifier_scheme
-            .identity()
-            .map(|pk| pk.encode().as_ref().to_vec())
-            .unwrap_or_default();
-        let vrf_group_pk_hash = if vrf_group_public_key_bytes.is_empty() {
-            B256::ZERO
-        } else {
-            keccak256(&vrf_group_public_key_bytes)
-        };
-        let encoded_pubkeys: Vec<Vec<u8>> = self
-            .verifier_scheme
-            .participants()
-            .iter()
-            .map(|pubkey| pubkey.encode().as_ref().to_vec())
-            .collect();
         // Defence-in-depth path: a snapshot build failure is an encode-invariant
         // violation; drop the certification deterministically (metered, never
         // panic) rather than write a record whose committee_set_hash would
         // diverge from the writer's.
-        let snapshot = match build_committee_snapshot(
+        let prelude = match crate::finalization::committee_prelude::build_committee_prelude(
+            &self.verifier_scheme,
             &self.validator_addresses,
-            &encoded_pubkeys,
-            vrf_material_version,
-            vrf_group_public_key_bytes,
-            alloy_primitives::B256::ZERO,
+            notarization.proposal.round.epoch().get(),
         ) {
-            Ok(snapshot) => snapshot,
+            Ok(prelude) => prelude,
             Err(error) => {
-                crate::metrics::record_certification_dropped("snapshot_build_failed");
+                crate::metrics::record_certification_dropped(
+                    crate::metrics::CertificationDropReason::SnapshotBuildFailed,
+                );
                 warn!(
                     target: "outbe::reporter",
                     epoch = notarization.proposal.round.epoch().get(),
@@ -614,8 +607,6 @@ impl OutbeReporter {
                 return;
             }
         };
-        let committee_set_hash =
-            committee_set_hash_v2(notarization.proposal.round.epoch().get(), &snapshot);
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
         let encoded_proof: Bytes = notarization.encode().into();
         // The notarization carries no block-number context. Store `0` so this
@@ -629,29 +620,22 @@ impl OutbeReporter {
             view,
             notarization.proposal.payload.0,
         );
-        self.proof_store.mark_local_certification_witness(proof_key);
+        self.witness_sink
+            .mark_local_certification_witness(proof_key);
         let record = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-            proof_type: ParentParticipationProof::CertifiedNotarization,
+            kind: ProofKind::CertifiedNotarization,
             finalized_epoch: notarization.proposal.round.epoch().get(),
             finalized_view: view,
             parent_view: notarization.proposal.parent.get(),
-            finalized_block_number: 0,
             finalized_block_hash: notarization.proposal.payload.0,
-            committee_set_hash,
-            vrf_material_version,
-            // Batch A: populate the V2 hash field on every
-            // certified-notarization write so the proof store is
-            // self-contained for the V2 metadata adapter
-            // ([`CertifiedParentProofRecord::to_v2_metadata`]).
-            vrf_group_public_key_hash: vrf_group_pk_hash,
+            committee_set_hash: prelude.committee_set_hash,
+            vrf_material_version: prelude.vrf_material_version,
+            vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
             ordered_committee: self.validator_addresses.clone(),
             signer_bitmap,
-            certificate: encoded_proof.clone(),
             encoded_proof,
-            local_certification_witness: true,
             stored_at_height: view,
-            ..CertifiedParentProofRecord::default()
         };
 
         // Step 3 — enqueue the durable write to the FinalizationActor.
@@ -668,7 +652,9 @@ impl OutbeReporter {
             .finalization_mailbox
             .persist_certified_notarization(record)
         {
-            crate::metrics::record_certification_dropped("mailbox_closed");
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::MailboxClosed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
@@ -690,6 +676,12 @@ impl OutbeReporter {
     }
 
     /// Build a stable one-byte-per-participant signer bitmap from the certificate.
+    ///
+    /// Producer-side guard with diagnostics; the fill delegates to the canonical
+    /// core in [`crate::finalization::util::build_signer_bitmap`]. On a
+    /// committee/cert size skew this emits the empty sentinel, matching
+    /// [`crate::finalization::util::build_signer_bitmap_guarded`] (the resolver
+    /// path); the verify-side structural check rejects that sentinel by length.
     fn build_signer_bitmap(&self, certificate: &HybridCertificate<MinSig>) -> Vec<u8> {
         let n = certificate.signers.len();
         if n != self.validator_addresses.len() {
@@ -701,13 +693,7 @@ impl OutbeReporter {
             return Vec::new();
         }
 
-        let mut signed = vec![0u8; n];
-        for signer in certificate.signers.iter() {
-            let idx = signer.get() as usize;
-            if idx < n {
-                signed[idx] = 1;
-            }
-        }
+        let signed = crate::finalization::util::build_signer_bitmap(certificate, n);
 
         debug!(
             signers = certificate.signers.count(),
@@ -735,20 +721,23 @@ impl OutbeReporter {
         }
 
         let gap = current_view - last_finalized_view - 1;
-        let cap = gap.min(MAX_MISSED_PROPOSERS as u64) as usize;
-        let mut missed = Vec::with_capacity(cap);
-        let mut dropped = 0u64;
 
-        for v in (last_finalized_view + 1)..current_view {
-            if missed.len() >= MAX_MISSED_PROPOSERS {
-                dropped = current_view - v;
-                break;
-            }
+        // Single source of truth for the view-gap election sequence, shared with
+        // the verify-side recompute in `finalization::util` so proposer and
+        // validator never disagree on who was the expected leader.
+        let leaders = crate::missed_proposers::elected_leaders_for_gap(
+            self.epoch,
+            &self.elector,
+            self.view_state.last_certificate(),
+            last_finalized_view,
+            current_view,
+            MAX_MISSED_PROPOSERS,
+        );
+        let dropped = gap.saturating_sub(leaders.len() as u64);
 
-            let round = Round::new(self.epoch, View::new(v));
-            let leader = self
-                .elector
-                .elect(round, self.view_state.last_certificate());
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
             let leader_idx = leader.get() as usize;
 
             if leader_idx < self.validator_addresses.len() {
@@ -827,7 +816,7 @@ mod tests {
             ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
             parent_cert_store::FinalizedParentCertStore,
         },
-        hybrid::{HybridRandom, HybridScheme},
+        hybrid::{election::HybridRandom, HybridScheme},
     };
 
     fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
@@ -950,7 +939,7 @@ mod tests {
             verifier,
             HybridRandom::default().build(&participants),
             Epoch::new(0),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             verify_mailbox,
         );
 
@@ -1007,7 +996,7 @@ mod tests {
             sample_verifier_scheme(),
             HybridRandom::default().build(&test_participants(3).1),
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 
@@ -1080,7 +1069,7 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 
@@ -1123,7 +1112,7 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
             FinalizeVerifyMailbox::disconnected(),
         );
 

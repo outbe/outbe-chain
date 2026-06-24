@@ -235,7 +235,7 @@ mod tests {
     /// Verify retry constants are reasonable and accessible.
     #[test]
     fn test_finalize_retry_constants() {
-        use crate::application::handler::{
+        use crate::config::{
             FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY,
             PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
         };

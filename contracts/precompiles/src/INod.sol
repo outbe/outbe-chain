@@ -10,7 +10,7 @@ interface INod {
         uint256 nodId;
         address owner;
         uint32 worldwideDay;
-        uint32 leagueId;
+        uint16 leagueId;
         uint256 floorPriceMinor;
         uint256 gratisLoadMinor;
         uint256 costOfGratisMinor;
