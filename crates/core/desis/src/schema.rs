@@ -151,6 +151,11 @@ pub struct DesisContract {
     /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
     #[attribute(order = 13)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// series_id -> 1 once `begin_clearing` has run; lets `clear_auction` tell a
+    /// genuine zero supply from a clearing that was never initiated.
+    #[attribute(order = 14)]
+    pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,
 }
 
 impl DesisContract<'_> {
