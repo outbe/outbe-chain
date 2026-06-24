@@ -280,7 +280,14 @@ pub fn serve_connection_with<S: Read + Write>(
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
 
-        let resp = dispatch(req, keys, &mut dkg, offer_key);
+        let resp = dispatch(
+            req,
+            keys,
+            &mut dkg,
+            offer_key,
+            boot.map(|b| b.chain_id)
+                .unwrap_or(alloy_primitives::B256::ZERO),
+        );
 
         // Persist the offer key + share the first time it becomes available
         // (write-once).
@@ -307,6 +314,7 @@ pub fn dispatch(
     keys: &EnclaveKeys,
     dkg: &mut DkgSessionStore,
     offer_key: &SharedTributeOfferKey,
+    chain_id: alloy_primitives::B256,
 ) -> EnclaveResponse {
     match req {
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
@@ -320,6 +328,7 @@ pub fn dispatch(
             noise_static_pub: keys.noise_public(),
             tee_bls_pub: keys.tee_bls_public_bytes(),
             dkg_enc_pub: keys.dkg_enc_public(),
+            dkg_enc_sig: keys.sign_dkg_enc_binding(chain_id),
         },
         EnclaveRequest::Initialize => EnclaveResponse::Initialized {
             sealed_loaded: false,
@@ -455,16 +464,8 @@ pub fn dispatch(
         EnclaveRequest::DkgOpen {
             ceremony_id,
             round,
-            participant_bls,
-            participant_enc,
-        } => dispatch_dkg_open(
-            keys,
-            dkg,
-            ceremony_id,
-            round,
-            participant_bls,
-            participant_enc,
-        ),
+            participants,
+        } => dispatch_dkg_open(keys, dkg, chain_id, ceremony_id, round, participants),
         EnclaveRequest::DkgStartDealer { ceremony_id } => {
             into_response(dkg.get_mut(&ceremony_id.0).and_then(|s| {
                 let (pub_msg, sealed_shares) = s.start_dealer_encoded()?;
@@ -578,24 +579,39 @@ pub fn dispatch(
 fn dispatch_dkg_open(
     keys: &EnclaveKeys,
     dkg: &mut DkgSessionStore,
+    chain_id: alloy_primitives::B256,
     ceremony_id: alloy_primitives::B256,
     round: u64,
-    participant_bls: Vec<Vec<u8>>,
-    participant_enc: Vec<[u8; 32]>,
+    participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
 ) -> EnclaveResponse {
-    if participant_bls.len() != participant_enc.len() {
-        return EnclaveResponse::Error {
-            message: "DkgOpen: participant_bls/participant_enc length mismatch".to_string(),
-        };
-    }
     let result = (|| {
-        let (info, pubkeys) = build_ceremony_info(round, &participant_bls)?;
-        // Map each participant BLS pubkey to its announced X25519 share key. The
-        // build sorts pubkeys, so pair enc keys by matching the original bls bytes.
+        // The host relays each `(bls, enc, sig)` it gathered from peers' GetPublicKeys.
+        // Before trusting any pairing: verify every enc key is signed by the BLS
+        // identity it is paired with, and reject duplicate enc keys / identities — so
+        // an untrusted host cannot mis-pair an enc key onto a foreign identity or
+        // collapse two participants onto one enc key (cross-decryption of shares).
         let mut enc_by_bls = std::collections::BTreeMap::new();
-        for (bls, enc) in participant_bls.iter().zip(participant_enc.iter()) {
-            enc_by_bls.insert(bls.clone(), *enc);
+        let mut seen_enc = std::collections::BTreeSet::new();
+        let participant_bls: Vec<Vec<u8>> =
+            participants.iter().map(|p| p.bls_pub.clone()).collect();
+        for p in &participants {
+            if !crate::keys::verify_dkg_enc_binding(&p.bls_pub, chain_id, &p.enc_pub, &p.enc_sig) {
+                return Err(crate::errors::TeeError::Dkg(
+                    "DkgOpen: enc-key identity binding failed verification".to_string(),
+                ));
+            }
+            if !seen_enc.insert(p.enc_pub) {
+                return Err(crate::errors::TeeError::Dkg(
+                    "DkgOpen: duplicate enc key across participants".to_string(),
+                ));
+            }
+            if enc_by_bls.insert(p.bls_pub.clone(), p.enc_pub).is_some() {
+                return Err(crate::errors::TeeError::Dkg(
+                    "DkgOpen: duplicate BLS identity across participants".to_string(),
+                ));
+            }
         }
+        let (info, pubkeys) = build_ceremony_info(round, &participant_bls)?;
         let mut recipient_enc_keys = std::collections::BTreeMap::new();
         for pk in &pubkeys {
             let bls_bytes = commonware_codec::Encode::encode(pk).to_vec();
@@ -695,6 +711,7 @@ mod tests {
         keys: EnclaveKeys,
         dkg: DkgSessionStore,
         offer_key: SharedTributeOfferKey,
+        chain_id: B256,
     }
 
     impl Enclave {
@@ -703,20 +720,32 @@ mod tests {
                 keys: EnclaveKeys::new([seed; 32], None).expect("keys"),
                 dkg: DkgSessionStore::new(),
                 offer_key: Arc::new(OnceLock::new()),
+                chain_id: B256::repeat_byte(0xC1),
             }
         }
 
         fn call(&mut self, req: EnclaveRequest) -> EnclaveResponse {
-            dispatch(req, &self.keys, &mut self.dkg, &self.offer_key)
+            dispatch(
+                req,
+                &self.keys,
+                &mut self.dkg,
+                &self.offer_key,
+                self.chain_id,
+            )
         }
 
-        fn identity(&mut self) -> (Vec<u8>, [u8; 32]) {
+        fn identity(&mut self) -> outbe_tee::protocol::ParticipantAnnounce {
             match self.call(EnclaveRequest::GetPublicKeys) {
                 EnclaveResponse::PublicKeys {
                     tee_bls_pub,
                     dkg_enc_pub,
+                    dkg_enc_sig,
                     ..
-                } => (tee_bls_pub, dkg_enc_pub),
+                } => outbe_tee::protocol::ParticipantAnnounce {
+                    bls_pub: tee_bls_pub,
+                    enc_pub: dkg_enc_pub,
+                    enc_sig: dkg_enc_sig,
+                },
                 other => panic!("unexpected GetPublicKeys response: {other:?}"),
             }
         }
@@ -733,19 +762,18 @@ mod tests {
 
         let mut enclaves: Vec<Enclave> = (0..n).map(|i| Enclave::new(i as u8 + 1)).collect();
 
-        // Announce identities, build the participant lists (paired bls + enc).
-        let identities: Vec<(Vec<u8>, [u8; 32])> =
+        // Announce identities, build the participant list (bls + enc + binding sig).
+        let participants: Vec<outbe_tee::protocol::ParticipantAnnounce> =
             enclaves.iter_mut().map(|e| e.identity()).collect();
-        let participant_bls: Vec<Vec<u8>> = identities.iter().map(|(b, _)| b.clone()).collect();
-        let participant_enc: Vec<[u8; 32]> = identities.iter().map(|(_, e)| *e).collect();
+        let participant_bls: Vec<Vec<u8>> =
+            participants.iter().map(|p| p.bls_pub.clone()).collect();
 
         // Open the ceremony on every enclave.
         for e in enclaves.iter_mut() {
             let resp = e.call(EnclaveRequest::DkgOpen {
                 ceremony_id,
                 round: 0,
-                participant_bls: participant_bls.clone(),
-                participant_enc: participant_enc.clone(),
+                participants: participants.clone(),
             });
             assert!(matches!(resp, EnclaveResponse::Ack), "DkgOpen: {resp:?}");
         }

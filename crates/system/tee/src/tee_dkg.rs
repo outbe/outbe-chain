@@ -397,27 +397,24 @@ pub struct CeremonyCoordinator {
     ceremony_id: B256,
     round: u64,
     my_bls: Vec<u8>,
-    participant_bls: Vec<Vec<u8>>,
-    participant_enc: Vec<[u8; 32]>,
+    participants: Vec<crate::protocol::ParticipantAnnounce>,
 }
 
 impl CeremonyCoordinator {
-    /// `participants` is the announced `(bls_pub, x25519_enc_pub)` of every
-    /// participant (from each enclave's `GetPublicKeys`), including this node.
+    /// `participants` is each enclave's announced `ParticipantAnnounce` (BLS
+    /// identity + X25519 enc key + the owner's binding signature), obtained from
+    /// each enclave's `GetPublicKeys`, including this node.
     pub fn new(
         ceremony_id: B256,
         round: u64,
         my_bls: Vec<u8>,
-        participants: Vec<(Vec<u8>, [u8; 32])>,
+        participants: Vec<crate::protocol::ParticipantAnnounce>,
     ) -> Self {
-        let participant_bls = participants.iter().map(|(b, _)| b.clone()).collect();
-        let participant_enc = participants.iter().map(|(_, e)| *e).collect();
         Self {
             ceremony_id,
             round,
             my_bls,
-            participant_bls,
-            participant_enc,
+            participants,
         }
     }
 
@@ -431,8 +428,7 @@ impl CeremonyCoordinator {
         match ch.request(&EnclaveRequest::DkgOpen {
             ceremony_id: self.ceremony_id,
             round: self.round,
-            participant_bls: self.participant_bls.clone(),
-            participant_enc: self.participant_enc.clone(),
+            participants: self.participants.clone(),
         })? {
             EnclaveResponse::Ack => Ok(()),
             _ => Err(CeremonyError::UnexpectedResponse("DkgOpen")),

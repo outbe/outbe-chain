@@ -117,15 +117,18 @@ where
         clock: &impl Clock,
         my_bls: Vec<u8>,
         my_enc: [u8; 32],
+        my_sig: Vec<u8>,
         n: usize,
-    ) -> eyre::Result<Vec<(Vec<u8>, [u8; 32])>> {
-        let mut ids: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
-        ids.insert(my_bls.clone(), my_enc);
+    ) -> eyre::Result<Vec<outbe_tee::protocol::ParticipantAnnounce>> {
+        let mut ids: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)> = BTreeMap::new();
+        ids.insert(my_bls.clone(), (my_enc, my_sig.clone()));
 
         let mut env = vec![DKG_ENV_IDENTITY];
         env.extend_from_slice(&(my_bls.len() as u32).to_be_bytes());
         env.extend_from_slice(&my_bls);
         env.extend_from_slice(&my_enc);
+        env.extend_from_slice(&(my_sig.len() as u32).to_be_bytes());
+        env.extend_from_slice(&my_sig);
         let _ = self.sender.send(Recipients::All, env.clone(), true);
 
         // Re-broadcast our identity periodically until every peer's identity is
@@ -150,9 +153,9 @@ where
                             let bytes = raw.as_ref();
                             match bytes.first().copied() {
                                 Some(DKG_ENV_IDENTITY) => {
-                                    if let Some((bls, enc)) = parse_identity(&bytes[1..]) {
+                                    if let Some((bls, enc, sig)) = parse_identity(&bytes[1..]) {
                                         self.routing.insert(bls.clone(), from);
-                                        ids.insert(bls, enc);
+                                        ids.insert(bls, (enc, sig));
                                     }
                                 }
                                 Some(DKG_ENV_CEREMONY) => {
@@ -184,7 +187,16 @@ where
                 },
             }
         }
-        Ok(ids.into_iter().collect())
+        Ok(ids
+            .into_iter()
+            .map(
+                |(bls, (enc, sig))| outbe_tee::protocol::ParticipantAnnounce {
+                    bls_pub: bls,
+                    enc_pub: enc,
+                    enc_sig: sig,
+                },
+            )
+            .collect())
     }
 }
 
@@ -228,32 +240,49 @@ where
     }
 }
 
-/// Parse an identity announcement body `bls_len(u32 BE) || bls || enc(32)`.
-fn parse_identity(body: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
+/// Parse an identity announcement body
+/// `bls_len(u32 BE) || bls || enc(32) || sig_len(u32 BE) || sig`.
+fn parse_identity(body: &[u8]) -> Option<(Vec<u8>, [u8; 32], Vec<u8>)> {
     if body.len() < 4 {
         return None;
     }
     let bls_len = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
     let enc_start = 4usize.checked_add(bls_len)?;
-    let end = enc_start.checked_add(32)?;
-    if end != body.len() {
+    let enc_end = enc_start.checked_add(32)?;
+    let sig_len_end = enc_end.checked_add(4)?;
+    if body.len() < sig_len_end {
+        return None;
+    }
+    let sig_len = u32::from_be_bytes([
+        body[enc_end],
+        body[enc_end + 1],
+        body[enc_end + 2],
+        body[enc_end + 3],
+    ]) as usize;
+    let sig_end = sig_len_end.checked_add(sig_len)?;
+    if sig_end != body.len() {
         return None;
     }
     let bls = body[4..enc_start].to_vec();
     let mut enc = [0u8; 32];
-    enc.copy_from_slice(&body[enc_start..end]);
-    Some((bls, enc))
+    enc.copy_from_slice(&body[enc_start..enc_end]);
+    let sig = body[sig_len_end..sig_end].to_vec();
+    Some((bls, enc, sig))
 }
 
 /// Deterministic ceremony id, identical on every node given the same chain and
 /// sorted participant set: `keccak256(chain_id || round || tee_bls_0 || …)`.
-fn compute_ceremony_id(chain_id: B256, round: u64, identities: &[(Vec<u8>, [u8; 32])]) -> B256 {
+fn compute_ceremony_id(
+    chain_id: B256,
+    round: u64,
+    identities: &[outbe_tee::protocol::ParticipantAnnounce],
+) -> B256 {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(chain_id.as_slice());
     preimage.extend_from_slice(&round.to_be_bytes());
-    for (bls, _) in identities {
-        preimage.extend_from_slice(&(bls.len() as u32).to_be_bytes());
-        preimage.extend_from_slice(bls);
+    for p in identities {
+        preimage.extend_from_slice(&(p.bls_pub.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(&p.bls_pub);
     }
     keccak256(&preimage)
 }
@@ -310,21 +339,22 @@ where
     let mut client = EnclaveClient::connect_endpoint(endpoint, connect_policy)
         .map_err(|e| eyre::eyre!("TEE DKG enclave connect failed: {e}"))?;
 
-    let (my_bls, my_enc) = match client
+    let (my_bls, my_enc, my_sig) = match client
         .request(&EnclaveRequest::GetPublicKeys)
         .map_err(|e| eyre::eyre!("TEE DKG GetPublicKeys failed: {e}"))?
     {
         EnclaveResponse::PublicKeys {
             tee_bls_pub,
             dkg_enc_pub,
+            dkg_enc_sig,
             ..
-        } => (tee_bls_pub, dkg_enc_pub),
+        } => (tee_bls_pub, dkg_enc_pub, dkg_enc_sig),
         other => return Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
     };
 
     let mut gossip = CommonwareDkgGossip::new(sender, receiver);
     let identities = gossip
-        .exchange_identities(clock, my_bls.clone(), my_enc, n)
+        .exchange_identities(clock, my_bls.clone(), my_enc, my_sig, n)
         .await?;
     let ceremony_id = compute_ceremony_id(chain_id, 0, &identities);
     let coord = CeremonyCoordinator::new(ceremony_id, 0, my_bls, identities);

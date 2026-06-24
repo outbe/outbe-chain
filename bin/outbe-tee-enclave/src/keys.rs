@@ -31,6 +31,53 @@ use crate::process::TributeOfferKeyMaterial;
 /// mistaken for an attested enclave — a strict host policy rejects it.
 pub const UNATTESTED_MEASUREMENT: B256 = B256::ZERO;
 
+/// Domain-separation namespace binding a DKG X25519 share-encryption key to its
+/// owner's TEE-BLS identity. A peer's enc key is otherwise host-announced and
+/// cryptographically unbound; this signature lets every enclave reject an enc key
+/// that is not authenticated by the BLS identity it is paired with, so an
+/// untrusted host cannot mis-pair or duplicate enc keys at ceremony open.
+pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-enc-bind/v1";
+
+/// Signature type produced by the TEE-BLS identity key.
+type TeeBlsSignature = <PrivKey as commonware_cryptography::Signer>::Signature;
+
+/// The 64-byte message bound by the enc-key identity signature:
+/// `chain_id (32) || dkg_enc_pub (32)`. `chain_id` scopes the binding to one
+/// chain; `dkg_enc_pub` is the bound value. No round/ceremony id is mixed in: the
+/// enc key is stable (derived from the sealed identity seed), so the binding is
+/// ceremony-independent and a replay only re-states the same true binding.
+fn dkg_enc_bind_message(chain_id: B256, dkg_enc_pub: &[u8; 32]) -> [u8; 64] {
+    let mut msg = [0u8; 64];
+    msg[..32].copy_from_slice(chain_id.as_slice());
+    msg[32..].copy_from_slice(dkg_enc_pub);
+    msg
+}
+
+/// Verify that `sig` is a valid TEE-BLS signature by `bls_pub` over the
+/// `(chain_id, dkg_enc_pub)` binding. Called at `DkgOpen` to reject any
+/// host-supplied `(bls, enc)` pairing whose enc key is not authenticated by its
+/// claimed identity. Malformed pubkey/signature bytes verify as `false`.
+pub fn verify_dkg_enc_binding(
+    bls_pub: &[u8],
+    chain_id: B256,
+    dkg_enc_pub: &[u8; 32],
+    sig: &[u8],
+) -> bool {
+    use commonware_codec::ReadExt as _;
+    use commonware_cryptography::Verifier as _;
+    let mut pk_reader: &[u8] = bls_pub;
+    let Ok(pk) = <PrivKey as commonware_cryptography::Signer>::PublicKey::read(&mut pk_reader)
+    else {
+        return false;
+    };
+    let mut sig_reader: &[u8] = sig;
+    let Ok(signature) = TeeBlsSignature::read(&mut sig_reader) else {
+        return false;
+    };
+    let msg = dkg_enc_bind_message(chain_id, dkg_enc_pub);
+    pk.verify(DKG_ENC_BIND_NAMESPACE, &msg, &signature)
+}
+
 /// Enclave-resident key material.
 pub struct EnclaveKeys {
     noise_private: Vec<u8>,
@@ -225,6 +272,18 @@ impl EnclaveKeys {
     pub fn sign_attestation(&self, msg: &[u8]) -> [u8; 64] {
         use ed25519_dalek::Signer as _;
         self.attestation_signing.sign(msg).to_bytes()
+    }
+
+    /// Sign this enclave's X25519 share-encryption public key with its TEE-BLS
+    /// identity, binding it to `chain_id`. Advertised alongside `dkg_enc_public`
+    /// so peers can verify (via [`verify_dkg_enc_binding`]) that the enc key
+    /// genuinely belongs to this BLS identity before sealing shares to it.
+    pub fn sign_dkg_enc_binding(&self, chain_id: B256) -> Vec<u8> {
+        let msg = dkg_enc_bind_message(chain_id, &self.dkg_enc_public());
+        self.tee_bls_key
+            .sign(DKG_ENC_BIND_NAMESPACE, &msg)
+            .encode()
+            .to_vec()
     }
     /// The running enclave's ISV SVN (0 when unattested). Consumed by the
     /// seal/unseal boot path for the anti-rollback floor (plan §"Local

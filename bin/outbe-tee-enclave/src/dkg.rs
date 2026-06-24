@@ -472,13 +472,30 @@ impl DkgSession {
     pub fn player_finalize_encoded(&mut self, signed_logs: &[Vec<u8>]) -> Result<(Vec<u8>, B256)> {
         let max = self.max_players()?;
         let mut logs = Vec::with_capacity(signed_logs.len());
+        let mut distinct_dealers = std::collections::BTreeSet::new();
         for bytes in signed_logs {
             let mut reader: &[u8] = bytes;
             let signed = SignedDealerLog::<Variant, PrivKey>::read_cfg(&mut reader, &max)
                 .map_err(|e| dkg_err("decode signed log", e))?;
             let (pk, log) = verify_dealer_log(&self.info, signed)
                 .ok_or_else(|| TeeError::Dkg("dealer log failed verification".to_string()))?;
+            distinct_dealers.insert(commonware_codec::Encode::encode(&pk).to_vec());
             logs.push((pk, log));
+        }
+        // Initial DKG: the group key is the sum of EVERY dealer's contribution, so an
+        // incomplete dealer set yields a DIFFERENT group key. Require the verified
+        // distinct dealers to cover the full committee — otherwise an untrusted host
+        // feeding different dealer subsets to different enclaves would diverge the
+        // derived offer key across validators. (Each verified dealer is a committee
+        // member, so a full distinct count equals full coverage. A reshare DKG would
+        // relax this to the recovery threshold, but onboarding uses key-handoff, not a
+        // reshare DKG, so every ceremony reaching here is an all-n initial DKG.)
+        let expected = max.get() as usize;
+        if distinct_dealers.len() != expected {
+            return Err(TeeError::Dkg(format!(
+                "incomplete dealer set: {} of {expected} committee dealers",
+                distinct_dealers.len(),
+            )));
         }
         let (output, share) = self.player_finalize(logs)?;
         Ok((output.encode().to_vec(), keccak256(share.encode())))
