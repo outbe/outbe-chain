@@ -397,6 +397,52 @@ fn clear_auction_transitions_to_cleared() {
 }
 
 #[test]
+fn begin_clearing_accepts_zero_supply() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        assert_eq!(remainder, 0);
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.pending_supply_intex.read(&SERIES_ID).unwrap(), 0);
+        assert_eq!(contract.clearing_initiated.read(&SERIES_ID).unwrap(), 1);
+    });
+}
+
+#[test]
+fn clear_auction_empty_supply_refunds_all_bidders() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+
+        assert_eq!(result.issued_intex_count, 0);
+        assert!(result.winners.is_empty());
+        assert_eq!(result.all_bidders.len(), 3);
+        assert!(result.paid_amounts.iter().all(|&p| p == 0));
+        assert!(result.refunded_amounts.iter().all(|&r| r > 0));
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Cleared
+        );
+    });
+}
+
+#[test]
 fn clear_auction_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
