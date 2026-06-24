@@ -1015,6 +1015,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
                 active_set_hash: B256::repeat_byte(0x55),

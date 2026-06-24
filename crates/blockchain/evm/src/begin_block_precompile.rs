@@ -942,6 +942,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![VALIDATOR],
                 active_set_hash: active_set_hash(&[VALIDATOR]),
@@ -1400,6 +1401,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0x72),
             tribute_offer_public_key: B256::repeat_byte(0x73),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations,
             policy,
             validator_signatures: Vec::new(),
@@ -1481,6 +1483,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0x72),
             tribute_offer_public_key: B256::repeat_byte(0x73),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations,
             policy,
             validator_signatures: Vec::new(),

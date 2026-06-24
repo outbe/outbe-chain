@@ -41,7 +41,7 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Pre-genesis hard fork; nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
-const VERSION: u8 = 0x08;
+const VERSION: u8 = 0x09;
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
@@ -249,6 +249,15 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                     payload.extend_from_slice(reg.attestation_pub.as_slice());
                     payload.extend_from_slice(reg.noise_static_pub.as_slice());
                 }
+                // V0.09: endorsement_signature (u32 length prefix + bytes). Empty
+                // except at a reshare boundary carrying a prior-committee endorsement.
+                ensure_len_fits_u32(
+                    "boundary endorsement signature",
+                    result.endorsement_signature.len(),
+                )?;
+                payload
+                    .extend_from_slice(&(result.endorsement_signature.len() as u32).to_be_bytes());
+                payload.extend_from_slice(result.endorsement_signature.as_ref());
                 records.push((BOUNDARY_TAG, payload));
             }
             ConsensusHeaderArtifact::DealerLog(log) => {
@@ -775,10 +784,14 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         .ok_or_else(|| {
             PrecompileError::Fatal("tee reshare registrations length overflow".into())
         })?;
-    let needed_payload = offset + reshare_bytes;
-    if payload.len() != needed_payload {
+    // Need room for the registrations + the V0.09 endorsement_signature u32 prefix.
+    let needed_after_reshare = offset
+        .checked_add(reshare_bytes)
+        .and_then(|v| v.checked_add(4))
+        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
+    if payload.len() < needed_after_reshare {
         return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} != {needed_payload}",
+            "invalid boundary header artifact payload length: {} < {needed_after_reshare}",
             payload.len()
         )));
     }
@@ -800,6 +813,25 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         });
     }
 
+    // V0.09: endorsement_signature (u32 length prefix + bytes), exact end match.
+    let endorsement_sig_len = u32::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+    ]) as usize;
+    offset += 4;
+    let needed_payload = offset.checked_add(endorsement_sig_len).ok_or_else(|| {
+        PrecompileError::Fatal("boundary endorsement signature length overflow".into())
+    })?;
+    if payload.len() != needed_payload {
+        return Err(PrecompileError::Fatal(format!(
+            "invalid boundary header artifact payload length: {} != {needed_payload}",
+            payload.len()
+        )));
+    }
+    let endorsement_signature = Bytes::from(payload[offset..needed_payload].to_vec());
+
     Ok(DkgBoundaryArtifact {
         epoch,
         dkg_cycle,
@@ -819,6 +851,7 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         },
         tee_recipient_pubkeys,
         tee_reshare_registrations,
+        endorsement_signature,
     })
 }
 
@@ -890,6 +923,7 @@ mod tests {
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
                     address!("0x1111111111111111111111111111111111111111"),
@@ -937,6 +971,7 @@ mod tests {
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
                     address!("0x1111111111111111111111111111111111111111"),
@@ -987,6 +1022,7 @@ mod tests {
                     noise_static_pub: B256::with_last_byte(0xC3),
                 },
             ],
+            endorsement_signature: Bytes::from(vec![0xEE; 48]),
             reshare: ReshareResult {
                 new_active_set: vec![
                     address!("0x1111111111111111111111111111111111111111"),
@@ -1058,6 +1094,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![],
                 active_set_hash: B256::ZERO,
@@ -1131,6 +1168,7 @@ mod tests {
             is_full_dkg,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set,
                 active_set_hash: B256::with_last_byte(0x41),
@@ -1260,9 +1298,10 @@ mod tests {
         // blob. We size the outcome so the total framed length is just over the
         // 64 KiB budget while the record payload stays <= 65535.
         // (180 V0.06 fields + 2-byte V0.07 tee_recipient_pubkeys count + 2-byte
-        // V0.08 tee_reshare_registrations count.)
+        // V0.08 tee_reshare_registrations count + 4-byte V0.09 endorsement_signature
+        // length prefix.)
         const FIXED_PREFIX: usize =
-            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 2;
+            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 2 + 4;
         const ENVELOPE: usize = 4 + 1 + 1; // MAGIC + version + record count
         const RECORD_HEADER: usize = 1 + 2; // tag + u16 length
 

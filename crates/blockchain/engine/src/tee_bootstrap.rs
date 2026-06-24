@@ -430,6 +430,9 @@ where
         dkg_transcript_hash: B256::ZERO,
         committee_snapshot_block: TEE_BOOTSTRAP_BLOCK,
         committee_snapshot_hash: B256::ZERO,
+        // Populated with the enclave's DKG group public key + the V2 committee hash
+        // in a follow-up producer slice; empty here keeps the payload byte-stable.
+        tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
     };
 
     let mut gossip = CommonwareBootstrapGossip { sender, receiver };
