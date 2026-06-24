@@ -32,8 +32,8 @@ impl IntexState {
 pub struct IntexCallTrigger {
     pub window_days: u16,
     pub threshold_days: u16,
-    /// COEN price level that arms the forced call (1e18, oracle scale).
-    pub call_price_minor: U256,
+    /// Seconds between `called_at` and the settlement deadline.
+    pub intex_call_period: u32,
 }
 
 /// Identity parameters captured once at series creation.
@@ -51,8 +51,8 @@ pub struct CreateSeriesParams {
     pub entry_price_minor: U256,
     /// Price floor (1e18, oracle scale).
     pub floor_price_minor: U256,
-    /// Seconds between `called_at` and the settlement deadline.
-    pub intex_call_period: u32,
+    /// Call price level that arms the forced call (1e18, oracle scale).
+    pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
     /// Creation timestamp (UNIX seconds); non-zero, doubles as existence sentinel.
     pub issued_at: u32,
@@ -118,7 +118,7 @@ impl SeriesRecord {
         IntexCallTrigger {
             window_days: self.call_window_days,
             threshold_days: self.call_threshold_days,
-            call_price_minor: self.call_price_minor,
+            intex_call_period: self.intex_call_period,
         }
     }
 }

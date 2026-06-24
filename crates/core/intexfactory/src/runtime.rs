@@ -42,11 +42,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price,
         floor_price_minor,
-        intex_call_period: cfg.intex_call_period_secs,
+        call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
             window_days: cfg.call_window_days,
             threshold_days: cfg.call_threshold_days,
-            call_price_minor,
+            intex_call_period: cfg.intex_call_period_secs,
         },
         issued_at,
         issuance_currency: params.issuance_currency,

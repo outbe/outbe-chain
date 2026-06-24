@@ -75,12 +75,13 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.issued_intex_count, 100);
         assert_eq!(r.intex_call_period, CALL_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
+        assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
-                call_price_minor: U256::from(EXPECTED_TRIGGER),
+                intex_call_period: CALL_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -584,11 +585,11 @@ fn try_call_excludes_pre_issuance_days() {
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
-                intex_call_period: CALL_PERIOD,
+                call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
                     window_days: 30,
                     threshold_days: 27,
-                    call_price_minor: U256::from(EXPECTED_TRIGGER),
+                    intex_call_period: CALL_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -633,11 +634,11 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
             floor_price_minor: U256::from(EXPECTED_FLOOR),
-            intex_call_period: CALL_PERIOD,
+            call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 21,
-                call_price_minor: U256::from(EXPECTED_TRIGGER),
+                intex_call_period: CALL_PERIOD,
             },
             issued_at: ISSUED_AT,
             issuance_currency: 840,
@@ -824,11 +825,15 @@ fn config_dev_profile_drives_issuance_and_maturity() {
             U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
         );
         assert_eq!(
+            r.call_price_minor,
+            U256::from(ENTRY_PRICE * dev.call_price_num / 100)
+        );
+        assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: dev.call_window_days,
                 threshold_days: dev.call_threshold_days,
-                call_price_minor: U256::from(ENTRY_PRICE * dev.call_price_num / 100),
+                intex_call_period: dev.intex_call_period_secs,
             }
         );
 

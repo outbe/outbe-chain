@@ -25,11 +25,11 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(2_000u64),
         floor_price_minor: U256::from(1_500u64),
-        intex_call_period: CALL_PERIOD,
+        call_price_minor: U256::from(900u64),
         call_trigger: IntexCallTrigger {
             window_days: 30,
             threshold_days: 5,
-            call_price_minor: U256::from(900u64),
+            intex_call_period: CALL_PERIOD,
         },
         issued_at: ISSUED_AT,
         issuance_currency: 840,
@@ -58,7 +58,7 @@ fn create_then_read_round_trip() {
             IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 5,
-                call_price_minor: U256::from(900u64),
+                intex_call_period: CALL_PERIOD,
             }
         );
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
