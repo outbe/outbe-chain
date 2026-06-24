@@ -1035,6 +1035,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
             tribute_offer_public_key: B256::repeat_byte(0xB4),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xB5; 96]),
             registrations: vec![TeeRegistrationBundle {
                 validator,
                 recipient_x25519: B256::repeat_byte(0x21),

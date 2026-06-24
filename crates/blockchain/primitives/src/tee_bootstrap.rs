@@ -31,6 +31,11 @@ pub const TEE_POLICY_HASH_DOMAIN: &[u8] = b"outbe/tee/policy/v1";
 /// Hard cap on allowlist entries per policy field. Bounds allocation/iteration.
 pub const MAX_TEE_POLICY_ENTRIES: usize = 64;
 
+/// Cap on the encoded DKG group public polynomial. The MinSig public polynomial is
+/// `threshold` G2 points (96 bytes each); 32 KiB covers any committee within the
+/// protocol validator cap with wide margin and bounds a malformed length prefix.
+pub const MAX_GROUP_PUBLIC_KEY_BYTES: usize = 32 * 1024;
+
 /// Genesis TEE attestation policy: the allowlist a `TeeBootstrap` payload's
 /// enclave registrations are checked against (Phase 3b). Carried in the signed
 /// payload and bound to the genesis-seeded `TeeRegistry.policy_hash` (slot 2);
@@ -143,6 +148,11 @@ pub struct TeeBootstrapPayload {
     pub tribute_offer_epoch: u64,
     pub dkg_transcript_hash: B256,
     pub tribute_offer_public_key: B256,
+    /// Encoded DKG group public polynomial (`output.public()`) of the bootstrapping
+    /// committee — the verification key for this committee's threshold group
+    /// signatures. Persisted on-chain so a later committee's reshare endorsement can
+    /// be verified against the endorsing committee's group key. Empty pre-V2.
+    pub tribute_offer_group_public_key: Bytes,
     pub registrations: Vec<TeeRegistrationBundle>,
     /// Genesis attestation allowlist (signed). `policy_hash` must equal
     /// `policy.compute_hash()`; the handler binds it to the genesis-seeded
@@ -192,6 +202,8 @@ impl TeeBootstrapPayload {
         buf.extend_from_slice(&self.tribute_offer_epoch.to_be_bytes());
         buf.extend_from_slice(self.dkg_transcript_hash.as_slice());
         buf.extend_from_slice(self.tribute_offer_public_key.as_slice());
+        buf.extend_from_slice(&(self.tribute_offer_group_public_key.len() as u32).to_be_bytes());
+        buf.extend_from_slice(&self.tribute_offer_group_public_key);
 
         buf.extend_from_slice(&(self.registrations.len() as u16).to_be_bytes());
         for reg in &self.registrations {
@@ -245,6 +257,14 @@ impl TeeBootstrapPayload {
         let tribute_offer_epoch = reader.u64()?;
         let dkg_transcript_hash = reader.b256()?;
         let tribute_offer_public_key = reader.b256()?;
+        let group_pk_len = usize::try_from(reader.u32()?)
+            .map_err(|_| revert("TeeBootstrap: group pk length overflow".to_string()))?;
+        if group_pk_len > MAX_GROUP_PUBLIC_KEY_BYTES {
+            return Err(revert(format!(
+                "tribute_offer_group_public_key too large: {group_pk_len}"
+            )));
+        }
+        let tribute_offer_group_public_key = Bytes::from(reader.take(group_pk_len)?.to_vec());
 
         let reg_count = usize::from(reader.u16()?);
         if reg_count > MAX_TEE_REGISTRATIONS {
@@ -312,6 +332,7 @@ impl TeeBootstrapPayload {
             tribute_offer_epoch,
             dkg_transcript_hash,
             tribute_offer_public_key,
+            tribute_offer_group_public_key,
             registrations,
             policy,
             validator_signatures,
@@ -387,6 +408,11 @@ impl<'a> Reader<'a> {
         Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
     }
 
+    fn u32(&mut self) -> Result<u32> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
     fn u64(&mut self) -> Result<u64> {
         let bytes = self.take(8)?;
         let mut arr = [0u8; 8];
@@ -426,6 +452,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0xA3),
             tribute_offer_public_key: B256::repeat_byte(0xA4),
+            tribute_offer_group_public_key: Bytes::from(vec![0xA5; 96]),
             registrations: vec![
                 TeeRegistrationBundle {
                     validator: Address::repeat_byte(0x11),

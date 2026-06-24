@@ -405,6 +405,18 @@ impl DkgSession {
         let partial = threshold::sign_message::<Variant>(share, TEE_ENDORSE_NAMESPACE, message);
         Ok(partial.encode().to_vec())
     }
+
+    /// The encoded DKG group public polynomial (`output.public()`). PUBLIC — it is
+    /// the verification key for this committee's threshold group signatures
+    /// (offer-key recovery and reshare endorsements). Carried into the bootstrap
+    /// payload so a later committee's reshare endorsement can be verified on-chain
+    /// against the endorsing committee's group key. Requires `player_finalize`.
+    pub fn group_public_key_bytes(&self) -> Result<Vec<u8>> {
+        let output = self.group_output.as_ref().ok_or(TeeError::DkgSeamOrder(
+            "group_public_key_bytes before player_finalize",
+        ))?;
+        Ok(output.public().encode().to_vec())
+    }
 }
 
 /// Verify a signed dealer log against the ceremony `info`, yielding the dealer's
