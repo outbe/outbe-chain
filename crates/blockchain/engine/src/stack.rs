@@ -2204,18 +2204,19 @@ where
                     // under gramine-sgx, unattested-fallback on the dev box.
                     let connect_policy =
                         crate::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-                    let tribute_offer_public = crate::tee_bootstrap::run_tee_dkg_at_startup(
-                        &socket,
-                        &dkg_clock,
-                        n,
-                        dkg_chain_id,
-                        0,
-                        &connect_policy,
-                        dkg_sender,
-                        dkg_receiver,
-                    )
-                    .await
-                    .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
+                    let (tribute_offer_public, tribute_offer_group_public_key) =
+                        crate::tee_bootstrap::run_tee_dkg_at_startup(
+                            &socket,
+                            &dkg_clock,
+                            n,
+                            dkg_chain_id,
+                            0,
+                            &connect_policy,
+                            dkg_sender,
+                            dkg_receiver,
+                        )
+                        .await
+                        .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
                     info!(
                         tribute_offer_public = %B256::from(tribute_offer_public),
                         "TEE DKG complete — shared tribute offer key derived"
@@ -2225,6 +2226,7 @@ where
                         my_validator,
                         committee,
                         B256::from(tribute_offer_public),
+                        tribute_offer_group_public_key,
                         tee_policy,
                         &evm_signer,
                         tee_sender,

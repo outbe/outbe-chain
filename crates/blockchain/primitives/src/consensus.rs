@@ -224,6 +224,13 @@ pub struct DkgBoundaryArtifact {
     /// begin-zone `BoundaryOutcome` handler writes these into `TeeRegistry`. The
     /// offer key is preserved across a reshare. OART wire `v0.08`.
     pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
+    /// Prior- (outgoing-) committee threshold GROUP signature over
+    /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
+    /// authorizing the incoming committee's TEE re-registrations. The begin-zone
+    /// handler verifies it against the stored prior group public key before applying
+    /// `tee_reshare_registrations` — so a malicious supermajority of the NEW committee
+    /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
+    pub endorsement_signature: Bytes,
 }
 
 /// A single validator entry for genesis initialization.

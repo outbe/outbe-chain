@@ -13,6 +13,7 @@ pub mod bootstrap;
 pub mod client;
 pub mod client_global;
 pub mod codec;
+pub mod endorsement;
 pub mod errors;
 pub mod handoff;
 pub mod protocol;

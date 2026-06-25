@@ -125,6 +125,30 @@ pub fn verify_seed_signature_plain(
     verify_message::<MinSig>(pk, &hybrid_seed_namespace(), seed_message, signature).is_ok()
 }
 
+/// Verify a recovered threshold GROUP signature against a group public key (the
+/// committee's constant-term BLS public, as stored on-chain). Returns `true` iff
+/// `sig_bytes` is a valid MinSig group signature by `group_pub_bytes` over
+/// `message` under `namespace`. Deterministic plain pairing (no RNG) so every
+/// validator reaches the same verdict — used by the begin-zone reshare endorsement
+/// gate. Malformed/empty public-key or signature bytes verify as `false`.
+pub fn verify_group_signature(
+    group_pub_bytes: &[u8],
+    namespace: &[u8],
+    message: &[u8],
+    sig_bytes: &[u8],
+) -> bool {
+    // A fixed-size decode validates the length; a wrong-length / empty (unset) key
+    // fails to decode and the gate treats the endorsement as invalid.
+    let Ok(pk) = <MinSig as Variant>::Public::decode(Bytes::copy_from_slice(group_pub_bytes))
+    else {
+        return false;
+    };
+    let Ok(sig) = <MinSig as Variant>::Signature::decode(Bytes::copy_from_slice(sig_bytes)) else {
+        return false;
+    };
+    verify_message::<MinSig>(&pk, namespace, message, &sig).is_ok()
+}
+
 /// Deterministically decide whether a threshold-VRF seed partial is VALID
 /// against the committee's full public polynomial commitment.
 ///

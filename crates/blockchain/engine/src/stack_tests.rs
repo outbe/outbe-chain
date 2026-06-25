@@ -364,6 +364,7 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
             active_set_hash: B256::with_last_byte(0xA2),

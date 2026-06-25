@@ -1015,6 +1015,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
                 active_set_hash: B256::repeat_byte(0x55),
@@ -1035,6 +1036,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
             tribute_offer_public_key: B256::repeat_byte(0xB4),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xB5; 96]),
             registrations: vec![TeeRegistrationBundle {
                 validator,
                 recipient_x25519: B256::repeat_byte(0x21),

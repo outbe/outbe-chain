@@ -34,11 +34,16 @@ sgx.edmm_enable = false
 # One Gramine thread per served connection + a margin.
 sgx.max_threads = 64
 
-# Real SGX attestation. Under gramine-sgx this makes /dev/attestation/quote
-# produce a real DCAP (ECDSA) quote and /dev/attestation/keys/* the real EGETKEY
-# sealing keys. Ignored by gramine-direct (which has no SGX hardware, so
-# attestation_type reads `none` and the enclave runs explicitly unattested).
-sgx.remote_attestation = "dcap"
+# SGX attestation mode. "none" runs honest gramine-sgx WITHOUT remote
+# attestation: real confidential execution and real EGETKEY sealing keys
+# (/dev/attestation/keys/*) still work, and /dev/attestation/report still exposes
+# the local SGX report (MRENCLAVE/MRSIGNER), but /dev/attestation/quote produces
+# no DCAP quote. This is deliberate — a DCAP quote needs a provisioned PCK
+# (PCCS / Intel PCS) which this box lacks, and DCAP load-time setup otherwise
+# fails with "AESM service returned error 12". We do not verify quotes on-chain
+# yet (verify_enclave_registration is a stub), so the enclave runs unattested.
+# Switch back to "dcap" once PCCS provisioning is in place and quotes are checked.
+sgx.remote_attestation = "none"
 # Enclave identity (MRSIGNER-policy sealing survives an update of the same SVN
 # family). Bump isvsvn on a security-relevant rebuild to enforce anti-rollback.
 sgx.isvprodid = 1

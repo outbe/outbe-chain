@@ -74,15 +74,20 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         }
 
         // Announce identities (tee_bls_pub, dkg_enc_pub).
-        let identities: Vec<(Vec<u8>, [u8; 32])> = clients
+        let identities: Vec<outbe_tee::protocol::ParticipantAnnounce> = clients
             .iter_mut()
             .map(
                 |c| match c.request(&EnclaveRequest::GetPublicKeys).unwrap() {
                     EnclaveResponse::PublicKeys {
                         tee_bls_pub,
                         dkg_enc_pub,
+                        dkg_enc_sig,
                         ..
-                    } => (tee_bls_pub, dkg_enc_pub),
+                    } => outbe_tee::protocol::ParticipantAnnounce {
+                        bls_pub: tee_bls_pub,
+                        enc_pub: dkg_enc_pub,
+                        enc_sig: dkg_enc_sig,
+                    },
                     other => panic!("GetPublicKeys: {other:?}"),
                 },
             )
@@ -91,9 +96,9 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         // One mpsc inbox per node + a shared bls -> sender map.
         let mut receivers = Vec::new();
         let mut senders: BTreeMap<Vec<u8>, mpsc::UnboundedSender<Envelope>> = BTreeMap::new();
-        for (bls, _) in &identities {
+        for p in &identities {
             let (tx, rx) = mpsc::unbounded_channel();
-            senders.insert(bls.clone(), tx);
+            senders.insert(p.bls_pub.clone(), tx);
             receivers.push(rx);
         }
 
@@ -103,7 +108,8 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
         // Spawn one driver task per node. `receivers.remove(0)` consumes the inboxes
         // in order, so node i gets receiver i.
         let mut tasks = Vec::new();
-        for ((bls, _), mut client) in identities.iter().cloned().zip(clients) {
+        for (p, mut client) in identities.iter().cloned().zip(clients) {
+            let bls = p.bls_pub.clone();
             let coord = CeremonyCoordinator::new(ceremony_id, 0, bls.clone(), identities.clone());
             let mut gossip = InMemoryGossip {
                 my_bls: bls,

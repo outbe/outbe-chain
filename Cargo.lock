@@ -7303,6 +7303,7 @@ dependencies = [
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-staking",
+ "outbe-tee",
  "outbe-teeregistry",
  "outbe-tribute",
  "outbe-tributefactory",
