@@ -99,7 +99,7 @@ contract IntexAuctionFuzzTest is Test {
         uint64 clearingRate = uint64(bound(rateSeed, 0, type(uint64).max));
         uint32 wonBidsCount = uint32(bound(wonSeed, 0, revealed + 3));
 
-        if (clearingRate == 0) {
+        if (issued > 0 && clearingRate == 0) {
             vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
             vm.prank(bridger);
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
@@ -109,7 +109,7 @@ contract IntexAuctionFuzzTest is Test {
             );
             vm.prank(bridger);
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
-        } else if (clearingRate < MIN_RATE) {
+        } else if (issued > 0 && clearingRate < MIN_RATE) {
             vm.expectRevert(
                 abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE)
             );

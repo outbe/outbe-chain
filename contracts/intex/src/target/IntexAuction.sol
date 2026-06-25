@@ -47,6 +47,10 @@ contract IntexAuction is
         mapping(uint32 seriesId => mapping(address bidder => bool revealed)) revealedBidsByBidder;
         /// @dev Revealed bids per series.
         mapping(uint32 seriesId => IIntexAuction.SubmittedBidData[]) revealedBids;
+        /// @dev Cleared marker per series. Set once by `executeAuctionClearing` and the sole
+        ///      `Completed`-stage signal — so a no-sale clearing (issuedIntexCount == 0,
+        ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
+        mapping(uint32 seriesId => bool) cleared;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuction")) - 1)) & ~bytes32(uint256(0xff))
@@ -247,14 +251,18 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        if (auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
+        // No-sale (issuedIntexCount == 0): supply was exhausted/zero, nothing is minted and every
+        // bidder is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained
+        // — it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
+        // must carry a real clearing rate at or above the floor.
+        if (issuedIntexCount > 0 && auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
 
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
-        // against on-chain counters — winners cannot exceed revealed bids, and the clearing rate
-        // cannot fall below the configured minimum. It is not a full re-computation.
+        // against on-chain counters — winners cannot exceed revealed bids, and a sale's clearing
+        // rate cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[seriesId].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
-        if (auctionClearingRate < a.params.minIntexBidRate) {
+        if (issuedIntexCount > 0 && auctionClearingRate < a.params.minIntexBidRate) {
             revert ClearingRateBelowMin(auctionClearingRate, a.params.minIntexBidRate);
         }
 
@@ -263,6 +271,7 @@ contract IntexAuction is
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
+        $.cleared[seriesId] = true;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
         emit AuctionClearingExecuted(seriesId, auctionClearingRate, issuedIntexCount);
@@ -444,7 +453,8 @@ contract IntexAuction is
     // --- Internal helpers ---
     /// @notice Compute the current auction stage from the schedule and worldwide-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Red day short-circuits to
-    ///      `Cancelled`; a non-zero clearing price short-circuits to `Completed`; an `Unknown`
+    ///      `Cancelled`; a cleared auction short-circuits to `Completed` (the `cleared` flag, set by
+    ///      `executeAuctionClearing` — covers a no-sale clearing whose rate is 0); an `Unknown`
     ///      worldwide-day state stays in `CommittingBids` regardless of `commitEnd`.
     /// @param seriesId Auction series id.
     /// @return Current auction stage.
@@ -456,7 +466,7 @@ contract IntexAuction is
             return IIntexAuction.AuctionStage.Cancelled;
         }
 
-        if (a.result.auctionClearingRate > 0) {
+        if (_s().cleared[seriesId]) {
             return IIntexAuction.AuctionStage.Completed;
         }
 

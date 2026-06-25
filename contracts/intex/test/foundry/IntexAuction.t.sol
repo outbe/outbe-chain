@@ -567,6 +567,47 @@ contract AuctionTest is Test {
         assertEq(fin.result.issuedIntexLoadedPromis, 0);
     }
 
+    /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
+    ///      (nothing was allocated because supply was exhausted/zero). It must still complete —
+    ///      full refund is handled via REFUND_INSTRUCTIONS, nothing is issued — and NOT revert
+    ///      `ZeroValue`/`ClearingRateBelowMin`. The `cleared` flag drives the Completed stage.
+    function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250145;
+        uint32 floor = 50; // minIntexBidRate > 0
+        _start(seriesId, floor, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.prank(bridger);
+        auction.startClearingStage(seriesId);
+
+        // issued=0, clearingRate=0, won=0 — accepted despite floor=50 (no supply was available).
+        vm.expectEmit(true, false, false, true);
+        emit IIntexAuction.AuctionClearingExecuted(seriesId, 0, 0);
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, 0, 0, 0);
+
+        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
+        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
+        assertEq(fin.result.auctionClearingRate, 0);
+        assertEq(fin.result.issuedIntexCount, 0);
+        assertEq(fin.result.wonBidsCount, 0);
+        assertEq(fin.result.issuedIntexLoadedPromis, 0);
+
+        // Idempotent: re-clearing a completed auction is rejected on the stage gate.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.Issuance,
+                IIntexAuction.AuctionStage.Completed
+            )
+        );
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, 0, 0, 0);
+    }
+
     // --- Validation Tests ---
     function test_AuctionStart_Validation() public {
         uint32 seriesId = 20250127;
