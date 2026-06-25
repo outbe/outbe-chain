@@ -3,7 +3,9 @@
 //! Mirrors the Cosmos reference (`x/nod/abci.go::EndBlocker` +
 //! `x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`): every
 //! block, read the current COEN/0xUSD exchange rate from the oracle and
-//! promote any unqualified bucket whose `floor_price_minor <= rate`.
+//! promote any unqualified bucket whose `floor_price_minor < rate`. The
+//! comparison is strict — a bucket priced exactly at the rate stays
+//! unqualified until the rate moves strictly above its floor.
 //! Qualification is a monotonic latch — once a bucket is qualified it stays
 //! that way, so `mine_gratis` only has to read the cached `is_qualified` bit.
 //!
@@ -14,9 +16,11 @@
 //!   `unqualified_bin_buckets`, and a 3-level radix-256 bitmap trie
 //!   (`bin_tree_root`/`bin_tree_mid`/`bin_tree_leaf`) marks non-empty bins.
 //! - Each block: walk set bins in ascending `bin_id` order via
-//!   `bin_tree::find_first_left_inclusive`. Strict-inequality bins drain
-//!   wholesale; the tail bin (`bin_id == r_bin`) checks each bucket's exact
-//!   `floor_price_minor` against `rate` to preserve Cosmos parity.
+//!   `bin_tree::find_first_left_inclusive`. Bins strictly below `r_bin` hold
+//!   only floors `< rate` (any floor equal to the rate maps into `r_bin`), so
+//!   they drain wholesale; the tail bin (`bin_id == r_bin`) checks each
+//!   bucket's exact `floor_price_minor < rate` so a coarse bin neither
+//!   qualifies a bucket above the rate nor one priced exactly at it.
 
 use alloy_primitives::U256;
 use outbe_oracle::api::get_exchange_rate;
@@ -77,9 +81,10 @@ pub fn qualify_buckets_with_rate(ctx: &BlockRuntimeContext, rate: U256) -> Resul
                 Some(b) if !b.is_qualified => b,
                 _ => continue,
             };
-            // Tail bin: exact-check `floor_price <= rate` so a coarse bin
-            // doesn't qualify a bucket that's strictly above the rate.
-            if !strict && bucket.floor_price_minor > rate {
+            // Tail bin: exact-check `floor_price < rate` (strict) so a coarse
+            // bin neither qualifies a bucket above the rate nor one priced
+            // exactly at it — equality stays unqualified.
+            if !strict && bucket.floor_price_minor >= rate {
                 survivors.push(bucket_key);
                 continue;
             }

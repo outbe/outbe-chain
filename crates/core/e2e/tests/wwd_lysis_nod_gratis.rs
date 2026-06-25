@@ -22,10 +22,10 @@
 //!
 //! Bucket qualification is oracle-driven: after lysis issues a NOD the bucket
 //! starts UNQUALIFIED, and `NodLifecycle::begin_block` promotes it once the
-//! COEN/0xUSD exchange rate reaches `bucket.floor_price_minor`. The test seeds
+//! COEN/0xUSD exchange rate rises strictly above `bucket.floor_price_minor`
+//! (a rate exactly equal to the floor leaves it unqualified). The test seeds
 //! the rate via `seed_exchange_rate(...)` between lysis and mining and asserts
-//! the bit flips after the next tick — matching the Cosmos reference
-//! (`x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`).
+//! the bit flips after the next tick.
 //!
 //! What is still bypassed in this test:
 //!   - NOD `cost_amount_minor` payment goes through the precompile's new
@@ -207,7 +207,7 @@ fn seed_current_wwd_vwap(storage: StorageHandle, pair_id: u32, wwd: WorldwideDay
 }
 
 /// System write of the COEN/0xUSD exchange rate used by `NodLifecycle` to
-/// qualify buckets whose `floor_price_minor <= rate`. In production this rate
+/// qualify buckets whose `floor_price_minor < rate` (strict). In production this rate
 /// comes from validator vote tally at vote-period boundaries; the test writes
 /// it directly as a deterministic substitute.
 fn seed_exchange_rate(storage: StorageHandle, rate: U256) {
@@ -479,9 +479,9 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     .unwrap()
                     .map(|b| b.is_qualified)
                     .unwrap_or(false),
-                "NodLifecycle must qualify the bucket once oracle rate >= floor_price"
+                "NodLifecycle must qualify the bucket once oracle rate > floor_price"
             );
-            assert!(alice_floor_price <= U256::from(500u64));
+            assert!(alice_floor_price < U256::from(500u64));
         }
 
         // GREEN unused demand + day_metadosis_limit_remainder landed in PromisLimit.
