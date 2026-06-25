@@ -1,6 +1,8 @@
 mod array;
 mod binary_heap;
 mod bytes_like;
+mod circular_buffer;
+mod deque;
 mod mapping;
 mod set;
 mod slot;
@@ -9,6 +11,8 @@ mod vec;
 pub use array::StorageArray;
 pub use binary_heap::BinaryHeap;
 pub use bytes_like::StorageBytes;
+pub use circular_buffer::StorageCircularBuffer;
+pub use deque::StorageDeque;
 pub use mapping::Mapping;
 pub use set::StorageSet;
 pub use slot::Slot;

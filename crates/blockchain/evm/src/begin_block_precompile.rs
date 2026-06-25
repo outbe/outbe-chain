@@ -1893,11 +1893,19 @@ mod tests {
                 "window marked settled"
             );
 
-            // Residue recycled into terminal Metadosis day-limit headroom.
-            let date = outbe_metadosis::runtime::timestamp_to_date_key(timestamp);
+            // Residue recycled into terminal Metadosis emission headroom. The
+            // terminal sink now keys the credit on the WorldwideDay record
+            // (UTC+14) for the block timestamp, i.e. date_key(timestamp + UTC+14).
+            use outbe_metadosis::schema::WorldwideDayEntryExt;
+            let wwd = outbe_metadosis::runtime::timestamp_to_date_key(
+                timestamp + outbe_metadosis::constants::UTC_PLUS_14_OFFSET,
+            );
             let recorded = ctx
                 .contract::<outbe_metadosis::schema::MetadosisContract>()
-                .get_day_limit(date.into())
+                .worldwide_days
+                .entry(wwd.into())
+                .metadosis_limit_amount()
+                .read()
                 .unwrap();
             assert_eq!(recorded, each, "residue routed to terminal Metadosis");
         });

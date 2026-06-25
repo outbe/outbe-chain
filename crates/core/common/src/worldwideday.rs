@@ -30,7 +30,7 @@ impl WorldwideDay {
         let Ok(month) = Month::try_from(month) else {
             return false;
         };
-        Date::from_calendar_date(i32::from(year), month, day).is_ok()
+        Date::from_calendar_date(year, month, day).is_ok()
     }
 
     fn parse_wwd_to_nums(self) -> (i32, u8, u8) {

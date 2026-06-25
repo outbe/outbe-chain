@@ -142,7 +142,10 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
         promis_limit.add_to_total_unallocated(total_unallocated)?;
     }
 
-    //cleanup_completed_wwd(&mut metadosis, timestamp)?;
+    // Terminal-day cleanup is no longer a per-tick scan: each COMPLETED/FAILED
+    // transition retires the day into the bounded `closed_worldwidedays`
+    // delete-queue (see `MetadosisContract::mark_wwd_*`), which evicts and
+    // deletes the oldest record past `MAX_RECORDS_KEPT`.
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::errors::MetadosisError;
+use crate::precompile::IMetadosis;
 use crate::schema::{day_type, status, MetadosisContract, WorldwideDay, WorldwideDayEntryExt};
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
@@ -107,21 +108,52 @@ impl MetadosisContract<'_> {
     }
 
     pub fn mark_wwd_completed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
-        let entry = self.worldwide_days.entry(wwd);
-        let current = entry.status().read()?;
+        let current = self.get_wwd_status(wwd)?;
         if current != status::READY {
             return Err(MetadosisError::InvalidTransitionToCompleted { wwd, current }.into());
         }
-        entry.status().write(status::COMPLETED)
+        self.worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::COMPLETED)?;
+        self.retire_terminal_wwd(wwd)
     }
 
     pub fn mark_wwd_failed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
-        let entry = self.worldwide_days.entry(wwd);
-        let current = entry.status().read()?;
+        let current = self.get_wwd_status(wwd)?;
         if current == status::COMPLETED {
             return Err(MetadosisError::InvalidTransitionToFailed { wwd }.into());
         }
-        entry.status().write(status::FAILED)
+        if current == status::FAILED {
+            // Already terminal: idempotent re-fail must not double-enqueue.
+            return Ok(());
+        }
+        self.worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::FAILED)?;
+        self.retire_terminal_wwd(wwd)
+    }
+
+    /// Moves a now-terminal day out of the active set and onto the bounded
+    /// delete-queue; once the queue exceeds `MAX_RECORDS_KEPT`, pops the oldest
+    /// from the front and deletes its record (emitting `WorldwideDayCleanedUp`).
+    fn retire_terminal_wwd(&mut self, wwd: WorldwideDayKey) -> Result<()> {
+        self.remove_active_wwd(wwd)?;
+        self.closed_worldwidedays.push_back(wwd)?;
+        // usize -> u64 is a widening, lossless conversion.
+        while self.closed_worldwidedays.len()? > MAX_RECORDS_KEPT as u64 {
+            let Some(evicted) = self.closed_worldwidedays.pop_front()? else {
+                break;
+            };
+            let final_status = self.get_wwd_status(evicted)?;
+            self.delete_worldwide_day(evicted)?;
+            self.emit(IMetadosis::WorldwideDayCleanedUp {
+                worldwideDay: evicted.into(),
+                finalStatus: final_status,
+            })?;
+        }
+        Ok(())
     }
 
     // --- Active WWD List ---
@@ -141,6 +173,16 @@ impl MetadosisContract<'_> {
         for wwd in self.active_wwd.read_all()? {
             if self.get_wwd_status(wwd)? == wanted_status {
                 result.push(wwd);
+            }
+        }
+        // Terminal records live in the bounded delete-queue, not active_wwd, so
+        // COMPLETED/FAILED status queries must also scan the queue. The two sets
+        // are disjoint (active = non-terminal, queue = terminal), so no dedup.
+        if wanted_status == status::COMPLETED || wanted_status == status::FAILED {
+            for wwd in self.closed_worldwidedays.read_all()? {
+                if self.get_wwd_status(wwd)? == wanted_status {
+                    result.push(wwd);
+                }
             }
         }
         Ok(result)

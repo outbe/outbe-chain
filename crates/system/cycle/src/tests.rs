@@ -131,7 +131,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
         // Sanity: no worldwide day exists before begin_block.
         let before = outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone());
         assert!(
-            before.get_all_active_wwds().unwrap().is_empty(),
+            before.active_wwd.read_all().unwrap().is_empty(),
             "no worldwide day should exist before block-1 begin_block"
         );
         drop(before);
@@ -140,7 +140,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
 
         let metadosis = outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone());
         assert!(
-            !metadosis.get_all_active_wwds().unwrap().is_empty(),
+            !metadosis.active_wwd.read_all().unwrap().is_empty(),
             "block-1 begin_block must create the genesis worldwide day"
         );
 

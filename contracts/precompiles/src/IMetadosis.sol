@@ -41,7 +41,10 @@ interface IMetadosis {
         string action
     );
 
-    event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint64 retentionDays);
+    /// @notice Emitted when a terminal WorldwideDay record is evicted from the
+    /// bounded delete-queue (oldest-first, once terminal records exceed the cap).
+    /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
+    event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
 
     function getWorldwideDay(uint32 wwd)
         external

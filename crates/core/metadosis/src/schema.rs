@@ -78,4 +78,10 @@ pub struct MetadosisContract {
 
     #[attribute(order = 4)]
     pub config_oracle_pair_hash: outbe_primitives::storage::dsl::Value<B256>,
+
+    /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
+    /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
+    /// the cap, the oldest is popped from the front and its record deleted.
+    #[attribute(order = 5)]
+    pub closed_worldwidedays: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 }
