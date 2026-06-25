@@ -16,11 +16,11 @@ e2e_cleanup
 e2e_bootstrap 4 || { e2e_summary; exit 1; }
 e2e_start
 V0=$(e2e_v0key)
-# wwd status BEFORE any offer (genesis OFFERING day 20241220 == status 2).
-WWD_BEFORE=$(cast call 0x000000000000000000000000000000000000100E 'getWorldwideDay(uint32)(uint8,uint8,uint64,uint64,uint64,uint64,uint64,uint256,uint256)' 20241220 --rpc-url $RPC0 2>/dev/null | sed -n '2p')
+# wwd status BEFORE any offer (genesis OFFERING day == today's $E2E_WWD, status 2).
+WWD_BEFORE=$(cast call 0x000000000000000000000000000000000000100E 'getWorldwideDay(uint32)(uint8,uint8,uint64,uint64,uint64,uint64,uint64,uint256,uint256)' "$E2E_WWD" --rpc-url $RPC0 2>/dev/null | sed -n '2p')
 e2e_offer "$V0" 1 && e2e_log "offer accepted (supply 1)"
 e2e_assert_eq "committee processed offer (supply)" "1" "$(e2e_supply 8545)"
-WWD_AFTER=$(cast call 0x000000000000000000000000000000000000100E 'getWorldwideDay(uint32)(uint8,uint8,uint64,uint64,uint64,uint64,uint64,uint256,uint256)' 20241220 --rpc-url $RPC0 2>/dev/null | sed -n '2p')
+WWD_AFTER=$(cast call 0x000000000000000000000000000000000000100E 'getWorldwideDay(uint32)(uint8,uint8,uint64,uint64,uint64,uint64,uint64,uint256,uint256)' "$E2E_WWD" --rpc-url $RPC0 2>/dev/null | sed -n '2p')
 e2e_assert_eq "wwd status unchanged by offer (time-driven, not offer-driven)" "$WWD_BEFORE" "$WWD_AFTER"
 
 e2e_log "provisioning + launching full-node v5 (REGISTERED, not staked)"
@@ -46,7 +46,7 @@ e2e_confirm_ready "$V5_KEY"; e2e_log "confirm-ready sent at committee h=$(e2e_h 
 
 e2e_step "S6: in-flight tribute offer submitted during the reshare window"
 V1=$(e2e_vkey 1)
-( for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer 20241220 --amount 100 --currency 840 --private-key "$V1" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "2" ] && break; done ) &
+( for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer "$E2E_WWD" --amount 100 --currency 840 --private-key "$V1" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "2" ] && break; done ) &
 INFLIGHT_PID=$!
 
 e2e_log "waiting for reshare to activate v5 (ACTIVE participant)..."
@@ -96,7 +96,7 @@ VH2=$(e2e_h 8549)
 e2e_assert "demoted node still follows finality (head advanced past exclusion)" "$([ "$VH2" != "dn" ] && [ "$VH2" -gt "$EXIT_ACT_H" ] 2>/dev/null && echo true || echo false)"
 # offer parity post-demotion: a new offer is executed by the demoted follower too.
 V2=$(e2e_vkey 2)
-for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer 20241220 --amount 100 --currency 840 --private-key "$V2" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "3" ] && break; done
+for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer "$E2E_WWD" --amount 100 --currency 840 --private-key "$V2" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "3" ] && break; done
 sleep 6
 e2e_assert_eq "demoted follower still executes offers (supply parity)" "$(e2e_supply 8545)" "$(e2e_supply 8549)"
 
