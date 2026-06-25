@@ -69,6 +69,7 @@ fn sample_boundary() -> DkgBoundaryArtifact {
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: ReshareResult {
             new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
             active_set_hash: B256::repeat_byte(0x55),
@@ -108,6 +109,7 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
                 tribute_offer_epoch: 0,
                 dkg_transcript_hash: B256::ZERO,
                 tribute_offer_public_key: B256::ZERO,
+                tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
                 registrations: Vec::new(),
                 policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
                 validator_signatures: Vec::new(),

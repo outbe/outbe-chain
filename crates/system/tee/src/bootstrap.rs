@@ -50,6 +50,11 @@ pub struct BootstrapParams {
     pub dkg_transcript_hash: B256,
     pub committee_snapshot_block: u64,
     pub committee_snapshot_hash: B256,
+    /// Encoded DKG group public polynomial of the bootstrapping committee — the
+    /// verification key for this committee's threshold group signatures (offer-key
+    /// recovery + reshare endorsements). Persisted on-chain so a later reshare
+    /// endorsement can be verified against the endorsing committee's group key.
+    pub tribute_offer_group_public_key: alloy_primitives::Bytes,
 }
 
 /// Build the unsigned bootstrap payload: every registration's `keys_hash` is
@@ -88,6 +93,7 @@ pub fn build_unsigned_bootstrap(
         tribute_offer_epoch: params.tribute_offer_epoch,
         dkg_transcript_hash: params.dkg_transcript_hash,
         tribute_offer_public_key: params.tribute_offer_public_key,
+        tribute_offer_group_public_key: params.tribute_offer_group_public_key.clone(),
         registrations,
         policy: params.policy.clone(),
         validator_signatures: Vec::new(),
@@ -301,6 +307,7 @@ mod tests {
             dkg_transcript_hash: B256::repeat_byte(0x72),
             committee_snapshot_block: 9,
             committee_snapshot_hash: B256::repeat_byte(0x73),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0x74; 96]),
         }
     }
 

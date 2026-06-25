@@ -16,6 +16,7 @@ fn sample_data() -> TeeBootstrapData {
         dkg_transcript_hash: B256::repeat_byte(0xCC),
         committee_snapshot_block: 1,
         committee_snapshot_hash: B256::repeat_byte(0xDD),
+        tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xEE; 96]),
         registrations: vec![
             TeeRegistration {
                 validator: Address::repeat_byte(0x11),

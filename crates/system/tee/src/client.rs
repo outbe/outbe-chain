@@ -171,11 +171,15 @@ impl EnclaveClient {
         Self::from_transport(Transport::Tcp(stream), policy)
     }
 
-    /// True if the connected enclave presented a real SGX hardware quote
-    /// (non-zero measurements). False under gramine-direct / bare, where the
-    /// enclave is unattested and was accepted only by a dev policy.
+    /// True only if the connected enclave is REMOTE-attested — it produced a real
+    /// DCAP/EPID quote. Measurements alone are NOT sufficient: under gramine-sgx
+    /// with `sgx.remote_attestation = "none"` the enclave reports REAL measurements
+    /// (read from the local SGX report) but produces no quote, so it is confidential
+    /// and measured yet unattested. False under gramine-direct / bare too. Gate
+    /// quote-dependent trust on this, not on non-zero measurements.
     pub fn is_hardware_attested(&self) -> bool {
-        self.identity.mrenclave != B256::ZERO
+        let a = &self.identity.attestation;
+        a.starts_with("dcap") || a.starts_with("epid")
     }
 
     /// The connected enclave's measurements `(mrenclave, mrsigner, isv_svn)`.

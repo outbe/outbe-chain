@@ -8,7 +8,9 @@
 //! Verification Library and PCCS collateral (see `verify_dcap_signature`).
 
 /// SGX report body offset inside a DCAP ECDSA quote (after the 48-byte header).
-const REPORT_BODY_OFFSET: usize = 48;
+/// A standalone local SGX report has its body at offset 0, so prepending this many
+/// bytes lets it be parsed by [`parse_quote_measurements`] at the same offsets.
+pub const REPORT_BODY_OFFSET: usize = 48;
 const RB_MRENCLAVE: usize = 64;
 const RB_MRSIGNER: usize = 128;
 const RB_ISV_SVN: usize = 258;

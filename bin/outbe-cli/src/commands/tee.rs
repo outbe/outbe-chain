@@ -31,6 +31,20 @@ pub enum TeeCmd {
         #[arg(long, default_value_t = 60)]
         timeout_secs: u64,
     },
+    /// Print this enclave's resident tribute-offer public key (the key clients
+    /// encrypt offers to once DKG completes) and its DKG identity key. With
+    /// `--diff-chain`, also read the on-chain registry `tributeOfferPublicKey()`
+    /// and assert it MATCHES the enclave — exits non-zero on a registry-vs-enclave
+    /// mismatch, so it can gate scripts.
+    Pubkey {
+        /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
+        #[arg(long)]
+        enclave_socket: String,
+        /// Also read the on-chain `tributeOfferPublicKey()` (TEE registry slot-1)
+        /// and assert it equals the enclave's resident offer key.
+        #[arg(long, default_value_t = false)]
+        diff_chain: bool,
+    },
 }
 
 impl TeeCmd {
@@ -40,7 +54,75 @@ impl TeeCmd {
                 enclave_socket,
                 timeout_secs,
             } => join(client, private_key, &enclave_socket, timeout_secs).await,
+            TeeCmd::Pubkey {
+                enclave_socket,
+                diff_chain,
+            } => pubkey(client, &enclave_socket, diff_chain).await,
         }
+    }
+}
+
+/// Query the enclave's resident offer + identity public keys and (optionally)
+/// diff the offer key against the on-chain registry. The resident offer key is
+/// the Seam-F group key once DKG completes (else the pre-DKG dev key), so a
+/// `--diff-chain` MISMATCH means the registry slot-1 value and the key the enclave
+/// would actually decrypt offers with have diverged.
+async fn pubkey(
+    client: &(impl Rpc + Sync),
+    enclave_socket: &str,
+    diff_chain: bool,
+) -> Result<()> {
+    let mut enclave =
+        EnclaveClient::connect_endpoint(enclave_socket, &QuotePolicy::dev_accept_any())
+            .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
+    let label = enclave.attestation_label().to_string();
+    let (mrenclave, mrsigner, isv_svn) = enclave.measurements();
+    let remote_attested = enclave.is_hardware_attested();
+    let (offer_pub, tee_bls_pub) = match enclave.request(&EnclaveRequest::GetPublicKeys) {
+        Ok(EnclaveResponse::PublicKeys {
+            recipient_x25519_pub,
+            tee_bls_pub,
+            ..
+        }) => (recipient_x25519_pub, tee_bls_pub),
+        Ok(other) => return Err(eyre::eyre!("expected enclave PublicKeys, got {other:?}")),
+        Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
+    };
+    println!("enclave offer pubkey (recipient_x25519): 0x{}", hex::encode(offer_pub));
+    println!("enclave tee_bls_pub (DKG identity):      0x{}", hex::encode(&tee_bls_pub));
+    println!("attestation:                             {label}");
+    println!("remote-attested (real quote):            {remote_attested}");
+    println!("mrenclave:                               0x{}", hex::encode(mrenclave));
+    println!("mrsigner:                                0x{}", hex::encode(mrsigner));
+    println!("isv_svn:                                 {isv_svn}");
+    if !diff_chain {
+        return Ok(());
+    }
+
+    let onchain = call_u256(
+        client,
+        ITeeRegistry::tributeOfferPublicKeyCall {}.abi_encode(),
+    )
+    .await?;
+    if onchain.is_zero() {
+        return Err(eyre::eyre!(
+            "on-chain tributeOfferPublicKey == 0 — chain is not TEE-bootstrapped yet, \
+             nothing to diff against"
+        ));
+    }
+    let onchain_bytes: [u8; 32] = onchain.to_be_bytes();
+    println!(
+        "on-chain tributeOfferPublicKey (slot-1): 0x{}",
+        hex::encode(onchain_bytes)
+    );
+    if onchain_bytes == offer_pub {
+        println!("✓ MATCH — enclave resident offer key == on-chain registry");
+        Ok(())
+    } else {
+        Err(eyre::eyre!(
+            "✗ MISMATCH — enclave offer key 0x{} != on-chain 0x{}",
+            hex::encode(offer_pub),
+            hex::encode(onchain_bytes)
+        ))
     }
 }
 

@@ -3389,6 +3389,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::ZERO,
             tribute_offer_public_key: B256::ZERO,
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations: Vec::new(),
             policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
             validator_signatures: Vec::new(),
@@ -7108,6 +7109,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: outbe_primitives::consensus::ReshareResult {
                 new_active_set,
                 active_set_hash,
