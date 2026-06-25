@@ -445,8 +445,7 @@ mod tests {
         // Must use the RAW threshold-signature seed (no round mix): byte-identical
         // leader to the pre-fix single-guess code.
         let epoch = Epoch::new(1);
-        let (participants, provider, cert) =
-            cert_over_round(4, Round::new(epoch, View::new(10)));
+        let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
         let n = participants.len() as usize;
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
@@ -465,8 +464,7 @@ mod tests {
         // post-fix the window recovers V and elects via the verified, round-mixed
         // seed. Pinning the exact verified value proves no degrade occurred.
         let epoch = Epoch::new(1);
-        let (participants, provider, cert) =
-            cert_over_round(4, Round::new(epoch, View::new(10)));
+        let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
         let n = participants.len() as usize;
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
@@ -487,8 +485,7 @@ mod tests {
         // single leader. Verify each matches its per-view reference, and that the
         // dv>1 views are distinct from the raw-seed value.
         let epoch = Epoch::new(1);
-        let (participants, provider, cert) =
-            cert_over_round(7, Round::new(epoch, View::new(20)));
+        let (participants, provider, cert) = cert_over_round(7, Round::new(epoch, View::new(20)));
         let n = participants.len() as usize;
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
@@ -521,8 +518,7 @@ mod tests {
         // the probe window, so no candidate verifies and elect falls through to the
         // round-robin path (fail-closed) rather than accepting a wrong-round seed.
         let epoch = Epoch::new(1);
-        let (participants, provider, cert) =
-            cert_over_round(4, Round::new(epoch, View::new(2)));
+        let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(2)));
         let n = participants.len() as usize;
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
 
