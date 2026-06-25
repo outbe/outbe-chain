@@ -35,9 +35,8 @@ fn default_config() -> AuctionConfig {
     AuctionConfig {
         promis_load_minor: PROMIS_LOAD_MINOR,
         min_intex_bid_rate: 100,
-        // strike = RATE_SCALE so that lock = qty * rate (keeps test amounts simple).
-        cost_amount_minor: 1_000_000,
-        entry_price: U256::ZERO,
+        // entry_price chosen so the derived strike == RATE_SCALE (lock = qty * rate).
+        entry_price: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
     }
 }
 
@@ -585,8 +584,7 @@ fn clear_rate_escrow_scales_by_strike() {
         let cfg = AuctionConfig {
             promis_load_minor: PROMIS_LOAD_MINOR,
             min_intex_bid_rate: 0,
-            cost_amount_minor: 2_000_000, // strike = 2 x RATE_SCALE
-            entry_price: U256::ZERO,
+            entry_price: U256::from(20_000_000_000_000u128), // 2e13 → strike = 2 x RATE_SCALE
         };
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
@@ -672,14 +670,14 @@ fn test_iface_id_matches_selector_xor() {
 fn from_entry_price_rounds_cost_amount_up_to_100() {
     let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
     assert_eq!(
-        cfg.cost_amount_minor % 100,
+        cfg.cost_amount_minor() % 100,
         0,
         "cost_amount must be a multiple of 100"
     );
-    assert_eq!(cfg.cost_amount_minor, 100_000_100);
+    assert_eq!(cfg.cost_amount_minor(), 100_000_100);
 
     let exact = AuctionConfig::from_entry_price(U256::from(2_000_000_000_000_000u128));
-    assert_eq!(exact.cost_amount_minor, 200_000_000);
+    assert_eq!(exact.cost_amount_minor(), 200_000_000);
 }
 
 // --- Best-effort dispatch API ---

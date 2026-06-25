@@ -35,7 +35,7 @@ pub fn start_auction(
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
     }
-    if config.promis_load_minor == 0 || config.cost_amount_minor == 0 {
+    if config.promis_load_minor == 0 || config.cost_amount_minor() == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
@@ -395,7 +395,7 @@ pub fn clear_auction(
             series_id,
             issued_intex_count: result.issued_intex_count,
             promis_load_minor: config.promis_load_minor,
-            entry_price: config.entry_price,
+            entry_price_minor: config.entry_price,
             issuance_currency: QUALIFIER_ISSUANCE_ISO,
             reference_currency: QUALIFIER_REFERENCE_ISO,
             recipients: result.winners.clone(),
@@ -521,7 +521,7 @@ fn calculate_clearing(
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
-    let strike = config.cost_amount_minor;
+    let strike = config.cost_amount_minor();
     let mut total_allocated: u32 = 0;
     let mut clearing_rate: u32 = config.min_intex_bid_rate;
 

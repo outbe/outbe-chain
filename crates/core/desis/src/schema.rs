@@ -44,32 +44,33 @@ pub struct AuctionConfig {
     pub promis_load_minor: u128,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of strike). 0 → no floor.
     pub min_intex_bid_rate: u32,
-    /// Per-Intex strike = entry_price × promis_load (payment-token decimals);
-    /// the bid rate applies against this.
-    pub cost_amount_minor: u64,
-    /// Entry price (per-unit, reference currency, 1e18) captured at auction start;
-    /// carried to IntexFactory.issue to derive floor_price_minor and call_price_minor.
+    /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
+    /// Sole stored anchor: the strike (`cost_amount_minor()`), floor and call all
+    /// derive from it; nothing else is persisted.
     pub entry_price: U256,
 }
 
 impl AuctionConfig {
     /// Build the demand-side config from the per-unit entry price (1e18-scaled).
-    ///
-    /// `cost_amount_minor` is the per-Intex strike `entry_price * PROMIS_LOAD /
-    /// 1e12` (payment-token decimals), rounded up to the next multiple of 100.
     /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
     /// `min_intex_bid_rate = 0` means no bid floor.
     pub fn from_entry_price(entry_price: U256) -> Self {
-        let cost_amount_u256 =
-            entry_price.saturating_mul(U256::from(PROMIS_LOAD)) / U256::from(10u128.pow(12));
-        let raw_cost_amount: u64 = cost_amount_u256.try_into().unwrap_or(u64::MAX);
-        let cost_amount_minor = raw_cost_amount.div_ceil(100).saturating_mul(100);
         Self {
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             min_intex_bid_rate: 0,
-            cost_amount_minor,
             entry_price,
         }
+    }
+
+    /// Per-Intex strike (payment-token decimals), derived (never stored) from the
+    /// entry price: `entry_price * PROMIS_LOAD / 1e12`, rounded up to the next
+    /// multiple of 100. The bid rate applies against this.
+    pub fn cost_amount_minor(&self) -> u64 {
+        let raw: u64 = (self.entry_price.saturating_mul(U256::from(PROMIS_LOAD))
+            / U256::from(10u128.pow(12)))
+        .try_into()
+        .unwrap_or(u64::MAX);
+        raw.div_ceil(100).saturating_mul(100)
     }
 }
 
@@ -110,8 +111,7 @@ pub struct DesisContract {
     pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
     pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 2)]
-    pub config_cost_amount_minor: outbe_primitives::storage::dsl::Map<u32, u64>,
+    // order = 2 retired: the strike is derived from entry_price, no longer stored.
     #[attribute(order = 3)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// Entry price (1e18) captured at auction start; carried to IntexFactory.

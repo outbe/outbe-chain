@@ -29,16 +29,16 @@ interface IIntexAuction {
     }
 
     /// @notice Revealed bid payload. Slot-packed: slot 0 holds
-    ///         `bidderAddress` (20B) + `intexBidRate` (4B) + `timestamp` (4B) + `intexQuantity` (2B) = 30B.
+    ///         `bidderAddress` (20B) + `intexBidRate` (4B) + `intexQuantity` (2B) + `timestamp` (4B) = 30B.
     struct SubmittedBidData {
         /// @notice Bidder IBA address.
         address bidderAddress;
         /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of strike).
         uint32 intexBidRate;
-        /// @notice Timestamp assigned at reveal (ordering only).
-        uint32 timestamp;
         /// @notice Requested quantity (Intex units).
         uint16 intexQuantity;
+        /// @notice Timestamp assigned at reveal (ordering only).
+        uint32 timestamp;
     }
 
     /// @notice Auction schedule — stage-end timestamps.
@@ -62,34 +62,35 @@ interface IIntexAuction {
         uint32 intexCallPeriod;
     }
 
-    /// @notice Auction input parameters, stored per auction.
+    /// @notice Auction input parameters, stored per auction. Field order mirrors the spec
+    ///         (single-currency: flat entry/floor/call stand in for the `referencePrices[]` slot).
     struct AuctionParams {
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
+        /// @notice Call-trigger parameters (window/threshold/period).
+        IntexCallTrigger callTrigger;
         /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of strike); rejects bids below it on reveal.
         uint32 minIntexBidRate;
+        /// @notice Minimum quantity per bid (Intex units).
+        uint16 minIntexBidQuantity;
         /// @notice Per-unit entry price (reference ccy); the escrow strike derives from it.
         uint64 entryPrice;
         /// @notice Floor price (payment-token minor units).
         uint64 floorPriceMinor;
         /// @notice Call price (payment-token minor units).
         uint64 callPriceMinor;
-        /// @notice Call-trigger parameters (window/threshold/period).
-        IntexCallTrigger callTrigger;
-        /// @notice Minimum quantity per bid (Intex units).
-        uint16 minIntexBidQuantity;
     }
 
     /// @notice Auction results and statistics (final, set at clearing).
     struct AuctionResult {
-        /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * promisLoadMinor`); derived on-chain at clearing.
-        uint128 issuedIntexLoadedPromis;
         /// @notice Uniform auction clearing rate (`1e6` fixed-point) used to issue Intex.
         uint64 auctionClearingRate;
-        /// @notice Number of Intex units issued.
-        uint32 issuedIntexCount;
         /// @notice Number of winning bids (provided by Outbe).
         uint32 wonBidsCount;
+        /// @notice Number of Intex units issued.
+        uint32 issuedIntexCount;
+        /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * promisLoadMinor`); derived on-chain at clearing.
+        uint128 issuedIntexLoadedPromis;
     }
 
     /// @notice Live bid counters tracked while the auction runs.

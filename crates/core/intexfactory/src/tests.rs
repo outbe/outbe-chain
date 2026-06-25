@@ -52,7 +52,7 @@ fn sample(series_id: u32) -> IssuanceParams {
         series_id,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
-        entry_price: U256::from(ENTRY_PRICE),
+        entry_price_minor: U256::from(ENTRY_PRICE),
         issuance_currency: 840,
         reference_currency: 840,
         recipients: vec![],

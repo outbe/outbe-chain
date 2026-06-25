@@ -12,7 +12,7 @@ pub struct IssuanceParams {
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.

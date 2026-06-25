@@ -33,14 +33,14 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read(&factory)?;
 
-    let floor_price_minor = derived_floor(params.entry_price, cfg.floor_price_num)?;
-    let call_price_minor = derived_call_price(params.entry_price, cfg.call_price_num)?;
+    let floor_price_minor = derived_floor(params.entry_price_minor, cfg.floor_price_num)?;
+    let call_price_minor = derived_call_price(params.entry_price_minor, cfg.call_price_num)?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         issued_intex_count: params.issued_intex_count,
         promis_load_minor: params.promis_load_minor,
-        entry_price_minor: params.entry_price,
+        entry_price_minor: params.entry_price_minor,
         floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
@@ -76,7 +76,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let cost_amount_minor_u64 =
-        u64::try_from(derived_cost_amount(params.entry_price, U256::from(params.promis_load_minor)))
+        u64::try_from(derived_cost_amount(params.entry_price_minor, U256::from(params.promis_load_minor)))
             .map_err(|_| PrecompileError::Revert("cost amount exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
@@ -130,7 +130,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id,
             issuedIntexCount: params.issued_intex_count,
-            entryPrice: params.entry_price,
+            entryPrice: params.entry_price_minor,
         },
     )
 }

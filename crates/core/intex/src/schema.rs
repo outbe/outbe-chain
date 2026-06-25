@@ -69,44 +69,46 @@ pub struct SeriesRecord {
     pub series_id: u32,
 
     #[attribute(order = 0)]
-    pub promis_load_minor: U256,
+    pub issuance_currency: u16,
 
     #[attribute(order = 1)]
-    pub entry_price_minor: U256,
+    pub reference_currency: u16,
 
     #[attribute(order = 2)]
-    pub floor_price_minor: U256,
-
-    #[attribute(order = 3)]
     pub issued_intex_count: u32,
 
+    #[attribute(order = 3)]
+    pub promis_load_minor: U256,
+
     #[attribute(order = 4)]
-    pub call_window_days: u16,
+    pub entry_price_minor: U256,
 
     #[attribute(order = 5)]
-    pub call_threshold_days: u16,
+    pub floor_price_minor: U256,
 
     #[attribute(order = 6)]
     pub call_price_minor: U256,
 
-    /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
+    // call_trigger group — stored flat (the storage DSL has no nested-struct codec),
+    // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
-    pub state: u8,
+    pub call_window_days: u16,
 
     #[attribute(order = 8)]
-    pub issued_at: u32,
+    pub call_threshold_days: u16,
 
-    #[attribute(order = 9, default = 0)]
-    pub called_at: u32,
-
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub intex_call_period: u32,
 
-    #[attribute(order = 11)]
-    pub issuance_currency: u16,
+    #[attribute(order = 10)]
+    pub issued_at: u32,
 
+    #[attribute(order = 11, default = 0)]
+    pub called_at: u32,
+
+    /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
     #[attribute(order = 12)]
-    pub reference_currency: u16,
+    pub state: u8,
 }
 
 impl SeriesRecord {
