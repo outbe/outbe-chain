@@ -30,7 +30,12 @@ import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
 // `barretenberg-rs` nightly pin). Cross-version drift surfaces as a
 // VK / proof byte mismatch rather than a compile error, so keep these
 // in sync manually when bumping.
-export const OUTBE_CIRCUITS_VERSION = "v0.10.0";
+// Pinned to the exact outbe-circuits commit the Rust side resolves to (the
+// `Cargo.lock` rev for the `feat/update-circuits` branch). A full 40-char SHA
+// is used rather than the branch name because `raw.githubusercontent.com`
+// can't disambiguate a branch ref containing a slash (`feat/update-circuits`)
+// from the file path. Bump this together with the Cargo dependency.
+export const OUTBE_CIRCUITS_VERSION = "5c123351c9583fb7c762068b460f64936e023b42";
 export const OUTBE_CIRCUITS_REPO = "outbe/outbe-circuits";
 
 const OUTBE_CIRCUITS_RAW_BASE =
@@ -211,7 +216,7 @@ export async function buildMerkleProof(
 
 // Both the compiled Noir program (used to build the prover witness) and
 // the canonical UltraHonkKeccak VK (used by `_writevk.ts` to cross-
-// check what the on-chain `verify_ultra_honk_keccak` sees) live in the
+// check what the on-chain `Barretenberg::verify_combined` sees) live in the
 // `outbe-circuits` repo at deterministic paths. We resolve them via:
 //
 //   1. Local download cache under `.outbe-circuits-cache/<version>/` —
@@ -232,11 +237,18 @@ const CACHE_DIR = resolve(
   OUTBE_CIRCUITS_VERSION,
 );
 
-const CIRCUIT_JSON_REPO_PATH =
-  "crates/outbe-zk-circuit-noir/data/commitment_nullifier_proof.json";
-const VK_REPO_PATH = "crates/outbe-zk-canonical/res/vks/commitment_nullifier.vk";
+// v0.11.0 ships each frozen circuit's artefacts under a per-circuit/per-version
+// directory: base64(gzip(ACIR)) bytecode, the Noir ABI, and the canonical VK.
+// There is no longer a single compiled-program JSON, so `loadCircuit` stitches
+// the bytecode + abi back into the `CompiledCircuit` noir_js/bb.js expect.
+const CIRCUIT_RESOURCE_DIR =
+  "crates/outbe-zk-canonical/resources/circuits/commitment_nullifier_proof/1.0.0";
+const CIRCUIT_BYTECODE_REPO_PATH = `${CIRCUIT_RESOURCE_DIR}/bytecode.b64`;
+const CIRCUIT_ABI_REPO_PATH = `${CIRCUIT_RESOURCE_DIR}/abi.json`;
+const VK_REPO_PATH = `${CIRCUIT_RESOURCE_DIR}/circuit.vk`;
 
-const CIRCUIT_JSON_CACHE_NAME = "commitment_nullifier_proof.json";
+const CIRCUIT_BYTECODE_CACHE_NAME = "commitment_nullifier_bytecode.b64";
+const CIRCUIT_ABI_CACHE_NAME = "commitment_nullifier_abi.json";
 const VK_CACHE_NAME = "commitment_nullifier.vk";
 
 async function fetchCanonicalAsset(
@@ -266,12 +278,16 @@ let circuitCache: CompiledCircuit | null = null;
 
 export async function loadCircuit(): Promise<CompiledCircuit> {
   if (circuitCache) return circuitCache;
-  const path = await fetchCanonicalAsset(
-    CIRCUIT_JSON_REPO_PATH,
-    CIRCUIT_JSON_CACHE_NAME,
-  );
-  const raw = readFileSync(path, "utf-8");
-  circuitCache = JSON.parse(raw) as CompiledCircuit;
+  const [bytecodePath, abiPath] = await Promise.all([
+    fetchCanonicalAsset(CIRCUIT_BYTECODE_REPO_PATH, CIRCUIT_BYTECODE_CACHE_NAME),
+    fetchCanonicalAsset(CIRCUIT_ABI_REPO_PATH, CIRCUIT_ABI_CACHE_NAME),
+  ]);
+  // `bytecode.b64` is base64(gzip(ACIR)) — exactly the encoding noir_js's
+  // `bytecode` field carries — and `abi.json` is the Noir ABI. Stitch them into
+  // the minimal CompiledCircuit the witness builder + bb backend read.
+  const bytecode = readFileSync(bytecodePath, "utf-8").trim();
+  const abi = JSON.parse(readFileSync(abiPath, "utf-8"));
+  circuitCache = { bytecode, abi } as unknown as CompiledCircuit;
   return circuitCache;
 }
 
@@ -304,8 +320,8 @@ export interface ProveUnpledgeInputs {
 // in `verifier.rs` prepends the public-input prefix itself, so we hand back
 // `proofData.proof` unchanged.
 //
-// Public-input order matches the v0.10.0 `outbe-commitment-nullifier-circuit`
-// `fn main`:
+// Public-input order matches the `commitment_nullifier_proof` circuit ABI
+// (`fn main`), verified against the frozen `abi.json` shipped at this pin:
 //   merkle_root, nullifier_hash, denom_id, receiver_binding,
 //   tag_commit, tag_nullifier, tag_merkle.
 // The three `tag_*` values are public inputs (not in-circuit constants) so the

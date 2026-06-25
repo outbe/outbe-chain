@@ -22,17 +22,17 @@ ark-ff.workspace = true
 
 # UltraHonkKeccak verifier (Barretenberg FFI). SRS is initialised once at
 # node startup via `outbe_zkproof::init_crs`; gratispool inherits that
-# initialisation and calls `verify_ultra_honk_keccak` directly with the
-# canonical COMMITMENT_NULLIFIER verification key from `outbe-zk-canonical`.
+# initialisation and calls `Barretenberg::verify_combined` directly with the
+# canonical commitment-nullifier verification key from `outbe-zk-canonical`.
 outbe-zk-canonical.workspace = true
-outbe-zk-circuit-noir.workspace = true
+outbe-zk-backend.workspace = true
 
 # Used by the real Barretenberg verifier path in `verifier.rs`. Under
 # `--all-features` the `test-helpers` feature replaces that path with a
 # thread-local override, so cargo-udeps (run with --all-features) sees these as
 # unused; they are required by the default/production build.
 [package.metadata.cargo-udeps.ignore]
-normal = ["outbe-zk-canonical", "outbe-zk-circuit-noir"]
+normal = ["outbe-zk-canonical", "outbe-zk-backend"]
 
 [features]
 default = []
