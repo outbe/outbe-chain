@@ -348,6 +348,7 @@ contract IntexAuction is
         if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
+        if (bidRate > BridgeMsgCodec.RATE_SCALE) revert BidRateAboveMax(bidRate);
 
         // Escrow the rate against the per-Intex strike: lock = qty * strike * rate / RATE_SCALE.
         // Computed in 256-bit space so an over-range product surfaces as a typed error rather than

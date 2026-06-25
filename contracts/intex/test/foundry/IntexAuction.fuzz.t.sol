@@ -50,15 +50,9 @@ contract IntexAuctionFuzzTest is Test {
         vm.stopPrank();
     }
 
-    function test_Fuzz_RevealBid_OverflowGuardFiresAboveUint64Max(uint256 qSeed, uint256 rSeed) public {
-        // qty large enough that an in-range uint32 rate can push the lock past uint64.
-        uint16 quantity = uint16(bound(qSeed, 5000, type(uint16).max));
-        // Smallest rate that overflows: qty * STRIKE * rate / RATE_SCALE > uint64 max.
-        uint256 loRate = (uint256(type(uint64).max) * RATE_SCALE) / (uint256(quantity) * STRIKE) + 1;
-        uint32 rate = uint32(bound(rSeed, loRate, type(uint32).max));
-        assertGt(
-            uint256(quantity) * STRIKE * rate / RATE_SCALE, type(uint64).max, "precondition: product overflows uint64"
-        );
+    function test_Fuzz_RevealBid_RejectsRateAboveMax(uint256 qSeed, uint256 rSeed) public {
+        uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
+        uint32 rate = uint32(bound(rSeed, uint256(RATE_SCALE) + 1, type(uint32).max));
 
         uint32 seriesId = 20260201;
         _start(seriesId);
@@ -66,18 +60,14 @@ contract IntexAuctionFuzzTest is Test {
         _commit(seriesId, iba1, sig);
         _enterReveal(seriesId);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidAmountOverflow.selector, quantity, rate));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
         vm.prank(iba1);
         auction.revealBid(seriesId, quantity, rate, uint64(block.chainid), sig);
     }
 
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
-        // Largest rate that does NOT overflow uint64.
-        uint256 hiRate = (uint256(type(uint64).max) * RATE_SCALE) / (uint256(quantity) * STRIKE);
-        if (hiRate > type(uint32).max) hiRate = type(uint32).max;
-        vm.assume(hiRate >= MIN_RATE);
-        uint32 rate = uint32(bound(rSeed, MIN_RATE, hiRate));
+        uint32 rate = uint32(bound(rSeed, MIN_RATE, RATE_SCALE));
         uint64 expected = uint64(uint256(quantity) * STRIKE * rate / RATE_SCALE);
 
         uint32 seriesId = 20260202;

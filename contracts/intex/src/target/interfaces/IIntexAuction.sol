@@ -165,6 +165,8 @@ interface IIntexAuction {
     error RevealHashMismatch();
     /// @notice Bid rate is below `minIntexBidRate`.
     error BidBelowMinIntexBidRate();
+    /// @notice Bid rate exceeds 100% of strike (`RATE_SCALE`).
+    error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
     /// @notice `quantity * strike * bidRate / RATE_SCALE` exceeds the uint64 lock-amount range.

@@ -1385,6 +1385,17 @@
     },
     {
       "type": "error",
+      "name": "BidRateAboveMax",
+      "inputs": [
+        {
+          "name": "bidRate",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ClearingRateBelowMin",
       "inputs": [
         {

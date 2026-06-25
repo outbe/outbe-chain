@@ -335,37 +335,32 @@ contract AuctionTest is Test {
         assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
     }
 
-    function test_Reveal_AmountOverflow() public {
+    function test_Reveal_AboveMaxRate() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250142;
-        // Max entry price → max strike. With max qty and rate the lock product overflows uint64.
-        vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _paramsEntry(1, type(uint64).max, 1));
+        _start(seriesId, 1, 1);
 
-        uint16 qty = type(uint16).max;
-        uint32 rate = type(uint32).max;
-        _commit(seriesId, iba1, qty, rate, iba1PrivateKey);
+        uint32 rate = RATE_SCALE + 1;
+        _commit(seriesId, iba1, 10, rate, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
 
-        // Overflow surfaces as a typed error, not a bare arithmetic Panic(0x11).
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidAmountOverflow.selector, qty, rate));
-        _reveal(seriesId, iba1, qty, rate, iba1PrivateKey);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
+        _reveal(seriesId, iba1, 10, rate, iba1PrivateKey);
     }
 
-    function test_Reveal_MaxAmount_NoOverflow_Succeeds() public {
+    function test_Reveal_AtMaxRate_Succeeds() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250143;
         _start(seriesId, 1, 1);
 
-        // Strike == RATE_SCALE → lock = qty * rate; the largest single-unit rate still fits uint64.
-        uint16 qty = 1;
-        uint32 rate = type(uint32).max;
+        uint16 qty = 3;
+        uint32 rate = RATE_SCALE;
         _commit(seriesId, iba1, qty, rate, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
         _reveal(seriesId, iba1, qty, rate, iba1PrivateKey);
 
         assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
-        assertEq(escrow.lockedFunds(seriesId, iba1), uint64(rate));
+        assertEq(escrow.lockedFunds(seriesId, iba1), uint64(qty) * rate);
     }
 
     function test_Reveal_WithoutCommit() public {
