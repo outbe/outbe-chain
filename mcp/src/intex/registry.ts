@@ -44,7 +44,8 @@ export const INTEX: Record<string, IntexAddresses> = {
   "bsc-testnet": {
     auction: a("0x60195ce77E6848483d7d42AAA30ce23E3B0e53de"),
     escrow: a("0xA3bdFbB87951C993D08271e6f221CB49cC774B1b"),
-    paymentToken: a("0x78366397b72D0c283658DA5A38C450455A97e595"),
+    // wCOEN — auction escrow pays wrapped COEN (18 decimals).
+    paymentToken: a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
     nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
     bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
   },

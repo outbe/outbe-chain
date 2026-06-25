@@ -29,9 +29,9 @@ interface ITargetMessenger {
     /// @param srcEid LayerZero source endpoint id (`_origin.srcEid`)
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param clearingPrice Uniform clearing price
+    /// @param clearingRate Uniform clearing rate (`1e6` fixed-point)
     event AuctionResultReceived(
-        bytes32 indexed guid, uint32 srcEid, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingPrice
+        bytes32 indexed guid, uint32 srcEid, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are received from Outbe.
@@ -102,7 +102,7 @@ interface ITargetMessenger {
         uint32 seriesId;
         address[] bidderAddresses;
         uint16[] intexQuantities;
-        uint64[] intexBidPrices;
+        uint32[] intexBidRates;
         uint32[] timestamps;
         bytes extraOptions;
         address refundAddress;

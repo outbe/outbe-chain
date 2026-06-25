@@ -22,12 +22,12 @@ export interface AuctionFlowTaskArgs extends CommonAuctionTaskArgs {
   revealEnd?: string;
   issuanceEnd?: string;
   promisLoadMinor?: string;
-  costAmountMinor?: string;
+  entryPrice?: string;
   floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   skipStart?: boolean;
   skipReveal?: boolean;
@@ -44,7 +44,7 @@ export interface AuctionStartTaskArgs extends CommonAuctionTaskArgs {
   revealEnd?: string;
   issuanceEnd?: string;
   promisLoadMinor?: string;
-  costAmountMinor?: string;
+  entryPrice?: string;
   floorPriceMinor?: string;
   minIntexBidQuantity?: string;
 }
@@ -59,7 +59,7 @@ export interface AuctionClearingTaskArgs extends CommonAuctionTaskArgs {
 
 export interface AuctionExecuteTaskArgs extends CommonAuctionTaskArgs {
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   finalizeEscrow?: string | boolean;
   escrowAdapterContract?: string;
@@ -94,14 +94,14 @@ export interface AuctionInteractiveTaskArgs extends CommonAuctionTaskArgs {
   revealEnd?: string;
   issuanceEnd?: string;
   promisLoadMinor?: string;
-  costAmountMinor?: string;
+  entryPrice?: string;
   floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   wallets?: string;
   commitsFile?: string;
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   finalizeEscrow?: string | boolean;
   escrowAdapterContract?: string;
@@ -133,7 +133,7 @@ export interface OutbeMockInteractiveTaskArgs extends TaskArgs {
   floor?: string;
   clearingTimestamp?: string;
   promisLoadMinor?: string;
-  costAmountMinor?: string;
+  entryPrice?: string;
   minIntexBidQuantity?: string;
   supply?: string;
   msgValue?: string;

@@ -16,9 +16,11 @@ sol! {
             uint32 issuedIntexCount;
             uint128 promisLoadMinor;
             uint64 costAmountMinor;
+            uint64 entryPriceMinor;
             uint64 floorPriceMinor;
             uint32 intexCallPeriod;
-            uint16 settlementTokenAlias;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
             uint16 callWindowDays;
             uint16 callThresholdDays;
             uint64 callPriceMinor;
@@ -82,7 +84,25 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
-        function createSeries(uint32 seriesId, uint32 issuedIntexCount, uint32 intexCallPeriod) external;
+        struct IntexCallTrigger {
+            uint16 windowDays;
+            uint16 thresholdDays;
+            uint32 intexCallPeriod;
+        }
+
+        struct CreateSeriesParams {
+            uint32 seriesId;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
+            uint32 issuedIntexCount;
+            uint128 promisLoadMinor;
+            uint64 entryPriceMinor;
+            uint64 floorPriceMinor;
+            uint64 callPriceMinor;
+            IntexCallTrigger callTrigger;
+        }
+
+        function createSeries(CreateSeriesParams params) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
         function settle(uint32 seriesId, address from, address to, uint256 amount) external;
         function burnSettled(address holder, uint32 seriesId, uint256 amount) external;

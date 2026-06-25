@@ -14,11 +14,11 @@ contract BridgeMsgCodecHardeningHarness {
         uint32 relayGeneration,
         address[] calldata bidders,
         uint16[] calldata quantities,
-        uint64[] calldata prices,
+        uint32[] calldata rates,
         uint32[] calldata timestamps
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, isLast, relayGeneration, bidders, quantities, prices, timestamps
+            seriesId, srcEid, isLast, relayGeneration, bidders, quantities, rates, timestamps
         );
     }
 
@@ -33,8 +33,8 @@ contract BridgeMsgCodecHardeningHarness {
     function encodeRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts);
     }
@@ -42,7 +42,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeRefundInstructions(bytes calldata m)
         external
         pure
-        returns (uint32, address[] memory, uint64[] memory, uint64[] memory)
+        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(m);
     }
@@ -50,7 +50,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeBidsBatch(bytes calldata m)
         external
         pure
-        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint64[] memory, uint32[] memory)
+        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint32[] memory, uint32[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(m);
     }
@@ -84,7 +84,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         bidders[1] = address(0xB2);
         uint16[] memory quantities = new uint16[](1); // one short
         quantities[0] = 1;
-        uint64[] memory prices = new uint64[](2);
+        uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
 
         vm.expectRevert(
@@ -92,7 +92,7 @@ contract BridgeMsgCodecHardeningTest is Test {
                 BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2), uint256(2)
             )
         );
-        harness.encodeBidsBatch(1, 1, true, 1, bidders, quantities, prices, timestamps);
+        harness.encodeBidsBatch(1, 1, true, 1, bidders, quantities, rates, timestamps);
     }
 
     function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {
@@ -108,8 +108,10 @@ contract BridgeMsgCodecHardeningTest is Test {
             issuedIntexCount: 1,
             promisLoadMinor: 1,
             costAmountMinor: 1,
+            entryPriceMinor: 1,
             floorPriceMinor: 1,
             intexCallPeriod: 0,
+            issuanceCurrency: 840,
             referenceCurrency: 840,
             callWindowDays: 0,
             callThresholdDays: 0,
@@ -128,9 +130,9 @@ contract BridgeMsgCodecHardeningTest is Test {
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xB1);
         bidders[1] = address(0xB2);
-        uint64[] memory refundedAmounts = new uint64[](1); // mismatch
+        uint128[] memory refundedAmounts = new uint128[](1); // mismatch
         refundedAmounts[0] = 1;
-        uint64[] memory paidAmounts = new uint64[](2);
+        uint128[] memory paidAmounts = new uint128[](2);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -149,8 +151,8 @@ contract BridgeMsgCodecHardeningTest is Test {
         // a parameterized diagnostic.
         uint256 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
         address[] memory bidders = new address[](n);
-        uint64[] memory refundedAmounts = new uint64[](n);
-        uint64[] memory paidAmounts = new uint64[](n);
+        uint128[] memory refundedAmounts = new uint128[](n);
+        uint128[] memory paidAmounts = new uint128[](n);
         for (uint256 i = 0; i < n; ++i) {
             bidders[i] = address(uint160(i + 1));
             refundedAmounts[i] = 1;

@@ -23,15 +23,15 @@ use crate::precompile::IDesis;
 use crate::runtime;
 use crate::schema::{AuctionConfig, DesisContract};
 
-/// Best-effort: create a new auction from the live COEN price and transition to
+/// Best-effort: create a new auction from the entry price and transition to
 /// `Started`. Returns `true` if Desis accepted the signal.
 pub fn dispatch_stage_start(
     storage: StorageHandle<'_>,
     auction_timestamp: u64,
-    coen_price: U256,
+    entry_price: U256,
 ) -> Result<bool> {
     let series_id = timestamp_to_date_key(auction_timestamp);
-    let config = AuctionConfig::from_coen_price(coen_price);
+    let config = AuctionConfig::from_entry_price(entry_price);
     best_effort(storage, series_id, "auction_stage_start", |s| {
         runtime::start_auction(s, series_id, config)
     })

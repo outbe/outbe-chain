@@ -11,7 +11,7 @@ interface IIntex {
     struct SeriesData {
         uint32 seriesId;
         uint256 promisLoadMinor;
-        uint64 costAmountMinor;
+        uint256 entryPriceMinor;
         uint256 floorPriceMinor;
         uint32 issuedIntexCount;
         uint16 callWindowDays;

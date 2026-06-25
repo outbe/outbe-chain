@@ -93,10 +93,16 @@ contract OriginMessengerTest is TestHelperOz5 {
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
-            minIntexBidPrice: 50e6,
-            costAmountMinor: 100e6,
+            minIntexBidRate: 50e6,
+            entryPrice: 100e6,
             floorPriceMinor: 50e6,
+            callPriceMinor: 25e6,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
             minIntexBidQuantity: 1
         });
     }
@@ -111,8 +117,10 @@ contract OriginMessengerTest is TestHelperOz5 {
             issuedIntexCount: 10_000,
             promisLoadMinor: 1000,
             costAmountMinor: 100e6,
+            entryPriceMinor: 100e6,
             floorPriceMinor: 50e6,
             intexCallPeriod: 0,
+            issuanceCurrency: 840,
             referenceCurrency: 840,
             callWindowDays: 30,
             callThresholdDays: 5,
@@ -205,9 +213,9 @@ contract OriginMessengerTest is TestHelperOz5 {
     function test_sendRefundInstructions_revert_unauthorized() public {
         address[] memory bidders = new address[](1);
         bidders[0] = address(0x1);
-        uint64[] memory refundedAmounts = new uint64[](1);
+        uint128[] memory refundedAmounts = new uint128[](1);
         refundedAmounts[0] = 100e6;
-        uint64[] memory paidAmounts = new uint64[](1);
+        uint128[] memory paidAmounts = new uint128[](1);
         paidAmounts[0] = 50e6;
 
         MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
@@ -264,8 +272,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_sendRefundInstructions_revert_empty_array() public {
         address[] memory bidders = new address[](0);
-        uint64[] memory refundedAmounts = new uint64[](0);
-        uint64[] memory paidAmounts = new uint64[](0);
+        uint128[] memory refundedAmounts = new uint128[](0);
+        uint128[] memory paidAmounts = new uint128[](0);
 
         MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
@@ -279,8 +287,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
         address[] memory bidders = new address[](2);
-        uint64[] memory refundedAmounts = new uint64[](2);
-        uint64[] memory paidAmounts = new uint64[](1); // Mismatch
+        uint128[] memory refundedAmounts = new uint128[](2);
+        uint128[] memory paidAmounts = new uint128[](1); // Mismatch
 
         bidders[0] = address(0x1);
         bidders[1] = address(0x2);
@@ -331,7 +339,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     function test_quoteSendAuctionResult() public view {
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
 
-        // (seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount, ...)
+        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount, ...)
         MessagingFee memory fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42, options, false);
 
         assertTrue(fee.nativeFee > 0);
@@ -356,8 +364,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_quoteSendRefundInstructions() public view {
         address[] memory bidders = new address[](2);
-        uint64[] memory refundedAmounts = new uint64[](2);
-        uint64[] memory paidAmounts = new uint64[](2);
+        uint128[] memory refundedAmounts = new uint128[](2);
+        uint128[] memory paidAmounts = new uint128[](2);
 
         bidders[0] = address(0x1);
         bidders[1] = address(0x2);

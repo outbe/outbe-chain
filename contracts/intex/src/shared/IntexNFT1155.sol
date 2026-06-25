@@ -114,32 +114,41 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @notice Series-level data, stored per token id. Flattened to match the original
-    ///         public-mapping getter ABI.
+    ///         public-mapping getter ABI, with the call-trigger returned as its struct (collapsing
+    ///         the three flat trigger fields keeps the return arity within the via_ir stack bound).
     function seriesData(uint256 tokenId)
         external
         view
         returns (
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
+            uint32 issuedIntexCount,
+            uint128 promisLoadMinor,
+            uint64 entryPriceMinor,
+            uint64 floorPriceMinor,
+            uint64 callPriceMinor,
+            IIntexNFT1155.IntexCallTrigger memory callTrigger,
             uint32 issuedAt,
             uint32 calledAt,
-            uint32 intexCallPeriod,
             uint32 totalSupply,
-            uint32 issuedIntexCount,
-            uint32 mintedCount,
             IIntexNFT1155.IntexStatus status,
             IIntexNFT1155.IntexState state
         )
     {
-        IIntexNFT1155.SeriesData storage d = _s().seriesData[tokenId];
-        return (
-            d.issuedAt,
-            d.calledAt,
-            d.intexCallPeriod,
-            d.totalSupply,
-            d.issuedIntexCount,
-            d.mintedCount,
-            d.status,
-            d.state
-        );
+        IIntexNFT1155.SeriesData memory d = _s().seriesData[tokenId];
+        issuanceCurrency = d.issuanceCurrency;
+        referenceCurrency = d.referenceCurrency;
+        issuedIntexCount = d.issuedIntexCount;
+        promisLoadMinor = d.promisLoadMinor;
+        entryPriceMinor = d.entryPriceMinor;
+        floorPriceMinor = d.floorPriceMinor;
+        callPriceMinor = d.callPriceMinor;
+        callTrigger = d.callTrigger;
+        issuedAt = d.issuedAt;
+        calledAt = d.calledAt;
+        totalSupply = d.totalSupply;
+        status = d.status;
+        state = d.state;
     }
 
     /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
@@ -151,12 +160,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function createSeries(uint32 seriesId, uint32 issuedIntexCount, uint32 intexCallPeriod)
-        external
-        onlyRole(RELAYER_ROLE)
-    {
+    function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = uint256(params.seriesId);
 
         if ($.seriesData[iTok].issuedAt != 0) {
             revert TokenAlreadyExists(iTok);
@@ -164,25 +170,35 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // The cap is part of the series's birth identity; a zero cap would mean "a series no
         // one can mint into," which never matches an auction-cleared result.
-        if (issuedIntexCount == 0) revert ZeroIssuedIntexCount();
+        if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
         // Default to 21 days when zero is provided; cap at MAX_INTEX_CALL_PERIOD to guard against accidents.
-        uint32 effectiveCallPeriod = intexCallPeriod == 0 ? uint32(21 days) : intexCallPeriod;
-        if (effectiveCallPeriod > MAX_INTEX_CALL_PERIOD) revert InvalidCallPeriod(intexCallPeriod);
+        uint32 effectiveCallPeriod =
+            params.callTrigger.intexCallPeriod == 0 ? uint32(21 days) : params.callTrigger.intexCallPeriod;
+        if (effectiveCallPeriod > MAX_INTEX_CALL_PERIOD) revert InvalidCallPeriod(params.callTrigger.intexCallPeriod);
 
         $.seriesData[iTok] = IIntexNFT1155.SeriesData({
+            issuanceCurrency: params.issuanceCurrency,
+            referenceCurrency: params.referenceCurrency,
+            issuedIntexCount: params.issuedIntexCount,
+            promisLoadMinor: params.promisLoadMinor,
+            entryPriceMinor: params.entryPriceMinor,
+            floorPriceMinor: params.floorPriceMinor,
+            callPriceMinor: params.callPriceMinor,
+            callTrigger: IIntexNFT1155.IntexCallTrigger({
+                windowDays: params.callTrigger.windowDays,
+                thresholdDays: params.callTrigger.thresholdDays,
+                intexCallPeriod: effectiveCallPeriod
+            }),
             issuedAt: uint32(block.timestamp),
             calledAt: 0,
-            intexCallPeriod: effectiveCallPeriod,
             totalSupply: 0,
-            issuedIntexCount: issuedIntexCount,
-            mintedCount: 0,
             status: IIntexNFT1155.IntexStatus.Issued,
             state: IIntexNFT1155.IntexState.Issued
         });
 
         // Register the Settled token id so reverse lookups and status checks work for either class.
-        uint256 sTok = _settledTokenId(seriesId);
+        uint256 sTok = _settledTokenId(params.seriesId);
         $.seriesData[sTok].status = IIntexNFT1155.IntexStatus.Settled;
 
         // Series remain in allSeries permanently even after supply reaches 0 —
@@ -210,24 +226,19 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // `intexQuantity` (uint16); keeps the ERC1155 balance, `totalSupply` and `auctionWonCount` consistent.
         if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
 
-        // Cap is enforced against the monotonic `mintedCount`, not live `totalSupply`. A burn
-        // (crosschainBurn/settle/expireSeries) reduces totalSupply but leaves mintedCount untouched, so
-        // a burn-then-remint cycle cannot reopen cap room (R-01). The intermediate is widened
-        // to uint256 so a series with `issuedIntexCount` near `type(uint32).max` surfaces the
-        // typed `SupplyCapExceeded` revert rather than a raw arithmetic panic on overflow.
-        uint256 newMinted = uint256(data.mintedCount) + quantity;
-        if (newMinted > data.issuedIntexCount) {
-            revert SupplyCapExceeded(seriesId, newMinted, data.issuedIntexCount);
+        // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate
+        // is widened to uint256 so a series with `issuedIntexCount` near `type(uint32).max`
+        // surfaces the typed `SupplyCapExceeded` revert rather than a raw arithmetic panic.
+        uint256 newTotal = uint256(data.totalSupply) + quantity;
+        if (newTotal > data.issuedIntexCount) {
+            revert SupplyCapExceeded(seriesId, newTotal, data.issuedIntexCount);
         }
 
-        // CEI ok: write totalSupply and mintedCount before _mint so the ERC1155 receiver
-        // callback observes a consistent (totalSupply == Σ balanceOf, mintedCount == cumulative)
-        // snapshot — closes the read-only-reentrancy window. Casts are safe because the cap
-        // check above bounded `newMinted ≤ issuedIntexCount ≤ type(uint32).max`.
+        // CEI ok: write totalSupply before _mint so the ERC1155 receiver callback observes a
+        // consistent (totalSupply == Σ balanceOf) snapshot — closes the read-only-reentrancy
+        // window. Cast is safe because the cap check bounded `newTotal ≤ issuedIntexCount ≤ uint32.max`.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.totalSupply += uint32(quantity);
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.mintedCount = uint32(newMinted);
+        data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, quantity, "");
 
         if ($.auctionWonCount[tokenId][to] == 0) {
@@ -270,22 +281,20 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             batchSum += quantities[i];
         }
 
-        // Cap is enforced against `mintedCount` (cumulative, monotonic). The intermediate is
+        // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate is
         // widened to uint256 so a series with `issuedIntexCount` near `type(uint32).max`
         // surfaces `SupplyCapExceeded` rather than an arithmetic panic. The cap field is
-        // itself uint32, so any `newMinted > issuedIntexCount` covers `batchSum > uint32.max`
+        // itself uint32, so any `newTotal > issuedIntexCount` covers `batchSum > uint32.max`
         // implicitly — no separate batchSum overflow guard is needed.
-        uint256 newMinted = uint256(data.mintedCount) + batchSum;
-        if (newMinted > data.issuedIntexCount) {
-            revert SupplyCapExceeded(seriesId, newMinted, data.issuedIntexCount);
+        uint256 newTotal = uint256(data.totalSupply) + batchSum;
+        if (newTotal > data.issuedIntexCount) {
+            revert SupplyCapExceeded(seriesId, newTotal, data.issuedIntexCount);
         }
-        // CEI ok: write the post-batch totals before the per-recipient _mint loop so each
-        // ERC1155 receiver callback sees (totalSupply == Σ balanceOf, mintedCount == cumulative)
-        // for the final batch. Casts are safe because `newMinted ≤ issuedIntexCount ≤ uint32.max`.
+        // CEI ok: write the post-batch total before the per-recipient _mint loop so each
+        // ERC1155 receiver callback sees (totalSupply == Σ balanceOf) for the final batch.
+        // Cast is safe because `newTotal ≤ issuedIntexCount ≤ uint32.max`.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.totalSupply += uint32(batchSum);
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.mintedCount = uint32(newMinted);
+        data.totalSupply = uint32(newTotal);
 
         for (uint256 i = 0; i < recipients.length; i++) {
             if (quantities[i] == 0) {
@@ -339,7 +348,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         data.state = IIntexNFT1155.IntexState.Called;
         data.calledAt = calledAt;
 
-        uint32 derivedDeadline = calledAt + data.intexCallPeriod;
+        uint32 derivedDeadline = calledAt + data.callTrigger.intexCallPeriod;
 
         emit IntexStatusUpdated(
             msg.sender, tokenId, previousState, IIntexNFT1155.IntexState.Called, calledAt, derivedDeadline
@@ -361,7 +370,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.state != IIntexNFT1155.IntexState.Called) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Called), uint8(data.state));
         }
-        uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
+        uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
         if (data.calledAt == 0 || block.timestamp <= derivedDeadline) {
             revert SeriesNotYetExpired(derivedDeadline, uint32(block.timestamp));
         }
@@ -431,10 +440,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(state));
             }
-            // Bridge moves are confined to the call window: once `calledAt + intexCallPeriod`
+            // Bridge moves are confined to the call window: once `calledAt + callTrigger.intexCallPeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise
             // a system relayer could keep moving (and `crosschainMint` could re-inflate) post-lifecycle.
-            uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
             }
@@ -470,7 +479,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline. Without this a
             // `crosschainMint` after `expireSeries` drained the series could re-inflate `totalSupply`
             // (capped by `issuedIntexCount`, but still a post-lifecycle mutation).
-            uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
             }
@@ -479,10 +488,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // A crosschainMinted balance can be a holder's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
-        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. CrosschainMint
-        // intentionally does NOT bump `mintedCount` — cross-chain returns of already-issued
-        // tokens are legitimate and must not consume primary-mint capacity. The live-supply
-        // invariant suffices because cumulative primary issuance is bounded at mint/mintBatch.
+        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. The
+        // live-supply invariant matches mint/mintBatch, which also cap on live `totalSupply`.
         // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
         // even at the `issuedIntexCount == type(uint32).max` boundary.
         uint256 newTotal = uint256(data.totalSupply) + amount;
@@ -518,7 +525,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
-            uint32 derivedDeadline = data.calledAt + data.intexCallPeriod;
+            uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert SettleAfterDeadline(iTok, derivedDeadline);
             }

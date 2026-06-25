@@ -11,6 +11,7 @@ import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @dev Test-only harness exposing the internal `LzGasEstimator` for unit assertions.
 contract GasEstimatorHarness {
@@ -72,8 +73,8 @@ contract DynamicLzGasTest is TestHelperOz5 {
         this.wireOApps(oapps);
 
         // Both sides have the series; src holders are minted below, dst crosschainMints on receive.
-        srcToken.createSeries(SERIES_ID, 1_000_000, 0);
-        dstToken.createSeries(SERIES_ID, 1_000_000, 0);
+        srcToken.createSeries(CreateSeriesLib.params(SERIES_ID, 1_000_000, 0));
+        dstToken.createSeries(CreateSeriesLib.params(SERIES_ID, 1_000_000, 0));
         srcToken.markQualified(SERIES_ID);
         dstToken.markQualified(SERIES_ID);
 

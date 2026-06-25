@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {Test} from "forge-std/Test.sol";
@@ -78,7 +79,7 @@ contract IntexNFT1155Test is Test {
     /// @dev Create a series with the standard parameters and a given call period.
     function _createSeries(uint32 seriesId, uint32 callPeriod) internal {
         vm.prank(bridger);
-        nft.createSeries(seriesId, ISSUED_INTEX_COUNT, callPeriod);
+        nft.createSeries(CreateSeriesLib.params(seriesId, ISSUED_INTEX_COUNT, callPeriod));
     }
 
     function test_InitialState() public view {
@@ -88,7 +89,7 @@ contract IntexNFT1155Test is Test {
 
     function test_CreateSeries() public {
         vm.prank(bridger);
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, 0);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -98,21 +99,21 @@ contract IntexNFT1155Test is Test {
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
         // Default callPeriod (21 days) is applied when 0 is passed at creation.
-        assertEq(data.intexCallPeriod, uint32(21 days));
+        assertEq(data.callTrigger.intexCallPeriod, uint32(21 days));
     }
 
     function test_CreateSeries_RevertsCallPeriodAboveMax() public {
         uint32 overMax = nft.MAX_INTEX_CALL_PERIOD() + 1;
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, overMax));
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, overMax);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, overMax));
     }
 
     function test_CreateSeries_AcceptsCallPeriodAtMax() public {
         uint32 atMax = nft.MAX_INTEX_CALL_PERIOD();
         vm.prank(bridger);
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, atMax);
-        assertEq(nft.readData(SERIES_ID_1).intexCallPeriod, atMax);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, atMax));
+        assertEq(nft.readData(SERIES_ID_1).callTrigger.intexCallPeriod, atMax);
     }
 
     function test_MaxIntexCallPeriod_IsOneYear() public view {
@@ -122,7 +123,7 @@ contract IntexNFT1155Test is Test {
     function test_OnlyBridgeCanCreateSeries() public {
         vm.prank(user);
         vm.expectRevert();
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, 0);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
     }
 
     function test_CreateSeriesDuplicate() public {
@@ -130,7 +131,7 @@ contract IntexNFT1155Test is Test {
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TokenAlreadyExists.selector, TOKEN_ID_1));
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, 0);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
     }
 
     function test_Mint() public {
@@ -275,8 +276,8 @@ contract IntexNFT1155Test is Test {
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(data.calledAt, calledAt);
-        assertEq(data.intexCallPeriod, customCallPeriod);
-        assertEq(data.calledAt + data.intexCallPeriod, calledAt + customCallPeriod);
+        assertEq(data.callTrigger.intexCallPeriod, customCallPeriod);
+        assertEq(data.calledAt + data.callTrigger.intexCallPeriod, calledAt + customCallPeriod);
     }
 
     function test_OnlyBridgeCanMarkCalled() public {
@@ -353,7 +354,7 @@ contract IntexNFT1155Test is Test {
         uint32 tooLong = uint32(366 days);
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, tooLong));
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, tooLong);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, tooLong));
     }
 
     function test_CrosschainBurnNonexistentToken() public {
@@ -415,7 +416,7 @@ contract IntexNFT1155Test is Test {
 
     function test_ReadData() public {
         vm.prank(bridger);
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, 0);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -491,7 +492,7 @@ contract IntexNFT1155Test is Test {
         vm.startPrank(bridger);
         vm.expectEmit();
         emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
-        nft.createSeries(SERIES_ID_1, ISSUED_INTEX_COUNT, customCallPeriod);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, customCallPeriod));
 
         vm.expectEmit(true, true, true, true);
         emit IIntexNFT1155.IntexIssued(bridger, TOKEN_ID_1, user, quantity);

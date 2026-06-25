@@ -9,6 +9,7 @@ import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155Adapt
 import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `ONFT1155AdapterBatch`: a per-item
@@ -45,7 +46,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         this.wireOApps(batches);
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
-        intex.createSeries(SERIES_GOOD, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_GOOD, 10_000, 0));
         intex.markQualified(SERIES_GOOD);
         // SERIES_BAD intentionally not created — `intex.crosschainMint` will revert on lookup.
 
@@ -140,7 +141,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
-        intex.createSeries(SERIES_BAD, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
         intex.markQualified(SERIES_BAD);
 
         // Anyone can retry — no auth gate.
@@ -162,7 +163,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
 
         // Fix upstream + retry once.
-        intex.createSeries(SERIES_BAD, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
         intex.markQualified(SERIES_BAD);
         onftBatchBnb.retryCrosschainMint(guid, 1);
 

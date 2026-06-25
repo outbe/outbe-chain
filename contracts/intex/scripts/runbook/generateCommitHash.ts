@@ -31,7 +31,7 @@ async function main() {
   const seriesId = parseInt(seriesIdStr, 10);
   const bidder = (params.bidder || account.address) as `0x${string}`;
   const quantity = BigInt(params.quantity || "5");
-  const bidPrice = BigInt(params.bidPrice || params.price || "1100");
+  const bidRate = BigInt(params.bidRate || params.rate || "800000");
   const chainId = BigInt(params.chainId || "97");
 
   // EIP-712 domain binds the deployment address; signature is invalid against any other
@@ -50,7 +50,7 @@ async function main() {
   console.log("seriesId:", seriesId);
   console.log("bidder:", bidder);
   console.log("quantity:", quantity.toString());
-  console.log("bidPrice:", bidPrice.toString());
+  console.log("bidRate:", bidRate.toString());
   console.log("chainId:", chainId.toString());
   console.log("verifyingContract:", verifyingContract);
 
@@ -68,7 +68,7 @@ async function main() {
         { name: "seriesId", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
-        { name: "bidPrice", type: "uint64" },
+        { name: "bidRate", type: "uint32" },
       ],
     },
     primaryType: "RevealBid",
@@ -76,7 +76,7 @@ async function main() {
       seriesId,
       bidder,
       quantity: Number(quantity),
-      bidPrice,
+      bidRate: Number(bidRate),
     },
   });
   console.log("\nsignature:", signature);
@@ -88,7 +88,7 @@ async function main() {
   console.log("\n=== FOR REVEAL ===");
   console.log(`seriesId: ${seriesId}`);
   console.log(`quantity: ${quantity}`);
-  console.log(`bidPrice: ${bidPrice}`);
+  console.log(`bidRate: ${bidRate}`);
   console.log(`chainId: ${chainId}`);
   console.log(`signature: ${signature}`);
 }

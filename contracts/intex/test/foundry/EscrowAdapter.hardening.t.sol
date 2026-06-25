@@ -122,20 +122,20 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_Boundary_LockFunds_AcceptsUint64Max() public {
-        uint64 max = type(uint64).max;
+        uint128 max = type(uint128).max;
         _fund(bidderA, max);
 
         vm.prank(auction);
         escrow.lockFunds(SERIES, bidderA, max);
 
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked");
         assertEq(escrow.getBidLock(SERIES, bidderA).lockedAmount, max, "lockedAmount");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance");
     }
 
     function test_Boundary_TotalLockedOverflow_Reverts() public {
-        uint64 max = type(uint64).max;
+        uint128 max = type(uint128).max;
         _fund(bidderA, max);
         _fund(bidderB, 1);
 
@@ -146,7 +146,7 @@ contract EscrowAdapterHardeningTest is Test {
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         escrow.lockFunds(SERIES, bidderB, 1);
 
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked unchanged after overflow revert");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance unchanged");
     }
@@ -169,7 +169,7 @@ contract EscrowAdapterHardeningTest is Test {
         vm.expectRevert();
         feeEscrow.lockFunds(SERIES, bidderA, 1_000e6);
 
-        (,, uint64 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, 0, "no state written on a fee-token lock");
     }
 
@@ -183,7 +183,7 @@ contract EscrowAdapterHardeningTest is Test {
         hEscrow.wire(auction, address(hCompact), address(hostile), address(hToken));
         hCompact.setResetPeriodSeconds(0);
 
-        uint64 amount = 500e6;
+        uint128 amount = 500e6;
         hToken.mint(bidderA, amount);
         vm.prank(bidderA);
         hToken.approve(address(hEscrow), type(uint256).max);
@@ -203,7 +203,7 @@ contract EscrowAdapterHardeningTest is Test {
             uint8(IEscrowAdapter.LockStatus.Locked),
             "lock must stay Locked after the re-entry was blocked"
         );
-        (,, uint64 totalLocked) = hEscrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = hEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, amount, "totalLocked unchanged");
         assertEq(hCompact.balanceOf(address(hEscrow), hEscrow.lockId()), amount, "pooled balance unchanged");
     }

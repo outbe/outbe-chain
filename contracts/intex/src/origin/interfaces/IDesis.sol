@@ -23,7 +23,7 @@ interface IDesis {
         uint32 relayGeneration,
         address[] calldata bidderAddresses,
         uint16[] calldata intexQuantities,
-        uint64[] calldata intexBidPrices,
+        uint32[] calldata intexBidRates,
         uint32[] calldata timestamps
     ) external;
 

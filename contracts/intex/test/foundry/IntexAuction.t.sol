@@ -25,7 +25,13 @@ contract AuctionTest is Test {
 
     // EIP-712 typehash mirrors `IntexAuction.REVEAL_BID_TYPEHASH`.
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)");
+        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+
+    uint32 internal constant RATE_SCALE = 1_000_000;
+    // wCOEN escrow: the per-Intex strike is PROMIS_LOAD_MINOR (constant COEN), so the lock is
+    // `qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE`. ENTRY_PRICE feeds only floor/call now.
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
+    uint64 internal constant ENTRY_PRICE = 1e13;
 
     // Schedule offsets relative to the auction-start timestamp.
     uint32 constant COMMIT_OFFSET = 100;
@@ -58,28 +64,39 @@ contract AuctionTest is Test {
         });
     }
 
-    /// @dev Build auction params with the given minimum bid price and Promis load.
-    function _params(uint64 minIntexBidPrice, uint128 promisLoadMinor, uint16 minIntexBidQuantity)
+    /// @dev Build auction params with the given minimum bid rate and entry price.
+    function _paramsEntry(uint32 minIntexBidRate, uint64 entryPrice, uint16 minIntexBidQuantity)
         internal
         pure
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
-            promisLoadMinor: promisLoadMinor,
-            minIntexBidPrice: minIntexBidPrice,
-            costAmountMinor: 100,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            minIntexBidRate: minIntexBidRate,
+            entryPriceMinor: entryPrice,
             floorPriceMinor: 100,
+            callPriceMinor: 200,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: minIntexBidQuantity
         });
     }
 
+    /// @dev Build auction params at the canonical entry price (strike == RATE_SCALE).
+    function _params(uint32 minIntexBidRate, uint16 minIntexBidQuantity)
+        internal
+        pure
+        returns (IIntexAuction.AuctionParams memory)
+    {
+        return _paramsEntry(minIntexBidRate, ENTRY_PRICE, minIntexBidQuantity);
+    }
+
     /// @dev Create and start an auction as the relayer. The schedule is anchored to the
     ///      current `block.timestamp` via `_schedule()`.
-    function _start(uint32 seriesId, uint64 minIntexBidPrice, uint128 promisLoadMinor, uint16 minIntexBidQuantity)
-        internal
-    {
+    function _start(uint32 seriesId, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(minIntexBidPrice, promisLoadMinor, minIntexBidQuantity));
+        auction.auctionStart(seriesId, _schedule(), _params(minIntexBidRate, minIntexBidQuantity));
     }
 
     /// @dev Send the green-day signal and warp past `commitEnd` so the computed stage is
@@ -92,12 +109,12 @@ contract AuctionTest is Test {
 
     /// @dev Build an EIP-712 reveal signature against the deployed `auction` instance and the
     ///      current `block.chainid`.
-    function _createSignature(uint32 seriesId, address sender, uint16 qty, uint64 price, uint256 privateKey)
+    function _createSignature(uint32 seriesId, address sender, uint16 qty, uint32 rate, uint256 privateKey)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, sender, qty, price));
+        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, sender, qty, rate));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -112,32 +129,31 @@ contract AuctionTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _commit(uint32 seriesId, address bidder, uint16 qty, uint64 price, uint256 privateKey) internal {
-        bytes memory signature = _createSignature(seriesId, bidder, qty, price, privateKey);
+    function _commit(uint32 seriesId, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
+        bytes memory signature = _createSignature(seriesId, bidder, qty, rate, privateKey);
         bytes32 commitHash = keccak256(signature);
         vm.prank(bidder);
         auction.commitBid(seriesId, commitHash);
     }
 
-    function _reveal(uint32 seriesId, address bidder, uint16 qty, uint64 price, uint256 privateKey) internal {
-        bytes memory signature = _createSignature(seriesId, bidder, qty, price, privateKey);
+    function _reveal(uint32 seriesId, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
+        bytes memory signature = _createSignature(seriesId, bidder, qty, rate, privateKey);
         vm.prank(bidder);
-        auction.revealBid(seriesId, qty, price, uint64(block.chainid), signature);
+        auction.revealBid(seriesId, qty, rate, uint64(block.chainid), signature);
     }
 
     function test_Lifecycle_FullFlow() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250115; // yyyymmdd format
-        uint64 floor = 50;
-        uint128 promisLoadMinor = 1000;
+        uint32 floor = 50;
         uint16 bidMinimumQuantity = 1;
-        _start(seriesId, floor, promisLoadMinor, bidMinimumQuantity);
+        _start(seriesId, floor, bidMinimumQuantity);
 
         assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         IIntexAuction.AuctionData memory info = auction.getAuctionInfo(seriesId);
-        assertEq(info.params.minIntexBidPrice, floor);
-        assertEq(info.params.promisLoadMinor, promisLoadMinor);
+        assertEq(info.params.minIntexBidRate, floor);
+        assertEq(info.params.promisLoadMinor, PROMIS_LOAD_MINOR);
 
         _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
         _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
@@ -150,6 +166,10 @@ contract AuctionTest is Test {
 
         _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
         _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+
+        // Lock = qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE (wCOEN strike).
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / RATE_SCALE);
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / RATE_SCALE);
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
         (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
@@ -169,17 +189,17 @@ contract AuctionTest is Test {
 
         assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
-        assertEq(fin.result.auctionIntexClearingPrice, 75);
+        assertEq(fin.result.auctionClearingRate, 75);
         assertEq(fin.result.issuedIntexCount, 100);
         assertEq(fin.result.wonBidsCount, 2);
-        assertEq(fin.params.promisLoadMinor, promisLoadMinor);
+        assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
         // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * promisLoadMinor.
-        assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * promisLoadMinor);
+        assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * PROMIS_LOAD_MINOR);
     }
 
     function test_CommitCancel_And_Reverts() public {
         uint32 seriesId = 20250116;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         // commit + cancel
         _commit(seriesId, iba1, 5, 11, iba1PrivateKey);
@@ -197,7 +217,7 @@ contract AuctionTest is Test {
     function test_CommitBid_RevertsZeroCommitHash() public {
         // B5.8: a degenerate zero commitHash must not occupy a bid slot.
         uint32 seriesId = 20250117;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         vm.expectRevert(IIntexAuction.InvalidCommitHash.selector);
         vm.prank(iba1);
@@ -207,7 +227,7 @@ contract AuctionTest is Test {
     function test_CommitBid_RevertsAfterCommitEnd_WhileUnknown() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250120;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         // No green-day signal: worldwideDayState stays Unknown, so the derived stage stays
         // CommittingBids even past commitEnd. The explicit deadline gate must still reject.
@@ -224,7 +244,7 @@ contract AuctionTest is Test {
     function test_CancelCommit_RevertsAfterCommitEnd_WhileUnknown() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250121;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         _commit(seriesId, iba1, 5, 11, iba1PrivateKey);
         assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
@@ -244,7 +264,7 @@ contract AuctionTest is Test {
     function test_CommitBid_AllowedAtLastSecondBeforeCommitEnd() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250122;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         // commitEnd - 1 is the last valid second of the window.
         vm.warp(uint256(startTs + COMMIT_OFFSET) - 1);
@@ -255,13 +275,13 @@ contract AuctionTest is Test {
     function test_Reveal_Reverts() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250117;
-        _start(seriesId, 100, 1000, 1);
+        _start(seriesId, 100, 1);
 
         _commit(seriesId, iba1, 10, 120, iba1PrivateKey);
 
         _enterRevealStage(seriesId, startTs);
 
-        // wrong price -> hash mismatch
+        // wrong rate -> hash mismatch
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         _reveal(seriesId, iba1, 10, 999, iba1PrivateKey);
 
@@ -276,7 +296,7 @@ contract AuctionTest is Test {
     function test_Reveal_BelowFloor() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250118;
-        _start(seriesId, 100, 1000, 1);
+        _start(seriesId, 100, 1);
 
         // Commit a below-floor bid during commit stage
         _commit(seriesId, iba1, 10, 90, iba1PrivateKey);
@@ -284,17 +304,17 @@ contract AuctionTest is Test {
         _enterRevealStage(seriesId, startTs);
 
         // below floor - try to reveal the below-floor bid
-        vm.expectRevert(IIntexAuction.BidBelowMinIntexBidPrice.selector);
+        vm.expectRevert(IIntexAuction.BidBelowMinIntexBidRate.selector);
         _reveal(seriesId, iba1, 10, 90, iba1PrivateKey);
     }
 
     function test_Reveal_BelowMinQuantity() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250140;
-        // minIntexBidPrice = 100, minIntexBidQuantity = 5
-        _start(seriesId, 100, 1000, 5);
+        // minIntexBidRate = 100, minIntexBidQuantity = 5
+        _start(seriesId, 100, 5);
 
-        // Commit a below-minimum-quantity bid (qty 4 < 5) at an above-floor price.
+        // Commit a below-minimum-quantity bid (qty 4 < 5) at an above-floor rate.
         _commit(seriesId, iba1, 4, 120, iba1PrivateKey);
 
         _enterRevealStage(seriesId, startTs);
@@ -307,7 +327,7 @@ contract AuctionTest is Test {
     function test_Reveal_AtMinQuantity_Succeeds() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250141;
-        _start(seriesId, 100, 1000, 5);
+        _start(seriesId, 100, 5);
 
         // Quantity exactly at the minimum is accepted (boundary is inclusive).
         _commit(seriesId, iba1, 5, 120, iba1PrivateKey);
@@ -317,42 +337,38 @@ contract AuctionTest is Test {
         assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
     }
 
-    function test_Reveal_AmountOverflow() public {
+    function test_Reveal_AboveMaxRate() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250142;
-        // Floor + min quantity low enough that only the lock-amount overflow can trip.
-        _start(seriesId, 1, 1000, 1);
+        _start(seriesId, 1, 1);
 
-        // quantity * bidPrice overflows uint64: 2 * (2^64 - 1) > type(uint64).max.
-        uint16 qty = 2;
-        uint64 price = type(uint64).max;
-        _commit(seriesId, iba1, qty, price, iba1PrivateKey);
+        uint32 rate = RATE_SCALE + 1;
+        _commit(seriesId, iba1, 10, rate, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
 
-        // Overflow surfaces as a typed error, not a bare arithmetic Panic(0x11).
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidAmountOverflow.selector, qty, price));
-        _reveal(seriesId, iba1, qty, price, iba1PrivateKey);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
+        _reveal(seriesId, iba1, 10, rate, iba1PrivateKey);
     }
 
-    function test_Reveal_MaxAmount_NoOverflow_Succeeds() public {
+    function test_Reveal_AtMaxRate_Succeeds() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250143;
-        _start(seriesId, 1, 1000, 1);
+        _start(seriesId, 1, 1);
 
-        // Largest product that still fits in uint64: 1 * (2^64 - 1) is accepted.
-        uint16 qty = 1;
-        uint64 price = type(uint64).max;
-        _commit(seriesId, iba1, qty, price, iba1PrivateKey);
+        uint16 qty = 3;
+        uint32 rate = RATE_SCALE;
+        _commit(seriesId, iba1, qty, rate, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, qty, price, iba1PrivateKey);
+        _reveal(seriesId, iba1, qty, rate, iba1PrivateKey);
 
         assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / RATE_SCALE);
     }
 
     function test_Reveal_WithoutCommit() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250119;
-        _start(seriesId, 100, 1000, 1);
+        _start(seriesId, 100, 1);
 
         _enterRevealStage(seriesId, startTs);
 
@@ -363,7 +379,7 @@ contract AuctionTest is Test {
 
     function test_RedDay_CancelsAuction() public {
         uint32 seriesId = 20250120;
-        _start(seriesId, 1, 1000, 1);
+        _start(seriesId, 1, 1);
 
         vm.prank(bridger);
         auction.startRevealingBidsStage(seriesId, false);
@@ -379,21 +395,21 @@ contract AuctionTest is Test {
 
     function test_Views_BySeriesId() public {
         uint32 seriesId = 20250121;
-        _start(seriesId, 5, 1000, 1);
+        _start(seriesId, 5, 1);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
-        assertEq(a.params.minIntexBidPrice, 5);
+        assertEq(a.params.minIntexBidRate, 5);
         assertEq(uint8(a.worldwideDayState), uint8(IIntexAuction.WorldwideDayState.Unknown));
 
         (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedBidData[] memory bids) =
             auction.getAuctionDetails(seriesId);
-        assertEq(b.params.promisLoadMinor, 1000);
+        assertEq(b.params.promisLoadMinor, PROMIS_LOAD_MINOR);
         assertEq(bids.length, 0);
     }
 
     function test_Stage_TimingTransitions() public {
         uint32 seriesId = 20250122;
-        _start(seriesId, 1, 1000, 1);
+        _start(seriesId, 1, 1);
 
         IIntexAuction.AuctionData memory d = auction.getAuctionInfo(seriesId);
         assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
@@ -426,16 +442,16 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1000, 1));
+        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1000, 1));
+        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
     }
 
     function test_AccessControl_StartRevealingBidsStage() public {
         uint32 seriesId = 20250124;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
 
         vm.expectRevert();
         vm.prank(admin);
@@ -449,7 +465,7 @@ contract AuctionTest is Test {
     function test_AccessControl_StartClearingStage() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250125;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _enterRevealStage(seriesId, startTs);
 
         vm.expectRevert();
@@ -464,7 +480,7 @@ contract AuctionTest is Test {
     function test_AccessControl_ExecuteAuctionClearing() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250126;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _enterRevealStage(seriesId, startTs);
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
@@ -483,8 +499,8 @@ contract AuctionTest is Test {
     function test_ExecuteAuctionClearing_RevertsWonBidsExceedRevealed() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250127;
-        uint64 floor = 50;
-        _start(seriesId, floor, 1000, 1);
+        uint32 floor = 50;
+        _start(seriesId, floor, 1);
         _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
         _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
         _enterRevealStage(seriesId, startTs);
@@ -500,11 +516,11 @@ contract AuctionTest is Test {
         auction.executeAuctionClearing(seriesId, 100, 75, 3);
     }
 
-    function test_ExecuteAuctionClearing_RevertsClearingPriceBelowMin() public {
+    function test_ExecuteAuctionClearing_RevertsClearingRateBelowMin() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250128;
-        uint64 floor = 50;
-        _start(seriesId, floor, 1000, 1);
+        uint32 floor = 50;
+        _start(seriesId, floor, 1);
         _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
         _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
@@ -512,21 +528,21 @@ contract AuctionTest is Test {
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
 
-        // Clearing price below the configured minimum is rejected.
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingPriceBelowMin.selector, uint64(floor - 1), floor));
+        // Clearing rate below the configured minimum is rejected.
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, uint64(floor - 1), floor));
         vm.prank(bridger);
         auction.executeAuctionClearing(seriesId, 100, floor - 1, 1);
     }
 
-    /// @dev No-sale auction: Desis floors the clearing price at `minIntexBidPrice`, so a clearing
-    ///      with zero winners still carries a non-zero price. This must be accepted as a valid
-    ///      result — the real invariant is `clearingPrice >= minIntexBidPrice`, NOT the (incorrect)
-    ///      `clearingPrice == 0 ⇔ winners == 0`. Guards against re-introducing that wrong rule.
+    /// @dev No-sale auction: Desis floors the clearing rate at `minIntexBidRate`, so a clearing
+    ///      with zero winners still carries a non-zero rate. This must be accepted as a valid
+    ///      result — the real invariant is `clearingRate >= minIntexBidRate`, NOT the (incorrect)
+    ///      `clearingRate == 0 ⇔ winners == 0`. Guards against re-introducing that wrong rule.
     function test_ExecuteAuctionClearing_NoSale_ZeroWinnersAtFloor() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250144;
-        uint64 floor = 50;
-        _start(seriesId, floor, 1000, 1);
+        uint32 floor = 50;
+        _start(seriesId, floor, 1);
         _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
         _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
@@ -534,7 +550,7 @@ contract AuctionTest is Test {
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
 
-        // Zero winners, zero issued, clearing price at the floor (non-zero): a valid No-sale result.
+        // Zero winners, zero issued, clearing rate at the floor (non-zero): a valid No-sale result.
         vm.expectEmit(true, false, false, true);
         emit IIntexAuction.AuctionClearingExecuted(seriesId, floor, 0);
         vm.prank(bridger);
@@ -544,8 +560,49 @@ contract AuctionTest is Test {
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedIntexCount, 0);
-        assertEq(fin.result.auctionIntexClearingPrice, floor);
+        assertEq(fin.result.auctionClearingRate, floor);
         assertEq(fin.result.issuedIntexLoadedPromis, 0);
+    }
+
+    /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
+    ///      (nothing was allocated because supply was exhausted/zero). It must still complete —
+    ///      full refund is handled via REFUND_INSTRUCTIONS, nothing is issued — and NOT revert
+    ///      `ZeroValue`/`ClearingRateBelowMin`. The `cleared` flag drives the Completed stage.
+    function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250145;
+        uint32 floor = 50; // minIntexBidRate > 0
+        _start(seriesId, floor, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.prank(bridger);
+        auction.startClearingStage(seriesId);
+
+        // issued=0, clearingRate=0, won=0 — accepted despite floor=50 (no supply was available).
+        vm.expectEmit(true, false, false, true);
+        emit IIntexAuction.AuctionClearingExecuted(seriesId, 0, 0);
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, 0, 0, 0);
+
+        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
+        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
+        assertEq(fin.result.auctionClearingRate, 0);
+        assertEq(fin.result.issuedIntexCount, 0);
+        assertEq(fin.result.wonBidsCount, 0);
+        assertEq(fin.result.issuedIntexLoadedPromis, 0);
+
+        // Idempotent: re-clearing a completed auction is rejected on the stage gate.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.Issuance,
+                IIntexAuction.AuctionStage.Completed
+            )
+        );
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, 0, 0, 0);
     }
 
     // --- Validation Tests ---
@@ -560,7 +617,7 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, pastSchedule, _params(10, 1000, 1));
+        auction.auctionStart(seriesId, pastSchedule, _params(10, 1));
 
         // Schedule not strictly increasing (revealEnd <= commitEnd).
         IIntexAuction.AuctionSchedule memory nonIncreasing = IIntexAuction.AuctionSchedule({
@@ -570,16 +627,16 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, nonIncreasing, _params(10, 1000, 1));
+        auction.auctionStart(seriesId, nonIncreasing, _params(10, 1));
 
         // Valid start succeeds.
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1000, 1));
+        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
 
         // AuctionAlreadyExists
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1000, 1));
+        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
     }
 
     function test_Wire_Validation() public {
@@ -597,15 +654,15 @@ contract AuctionTest is Test {
     function test_ExecuteAuctionClearing_Validation() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250128;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _enterRevealStage(seriesId, startTs);
         // Reach the Issuance stage (time-derived: now >= revealEnd).
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
 
-        // Zero auctionIntexClearingPrice
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionIntexClearingPrice"));
+        // Zero auctionClearingRate
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
         vm.prank(bridger);
         auction.executeAuctionClearing(seriesId, 100, 0, 1);
     }
@@ -613,19 +670,19 @@ contract AuctionTest is Test {
     function test_RevealBid_Validation() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250129;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
 
         // Zero quantity
         bytes memory sig = _createSignature(seriesId, iba1, 0, 20, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidPrice"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
         auction.revealBid(seriesId, 0, 20, uint64(block.chainid), sig);
 
-        // Zero bidPrice
+        // Zero bidRate
         sig = _createSignature(seriesId, iba1, 10, 0, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidPrice"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
         auction.revealBid(seriesId, 10, 0, uint64(block.chainid), sig);
 
@@ -640,7 +697,7 @@ contract AuctionTest is Test {
     function test_StartClearingStage_AlreadyClearing() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250130;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _enterRevealStage(seriesId, startTs);
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
@@ -670,7 +727,7 @@ contract AuctionTest is Test {
     function test_RevealBid_WrongSigner() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250131;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
 
@@ -690,7 +747,7 @@ contract AuctionTest is Test {
     function test_RevealBid_reentrancyBlocked() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250201;
-        _start(seriesId, 10, 1000, 1);
+        _start(seriesId, 10, 1);
         _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
         _enterRevealStage(seriesId, startTs);
 

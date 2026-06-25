@@ -8,9 +8,11 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_promislimit::PromisLimitContract;
 
+use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
+
 use crate::constants::{
     BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
-    QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, REVEAL_WINDOW_SECONDS,
+    QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -28,12 +30,12 @@ use crate::sol_ext::{IOriginMessenger, MessagingFee};
 pub fn start_auction(
     storage: StorageHandle<'_>,
     series_id: u32,
-    config: AuctionConfig,
+    mut config: AuctionConfig,
 ) -> Result<()> {
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
     }
-    if config.promis_load_minor == 0 || config.cost_amount_minor == 0 {
+    if config.promis_load_minor == 0 || config.cost_amount_minor() == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
@@ -58,10 +60,19 @@ pub fn start_auction(
         }
     };
 
+    // Genesis IntexFactory profile: floor/call derive from entry; window/threshold/
+    // period are the call-trigger params relayed to the target chain. Sourced here
+    // (storage in reach) and folded into the config before it is persisted, so the
+    // demand-side config carries the same values the wire message ships.
+    let iparams = outbe_intexfactory::read_params(&storage)?;
+    config.min_intex_bid_quantity = min_bid_qty;
+    config.call_trigger = crate::schema::IntexCallTrigger {
+        window_days: iparams.call_window_days,
+        threshold_days: iparams.call_threshold_days,
+        intex_call_period: iparams.intex_call_period_secs,
+    };
+
     contract.write_auction_config(series_id, &config)?;
-    contract
-        .config_min_bid_quantity
-        .write(&series_id, u32::from(min_bid_qty))?;
     contract.write_stage(series_id, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
         seriesId: series_id,
@@ -73,22 +84,37 @@ pub fn start_auction(
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
-    let coen_floor = config
-        .coen_price
-        .checked_mul(U256::from(108u64))
-        .map(|v| v / U256::from(100u64))
-        .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))?;
-    let coen_floor_u64 = u64::try_from(coen_floor)
-        .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
+    let floor_price = config
+        .entry_price_minor
+        .checked_mul(U256::from(iparams.floor_price_num))
+        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
+    let call_price = config
+        .entry_price_minor
+        .checked_mul(U256::from(iparams.call_price_num))
+        .map(|v| v / U256::from(CALL_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
+    let entry_price_u64 = u64::try_from(config.entry_price_minor)
+        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
+    let floor_price_u64 = u64::try_from(floor_price)
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
+    let call_price_u64 = u64::try_from(call_price)
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let stage_params = IOriginMessenger::AuctionStageStartParams {
         seriesId: series_id,
         commitEnd: commit_end,
         revealEnd: noon,
         issuanceEnd: issuance_end,
+        issuanceCurrency: config.issuance_currency,
+        referenceCurrency: config.reference_currency,
         promisLoadMinor: config.promis_load_minor,
-        minIntexBidPrice: config.min_intex_bid_price,
-        costAmountMinor: config.cost_amount_minor,
-        floorPriceMinor: coen_floor_u64,
+        minIntexBidRate: config.min_intex_bid_rate,
+        entryPrice: entry_price_u64,
+        floorPriceMinor: floor_price_u64,
+        callPriceMinor: call_price_u64,
+        intexCallPeriod: iparams.intex_call_period_secs,
+        callWindowDays: iparams.call_window_days,
+        callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
     };
     let quote_ret = storage.staticcall(
@@ -354,7 +380,7 @@ pub fn clear_auction(
         contract.emit(IDesis::AuctionCleared {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            clearingPrice: result.clearing_price,
+            clearingRate: result.clearing_rate,
             totalDemand: total_demand,
         })?;
     }
@@ -378,8 +404,7 @@ pub fn clear_auction(
             series_id,
             issued_intex_count: result.issued_intex_count,
             promis_load_minor: config.promis_load_minor,
-            cost_amount_minor: config.cost_amount_minor,
-            coen_price: config.coen_price,
+            entry_price_minor: config.entry_price_minor,
             issuance_currency: QUALIFIER_ISSUANCE_ISO,
             reference_currency: QUALIFIER_REFERENCE_ISO,
             recipients: result.winners.clone(),
@@ -396,7 +421,7 @@ pub fn clear_auction(
         IOriginMessenger::quoteSendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingPrice: result.clearing_price,
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             payInLzToken: false,
@@ -413,7 +438,7 @@ pub fn clear_auction(
         IOriginMessenger::sendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingPrice: result.clearing_price,
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             fee: MessagingFee {
@@ -473,18 +498,28 @@ pub fn clear_auction(
 // Clearing algorithm (pure)
 // ---------------------------------------------------------------------------
 
-/// Sort bids: descending price, ascending timestamp on tie.
+/// Sort bids: descending rate, ascending timestamp on tie.
 fn sort_bids(bids: &mut [BidData]) {
     bids.sort_by(|a, b| {
-        b.intex_bid_price
-            .cmp(&a.intex_bid_price)
+        b.intex_bid_rate
+            .cmp(&a.intex_bid_rate)
             .then_with(|| a.timestamp.cmp(&b.timestamp))
     });
 }
 
-/// Uniform-price clearing. Walks sorted bids from highest to lowest price,
-/// allocates until `supply` is exhausted, and sets the clearing price to the
-/// last allocated bid's price. Computes per-bidder paid/refund amounts.
+/// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
+/// per-Intex `strike`: `qty * strike * rate / RATE_SCALE`, saturating to u128
+/// (wCOEN amounts at 18 decimals exceed u64).
+fn rate_lock(qty: u64, strike: u128, rate: u32) -> u128 {
+    let amount = U256::from(qty)
+        .saturating_mul(U256::from(strike))
+        .saturating_mul(U256::from(rate))
+        / U256::from(RATE_SCALE);
+    u128::try_from(amount).unwrap_or(u128::MAX)
+}
+
+/// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
+/// clearing rate is the last allocated bid's. lock/pay = qty * strike * rate / RATE_SCALE.
 fn calculate_clearing(
     bids: &[BidData],
     config: &AuctionConfig,
@@ -496,14 +531,15 @@ fn calculate_clearing(
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
+    let strike = config.cost_amount_minor();
     let mut total_allocated: u32 = 0;
-    let mut clearing_price: u64 = config.min_intex_bid_price;
+    let mut clearing_rate: u32 = config.min_intex_bid_rate;
 
     for (i, bid) in bids.iter().enumerate() {
         if total_allocated >= supply {
             break;
         }
-        if bid.intex_bid_price < config.min_intex_bid_price {
+        if bid.intex_bid_rate < config.min_intex_bid_rate {
             continue;
         }
         if bid.intex_quantity < min_qty {
@@ -518,35 +554,36 @@ fn calculate_clearing(
             winner_quantities.push(alloy_primitives::U256::from(allocated));
             won_by_index[i] = allocated;
             total_allocated += allocated;
-            clearing_price = bid.intex_bid_price;
+            clearing_rate = bid.intex_bid_rate;
         }
     }
 
     let mut all_bidders: Vec<Address> = Vec::with_capacity(len);
-    let mut refunded_amounts: Vec<u64> = Vec::with_capacity(len);
-    let mut paid_amounts: Vec<u64> = Vec::with_capacity(len);
+    let mut refunded_amounts: Vec<u128> = Vec::with_capacity(len);
+    let mut paid_amounts: Vec<u128> = Vec::with_capacity(len);
 
     for (i, bid) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
 
-        // locked = quantity * bid_price; saturate on overflow (extreme values stay u64-bounded)
-        let locked_wide = u64::from(bid.intex_quantity).saturating_mul(bid.intex_bid_price);
+        // locked = quantity * strike * rate / RATE_SCALE (escrowed at bid time).
+        let locked = rate_lock(u64::from(bid.intex_quantity), strike, bid.intex_bid_rate);
 
         let won = won_by_index[i];
         if won > 0 {
-            let paid = (won as u64).saturating_mul(clearing_price);
-            let refunded = locked_wide.saturating_sub(paid);
+            // Uniform clearing: winners pay at the clearing rate; refund the rest.
+            let paid = rate_lock(u64::from(won), strike, clearing_rate);
+            let refunded = locked.saturating_sub(paid);
             paid_amounts.push(paid);
             refunded_amounts.push(refunded);
         } else {
             paid_amounts.push(0);
-            refunded_amounts.push(locked_wide);
+            refunded_amounts.push(locked);
         }
     }
 
     ClearingResult {
         issued_intex_count: total_allocated,
-        clearing_price,
+        clearing_rate,
         winners,
         winner_quantities,
         all_bidders,

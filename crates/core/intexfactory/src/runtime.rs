@@ -16,6 +16,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
 use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -33,20 +34,27 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read(&factory)?;
 
-    let floor_price_minor = derived_floor(params.coen_price, cfg.floor_price_num)?;
-    let call_price_minor = derived_call_price(params.coen_price, cfg.call_price_num)?;
+    let floor_price_minor = derived_floor(params.entry_price_minor, cfg.floor_price_num)?;
+    let call_price_minor = derived_call_price(params.entry_price_minor, cfg.call_price_num)?;
+
+    let entry_price_minor_u64 = u64::try_from(params.entry_price_minor)
+        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
+    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
+    let call_price_minor_u64 = u64::try_from(call_price_minor)
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         issued_intex_count: params.issued_intex_count,
         promis_load_minor: params.promis_load_minor,
-        cost_amount_minor: params.cost_amount_minor,
+        entry_price_minor: params.entry_price_minor,
         floor_price_minor,
-        intex_call_period: cfg.intex_call_period_secs,
+        call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
             window_days: cfg.call_window_days,
             threshold_days: cfg.call_threshold_days,
-            call_price_minor,
+            intex_call_period: cfg.intex_call_period_secs,
         },
         issued_at,
         issuance_currency: params.issuance_currency,
@@ -60,9 +68,21 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::createSeriesCall {
-            seriesId: params.series_id,
-            issuedIntexCount: params.issued_intex_count,
-            intexCallPeriod: cfg.intex_call_period_secs,
+            params: CreateSeriesParams {
+                seriesId: params.series_id,
+                issuanceCurrency: params.issuance_currency,
+                referenceCurrency: params.reference_currency,
+                issuedIntexCount: params.issued_intex_count,
+                promisLoadMinor: params.promis_load_minor,
+                entryPriceMinor: entry_price_minor_u64,
+                floorPriceMinor: floor_price_minor_u64,
+                callPriceMinor: call_price_minor_u64,
+                callTrigger: IntexCallTrigger {
+                    windowDays: cfg.call_window_days,
+                    thresholdDays: cfg.call_threshold_days,
+                    intexCallPeriod: cfg.intex_call_period_secs,
+                },
+            },
         }
         .abi_encode()
         .into(),
@@ -72,17 +92,22 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     // OriginMessenger._payNative pays from its relay float when msg.value == 0;
     // we still quote so the fee struct carries the correct nativeFee for _lzSend.
     let floor_price_minor_u64 = u64::try_from(floor_price_minor)
-        .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
-        .map_err(|_| PrecompileError::Revert("coen call trigger exceeds u64".into()))?;
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
+    let cost_amount_minor_u64 =
+        u64::try_from(derived_cost_amount(params.entry_price_minor, U256::from(params.promis_load_minor)))
+            .map_err(|_| PrecompileError::Revert("cost amount exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
-        costAmountMinor: params.cost_amount_minor,
+        costAmountMinor: cost_amount_minor_u64,
+        entryPriceMinor: entry_price_minor_u64,
         floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: cfg.intex_call_period_secs,
-        settlementTokenAlias: params.reference_currency,
+        issuanceCurrency: params.issuance_currency,
+        referenceCurrency: params.reference_currency,
         callWindowDays: cfg.call_window_days,
         callThresholdDays: cfg.call_threshold_days,
         callPriceMinor: call_price_minor_u64,
@@ -127,23 +152,30 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id,
             issuedIntexCount: params.issued_intex_count,
-            coenPrice: params.coen_price,
+            entryPrice: params.entry_price_minor,
         },
     )
 }
 
-pub(crate) fn derived_floor(coen_price: U256, floor_price_num: u64) -> Result<U256> {
-    coen_price
+pub(crate) fn derived_floor(entry_price: U256, floor_price_num: u64) -> Result<U256> {
+    entry_price
         .checked_mul(U256::from(floor_price_num))
         .map(|v| v / U256::from(FLOOR_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))
+        .ok_or_else(|| PrecompileError::Revert("floor price overflow".into()))
 }
 
-pub(crate) fn derived_call_price(coen_price: U256, call_price_num: u64) -> Result<U256> {
-    coen_price
+pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Result<U256> {
+    entry_price
         .checked_mul(U256::from(call_price_num))
         .map(|v| v / U256::from(CALL_PRICE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("coen call price overflow".into()))
+        .ok_or_else(|| PrecompileError::Revert("call price overflow".into()))
+}
+
+/// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
+/// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
+/// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
+pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> U256 {
+    entry_price.saturating_mul(promis_load_minor) / U256::from(10u64).pow(U256::from(30u64))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -210,8 +242,8 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // payment = costAmountMinor * amount (in payment-token units).
-    let payment = U256::from(series.cost_amount_minor)
+    // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
+    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 

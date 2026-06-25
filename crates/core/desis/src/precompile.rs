@@ -14,7 +14,7 @@ use crate::runtime;
 use crate::schema::BidData;
 
 /// `IDesis` interface ID (XOR of non-ERC-165 selectors in IDesis).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0x7b, 0x57, 0x26, 0x34];
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xd2, 0xcf, 0xe8, 0xda];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -34,7 +34,7 @@ pub fn dispatch(
                 let bids = bids_from_sol_arrays(
                     &c.bidderAddresses,
                     &c.intexQuantities,
-                    &c.intexBidPrices,
+                    &c.intexBidRates,
                     &c.timestamps,
                 )?;
                 runtime::process_bids_batch(
@@ -74,11 +74,11 @@ pub fn dispatch(
 fn bids_from_sol_arrays(
     bidders: &[Address],
     quantities: &[u16],
-    prices: &[u64],
+    rates: &[u32],
     timestamps: &[u32],
 ) -> Result<Vec<BidData>> {
     let len = bidders.len();
-    if len != quantities.len() || len != prices.len() || len != timestamps.len() {
+    if len != quantities.len() || len != rates.len() || len != timestamps.len() {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "processBidsBatch: array length mismatch".into(),
         ));
@@ -87,7 +87,7 @@ fn bids_from_sol_arrays(
         .map(|i| BidData {
             bidder_address: bidders[i],
             intex_quantity: quantities[i],
-            intex_bid_price: prices[i],
+            intex_bid_rate: rates[i],
             timestamp: timestamps[i],
         })
         .collect())

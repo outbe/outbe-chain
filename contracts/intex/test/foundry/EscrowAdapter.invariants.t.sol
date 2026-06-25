@@ -32,9 +32,9 @@ contract EscrowAdapterInvariantsTest is Test {
     uint32 s1 = 1;
     uint32 s2 = 2;
 
-    uint64 constant LOCK_A = 100 * 10 ** 6;
-    uint64 constant LOCK_B = 250 * 10 ** 6;
-    uint64 constant LOCK_C = 75 * 10 ** 6;
+    uint128 constant LOCK_A = 100 * 10 ** 6;
+    uint128 constant LOCK_B = 250 * 10 ** 6;
+    uint128 constant LOCK_C = 75 * 10 ** 6;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
@@ -58,7 +58,7 @@ contract EscrowAdapterInvariantsTest is Test {
     }
 
     function _assertSeriesInvariant(uint32 seriesId, address[3] memory bidders) internal view {
-        uint64 sum = 0;
+        uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
             IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId, bidders[i]);
             if (lock.status == IEscrowAdapter.LockStatus.Locked) {
@@ -68,7 +68,7 @@ contract EscrowAdapterInvariantsTest is Test {
                 sum += lock.lockedAmount - lock.failedRefund;
             }
         }
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesId);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
     }
 
@@ -132,7 +132,7 @@ contract EscrowAdapterInvariantsTest is Test {
         bytes32 baseSlot = bytes32(_auctionEscrowStateSlot());
         bytes32 entrySlot = keccak256(abi.encode(uint256(s1), uint256(baseSlot)));
         bytes32 packed = vm.load(address(escrow), entrySlot);
-        // Add 1 to the uint64 totalLocked field (low 64 bits).
+        // Add 1 to the uint128 totalLocked field (low 64 bits).
         bytes32 corrupted = bytes32(uint256(packed) + 1);
         vm.store(address(escrow), entrySlot, corrupted);
 

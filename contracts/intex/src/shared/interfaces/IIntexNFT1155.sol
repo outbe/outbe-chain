@@ -46,29 +46,44 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 settled;
     }
 
+    /// @notice Forced-call trigger parameters (window/threshold/period).
+    struct IntexCallTrigger {
+        /// @notice Call-trigger observation window in days.
+        uint16 windowDays;
+        /// @notice Call-trigger threshold in days.
+        uint16 thresholdDays;
+        /// @notice Called->deadline window in seconds (0 = default).
+        uint32 intexCallPeriod;
+    }
+
     /// @notice Series-level data, stored per token id (one entry for the Issued token id
     ///         and one for the Settled token id; `status` distinguishes them).
-    /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the
-    ///      cumulative `totalSupply` minted via `mint`/`mintBatch`.
-    /// @dev Identity fields (promisLoadMinor, costAmountMinor, floorPriceMinor, etc.) live in
-    ///      Intex; this struct holds only balance/lifecycle state.
+    /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the current
+    ///      `totalSupply` minted via `mint`/`mintBatch` (a burn frees cap room).
     struct SeriesData {
+        /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
+        uint16 issuanceCurrency;
+        /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
+        uint16 referenceCurrency;
+        /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
+        ///         never mutated; `mint`/`mintBatch` reject pushing `totalSupply` past it.
+        uint32 issuedIntexCount;
+        /// @notice Promis tokens per Intex unit (18 decimals).
+        uint128 promisLoadMinor;
+        /// @notice Per-unit entry price (reference ccy).
+        uint64 entryPriceMinor;
+        /// @notice Floor price (reference ccy).
+        uint64 floorPriceMinor;
+        /// @notice Call price (reference ccy).
+        uint64 callPriceMinor;
+        /// @notice Forced-call trigger (window/threshold/period).
+        IntexCallTrigger callTrigger;
         /// @notice Timestamp when the series was created (UNIX seconds).
         uint32 issuedAt;
         /// @notice Timestamp when the series entered the Called state (UNIX seconds, 0 if not called).
         uint32 calledAt;
-        /// @notice Duration in seconds between `calledAt` and the settlement deadline.
-        uint32 intexCallPeriod;
         /// @notice Total supply of this token id across all holders.
         uint32 totalSupply;
-        /// @notice Auction-cleared cap on the cumulative Issued mint quantity. Set once at
-        ///         `createSeries` and never mutated. `mint`/`mintBatch` reject anything that
-        ///         would push `mintedCount` past this value.
-        uint32 issuedIntexCount;
-        /// @notice Monotonic count of Issued tokens ever minted via `mint`/`mintBatch`. Never
-        ///         decremented — burns (`crosschainBurn`, `settle`, `expireSeries`) leave this field
-        ///         untouched so a burn-then-remint cycle cannot reopen cap room.
-        uint32 mintedCount;
         /// @notice Token classification (Issued or Settled).
         IntexStatus status;
         /// @notice Current series lifecycle state.
@@ -184,11 +199,22 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     // --- Writes ---
 
-    /// @notice Create a new Intex series (one per auction).
-    /// @param seriesId Series identifier (yyyymmdd as uint32).
-    /// @param issuedIntexCount Auction-cleared cap on the cumulative Issued mint quantity (must be > 0).
-    /// @param intexCallPeriod Duration in seconds between Called and the settlement deadline (0 = default).
-    function createSeries(uint32 seriesId, uint32 issuedIntexCount, uint32 intexCallPeriod) external;
+    /// @notice Identity inputs for a new series, set once at `createSeries`.
+    struct CreateSeriesParams {
+        uint32 seriesId;
+        uint16 issuanceCurrency;
+        uint16 referenceCurrency;
+        uint32 issuedIntexCount;
+        uint128 promisLoadMinor;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+        IntexCallTrigger callTrigger;
+    }
+
+    /// @notice Create a new Intex series (one per auction) with its identity fields.
+    /// @param params Series identity (id, currencies, cap, promis load, prices, call trigger).
+    function createSeries(CreateSeriesParams calldata params) external;
 
     /// @notice Mint Intex to a specific address.
     /// @param to Recipient of the minted Issued tokens.

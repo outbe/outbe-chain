@@ -6,7 +6,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::ORIGIN_MESSENGER_ADDRESS;
 use crate::runtime;
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
+use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
 
 const CHAIN_ID: u64 = 1;
 const SERIES_ID: u32 = 20260101;
@@ -33,10 +33,14 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn default_config() -> AuctionConfig {
     AuctionConfig {
+        issuance_currency: 840,
+        reference_currency: 840,
         promis_load_minor: PROMIS_LOAD_MINOR,
-        min_intex_bid_price: 100,
-        cost_amount_minor: 500,
-        coen_price: U256::ZERO,
+        call_trigger: IntexCallTrigger::default(),
+        min_intex_bid_rate: 100,
+        min_intex_bid_quantity: 0,
+        // entry_price chosen so the derived strike == RATE_SCALE (lock = qty * rate).
+        entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
     }
 }
 
@@ -119,7 +123,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
             (0..100u8)
                 .map(|i| BidData {
                     bidder_address: bidder(i),
-                    intex_bid_price: 200,
+                    intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
                 })
@@ -209,11 +213,11 @@ fn clear_auction_rejects_non_origin_caller() {
 
 // --- Bid ingestion ---
 
-fn bids(n: u8, price: u64) -> Vec<BidData> {
+fn bids(n: u8, rate: u32) -> Vec<BidData> {
     (0..n)
         .map(|i| BidData {
             bidder_address: bidder(i),
-            intex_bid_price: price,
+            intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
         })
@@ -452,19 +456,19 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         let three_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(2),
-                intex_bid_price: 150,
+                intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
             },
@@ -481,8 +485,8 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         .unwrap();
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
-        // Supply 2 → top 2 bids win (300 and 200); clearing price = 200.
-        assert_eq!(result.clearing_price, 200);
+        // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
+        assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
     });
 }
@@ -496,13 +500,13 @@ fn clear_bids_below_min_price_skipped() {
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 50,
+                intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
@@ -535,13 +539,13 @@ fn clear_refunds_equal_locked_minus_paid() {
         let two_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
@@ -558,8 +562,8 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
-        // Winner (bid 300): locked=300, paid=300 (clearing price), refund=0
-        // Loser (bid 200): locked=200, refund=200
+        // strike = promis_load; lock/pay = qty * strike * rate / RATE_SCALE.
+        // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
             .iter()
@@ -570,10 +574,73 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], 300);
+        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], 200);
+        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
         assert_eq!(supply, result.issued_intex_count);
+    });
+}
+
+#[test]
+fn clear_rate_escrow_scales_by_strike() {
+    // strike != RATE_SCALE, so this exercises the * strike / RATE_SCALE.
+    with_storage(|s| {
+        let cfg = AuctionConfig {
+            issuance_currency: 840,
+            reference_currency: 840,
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            call_trigger: IntexCallTrigger::default(),
+            min_intex_bid_rate: 0,
+            min_intex_bid_quantity: 0,
+            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; strike = promis_load)
+        };
+        runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        let supply = 2u32;
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
+        let rate_bids = vec![
+            BidData {
+                bidder_address: bidder(0),
+                intex_bid_rate: 800_000,
+                timestamp: 0,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(1),
+                intex_bid_rate: 600_000,
+                timestamp: 1,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(2),
+                intex_bid_rate: 400_000,
+                timestamp: 2,
+                intex_quantity: 1,
+            },
+        ];
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            rate_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+
+        assert_eq!(result.clearing_rate, 600_000);
+        // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
+        let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
+        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
+        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
+        assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
+        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
     });
 }
 
@@ -608,22 +675,15 @@ fn test_iface_id_matches_selector_xor() {
 // --- Config construction ---
 
 #[test]
-fn from_coen_price_rounds_cost_amount_up_to_100() {
-    let cfg = AuctionConfig::from_coen_price(U256::from(1_000_000_150_000_000u128));
-    assert_eq!(
-        cfg.cost_amount_minor % 100,
-        0,
-        "cost_amount must be a multiple of 100"
-    );
-    assert_eq!(cfg.cost_amount_minor, 100_000_100);
-
-    let exact = AuctionConfig::from_coen_price(U256::from(2_000_000_000_000_000u128));
-    assert_eq!(exact.cost_amount_minor, 200_000_000);
+fn cost_amount_is_promis_load() {
+    // wCOEN strike = promis_load per Intex; entry no longer drives it.
+    let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
+    assert_eq!(cfg.cost_amount_minor(), cfg.promis_load_minor);
 }
 
 // --- Best-effort dispatch API ---
 
-const COEN_PRICE: u128 = 2_000_000_000_000_000; // 2e15 → cost_amount_minor = 200_000_000
+const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry; strike = promis_load, not entry-derived)
 
 #[test]
 fn dispatch_stage_start_success_returns_true() {
@@ -631,7 +691,7 @@ fn dispatch_stage_start_success_returns_true() {
         let accepted = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         assert!(accepted, "valid start should be accepted");
@@ -662,13 +722,13 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
         let first = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         let second = crate::api::dispatch_stage_start(
             s.clone(),
             outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
-            U256::from(COEN_PRICE),
+            U256::from(ENTRY_PRICE),
         )
         .unwrap();
         (first, second)

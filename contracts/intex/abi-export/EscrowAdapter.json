@@ -162,8 +162,8 @@
       "outputs": [
         {
           "name": "totalLocked",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "lockCount",
@@ -250,8 +250,8 @@
       "outputs": [
         {
           "name": "lockedAmount",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "lockedAt",
@@ -265,8 +265,8 @@
         },
         {
           "name": "failedRefund",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "splitRecorded",
@@ -333,13 +333,13 @@
             },
             {
               "name": "refundedAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             },
             {
               "name": "paidAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }
@@ -370,8 +370,8 @@
         },
         {
           "name": "totalLocked",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         }
       ],
       "stateMutability": "view"
@@ -399,8 +399,8 @@
           "components": [
             {
               "name": "lockedAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             },
             {
               "name": "lockedAt",
@@ -414,8 +414,8 @@
             },
             {
               "name": "failedRefund",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             },
             {
               "name": "splitRecorded",
@@ -579,8 +579,8 @@
         },
         {
           "name": "amount",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         }
       ],
       "outputs": [],
@@ -651,13 +651,13 @@
             },
             {
               "name": "refundedAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             },
             {
               "name": "paidAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }
@@ -722,13 +722,13 @@
             },
             {
               "name": "refundedAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             },
             {
               "name": "paidAmount",
-              "type": "uint64",
-              "internalType": "uint64"
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }
@@ -886,15 +886,15 @@
         },
         {
           "name": "totalRefunded",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         },
         {
           "name": "totalPaid",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         },
         {
           "name": "bidsProcessed",
@@ -960,15 +960,15 @@
         },
         {
           "name": "refundedAmount",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         },
         {
           "name": "paidAmount",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1016,9 +1016,9 @@
         },
         {
           "name": "amount",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1041,9 +1041,9 @@
         },
         {
           "name": "amount",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1072,9 +1072,9 @@
         },
         {
           "name": "amount",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1198,9 +1198,9 @@
         },
         {
           "name": "vaultOwed",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1223,9 +1223,9 @@
         },
         {
           "name": "vaultOwed",
-          "type": "uint64",
+          "type": "uint128",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1328,13 +1328,13 @@
       "inputs": [
         {
           "name": "locked",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "requested",
-          "type": "uint64",
-          "internalType": "uint64"
+          "type": "uint128",
+          "internalType": "uint128"
         }
       ]
     },
