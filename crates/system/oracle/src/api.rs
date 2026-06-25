@@ -62,6 +62,20 @@ pub fn get_worldwide_day_vwap_for_pair_id(
     oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
 }
 
+/// Returns the finalized VWAP for `pair_id` on the given UTC calendar day
+/// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
+/// day is not finalized or had no oracle data for that pair. Distinguishing
+/// "not finalized yet" from "finalized, no data" requires comparing `utc_day`
+/// against the oracle's `utc_day_vwap_last_finalized` watermark.
+pub fn get_utc_day_vwap(
+    storage: StorageHandle,
+    utc_day: u32,
+    pair_id: u32,
+) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+}
+
 pub fn get_max_active_scurve_value(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,

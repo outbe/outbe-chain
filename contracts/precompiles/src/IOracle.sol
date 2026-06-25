@@ -17,6 +17,9 @@ interface IOracle {
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
     event ValidatorForcedExit(address indexed validator);
     event ScurvePeakDetected(uint32 indexed pairId, uint256 peakPrice, uint64 peakDay);
+    /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
+    /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
+    event VwapCalculated(uint32 indexed utcDay, uint32 indexed pairId, uint256 vwap);
 
     struct ExchangeRateTuple {
         string base;
@@ -150,6 +153,15 @@ interface IOracle {
 
     /// @notice Returns VWAP over the last 24 hours for a pair.
     function getDayVwap(string calldata base, string calldata quote) external view returns (uint256 vwap);
+
+    /// @notice Returns the finalized VWAP for a full UTC calendar day.
+    /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
+    ///        is not yet finalized or had no oracle data for the pair. For the
+    ///        in-progress current day use `getVwapForTimeRange` instead.
+    function getUtcDayVwap(string calldata base, string calldata quote, uint32 utcDay)
+        external
+        view
+        returns (uint256 vwap);
 
     /// @notice Returns VWAPs for all active vote-target pairs over an explicit WorldwideDay-style window.
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)

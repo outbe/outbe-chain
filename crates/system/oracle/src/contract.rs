@@ -157,6 +157,26 @@ pub struct OracleContract {
     // for off-chain pricing. Length at the base slot, data at keccak256(slot)
     // + index. Pre-filled at genesis with [840] (USD).
     pub reference_currencies: StorageVec<u16>,
+
+    // === Per-UTC-Day VWAP Snapshots ===
+    // Finalized VWAP for a full UTC calendar day, keyed by a yyyymmdd UTC date
+    // key (e.g. 20260625) — NOT a WorldwideDay (which is UTC+14). Written once
+    // per closed day by the begin-block lifecycle from the canonical
+    // `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)` window. Stored
+    // forever (no pruning). A day with no oracle data is never written, so
+    // `pair_count == 0` means "not finalized OR finalized-empty"; the three
+    // states are disambiguated against `utc_day_vwap_last_finalized`.
+    //
+    // mapping(utc_day => number of (pair_id, vwap) entries finalized for the day)
+    pub utc_day_vwap_pair_count: Mapping<u32, u32>,
+    // mapping(utc_day => mapping(entry_idx => pair_id))
+    pub utc_day_vwap_pair_id: Mapping<u32, Mapping<u32, u32>>,
+    // mapping(utc_day => mapping(entry_idx => vwap)) 1e18 scaled
+    pub utc_day_vwap_value: Mapping<u32, Mapping<u32, U256>>,
+    // Monotonic watermark: most recent fully-closed UTC day that has been
+    // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
+    // so every day <= this watermark is considered finalized.
+    pub utc_day_vwap_last_finalized: Slot<u32>,
 }
 
 /// 1e18 scale factor for fixed-point arithmetic.

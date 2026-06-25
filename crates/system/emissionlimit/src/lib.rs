@@ -1,3 +1,3 @@
 pub mod allocation;
 pub mod block;
-pub mod daily_emission;
+pub mod day_emission;

@@ -70,7 +70,7 @@ const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 /// Tamper-resistance: a node booting with a different `genesis.json`
 /// timestamp will lock in a different value here. Subsequent
 /// `day_emission_limit` calculations (in
-/// `outbe_emissionlimit::daily_emission`) diverge from quorum, the
+/// `outbe_emissionlimit::day_emission`) diverge from quorum, the
 /// post-exec state root mismatches at the first day-settle, and the
 /// node falls out of consensus.
 pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
@@ -252,7 +252,7 @@ pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofK
 
 /// Validator emission percentage (kept for documentation/compat; the
 /// closed-form `day_emission_limit` in
-/// `outbe_emissionlimit::daily_emission` is the authoritative source
+/// `outbe_emissionlimit::day_emission` is the authoritative source
 /// for the validator daily reward, allocated through the Cycle handler).
 pub const VALIDATOR_REWARD_PERCENT: u64 = 4;
 

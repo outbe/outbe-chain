@@ -13,7 +13,7 @@ use alloy_primitives::U256;
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
     block::dispatch_terminal_remainder_at,
-    daily_emission::day_emission_limit,
+    day_emission::day_emission_limit,
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,

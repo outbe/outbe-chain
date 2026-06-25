@@ -35,7 +35,7 @@ impl MetadosisContract<'_> {
         tribute_nominal_total: U256,
         day_metadosis_limit: U256,
     ) -> Result<MetadosisCalculation> {
-        let dtype = self.get_day_type(wwd)?;
+        let dtype = self.get_wwd_day_type(wwd)?;
 
         let mut action = "lysis green day";
         let mut demand = tribute_nominal_total * U256::from(SYMBOLIC_RATE) / U256::from(100u64);
@@ -71,7 +71,7 @@ impl MetadosisContract<'_> {
                 BOOTSTRAP_OFFERING_PERIOD_HOURS,
             ))
         } else {
-            Ok((DEFAULT_LOOKBACK_DELAY_HOURS, DEFAULT_OFFERING_PERIOD_HOURS))
+            Ok((LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS))
         }
     }
 }
@@ -123,15 +123,15 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
 
     create_worldwide_day_if_needed(&mut metadosis, ctx, timestamp)?;
 
-    let active = metadosis.get_all_active_wwds()?;
+    let mut total_unallocated = U256::ZERO;
+
+    let active = metadosis.active_wwd.read_all()?;
     for wwd in &active {
         update_wwd_status_machine(&mut metadosis, ctx, *wwd, timestamp)?;
     }
 
-    let mut total_unallocated = U256::ZERO;
-    let active = metadosis.get_all_active_wwds()?;
     for wwd in &active {
-        if metadosis.get_status(*wwd)? == status::READY {
+        if metadosis.get_wwd_status(*wwd)? == status::READY {
             let unallocated = process_metadosis(&mut metadosis, ctx, *wwd)?;
             total_unallocated += unallocated;
         }
@@ -142,7 +142,7 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
         promis_limit.add_to_total_unallocated(total_unallocated)?;
     }
 
-    cleanup_completed_days(&mut metadosis, timestamp)?;
+    //cleanup_completed_wwd(&mut metadosis, timestamp)?;
 
     Ok(())
 }
@@ -190,7 +190,7 @@ fn create_initial_worldwide_day_if_needed(
     ctx: &BlockRuntimeContext,
     timestamp: u64,
 ) -> Result<()> {
-    if !metadosis.get_all_active_wwds()?.is_empty() {
+    if !metadosis.active_wwd.is_empty()? {
         return Ok(());
     }
 
@@ -198,7 +198,7 @@ fn create_initial_worldwide_day_if_needed(
     create_worldwide_day_for_date(metadosis, ctx, utc_day.into())
 }
 
-fn create_worldwide_day_if_needed(
+pub fn create_worldwide_day_if_needed(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
     timestamp: u64,
@@ -207,7 +207,7 @@ fn create_worldwide_day_if_needed(
     create_worldwide_day_for_date(metadosis, ctx, wwd)
 }
 
-fn create_worldwide_day_for_date(
+pub fn create_worldwide_day_for_date(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
@@ -251,7 +251,7 @@ fn update_wwd_status_machine(
     wwd: WorldwideDay,
     timestamp: u64,
 ) -> Result<()> {
-    let current_status = metadosis.get_status(wwd)?;
+    let current_status = metadosis.get_wwd_status(wwd)?;
 
     match current_status {
         status::IN_PROGRESS | status::COMPLETED | status::FAILED | status::READY => {
@@ -268,7 +268,7 @@ fn update_wwd_status_machine(
             .entry(wwd)
             .scheduled_process_time()
             .read()?;
-        let is_green_day = metadosis.get_day_type(wwd)? == day_type::GREEN;
+        let is_green_day = metadosis.get_wwd_day_type(wwd)? == day_type::GREEN;
         outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), auction_ts, is_green_day)?;
         return Ok(());
     }
@@ -338,7 +338,7 @@ fn load_worldwide_day_rates_from_oracle_snapshots(
             .entry(wwd)
             .current_vwap()
             .write(U256::ZERO)?;
-        metadosis.set_day_type(wwd, day_type::RED)?;
+        metadosis.set_wwd_day_type(wwd, day_type::RED)?;
         return Ok(());
     }
 
@@ -356,7 +356,7 @@ fn load_worldwide_day_rates_from_oracle_snapshots(
         .entry(wwd)
         .current_vwap()
         .write(current_vwap)?;
-    metadosis.set_day_type(wwd, determine_day_type(previous_vwap, current_vwap))?;
+    metadosis.set_wwd_day_type(wwd, determine_day_type(previous_vwap, current_vwap))?;
 
     Ok(())
 }
@@ -366,41 +366,21 @@ fn process_metadosis(
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
 ) -> Result<U256> {
-    // AgentReward unallocated state is no longer drained
-    // by Metadosis on the skip / fail paths. The Cycle handler owns
-    // the daily AgentReward dispatch; once Metadosis can't run, there
-    // is nothing useful for it to merge into the day_limit. Returning
-    // a zero remainder keeps the per-WWD accounting consistent with
-    // the Cycle handler's already-committed allocation.
-    if !metadosis.has_day_limit(wwd)? {
-        let dtype = metadosis.get_day_type(wwd)?;
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        dispatch_auction_clearing(ctx, dtype, auction_ts, U256::ZERO)?;
-        metadosis.mark_failed(wwd)?;
-        metadosis.emit(IMetadosis::MetadosisSkipped {
-            worldwideDay: wwd.into(),
-            reason: "day_metadosis_limit_not_found".into(),
-            status: "SKIPPED".into(),
-            blockNumber: ctx.block.block_number,
-        })?;
-        return Ok(U256::ZERO);
-    }
+    let day_limit = metadosis
+        .worldwide_days
+        .entry(wwd)
+        .metadosis_limit_amount()
+        .read()?;
 
-    let day_limit = metadosis.get_day_limit(wwd)?;
     if day_limit.is_zero() {
-        let dtype = metadosis.get_day_type(wwd)?;
+        let dtype = metadosis.get_wwd_day_type(wwd)?;
         let auction_ts = metadosis
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()
             .read()?;
         dispatch_auction_clearing(ctx, dtype, auction_ts, U256::ZERO)?;
-        metadosis.mark_failed(wwd)?;
-        metadosis.mark_day_limit_used(wwd)?;
+        metadosis.mark_wwd_failed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
             worldwideDay: wwd.into(),
             reason: "day_metadosis_limit_is_zero".into(),
@@ -410,9 +390,8 @@ fn process_metadosis(
         return Ok(U256::ZERO);
     }
 
-    if metadosis.get_day_type(wwd)? == day_type::UNKNOWN {
-        metadosis.mark_failed(wwd)?;
-        metadosis.mark_day_limit_used(wwd)?;
+    if metadosis.get_wwd_day_type(wwd)? == day_type::UNKNOWN {
+        metadosis.mark_wwd_failed(wwd)?;
         emit_failed_execution(metadosis, ctx, wwd, U256::ZERO, day_limit)?;
         return Ok(day_limit);
     }
@@ -420,15 +399,14 @@ fn process_metadosis(
     let tribute = TributeContract::new(metadosis.storage.clone());
     let day_totals = tribute.get_day_totals(wwd)?;
     if day_totals.tribute_count == 0 {
-        let dtype = metadosis.get_day_type(wwd)?;
+        let dtype = metadosis.get_wwd_day_type(wwd)?;
         let auction_ts = metadosis
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()
             .read()?;
         let to_promis_limit = dispatch_auction_clearing(ctx, dtype, auction_ts, day_limit)?;
-        metadosis.mark_completed(wwd)?;
-        metadosis.mark_day_limit_used(wwd)?;
+        metadosis.mark_wwd_completed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
             worldwideDay: wwd.into(),
             dayMetadosisLimit: day_limit,
@@ -454,15 +432,14 @@ fn process_metadosis(
     match outbe_lysis::runtime::lysis(metadosis.storage.clone(), wwd, calc.day_gratis_allocation) {
         Ok(lysis_result) => {
             let remainder = lysis_result.remaining_gratis + calc.day_metadosis_limit_remainder;
-            let dtype = metadosis.get_day_type(wwd)?;
+            let dtype = metadosis.get_wwd_day_type(wwd)?;
             let auction_ts = metadosis
                 .worldwide_days
                 .entry(wwd)
                 .scheduled_process_time()
                 .read()?;
             let to_promis_limit = dispatch_auction_clearing(ctx, dtype, auction_ts, remainder)?;
-            metadosis.mark_completed(wwd)?;
-            metadosis.mark_day_limit_used(wwd)?;
+            metadosis.mark_wwd_completed(wwd)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),
                 tributeTotals: tribute_nominal_total,
@@ -488,7 +465,7 @@ fn process_metadosis(
             Ok(to_promis_limit)
         }
         Err(_) => {
-            let dtype = metadosis.get_day_type(wwd)?;
+            let dtype = metadosis.get_wwd_day_type(wwd)?;
             let auction_ts = metadosis
                 .worldwide_days
                 .entry(wwd)
@@ -496,8 +473,7 @@ fn process_metadosis(
                 .read()?;
             let to_promis_limit =
                 dispatch_auction_clearing(ctx, dtype, auction_ts, effective_day_limit)?;
-            metadosis.mark_failed(wwd)?;
-            metadosis.mark_day_limit_used(wwd)?;
+            metadosis.mark_wwd_failed(wwd)?;
             emit_failed_execution(
                 metadosis,
                 ctx,
@@ -543,34 +519,6 @@ fn emit_failed_execution(
         status: "FAILED".into(),
         blockNumber: ctx.block.block_number,
     })
-}
-
-fn cleanup_completed_days(metadosis: &mut MetadosisContract, timestamp: u64) -> Result<()> {
-    const RETENTION_SECONDS: u64 = COMPLETED_WWD_RETENTION_DAYS * 24 * 3600;
-
-    let active = metadosis.get_all_active_wwds()?;
-    for wwd in active {
-        let wwd_status = metadosis.get_status(wwd)?;
-        if wwd_status != status::COMPLETED && wwd_status != status::FAILED {
-            continue;
-        }
-
-        let scheduled = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        if scheduled > 0 && timestamp.saturating_sub(scheduled) > RETENTION_SECONDS {
-            metadosis.remove_active_wwd(wwd)?;
-            metadosis.delete_worldwide_day(wwd)?;
-            metadosis.emit(IMetadosis::WorldwideDayCleanedUp {
-                worldwideDay: wwd.into(),
-                retentionDays: COMPLETED_WWD_RETENTION_DAYS,
-            })?;
-        }
-    }
-
-    Ok(())
 }
 
 fn determine_day_type(previous_vwap: U256, current_vwap: U256) -> u8 {

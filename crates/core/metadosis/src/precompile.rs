@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_common::WorldwideDay;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
@@ -42,18 +41,12 @@ pub fn dispatch(
                 )
                     .into())
             }),
-            getDayMetadosisLimit(c) => view(c, |c| {
-                let date = WorldwideDay::from(c.date);
-                let amount = metadosis.get_day_limit(date)?;
-                let is_used = metadosis.is_day_limit_used(date)?;
-                Ok((amount, is_used).into())
-            }),
             getActiveWorldwideDays(_) => metadata::<IMetadosis::getActiveWorldwideDaysCall>(|| {
-                let wwds = metadosis.get_all_active_wwds()?;
+                let wwds = metadosis.active_wwd.read_all()?;
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getWorldwideDaysByStatus(c) => view(c, |c| {
-                let wwds = metadosis.get_active_wwds_by_status(c.status)?;
+                let wwds = metadosis.get_active_wwd_by_status(c.status)?;
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {

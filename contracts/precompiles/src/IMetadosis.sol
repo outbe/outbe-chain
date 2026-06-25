@@ -58,8 +58,6 @@ interface IMetadosis {
             uint256 currentVwap
         );
 
-    function getDayMetadosisLimit(uint32 date) external view returns (uint256 amount, bool isUsed);
-
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);
     function getBootstrapEndTime() external view returns (uint64 endTime);
