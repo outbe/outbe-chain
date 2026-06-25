@@ -1,11 +1,9 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
-use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     chain,
     error::Result,
-    storage::StorageHandle,
     time::{
         date_key_to_utc_timestamp as primitives_date_key_to_timestamp,
         previous_date_key as primitives_previous_date_key, timestamp_to_date_key as utc_date_key,
@@ -278,7 +276,7 @@ fn update_wwd_status_machine(
 
     if current_status == status::FORMING && new_status != status::FORMING {
         store_worldwide_day_vwap_snapshot(metadosis, wwd)?;
-        load_worldwide_day_rates_from_oracle_snapshots(metadosis, wwd)?;
+        resolve_day_rate(metadosis, wwd)?;
     }
 
     if current_status < status::OFFERING && new_status == status::OFFERING {
@@ -305,43 +303,40 @@ fn update_wwd_status_machine(
     Ok(())
 }
 
+/// Snapshot the day's forming-window VWAPs into the Oracle. A window with no
+/// oracle data is a deterministic no-op (the Oracle reports `false`); the day
+/// then resolves to RED via [`resolve_day_rate`] reading `None`.
 fn store_worldwide_day_vwap_snapshot(
     metadosis: &mut MetadosisContract,
     wwd: WorldwideDay,
 ) -> Result<()> {
     let forming_start = metadosis.worldwide_days.entry(wwd).forming_start().read()?;
     let forming_end = metadosis.worldwide_days.entry(wwd).forming_end().read()?;
-    oracle_store_worldwide_day_vwap_snapshot(
+    outbe_oracle::api::store_worldwide_day_vwap_snapshot(
         metadosis.storage.clone(),
         wwd,
         forming_start,
         forming_end,
-    )
+    )?;
+    Ok(())
 }
 
-fn load_worldwide_day_rates_from_oracle_snapshots(
-    metadosis: &mut MetadosisContract,
-    wwd: WorldwideDay,
-) -> Result<()> {
-    let current_vwap = oracle_worldwide_day_vwap_snapshot_value(metadosis.storage.clone(), wwd);
-    if current_vwap.is_zero() {
-        metadosis
-            .worldwide_days
-            .entry(wwd)
-            .previous_vwap()
-            .write(U256::ZERO)?;
-        metadosis
-            .worldwide_days
-            .entry(wwd)
-            .current_vwap()
-            .write(U256::ZERO)?;
-        metadosis.set_wwd_day_type(wwd, day_type::RED)?;
-        return Ok(());
-    }
+/// Resolve and persist the day's current/previous VWAP and GREEN/RED type from
+/// the Oracle's `COEN/0xUSD` snapshots. Missing data (`None`) reads as zero; the
+/// zero-VWAP⇒RED rule lives solely in [`determine_day_type`]. Genuine Oracle
+/// faults propagate (no silent zero-fallback).
+fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Result<()> {
+    let current_vwap = outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd)?
+        .unwrap_or(U256::ZERO);
 
-    let previous_wwd = wwd.previous_date_key();
-    let previous_vwap =
-        oracle_worldwide_day_vwap_snapshot_value(metadosis.storage.clone(), previous_wwd);
+    // When today has no VWAP the day is already RED regardless of yesterday, so
+    // skip the second Oracle read.
+    let previous_vwap = if current_vwap.is_zero() {
+        U256::ZERO
+    } else {
+        outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd.previous_date_key())?
+            .unwrap_or(U256::ZERO)
+    };
 
     metadosis
         .worldwide_days
@@ -358,6 +353,25 @@ fn load_worldwide_day_rates_from_oracle_snapshots(
     Ok(())
 }
 
+/// Settle a READY worldwide day. The five terminal outcomes are intentionally
+/// **not** uniform — each has a distinct PROMIS interaction, so do not collapse
+/// them into one shared "settle" helper. PromisLimit is a cross-day accumulator;
+/// `set` replaces the whole pool, `add` contributes to it.
+///
+/// | branch        | auction clearing        | PromisLimit                  | mark      |
+/// |---------------|-------------------------|------------------------------|-----------|
+/// | limit == 0    | clear(0) to close it     | —                            | FAILED    |
+/// | day = UNKNOWN | none (not GREEN)         | `add(limit)` so it isn't lost| FAILED    |
+/// | no tributes   | clear(limit), close      | `add(remainder)`             | COMPLETED |
+/// | lysis Ok      | add day remainder, then  | `set(clearing remainder)` —  | COMPLETED |
+/// |               | clear the **whole** pool | the pool minus what the      |           |
+/// |               |                          | auction consumed             |           |
+/// | lysis Err     | none                     | none (propagates, reverts)   | —         |
+///
+/// `dispatch_auction_clearing` returns the PROMIS the auction could not consume
+/// (rounding dust on success, whole supply on best-effort failure); that value —
+/// not zero — is what the success branch writes back via `set`. Do not re-add the
+/// dust inside Desis; that double-counts and the `set` here would wipe it.
 fn process_metadosis(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -438,6 +452,8 @@ fn process_metadosis(
             let remainder =
                 lysis_result.remaining_gratis + metadosis_parameters.metadosis_limit_remainder;
 
+            promis_limit.add_to_total_unallocated(remainder)?;
+
             let promis_total_unallocated = promis_limit.get_total_unallocated()?;
 
             let auction_ts = metadosis
@@ -499,9 +515,10 @@ fn dispatch_auction_clearing(
     if dtype != day_type::GREEN {
         return Ok(supply);
     }
-    let delivered =
-        outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), auction_ts, supply)?;
-    Ok(if delivered { U256::ZERO } else { supply })
+    // Returns the PROMIS remainder the auction could not consume: the rounding
+    // remainder on a delivered clearing, or the whole `supply` on a best-effort
+    // Desis failure. The caller writes this back into the PromisLimit accumulator.
+    outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), auction_ts, supply)
 }
 
 fn emit_failed_execution(
@@ -543,49 +560,4 @@ fn wwd_state_label(dtype: u8) -> &'static str {
         day_type::RED => "RED",
         _ => "UNKNOWN",
     }
-}
-
-fn oracle_pair_hash(storage: StorageHandle) -> alloy_primitives::B256 {
-    let metadosis = MetadosisContract::new(storage);
-    let hash = metadosis.config_oracle_pair_hash.read().unwrap_or_default();
-    if hash.is_zero() {
-        OracleContract::pair_hash("COEN", "0xUSD")
-    } else {
-        hash
-    }
-}
-
-fn oracle_store_worldwide_day_vwap_snapshot(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    start_time: u64,
-    end_time: u64,
-) -> Result<()> {
-    let mut oracle = OracleContract::new(storage);
-    match oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time) {
-        Ok(()) => Ok(()),
-        Err(outbe_primitives::error::PrecompileError::Revert(msg))
-            if msg.contains("no VWAP data") =>
-        {
-            Ok(())
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn oracle_worldwide_day_vwap_snapshot_value(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-) -> U256 {
-    let oracle = OracleContract::new(storage.clone());
-    let pair_hash = oracle_pair_hash(storage);
-    let pair_id = oracle.pair_hash_to_id.read(&pair_hash).unwrap_or(0);
-    if pair_id == 0 {
-        return U256::ZERO;
-    }
-    oracle
-        .get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
-        .ok()
-        .flatten()
-        .unwrap_or(U256::ZERO)
 }

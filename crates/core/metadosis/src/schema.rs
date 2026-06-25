@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
@@ -76,12 +76,9 @@ pub struct MetadosisContract {
     #[attribute(order = 3)]
     pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDayKey>,
 
-    #[attribute(order = 4)]
-    pub config_oracle_pair_hash: outbe_primitives::storage::dsl::Value<B256>,
-
     /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
     /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
     /// the cap, the oldest is popped from the front and its record deleted.
-    #[attribute(order = 5)]
+    #[attribute(order = 4)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 }

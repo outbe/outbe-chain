@@ -1872,6 +1872,50 @@ mod oracle_tests {
     }
 
     #[test]
+    fn test_api_day_type_pair_vwap_and_snapshot_store() {
+        with_storage(|storage| {
+            let wwd = outbe_common::WorldwideDay::new(20260302u32);
+
+            // Pair not registered yet → typed None, not an error.
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                None
+            );
+
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .write_snapshot(1_500, &[(1, U256::from(110u64), U256::from(1u64))])
+                .unwrap();
+
+            // No window data → store is a deterministic no-op returning false,
+            // not a "no VWAP data" revert leaking to the caller.
+            assert!(
+                !crate::api::store_worldwide_day_vwap_snapshot(storage.clone(), wwd, 100, 200)
+                    .unwrap()
+            );
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                None,
+                "no snapshot written → None"
+            );
+
+            // Window with data → store writes (true) and the COEN VWAP resolves.
+            assert!(crate::api::store_worldwide_day_vwap_snapshot(
+                storage.clone(),
+                wwd,
+                1_000,
+                3_000
+            )
+            .unwrap());
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                Some(U256::from(110u64))
+            );
+        });
+    }
+
+    #[test]
     fn test_finalize_utc_day_vwap_writes_and_reads() {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
