@@ -108,9 +108,26 @@ export interface AuctionConfig {
   revealWindow: number;
   issuanceWindow: number;
   promisLoadMinor: bigint;
-  minIntexBidPrice: bigint;
-  costAmountMinor: bigint;
+  /** Minimum bid rate (1e6 fixed-point, % of strike). */
+  minIntexBidRate: number;
+  /** Per-unit entry price (reference ccy, 1e18); strike/floor/call derive from it. */
+  entryPrice: bigint;
   minIntexBidQuantity: number;
+}
+
+/** Rate fixed-point scale (1e6 = 100%), matching BridgeMsgCodec.RATE_SCALE. */
+export const RATE_SCALE = 1_000_000n;
+
+/** Per-Intex strike = entryPrice * PROMIS_LOAD / 1e12, rounded up to the next 100 — mirrors
+ *  Desis `AuctionConfig.cost_amount_minor()` / IntexAuction `_strike()`. PROMIS_LOAD = 100_000. */
+export function derivedStrike(entryPrice: bigint): bigint {
+  const raw = (entryPrice * 100_000n) / 1_000_000_000_000n; // entry * PROMIS_LOAD / 1e12
+  return ((raw + 99n) / 100n) * 100n; // ceil to next 100
+}
+
+/** Escrow lock at reveal = qty * strike * bidRate / RATE_SCALE. */
+export function lockAmount(quantity: bigint, entryPrice: bigint, bidRate: bigint): bigint {
+  return (quantity * derivedStrike(entryPrice) * bidRate) / RATE_SCALE;
 }
 
 /** 12:00 UTC of the seriesId date (yyyymmdd). Used in demos for display; on-chain Desis derives it itself. */
@@ -130,8 +147,8 @@ export function buildAuctionConfig(opts: { seriesId: number }): AuctionConfig {
     revealWindow: 12 * 60 * 60,
     issuanceWindow: 60 * 60,
     promisLoadMinor: 1000n,
-    minIntexBidPrice: 0n,
-    costAmountMinor: 2_800_000_000n,
+    minIntexBidRate: 0,
+    entryPrice: 28_000_000_000_000_000n, // 2.8e16 → strike = 2.8e9 (mirrors the old demo strike)
     minIntexBidQuantity: 4,
   };
 }
@@ -154,13 +171,16 @@ export function buildIssuanceConfig(): IssuanceConfig {
   };
 }
 
-/** costAmountMinor * 1.08 / promisLoadMinor — matches Desis._derivedFloorPriceMinor. */
-function derivedFloorPriceMinor(strikePrice: bigint, promisLoadMinor: bigint): bigint {
-  return (strikePrice * 108n) / (promisLoadMinor * 100n);
+/** floor/call derive from the entry price — mirror the Desis/IntexFactory ratios (1.08 / 2.28). */
+function derivedFloorPriceMinor(entryPrice: bigint): bigint {
+  return (entryPrice * 108n) / 100n;
+}
+function derivedCallPriceMinor(entryPrice: bigint): bigint {
+  return (entryPrice * 228n) / 100n;
 }
 
 /** Build the LZ quote-friendly start params; mirrors the derivation Desis does on-chain. */
-export function auctionStageStartParams(config: AuctionConfig) {
+export function auctionStageStartParams(config: AuctionConfig, issuance: IssuanceConfig) {
   const clearing = clearingTimestampFor(config.seriesId);
   return {
     seriesId: config.seriesId,
@@ -168,9 +188,13 @@ export function auctionStageStartParams(config: AuctionConfig) {
     revealEnd: clearing,
     issuanceEnd: clearing + config.issuanceWindow,
     promisLoadMinor: config.promisLoadMinor,
-    minIntexBidPrice: config.minIntexBidPrice,
-    costAmountMinor: config.costAmountMinor,
-    floorPriceMinor: derivedFloorPriceMinor(config.costAmountMinor, config.promisLoadMinor),
+    minIntexBidRate: config.minIntexBidRate,
+    entryPrice: config.entryPrice,
+    floorPriceMinor: derivedFloorPriceMinor(config.entryPrice),
+    callPriceMinor: derivedCallPriceMinor(config.entryPrice),
+    intexCallPeriod: issuance.intexCallPeriod,
+    callWindowDays: issuance.callWindowDays,
+    callThresholdDays: issuance.callThresholdDays,
     minIntexBidQuantity: config.minIntexBidQuantity,
   };
 }

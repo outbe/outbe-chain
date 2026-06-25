@@ -335,7 +335,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     function test_quoteSendAuctionResult() public view {
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
 
-        // (seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount, ...)
+        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount, ...)
         MessagingFee memory fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42, options, false);
 
         assertTrue(fee.nativeFee > 0);

@@ -16,7 +16,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "auctionIntexClearingPrice",
+          "name": "auctionClearingRate",
           "type": "uint64",
           "internalType": "uint64"
         },
@@ -179,12 +179,12 @@
               "internalType": "uint128"
             },
             {
-              "name": "minIntexBidPrice",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "minIntexBidRate",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "costAmountMinor",
+              "name": "entryPrice",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -192,6 +192,26 @@
               "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
             },
             {
               "name": "minIntexBidQuantity",
@@ -488,7 +508,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "auctionIntexClearingPrice",
+          "name": "auctionClearingRate",
           "type": "uint64",
           "internalType": "uint64"
         },
@@ -753,12 +773,12 @@
               "internalType": "uint128"
             },
             {
-              "name": "minIntexBidPrice",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "minIntexBidRate",
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
-              "name": "costAmountMinor",
+              "name": "entryPrice",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -766,6 +786,26 @@
               "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
             },
             {
               "name": "minIntexBidQuantity",
@@ -1276,7 +1316,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "clearingPrice",
+          "name": "clearingRate",
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"

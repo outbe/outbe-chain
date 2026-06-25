@@ -26,9 +26,9 @@
               "internalType": "uint16[]"
             },
             {
-              "name": "intexBidPrices",
-              "type": "uint64[]",
-              "internalType": "uint64[]"
+              "name": "intexBidRates",
+              "type": "uint32[]",
+              "internalType": "uint32[]"
             },
             {
               "name": "timestamps",
@@ -99,9 +99,9 @@
               "internalType": "uint16[]"
             },
             {
-              "name": "intexBidPrices",
-              "type": "uint64[]",
-              "internalType": "uint64[]"
+              "name": "intexBidRates",
+              "type": "uint32[]",
+              "internalType": "uint32[]"
             },
             {
               "name": "timestamps",
@@ -251,7 +251,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "clearingPrice",
+          "name": "clearingRate",
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"

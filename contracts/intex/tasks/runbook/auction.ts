@@ -13,7 +13,9 @@ import {
   getRunner,
   contractAt,
   buildAuctionConfig,
+  buildIssuanceConfig,
   auctionStageStartParams,
+  lockAmount,
   bnbChainId,
   ERC20_ABI,
   AUCTION_STAGE,
@@ -59,7 +61,7 @@ const startAction = async (args: CommonArgs) => {
     "OriginMessenger.sendAuctionStageStart",
     `Start series ${seriesId} on Outbe and bridge AUCTION_STAGE_START to BNB.`,
     async () => {
-      const params = auctionStageStartParams(buildAuctionConfig({ seriesId }));
+      const params = auctionStageStartParams(buildAuctionConfig({ seriesId }), buildIssuanceConfig());
       const fee = (await messenger.read.quoteSendAuctionStageStart([params, "0x", false])) as MessagingFee;
       const txHash = (await messenger.write.sendAuctionStageStart(
         [params, "0x", fee, outbe.account.address],
@@ -101,13 +103,13 @@ const startAction = async (args: CommonArgs) => {
 // --------------------------------------------------------------------------
 interface BidArgs extends CommonArgs {
   quantity: string;
-  bidPrice: string;
+  bidRate: string;
 }
 const commitAction = async (args: BidArgs) => {
   const bnbNet = args.bnbNetwork as DemoNetwork;
   const seriesId = Number(args.seriesId);
   const quantity = Number(args.quantity);
-  const bidPrice = BigInt(args.bidPrice);
+  const bidRate = BigInt(args.bidRate);
   const bnb = getRunner(bnbNet);
   const aB = resolveAddresses(bnbNet);
   const auction = contractAt(bnb, "IntexAuction", requireAddress(aB, "intexAuction", bnbNet) as Address);
@@ -122,7 +124,7 @@ const commitAction = async (args: BidArgs) => {
     `Commit a sealed bid for series ${seriesId} (BNB stage CommittingBids — must precede the reveal-stage signal).`,
     async () => {
       const commitHash = await createCommitHash(
-        seriesId, bidder, BigInt(quantity), bidPrice, chainId, auction.address as Address, bnb.privateKey,
+        seriesId, bidder, BigInt(quantity), bidRate, chainId, auction.address as Address, bnb.privateKey,
       );
       const txHash = (await auction.write.commitBid([seriesId, commitHash])) as `0x${string}`;
       return { txHash, notes: `commitHash ${commitHash}` };
@@ -190,7 +192,7 @@ const revealBidAction = async (args: BidArgs) => {
   const bnbNet = args.bnbNetwork as DemoNetwork;
   const seriesId = Number(args.seriesId);
   const quantity = Number(args.quantity);
-  const bidPrice = BigInt(args.bidPrice);
+  const bidRate = BigInt(args.bidRate);
   const bnb = getRunner(bnbNet);
   const aB = resolveAddresses(bnbNet);
   const auction = contractAt(bnb, "IntexAuction", requireAddress(aB, "intexAuction", bnbNet) as Address);
@@ -201,23 +203,23 @@ const revealBidAction = async (args: BidArgs) => {
   const bidder = bnb.account.address;
   const ctx = { report, network: bnbNet, phase: "auction", publicClient: bnb.publicClient };
 
-  await runStep(ctx, "PaymentToken.approve", "Approve the escrow lock (quantity * bidPrice).", async () => {
+  await runStep(ctx, "PaymentToken.approve", "Approve the escrow lock (qty * strike * bidRate / RATE_SCALE).", async () => {
     const erc20 = getContract({
       address: paymentToken,
       abi: ERC20_ABI,
       client: { public: bnb.publicClient, wallet: bnb.walletClient },
     });
-    const amount = BigInt(quantity) * bidPrice;
+    const amount = lockAmount(BigInt(quantity), buildAuctionConfig({ seriesId }).entryPrice, bidRate);
     const txHash = (await erc20.write.approve([escrowAddr, amount])) as `0x${string}`;
     return { txHash, notes: `approved ${amount} to EscrowAdapter` };
   });
 
   await runStep(ctx, "IntexAuction.revealBid", "Reveal the committed bid (BNB stage RevealingBids; locks escrow).", async () => {
     const signature = await createRevealSignature(
-      seriesId, bidder, BigInt(quantity), bidPrice, chainId, auction.address as Address, bnb.privateKey,
+      seriesId, bidder, BigInt(quantity), bidRate, chainId, auction.address as Address, bnb.privateKey,
     );
-    const txHash = (await auction.write.revealBid([seriesId, quantity, bidPrice, chainId, signature])) as `0x${string}`;
-    return { txHash, notes: `revealed qty=${quantity} price=${bidPrice}` };
+    const txHash = (await auction.write.revealBid([seriesId, quantity, bidRate, chainId, signature])) as `0x${string}`;
+    return { txHash, notes: `revealed qty=${quantity} rate=${bidRate}` };
   });
 };
 
@@ -226,7 +228,7 @@ const revealBidAction = async (args: BidArgs) => {
 // --------------------------------------------------------------------------
 interface ClearingArgs extends CommonArgs {
   supply: string;
-  bidPrice: string;
+  bidRate: string;
 }
 const clearingAction = async (args: ClearingArgs) => {
   const outbeNet = args.outbeNetwork as DemoNetwork;
@@ -261,7 +263,7 @@ const clearingAction = async (args: ClearingArgs) => {
       return {
         txHash,
         lz,
-        notes: `bidPrice ${args.bidPrice} retained for relay-phase reveal payload.`,
+        notes: `bidRate ${args.bidRate} retained for relay-phase reveal payload.`,
       };
     },
   );
@@ -359,7 +361,7 @@ const verifyAction = async (args: CommonArgs) => {
 // --------------------------------------------------------------------------
 interface AllArgs extends CommonArgs {
   quantity: string;
-  bidPrice: string;
+  bidRate: string;
   supply: string;
   pause: string;
 }
@@ -410,20 +412,20 @@ const start = commonOpts(task("runbook:auction:start", "Auction demo phase 1/7: 
 );
 const commit = commonOpts(task("runbook:auction:commit", "Auction demo phase 2/7: commit a sealed bid on BNB"))
   .addOption(opt("quantity", "Bid quantity (Intex units)", "5"))
-  .addOption(opt("bidPrice", "Bid price per Intex (payment-token minor units)", "60000000"))
+  .addOption(opt("bidRate", "Bid rate (1e6 fixed-point, % of strike)", "800000"))
   .setAction(lazy(commitAction));
 const reveal = commonOpts(task("runbook:auction:reveal", "Auction demo phase 3/7: open the reveal stage -> BNB")).setAction(
   lazy(revealAction),
 );
 const revealBid = commonOpts(task("runbook:auction:reveal-bid", "Auction demo phase 4/7: reveal the committed bid on BNB"))
   .addOption(opt("quantity", "Bid quantity (must match the commit)", "5"))
-  .addOption(opt("bidPrice", "Bid price (must match the commit)", "60000000"))
+  .addOption(opt("bidRate", "Bid rate (1e6 fixed-point, % of strike)", "800000"))
   .setAction(lazy(revealBidAction));
 const clearing = commonOpts(
   task("runbook:auction:clearing", "Auction demo phase 5/7: signal clearing + persist supply/issuance"),
 )
   .addOption(opt("supply", "Issued supply in Intex units (Desis multiplies by promisLoadMinor for Promis)", "100"))
-  .addOption(opt("bidPrice", "Bid price reference (used by relay-phase reveal payload)", "60000000"))
+  .addOption(opt("bidRate", "Bid rate (1e6 fixed-point, % of strike)", "800000"))
   .setAction(lazy(clearingAction));
 const relay = commonOpts(task("runbook:auction:relay", "Auction demo phase 6/7: wait for the auto-relayed bids batch (TargetMessenger fires it inside the clearing handler; OriginMessenger then auto-fires clearAuction)"))
   .setAction(lazy(relayAction));
@@ -434,7 +436,7 @@ const all = commonOpts(
   task("runbook:auction:all", "Auction demo: run all seven phases in order, pausing for Enter between each"),
 )
   .addOption(opt("quantity", "Bid quantity (Intex units)", "5"))
-  .addOption(opt("bidPrice", "Bid price per Intex (payment-token minor units)", "60000000"))
+  .addOption(opt("bidRate", "Bid rate (1e6 fixed-point, % of strike)", "800000"))
   .addOption(opt("supply", "Issued supply for clearing (Intex units)", "100"))
   .addOption(opt("pause", 'Pause for Enter between phases ("false" runs unattended)', "true"))
   .setAction(lazy(allAction));

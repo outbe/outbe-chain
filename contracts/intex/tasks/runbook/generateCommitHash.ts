@@ -15,7 +15,7 @@ interface GenerateCommitHashTaskArgs {
   series?: string;
   bidder?: string;
   quantity?: string;
-  bidPrice?: string;
+  bidRate?: string;
   chainId?: string;
 }
 
@@ -27,13 +27,13 @@ function createMessageHash(
   seriesId: number,
   bidder: `0x${string}`,
   quantity: bigint,
-  bidPrice: bigint,
+  bidRate: bigint,
   chainId: bigint,
 ): Hex {
   return keccak256(
     encodePacked(
-      ["uint32", "address", "uint16", "uint64", "uint64"],
-      [seriesId, bidder, Number(quantity), bidPrice, chainId],
+      ["uint32", "address", "uint16", "uint32", "uint64"],
+      [seriesId, bidder, Number(quantity), Number(bidRate), chainId],
     ),
   );
 }
@@ -68,7 +68,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   const seriesId = resolveSeriesId(toOptional(args.series));
   const bidder = (toOptional(args.bidder) || account.address) as `0x${string}`;
   const quantity = BigInt(toOptional(args.quantity) || "5");
-  const bidPrice = BigInt(toOptional(args.bidPrice) || "1100");
+  const bidRate = BigInt(toOptional(args.bidRate) || "800000");
   const chainId = BigInt(toOptional(args.chainId) || "97");
 
   // Log inputs
@@ -76,11 +76,11 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("seriesId:", seriesId);
   console.log("bidder:", bidder);
   console.log("quantity:", quantity.toString());
-  console.log("bidPrice:", bidPrice.toString());
+  console.log("bidRate:", bidRate.toString());
   console.log("chainId:", chainId.toString());
 
   // Generate hashes and signature
-  const messageHash = createMessageHash(seriesId, bidder, quantity, bidPrice, chainId);
+  const messageHash = createMessageHash(seriesId, bidder, quantity, bidRate, chainId);
   console.log("\nmessageHash:", messageHash);
 
   const ethSignedMessageHash = createEthSignedMessageHash(messageHash);
@@ -97,7 +97,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("\n=== FOR REVEAL ===");
   console.log(`seriesId: ${seriesId}`);
   console.log(`quantity: ${quantity}`);
-  console.log(`bidPrice: ${bidPrice}`);
+  console.log(`bidRate: ${bidRate}`);
   console.log(`chainId: ${chainId}`);
   console.log(`signature: ${signature}`);
 };
@@ -114,7 +114,7 @@ const generateCommitHash = task("generate-commit-hash", "Generate commit hash an
   })
   .addOption({ name: "bidder", description: "Bidder address (default: from PRIVATE_KEY)", defaultValue: "" })
   .addOption({ name: "quantity", description: "Intex quantity", defaultValue: "5" })
-  .addOption({ name: "bidPrice", description: "Bid price", defaultValue: "1100" })
+  .addOption({ name: "bidRate", description: "Bid rate (1e6 fixed-point, % of strike)", defaultValue: "800000" })
   .addOption({ name: "chainId", description: "Chain ID", defaultValue: "97" })
   .setAction(lazy(generateCommitHashAction));
 

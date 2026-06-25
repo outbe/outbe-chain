@@ -43,12 +43,39 @@
               "internalType": "uint128"
             },
             {
-              "name": "minIntexBidPrice",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "callTrigger",
+              "type": "tuple",
+              "internalType": "struct IIntexAuction.IntexCallTrigger",
+              "components": [
+                {
+                  "name": "windowDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "thresholdDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "intexCallPeriod",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                }
+              ]
             },
             {
-              "name": "costAmountMinor",
+              "name": "minIntexBidRate",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "minIntexBidQuantity",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "entryPrice",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -58,9 +85,9 @@
               "internalType": "uint64"
             },
             {
-              "name": "minIntexBidQuantity",
-              "type": "uint16",
-              "internalType": "uint16"
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
             }
           ]
         }
@@ -114,7 +141,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "auctionIntexClearingPrice",
+          "name": "auctionClearingRate",
           "type": "uint64",
           "internalType": "uint64"
         },
@@ -181,12 +208,39 @@
                   "internalType": "uint128"
                 },
                 {
-                  "name": "minIntexBidPrice",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "callTrigger",
+                  "type": "tuple",
+                  "internalType": "struct IIntexAuction.IntexCallTrigger",
+                  "components": [
+                    {
+                      "name": "windowDays",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "thresholdDays",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "intexCallPeriod",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    }
+                  ]
                 },
                 {
-                  "name": "costAmountMinor",
+                  "name": "minIntexBidRate",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "minIntexBidQuantity",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPrice",
                   "type": "uint64",
                   "internalType": "uint64"
                 },
@@ -196,9 +250,9 @@
                   "internalType": "uint64"
                 },
                 {
-                  "name": "minIntexBidQuantity",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
                 }
               ]
             },
@@ -208,14 +262,14 @@
               "internalType": "struct IIntexAuction.AuctionResult",
               "components": [
                 {
-                  "name": "issuedIntexLoadedPromis",
-                  "type": "uint128",
-                  "internalType": "uint128"
-                },
-                {
-                  "name": "auctionIntexClearingPrice",
+                  "name": "auctionClearingRate",
                   "type": "uint64",
                   "internalType": "uint64"
+                },
+                {
+                  "name": "wonBidsCount",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
                   "name": "issuedIntexCount",
@@ -223,9 +277,9 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "wonBidsCount",
-                  "type": "uint32",
-                  "internalType": "uint32"
+                  "name": "issuedIntexLoadedPromis",
+                  "type": "uint128",
+                  "internalType": "uint128"
                 }
               ]
             }
@@ -242,12 +296,7 @@
               "internalType": "address"
             },
             {
-              "name": "intexBidPrice",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "timestamp",
+              "name": "intexBidRate",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -255,6 +304,11 @@
               "name": "intexQuantity",
               "type": "uint16",
               "internalType": "uint16"
+            },
+            {
+              "name": "timestamp",
+              "type": "uint32",
+              "internalType": "uint32"
             }
           ]
         }
@@ -315,12 +369,39 @@
                   "internalType": "uint128"
                 },
                 {
-                  "name": "minIntexBidPrice",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "callTrigger",
+                  "type": "tuple",
+                  "internalType": "struct IIntexAuction.IntexCallTrigger",
+                  "components": [
+                    {
+                      "name": "windowDays",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "thresholdDays",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "intexCallPeriod",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    }
+                  ]
                 },
                 {
-                  "name": "costAmountMinor",
+                  "name": "minIntexBidRate",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "minIntexBidQuantity",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPrice",
                   "type": "uint64",
                   "internalType": "uint64"
                 },
@@ -330,9 +411,9 @@
                   "internalType": "uint64"
                 },
                 {
-                  "name": "minIntexBidQuantity",
-                  "type": "uint16",
-                  "internalType": "uint16"
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
                 }
               ]
             },
@@ -342,14 +423,14 @@
               "internalType": "struct IIntexAuction.AuctionResult",
               "components": [
                 {
-                  "name": "issuedIntexLoadedPromis",
-                  "type": "uint128",
-                  "internalType": "uint128"
-                },
-                {
-                  "name": "auctionIntexClearingPrice",
+                  "name": "auctionClearingRate",
                   "type": "uint64",
                   "internalType": "uint64"
+                },
+                {
+                  "name": "wonBidsCount",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 },
                 {
                   "name": "issuedIntexCount",
@@ -357,9 +438,9 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "wonBidsCount",
-                  "type": "uint32",
-                  "internalType": "uint32"
+                  "name": "issuedIntexLoadedPromis",
+                  "type": "uint128",
+                  "internalType": "uint128"
                 }
               ]
             }
@@ -402,9 +483,9 @@
           "internalType": "uint16"
         },
         {
-          "name": "bidPrice",
-          "type": "uint64",
-          "internalType": "uint64"
+          "name": "bidRate",
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
           "name": "chainId",
@@ -475,7 +556,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "auctionIntexClearingPrice",
+          "name": "auctionClearingRate",
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"
@@ -568,10 +649,10 @@
           "internalType": "uint16"
         },
         {
-          "name": "bidPrice",
-          "type": "uint64",
+          "name": "bidRate",
+          "type": "uint32",
           "indexed": false,
-          "internalType": "uint64"
+          "internalType": "uint32"
         }
       ],
       "anonymous": false
@@ -644,20 +725,20 @@
           "internalType": "uint16"
         },
         {
-          "name": "bidPrice",
-          "type": "uint64",
-          "internalType": "uint64"
+          "name": "bidRate",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ]
     },
     {
       "type": "error",
-      "name": "BidBelowMinIntexBidPrice",
+      "name": "BidBelowMinIntexBidQuantity",
       "inputs": []
     },
     {
       "type": "error",
-      "name": "BidBelowMinIntexBidQuantity",
+      "name": "BidBelowMinIntexBidRate",
       "inputs": []
     },
     {
@@ -667,17 +748,17 @@
     },
     {
       "type": "error",
-      "name": "ClearingPriceBelowMin",
+      "name": "ClearingRateBelowMin",
       "inputs": [
         {
-          "name": "clearingPrice",
+          "name": "clearingRate",
           "type": "uint64",
           "internalType": "uint64"
         },
         {
-          "name": "minIntexBidPrice",
-          "type": "uint64",
-          "internalType": "uint64"
+          "name": "minIntexBidRate",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ]
     },
