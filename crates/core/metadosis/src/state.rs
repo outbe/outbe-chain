@@ -159,12 +159,12 @@ impl MetadosisContract<'_> {
     // --- Active WWD List ---
 
     pub fn add_active_wwd(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        _ = self.active_wwd.insert(wwd_key);
+        self.active_wwd.insert(wwd_key)?;
         Ok(())
     }
 
     pub fn remove_active_wwd(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        _ = self.active_wwd.remove(&wwd_key);
+        self.active_wwd.remove(&wwd_key)?;
         Ok(())
     }
 

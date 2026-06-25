@@ -11,12 +11,12 @@ pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
 
     let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
-    _ = create_worldwide_day_for_date(&mut metadosis, ctx, wwd);
-    _ = metadosis
+    create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
+    metadosis
         .worldwide_days
         .entry(wwd)
         .metadosis_limit_amount()
-        .write(amount);
+        .write(amount)?;
 
     metadosis.emit(IMetadosis::MetadosisAccumulation {
         date: wwd.value(),
