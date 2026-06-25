@@ -115,7 +115,10 @@ ADDR=$(cast wallet address --private-key "$V0")
 # Optional pre-flight: fail fast if the registry and enclave keys diverged.
 ./target/debug/outbe-cli tee pubkey --enclave-socket 127.0.0.1:7000 --rpc-url http://localhost:8545 --diff-chain
 
-./target/debug/outbe-cli tribute offer 20241220 --amount 100 --currency 840 \
+# The localnet boots on the CURRENT date (bootstrap-testnet.sh seeds the OFFERING
+# day = genesis date, UTC+14), so offer for today, not a hardcoded calendar day:
+WWD=$(date -u -d "@$(( $(date +%s) + 50400 ))" +%Y%m%d)
+./target/debug/outbe-cli tribute offer "$WWD" --amount 100 --currency 840 \
   --private-key "$V0" --rpc-url http://localhost:8545
 
 # After a block, the tribute is owned by the creator and supply is +1 on every node:

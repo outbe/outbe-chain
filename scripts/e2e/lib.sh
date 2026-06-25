@@ -26,6 +26,13 @@ E2E_KEYGEN="${E2E_KEYGEN:-$E2E_REPO/target/debug/outbe-keygen}"
 E2E_SEED="${E2E_SEED:-$E2E_REPO/scripts/seed-testnet-lowstake.json}"
 RPC0="http://localhost:8545"
 
+# Active worldwide-day = the chain's current date, matching how bootstrap-testnet.sh
+# seeds it: WorldwideDay::from_timestamp = date_key(genesis_ts + UTC_PLUS_14_OFFSET).
+# The net boots "today", so offers/queries must target today — not a fixed calendar
+# day (a stale day is not OFFERING and wedges metadosis; see bootstrap-testnet.sh).
+E2E_WWD="${E2E_WWD:-$(date -u -d "@$(( $(date +%s) + 50400 ))" +%Y%m%d 2>/dev/null \
+    || date -u -r "$(( $(date +%s) + 50400 ))" +%Y%m%d)}"
+
 # Protocol addresses (README "EVM").
 TEE_ADDR=0x000000000000000000000000000000000000EE0A
 TRIBUTE_ADDR=0x0000000000000000000000000000000000001101
@@ -135,7 +142,7 @@ e2e_v0key(){ echo "0x$(tr -d '[:space:]' < "$E2E_DIR/validator-0/evm-key.hex")";
 e2e_vkey(){ echo "0x$(tr -d '[:space:]' < "$E2E_DIR/validator-$1/evm-key.hex")"; }
 
 # submit a tribute offer for the genesis OFFERING day with creator key $1; retry until supply rises to $2
-e2e_offer(){ local key="$1" want="$2" try; for try in 1 2 3 4 5; do "$E2E_CLI" tribute offer 20241220 --amount 100 --currency 840 --private-key "$key" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 5; [ "$(e2e_supply 8545)" = "$want" ] && return 0; done; return 1; }
+e2e_offer(){ local key="$1" want="$2" try; for try in 1 2 3 4 5; do "$E2E_CLI" tribute offer "$E2E_WWD" --amount 100 --currency 840 --private-key "$key" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 5; [ "$(e2e_supply 8545)" = "$want" ] && return 0; done; return 1; }
 
 # ---- joiner (v5) management --------------------------------------------------
 # Provision joiner index 4 (v5): keys, fund, register, p2p, enclave, tee join.

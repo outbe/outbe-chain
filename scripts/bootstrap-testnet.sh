@@ -124,7 +124,15 @@ print(validators[$i]['address'][2:])  # strip 0x prefix
       \"$ADDR\": { \"balance\": \"0x21E19E0C9BAB2400000\" }"
 done
 
-GENESIS_TIMESTAMP=$(printf '0x%x' "$(date +%s)")
+GENESIS_EPOCH=$(date +%s)
+GENESIS_TIMESTAMP=$(printf '0x%x' "$GENESIS_EPOCH")
+# The metadosis runtime derives the active worldwide-day each block from the block
+# timestamp: WorldwideDay::from_timestamp = date_key(ts + UTC_PLUS_14_OFFSET=50400).
+# Seed the OFFERING day on that SAME current date so it tracks the chain wall-clock.
+# A stale hardcoded day desyncs from the runtime-created "today" and wedges
+# metadosis processing (two active days). See seed_genesis.py --worldwide-day.
+WORLDWIDE_DAY=$(date -u -d "@$((GENESIS_EPOCH + 50400))" +%Y%m%d 2>/dev/null \
+    || date -u -r "$((GENESIS_EPOCH + 50400))" +%Y%m%d)
 if date -u -d '1 day ago' +"%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
     GENESIS_TIME=$(date -u -d '1 day ago' +"%Y-%m-%dT%H:%M:%SZ")
 else
@@ -180,7 +188,9 @@ if [ -n "$SEED_FILE" ]; then
         --genesis "$OUTPUT_DIR/genesis.json" \
         --seed "$SEED_FILE" \
         --validators "$OUTPUT_DIR/validators.json" \
+        --worldwide-day "$WORLDWIDE_DAY" \
         --output "$OUTPUT_DIR/genesis.json"
+    echo "  Worldwide-day retargeted to genesis date $WORLDWIDE_DAY (tracks wall-clock)"
     echo "  Seeded genesis validator stake from $OUTPUT_DIR/validators.json"
     echo
 else
