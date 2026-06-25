@@ -26,7 +26,7 @@ pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
 pub const BOOTSTRAP_OFFERING_PERIOD_HOURS: u64 = 48;
 
 /// Maximum wwd records kept.
-pub const MAX_RECORDS_KEPT: usize = 120;
+pub const MAX_RECORDS_KEPT: usize = 365;
 
 /// UTC+14 offset in seconds (14 * 3600).
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;

@@ -83,5 +83,5 @@ pub struct MetadosisContract {
     /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
     /// the cap, the oldest is popped from the front and its record deleted.
     #[attribute(order = 5)]
-    pub closed_worldwidedays: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
+    pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 }

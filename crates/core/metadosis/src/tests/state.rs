@@ -182,8 +182,8 @@ fn test_calculate_metadosis_green_day() {
         //   limit      = day_limit         = 5_000
         //   allocation = min(demand, limit) = 3_200
         //   remainder  = day_limit - allocation = 1_800
-        assert_eq!(calc.day_gratis_allocation, U256::from(3_200u64));
-        assert_eq!(calc.day_metadosis_limit_remainder, U256::from(1_800u64));
+        assert_eq!(calc.gratis_allocation, U256::from(3_200u64));
+        assert_eq!(calc.metadosis_limit_remainder, U256::from(1_800u64));
     });
 }
 
@@ -208,10 +208,7 @@ fn test_calculate_metadosis_red_day() {
         let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
-        let (allocation, remainder) = (
-            calc.day_gratis_allocation,
-            calc.day_metadosis_limit_remainder,
-        );
+        let (allocation, remainder) = (calc.gratis_allocation, calc.metadosis_limit_remainder);
 
         // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
         //   demand     = 10_000 * 32 / 100 / 8 = 400
@@ -388,8 +385,8 @@ fn test_storage_dsl_layout_slots() {
         // `active_wwd` is a Set (2 slots: 12 = length, 13 = positions), so the
         // next schema field lands at 14 — this pins the Set's position too.
         assert_eq!(m.config_oracle_pair_hash.slot(), U256::from(14u64));
-        // `closed_worldwidedays` is a Deque (2 slots: 15 = begin, 16 = end).
-        assert_eq!(m.closed_worldwidedays.base_slot(), U256::from(15u64));
+        // `closed_wwd` is a Deque (2 slots: 15 = begin, 16 = end).
+        assert_eq!(m.closed_wwd.base_slot(), U256::from(15u64));
     });
 }
 
@@ -409,7 +406,7 @@ fn test_mark_terminal_retires_and_is_idempotent() {
         // Terminal day leaves the active set, enters the delete-queue, and the
         // record stays readable (under the cap, not yet evicted).
         assert!(!m.active_wwd.read_all().unwrap().contains(&wwd));
-        assert_eq!(m.closed_worldwidedays.len().unwrap(), 1);
+        assert_eq!(m.closed_wwd.len().unwrap(), 1);
         assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
         assert!(m
             .get_active_wwd_by_status(status::COMPLETED)
@@ -426,9 +423,9 @@ fn test_mark_terminal_retires_and_is_idempotent() {
             .write(status::OFFERING)
             .unwrap();
         m.mark_wwd_failed(wwd2).unwrap();
-        assert_eq!(m.closed_worldwidedays.len().unwrap(), 2);
+        assert_eq!(m.closed_wwd.len().unwrap(), 2);
         m.mark_wwd_failed(wwd2).unwrap(); // already FAILED
-        assert_eq!(m.closed_worldwidedays.len().unwrap(), 2);
+        assert_eq!(m.closed_wwd.len().unwrap(), 2);
     });
 }
 
@@ -455,10 +452,7 @@ fn test_terminal_records_capped_oldest_evicted() {
         // Every day retired out of the active set.
         assert!(m.active_wwd.read_all().unwrap().is_empty());
         // Delete-queue capped at MAX_RECORDS_KEPT.
-        assert_eq!(
-            m.closed_worldwidedays.len().unwrap(),
-            MAX_RECORDS_KEPT as u64
-        );
+        assert_eq!(m.closed_wwd.len().unwrap(), MAX_RECORDS_KEPT as u64);
         // The two oldest records were evicted and deleted.
         for i in 0..2u32 {
             let wwd = WwdKey::new(20240101 + i);

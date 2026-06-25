@@ -140,10 +140,10 @@ impl MetadosisContract<'_> {
     /// from the front and deletes its record (emitting `WorldwideDayCleanedUp`).
     fn retire_terminal_wwd(&mut self, wwd: WorldwideDayKey) -> Result<()> {
         self.remove_active_wwd(wwd)?;
-        self.closed_worldwidedays.push_back(wwd)?;
+        self.closed_wwd.push_back(wwd)?;
         // usize -> u64 is a widening, lossless conversion.
-        while self.closed_worldwidedays.len()? > MAX_RECORDS_KEPT as u64 {
-            let Some(evicted) = self.closed_worldwidedays.pop_front()? else {
+        while self.closed_wwd.len()? > MAX_RECORDS_KEPT as u64 {
+            let Some(evicted) = self.closed_wwd.pop_front()? else {
                 break;
             };
             let final_status = self.get_wwd_status(evicted)?;
@@ -179,7 +179,7 @@ impl MetadosisContract<'_> {
         // COMPLETED/FAILED status queries must also scan the queue. The two sets
         // are disjoint (active = non-terminal, queue = terminal), so no dedup.
         if wanted_status == status::COMPLETED || wanted_status == status::FAILED {
-            for wwd in self.closed_worldwidedays.read_all()? {
+            for wwd in self.closed_wwd.read_all()? {
                 if self.get_wwd_status(wwd)? == wanted_status {
                     result.push(wwd);
                 }

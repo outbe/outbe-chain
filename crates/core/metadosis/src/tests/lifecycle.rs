@@ -579,7 +579,7 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
 }
 
 #[test]
-fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes() {
+fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
     with_storage(|storage| {
         let wwd_raw = 20260313u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
@@ -631,8 +631,11 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
 
         // Pre-issue a NOD with the same (owner, worldwide_day) tuple the lysis
         // run will produce, so the second issue collides on nod_id and lysis
-        // fails — the test asserts the day_limit is returned in full and the
-        // tribute survives.
+        // fails. A lysis failure on a day that already passed FORMING/OFFERING is
+        // genuine state corruption, so `process_metadosis` propagates the error
+        // out of the begin-zone system transaction instead of silently retiring
+        // the day. The test asserts the error surfaces and the day is left
+        // unsettled (still READY, limit not routed to PROMIS).
         nodfactory_api::issue_nod(
             &storage,
             &outbe_nod::NodIssueParams {
@@ -649,8 +652,17 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
         )
         .unwrap();
 
-        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        let result = try_run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        assert!(
+            result.is_err(),
+            "lysis failure must propagate out of the begin-zone system transaction"
+        );
 
+        // The error carries the real reason out. `process_metadosis` records the
+        // FAILED transition before propagating (observable here because the test
+        // harness does not revert; on the production path the propagated error
+        // reverts the system tx and rolls this write back). The limit is never
+        // routed to PROMIS, and the tribute is untouched.
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
@@ -658,7 +670,7 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
         assert_eq!(tribute.total_supply().unwrap(), 1);
 
         let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
     });
 }
 
