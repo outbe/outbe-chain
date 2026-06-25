@@ -9,6 +9,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
 contract IntexNFT1155UupsTest is Test {
     address internal admin = makeAddr("admin");
@@ -54,7 +55,7 @@ contract IntexNFT1155UupsTest is Test {
 
     function test_Upgrade_PreservesStateAndSwapsImplementation() public {
         vm.prank(bridger);
-        nft.createSeries(7, 100, 0);
+        nft.createSeries(CreateSeriesLib.params(7, 100, 0));
         vm.prank(bridger);
         nft.mint(stranger, 3, 7);
 

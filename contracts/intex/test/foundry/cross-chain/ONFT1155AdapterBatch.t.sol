@@ -14,6 +14,7 @@ import {
 } from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title ONFT1155AdapterBatchTest
 /// @notice direct coverage for the ONFT-Batch outbound entry points
@@ -56,8 +57,8 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
 
         for (uint32 i = 0; i < 2; i++) {
             uint32 series = i == 0 ? SERIES_A : SERIES_B;
-            srcToken.createSeries(series, 1_000_000, 0);
-            dstToken.createSeries(series, 1_000_000, 0);
+            srcToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
+            dstToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
             srcToken.markQualified(series);
             dstToken.markQualified(series);
         }

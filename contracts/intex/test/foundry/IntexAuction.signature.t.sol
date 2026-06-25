@@ -101,9 +101,11 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            entryPrice: 100,
+            entryPriceMinor: 100,
             floorPriceMinor: 100,
             callPriceMinor: 100,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
@@ -211,9 +213,11 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            entryPrice: 100,
+            entryPriceMinor: 100,
             floorPriceMinor: 100,
             callPriceMinor: 100,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),

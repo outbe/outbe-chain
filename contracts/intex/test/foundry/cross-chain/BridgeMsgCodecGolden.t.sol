@@ -14,6 +14,8 @@ contract BridgeMsgCodecGoldenTest is Test {
             0x55667788,
             0x99AABBCC,
             0xDDEEFF00,
+            0xC1C2,
+            0xD1D2,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
             0x1122334455667788,
@@ -26,7 +28,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0104112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe56789abcabcd"
+            hex"0104112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe56789abcabcd"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START);
     }
@@ -64,6 +66,8 @@ contract BridgeMsgCodecGoldenTest is Test {
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
             uint128 promisLoadMinor,
             uint32 minIntexBidRate,
             uint64 entryPrice,
@@ -79,6 +83,8 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0x55667788,
                 0x99AABBCC,
                 0xDDEEFF00,
+                0xC1C2,
+                0xD1D2,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
                 0x1122334455667788,
@@ -94,6 +100,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(commitEnd, 0x55667788, "commitEnd");
         assertEq(revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(issuanceEnd, 0xDDEEFF00, "issuanceEnd");
+        assertEq(issuanceCurrency, 0xC1C2, "issuanceCurrency");
+        assertEq(referenceCurrency, 0xD1D2, "referenceCurrency");
         assertEq(promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
         assertEq(entryPrice, 0x1122334455667788, "entryPrice");
@@ -206,8 +214,10 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.costAmountMinor = 0x1122334455667788;
+        p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.intexCallPeriod = 0xCAFEBABE;
+        p.issuanceCurrency = 0x4321;
         p.referenceCurrency = 0x1234;
         p.callWindowDays = 0x5678;
         p.callThresholdDays = 0x9ABC;
@@ -222,8 +232,10 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.costAmountMinor, 0x1122334455667788, "costAmountMinor");
+        assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
+        assertEq(d.issuanceCurrency, 0x4321, "issuanceCurrency");
         assertEq(d.referenceCurrency, 0x1234, "referenceCurrency");
         assertEq(d.callWindowDays, 0x5678, "callWindowDays");
         assertEq(d.callThresholdDays, 0x9ABC, "callThresholdDays");
@@ -251,7 +263,23 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeAuctionStageStart(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, uint32, uint32, uint128, uint32, uint64, uint64, uint64, uint32, uint16, uint16, uint16)
+        returns (
+            uint32,
+            uint32,
+            uint32,
+            uint32,
+            uint16,
+            uint16,
+            uint128,
+            uint32,
+            uint64,
+            uint64,
+            uint64,
+            uint32,
+            uint16,
+            uint16,
+            uint16
+        )
     {
         return BridgeMsgCodec.decodeAuctionStageStart(p);
     }

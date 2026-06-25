@@ -191,7 +191,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_TM_ShortIssuanceInstructions_DroppedInvalidPayloadLength() public {
-        // ISSUANCE_INSTRUCTIONS has the largest minimum (HEADER_LEN + 480): a struct with two
+        // ISSUANCE_INSTRUCTIONS has the largest minimum (HEADER_LEN + 544): a struct with two
         // arrays. One byte under the floor must trip the per-type length check.
         uint256 minLen = BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS;
         bytes memory packet = abi.encodePacked(

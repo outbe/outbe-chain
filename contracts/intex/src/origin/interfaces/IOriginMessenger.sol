@@ -97,6 +97,10 @@ interface IOriginMessenger {
         uint32 revealEnd;
         /// @notice End of the issuance stage (UNIX seconds).
         uint32 issuanceEnd;
+        /// @notice Issuance currency (ISO numeric).
+        uint16 issuanceCurrency;
+        /// @notice Reference currency (ISO numeric).
+        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of strike).
@@ -126,9 +130,11 @@ interface IOriginMessenger {
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 costAmountMinor;
+        uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
         uint32 intexCallPeriod;
+        uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint16 callWindowDays;
         uint16 callThresholdDays;

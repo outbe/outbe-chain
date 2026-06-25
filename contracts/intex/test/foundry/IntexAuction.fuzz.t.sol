@@ -158,9 +158,11 @@ contract IntexAuctionFuzzTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: MIN_RATE,
-            entryPrice: ENTRY_PRICE,
+            entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),

@@ -30,7 +30,7 @@ use crate::sol_ext::{IOriginMessenger, MessagingFee};
 pub fn start_auction(
     storage: StorageHandle<'_>,
     series_id: u32,
-    config: AuctionConfig,
+    mut config: AuctionConfig,
 ) -> Result<()> {
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
@@ -60,10 +60,19 @@ pub fn start_auction(
         }
     };
 
+    // Genesis IntexFactory profile: floor/call derive from entry; window/threshold/
+    // period are the call-trigger params relayed to the target chain. Sourced here
+    // (storage in reach) and folded into the config before it is persisted, so the
+    // demand-side config carries the same values the wire message ships.
+    let iparams = outbe_intexfactory::read_params(&storage)?;
+    config.min_intex_bid_quantity = min_bid_qty;
+    config.call_trigger = crate::schema::IntexCallTrigger {
+        window_days: iparams.call_window_days,
+        threshold_days: iparams.call_threshold_days,
+        intex_call_period: iparams.intex_call_period_secs,
+    };
+
     contract.write_auction_config(series_id, &config)?;
-    contract
-        .config_min_bid_quantity
-        .write(&series_id, u32::from(min_bid_qty))?;
     contract.write_stage(series_id, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
         seriesId: series_id,
@@ -75,19 +84,17 @@ pub fn start_auction(
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
-    // floor/call/trigger from the IntexFactory profile; floor/call derive from entry.
-    let iparams = outbe_intexfactory::read_params(&storage)?;
     let floor_price = config
-        .entry_price
+        .entry_price_minor
         .checked_mul(U256::from(iparams.floor_price_num))
         .map(|v| v / U256::from(FLOOR_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
     let call_price = config
-        .entry_price
+        .entry_price_minor
         .checked_mul(U256::from(iparams.call_price_num))
         .map(|v| v / U256::from(CALL_PRICE_DEN))
         .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
-    let entry_price_u64 = u64::try_from(config.entry_price)
+    let entry_price_u64 = u64::try_from(config.entry_price_minor)
         .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
     let floor_price_u64 = u64::try_from(floor_price)
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
@@ -98,6 +105,8 @@ pub fn start_auction(
         commitEnd: commit_end,
         revealEnd: noon,
         issuanceEnd: issuance_end,
+        issuanceCurrency: config.issuance_currency,
+        referenceCurrency: config.reference_currency,
         promisLoadMinor: config.promis_load_minor,
         minIntexBidRate: config.min_intex_bid_rate,
         entryPrice: entry_price_u64,
@@ -395,7 +404,7 @@ pub fn clear_auction(
             series_id,
             issued_intex_count: result.issued_intex_count,
             promis_load_minor: config.promis_load_minor,
-            entry_price_minor: config.entry_price,
+            entry_price_minor: config.entry_price_minor,
             issuance_currency: QUALIFIER_ISSUANCE_ISO,
             reference_currency: QUALIFIER_REFERENCE_ISO,
             recipients: result.winners.clone(),

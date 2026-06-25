@@ -16,6 +16,8 @@ sol! {
             uint32 commitEnd;
             uint32 revealEnd;
             uint32 issuanceEnd;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
             uint128 promisLoadMinor;
             uint32 minIntexBidRate;
             uint64 entryPrice;

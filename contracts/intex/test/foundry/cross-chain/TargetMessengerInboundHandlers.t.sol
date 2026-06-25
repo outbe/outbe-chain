@@ -10,6 +10,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -139,8 +140,10 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             issuedIntexCount: ISSUED_INTEX_COUNT,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             costAmountMinor: STRIKE_PRICE,
+            entryPriceMinor: STRIKE_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
+            issuanceCurrency: 840,
             referenceCurrency: REFERENCE_CURRENCY,
             callWindowDays: 30,
             callThresholdDays: 5,
@@ -202,9 +205,11 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             issuanceEnd: uint32(block.timestamp + 3 days)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 60e6,
-            entryPrice: STRIKE_PRICE,
+            entryPriceMinor: STRIKE_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             callPriceMinor: STRIKE_PRICE,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
@@ -215,7 +220,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
     }
 
     function _deliver(bytes memory packet) internal {

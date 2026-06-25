@@ -13,6 +13,7 @@ import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {
     UPGRADE_PROBE,
     IntexNFT1155V2,
@@ -59,7 +60,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
         address holder = makeAddr("holder");
 
         vm.startPrank(admin);
-        nft.createSeries(7, 100, 0);
+        nft.createSeries(CreateSeriesLib.params(7, 100, 0));
         nft.mint(holder, 3, 7);
         vm.stopPrank();
 
@@ -70,7 +71,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
         _assertUpgraded(address(nft), address(newImpl));
         assertEq(nft.balanceOf(holder, 7), 3, "balance lost");
         assertEq(nft.totalSupply(7), 3, "supply lost");
-        (uint32 issuedAt,,,,,,, IIntexNFT1155.IntexState state) = nft.seriesData(7);
+        (,,,,,,,, uint32 issuedAt,,, , IIntexNFT1155.IntexState state) = nft.seriesData(7);
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
@@ -83,7 +84,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
         address holder = makeAddr("holder");
 
         vm.startPrank(admin);
-        nft.createSeries(7, 100, 0);
+        nft.createSeries(CreateSeriesLib.params(7, 100, 0));
         nft.mint(holder, 3, 7);
         vm.stopPrank();
 
@@ -109,9 +110,11 @@ contract UpgradeDrillTest is TestHelperOz5 {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            entryPrice: 1,
+            entryPriceMinor: 1,
             floorPriceMinor: 1,
             callPriceMinor: 1,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),

@@ -37,28 +37,55 @@ impl AuctionStage {
     }
 }
 
+/// Call-trigger parameters carried alongside the auction config; sourced from
+/// the genesis `IntexParams` at auction start and relayed to the target chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IntexCallTrigger {
+    /// Rolling VWAP window length (whole days) evaluated for the call condition.
+    pub window_days: u16,
+    /// Days within the window that must breach for a call to trigger.
+    pub threshold_days: u16,
+    /// Cooldown between successive calls (seconds).
+    pub intex_call_period: u32,
+}
+
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
+    /// Issuance-currency ISO-4217 code (e.g. 840 = USD).
+    pub issuance_currency: u16,
+    /// Reference-currency ISO-4217 code (e.g. 840 = USD).
+    pub reference_currency: u16,
     /// Promis tokens per Intex unit (18 decimals); bounded by uint128.
     pub promis_load_minor: u128,
+    /// Call-trigger parameters sourced from genesis `IntexParams`.
+    pub call_trigger: IntexCallTrigger,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of strike). 0 → no floor.
     pub min_intex_bid_rate: u32,
+    /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
+    pub min_intex_bid_quantity: u16,
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
-    /// Sole stored anchor: the strike (`cost_amount_minor()`), floor and call all
-    /// derive from it; nothing else is persisted.
-    pub entry_price: U256,
+    /// Sole stored price anchor: the strike (`cost_amount_minor()`), floor and call
+    /// all derive from it; nothing else price-related is persisted.
+    pub entry_price_minor: U256,
 }
 
 impl AuctionConfig {
     /// Build the demand-side config from the per-unit entry price (1e18-scaled).
     /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
-    /// `min_intex_bid_rate = 0` means no bid floor.
-    pub fn from_entry_price(entry_price: U256) -> Self {
+    /// `min_intex_bid_rate = 0` means no bid floor. Currencies come from the
+    /// genesis ISO constants. `call_trigger` and `min_intex_bid_quantity` are left
+    /// at their defaults here and populated at auction start (`start_auction`),
+    /// where the genesis `IntexParams` and the prior-clearing count are in reach.
+    pub fn from_entry_price(entry_price_minor: U256) -> Self {
         Self {
+            issuance_currency: crate::constants::QUALIFIER_ISSUANCE_ISO,
+            reference_currency: crate::constants::QUALIFIER_REFERENCE_ISO,
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
+            call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
-            entry_price,
+            min_intex_bid_quantity: 0,
+            entry_price_minor,
         }
     }
 
@@ -66,7 +93,7 @@ impl AuctionConfig {
     /// entry price: `entry_price * PROMIS_LOAD / 1e12`, rounded up to the next
     /// multiple of 100. The bid rate applies against this.
     pub fn cost_amount_minor(&self) -> u64 {
-        let raw: u64 = (self.entry_price.saturating_mul(U256::from(PROMIS_LOAD))
+        let raw: u64 = (self.entry_price_minor.saturating_mul(U256::from(PROMIS_LOAD))
             / U256::from(10u128.pow(12)))
         .try_into()
         .unwrap_or(u64::MAX);
@@ -157,6 +184,23 @@ pub struct DesisContract {
     /// genuine zero supply from a clearing that was never initiated.
     #[attribute(order = 14)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,
+
+    // --- Extended auction config (per series) ---
+    /// series_id -> issuance-currency ISO-4217 code.
+    #[attribute(order = 15)]
+    pub config_issuance_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> reference-currency ISO-4217 code.
+    #[attribute(order = 16)]
+    pub config_reference_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call-trigger window (whole days).
+    #[attribute(order = 17)]
+    pub config_call_window_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call-trigger threshold (whole days).
+    #[attribute(order = 18)]
+    pub config_call_threshold_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call cooldown (seconds).
+    #[attribute(order = 19)]
+    pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {

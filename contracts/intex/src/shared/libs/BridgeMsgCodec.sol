@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
+
 /// @title BridgeMsgCodec
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between BNB and Outbe chains.
@@ -44,7 +46,7 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // encodePacked messages have a tight upper bound that equals the lower bound.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 72;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 76;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_REVEAL = 7;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
@@ -57,11 +59,11 @@ library BridgeMsgCodec {
     //     4 static head words + 4 dynamic head offsets + 4 empty length words = 12×32 = 384
     //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
     //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
-    //   ISSUANCE_INSTRUCTIONS(struct with 10 static + 2 dynamic, dynamic struct):
-    //     outer offset(32) + 10 static + 2 inner offsets + 2 empty length words = 15×32 = 480
+    //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
+    //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 384;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 480;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -200,14 +202,16 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (72 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout (76 bytes), field order mirrors the Outbe `sol_ext` struct:
     ///      [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
+    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
     ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
     /// @param _seriesId The auction series identifier.
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
+    /// @param _issuanceCurrency The issuance currency (ISO numeric).
+    /// @param _referenceCurrency The reference currency (ISO numeric).
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
     /// @param _entryPrice The per-unit entry price (reference ccy); strike derives from it.
@@ -223,6 +227,8 @@ library BridgeMsgCodec {
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
+        uint16 _issuanceCurrency,
+        uint16 _referenceCurrency,
         uint128 _promisLoadMinor,
         uint32 _minIntexBidRate,
         uint64 _entryPrice,
@@ -240,6 +246,8 @@ library BridgeMsgCodec {
             _commitEnd,
             _revealEnd,
             _issuanceEnd,
+            _issuanceCurrency,
+            _referenceCurrency,
             _promisLoadMinor,
             _minIntexBidRate,
             _entryPrice,
@@ -298,15 +306,54 @@ library BridgeMsgCodec {
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 costAmountMinor;
+        uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.
         uint32 intexCallPeriod;
+        uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint16 callWindowDays;
         uint16 callThresholdDays;
         uint64 callPriceMinor;
         address[] recipients;
         uint256[] quantities;
+    }
+
+    /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
+    ///         Kept `external` so the struct construction lives in the linked library, off the
+    ///         messenger's runtime size (EIP-170). Mirrors `decodeAuctionStageStart`'s layout.
+    /// @param _msg The wire-encoded AUCTION_STAGE_START message.
+    /// @return seriesId The auction series identifier.
+    /// @return schedule The decoded commit/reveal/issuance schedule.
+    /// @return params The decoded auction params.
+    function decodeAuctionParams(bytes calldata _msg)
+        external
+        pure
+        returns (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params)
+    {
+        _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
+        _assertBodyVersion(_msg);
+        seriesId = uint32(bytes4(_msg[2:6]));
+        schedule = IIntexAuction.AuctionSchedule({
+            commitEnd: uint32(bytes4(_msg[6:10])),
+            revealEnd: uint32(bytes4(_msg[10:14])),
+            issuanceEnd: uint32(bytes4(_msg[14:18]))
+        });
+        params = IIntexAuction.AuctionParams({
+            issuanceCurrency: uint16(bytes2(_msg[18:20])),
+            referenceCurrency: uint16(bytes2(_msg[20:22])),
+            promisLoadMinor: uint128(bytes16(_msg[22:38])),
+            callTrigger: IIntexAuction.IntexCallTrigger({
+                windowDays: uint16(bytes2(_msg[70:72])),
+                thresholdDays: uint16(bytes2(_msg[72:74])),
+                intexCallPeriod: uint32(bytes4(_msg[66:70]))
+            }),
+            minIntexBidRate: uint32(bytes4(_msg[38:42])),
+            minIntexBidQuantity: uint16(bytes2(_msg[74:76])),
+            entryPriceMinor: uint64(bytes8(_msg[42:50])),
+            floorPriceMinor: uint64(bytes8(_msg[50:58])),
+            callPriceMinor: uint64(bytes8(_msg[58:66]))
+        });
     }
 
     /// @notice Encodes ISSUANCE_INSTRUCTIONS message.
@@ -445,17 +492,19 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (72 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout (76 bytes), field order mirrors the Outbe `sol_ext` struct:
     ///      [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
+    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
     ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
-    ///      Reverts `InvalidPayloadLength` unless the payload is exactly 72 bytes, then
+    ///      Reverts `InvalidPayloadLength` unless the payload is exactly 76 bytes, then
     ///      `UnsupportedBodyVersion` on a stale version byte.
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return seriesId The auction series identifier.
     /// @return commitEnd The commit-stage end timestamp.
     /// @return revealEnd The reveal-stage end timestamp.
     /// @return issuanceEnd The issuance-stage end timestamp.
+    /// @return issuanceCurrency The issuance currency (ISO numeric).
+    /// @return referenceCurrency The reference currency (ISO numeric).
     /// @return promisLoadMinor The Promis load (minor units) for the series.
     /// @return minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
     /// @return entryPrice The per-unit entry price (reference ccy); strike derives from it.
@@ -473,6 +522,8 @@ library BridgeMsgCodec {
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
             uint128 promisLoadMinor,
             uint32 minIntexBidRate,
             uint64 entryPrice,
@@ -490,15 +541,17 @@ library BridgeMsgCodec {
         commitEnd = uint32(bytes4(_msg[6:10]));
         revealEnd = uint32(bytes4(_msg[10:14]));
         issuanceEnd = uint32(bytes4(_msg[14:18]));
-        promisLoadMinor = uint128(bytes16(_msg[18:34]));
-        minIntexBidRate = uint32(bytes4(_msg[34:38]));
-        entryPrice = uint64(bytes8(_msg[38:46]));
-        floorPriceMinor = uint64(bytes8(_msg[46:54]));
-        callPriceMinor = uint64(bytes8(_msg[54:62]));
-        intexCallPeriod = uint32(bytes4(_msg[62:66]));
-        callWindowDays = uint16(bytes2(_msg[66:68]));
-        callThresholdDays = uint16(bytes2(_msg[68:70]));
-        minIntexBidQuantity = uint16(bytes2(_msg[70:72]));
+        issuanceCurrency = uint16(bytes2(_msg[18:20]));
+        referenceCurrency = uint16(bytes2(_msg[20:22]));
+        promisLoadMinor = uint128(bytes16(_msg[22:38]));
+        minIntexBidRate = uint32(bytes4(_msg[38:42]));
+        entryPrice = uint64(bytes8(_msg[42:50]));
+        floorPriceMinor = uint64(bytes8(_msg[50:58]));
+        callPriceMinor = uint64(bytes8(_msg[58:66]));
+        intexCallPeriod = uint32(bytes4(_msg[66:70]));
+        callWindowDays = uint16(bytes2(_msg[70:72]));
+        callThresholdDays = uint16(bytes2(_msg[72:74]));
+        minIntexBidQuantity = uint16(bytes2(_msg[74:76]));
     }
 
     /// @notice Decodes AUCTION_STAGE_REVEAL message.
@@ -565,7 +618,9 @@ library BridgeMsgCodec {
             revert InvalidPayloadLength(MSG_ISSUANCE_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        payload = abi.decode(_msg[2:], (IssuanceInstructionsPayload));
+        // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
+        // function's stack — keeps the 14-field payload within bounds under via_ir.
+        payload = _decodeIssuancePayload(_msg[2:]);
         // `recipients` and `quantities` are indexed in lockstep when minting; unequal lengths would
         // index out of bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (payload.recipients.length != payload.quantities.length) {
@@ -575,6 +630,11 @@ library BridgeMsgCodec {
         if (payload.recipients.length > MAX_PAYLOAD_ARRAY_LEN) {
             revert IssuanceBatchTooLarge(payload.recipients.length, MAX_PAYLOAD_ARRAY_LEN);
         }
+    }
+
+    /// @dev Isolated frame for the `IssuanceInstructionsPayload` ABI decode (via_ir stack relief).
+    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload memory) {
+        return abi.decode(_body, (IssuanceInstructionsPayload));
     }
 
     /// @notice Decodes REFUND_INSTRUCTIONS message.

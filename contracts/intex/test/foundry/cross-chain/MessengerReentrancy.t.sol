@@ -146,7 +146,7 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 
         bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
+            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
 
         _deliver(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger), packet);
 

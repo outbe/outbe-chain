@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
 import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -55,8 +56,8 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         oapps[1] = address(adapterB);
         this.wireOApps(oapps);
 
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);
@@ -102,7 +103,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         // minted on B — the missing amount lives in failedCrosschainMints.
         uint32 parkSeries = 20260601;
         uint256 parkTokenId = uint256(parkSeries);
-        tokenA.createSeries(parkSeries, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
@@ -126,7 +127,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
 
         // Fix the destination cause and retry — parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.createSeries(parkSeries, ISSUED_INTEX_COUNT, 0);
+        tokenB.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(parkSeries);
         adapterB.retryCrosschainMint(r.guid);
 

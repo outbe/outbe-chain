@@ -29,9 +29,11 @@ contract IntexAuctionUupsTest is Test {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            entryPrice: 1,
+            entryPriceMinor: 1,
             floorPriceMinor: 1,
             callPriceMinor: 1,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),

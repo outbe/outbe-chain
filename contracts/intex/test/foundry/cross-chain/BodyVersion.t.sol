@@ -23,10 +23,10 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsBatch.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
-        encoded = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
+        encoded = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
-        assertEq(encoded.length, 72, "stageStart.length"); // 2 header + 70 body
+        assertEq(encoded.length, 76, "stageStart.length"); // 2 header + 74 body
 
         encoded = BridgeMsgCodec.encodeAuctionStageReveal(1, true);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageReveal.version");
@@ -63,12 +63,14 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionStageStart_RoundTrip() public view {
         bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3);
+            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 9, 10, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3);
         (
             uint32 seriesId,
             uint32 commitEnd,
             uint32 revealEnd,
             uint32 issuanceEnd,
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
             uint128 promisLoadMinor,
             uint32 minBidRate,
             uint64 entryPrice,
@@ -84,6 +86,8 @@ contract BodyVersionTest is Test {
         assertEq(commitEnd, 100);
         assertEq(revealEnd, 200);
         assertEq(issuanceEnd, 300);
+        assertEq(issuanceCurrency, 9);
+        assertEq(referenceCurrency, 10);
         assertEq(promisLoadMinor, 1e18);
         assertEq(minBidRate, 5e6);
         assertEq(entryPrice, 7e6);
@@ -121,7 +125,7 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: unknown version reverts ---
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageStart_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
         packet[0] = 0xFF;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xFF));
         this.exposedDecodeAuctionStageStart(packet);
@@ -316,7 +320,23 @@ contract BodyVersionTest is Test {
     function exposedDecodeAuctionStageStart(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, uint32, uint32, uint128, uint32, uint64, uint64, uint64, uint32, uint16, uint16, uint16)
+        returns (
+            uint32,
+            uint32,
+            uint32,
+            uint32,
+            uint16,
+            uint16,
+            uint128,
+            uint32,
+            uint64,
+            uint64,
+            uint64,
+            uint32,
+            uint16,
+            uint16,
+            uint16
+        )
     {
         return BridgeMsgCodec.decodeAuctionStageStart(p);
     }

@@ -65,6 +65,10 @@ interface IIntexAuction {
     /// @notice Auction input parameters, stored per auction. Field order mirrors the spec
     ///         (single-currency: flat entry/floor/call stand in for the `referencePrices[]` slot).
     struct AuctionParams {
+        /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
+        uint16 issuanceCurrency;
+        /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
+        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
@@ -74,10 +78,10 @@ interface IIntexAuction {
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
         /// @notice Per-unit entry price (reference ccy); the escrow strike derives from it.
-        uint64 entryPrice;
-        /// @notice Floor price (payment-token minor units).
+        uint64 entryPriceMinor;
+        /// @notice Floor price (reference ccy).
         uint64 floorPriceMinor;
-        /// @notice Call price (payment-token minor units).
+        /// @notice Call price (reference ccy).
         uint64 callPriceMinor;
     }
 

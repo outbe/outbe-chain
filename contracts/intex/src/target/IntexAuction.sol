@@ -354,7 +354,7 @@ contract IntexAuction is
         // Computed in 256-bit space so an over-range product surfaces as a typed error rather than
         // a bare Panic(0x11); lockFunds takes a uint64 amount. The strike derives from entryPrice
         // identically to the Outbe clearing side, so the lock matches bit-for-bit.
-        uint256 strike = _strike(a.params.entryPrice, a.params.promisLoadMinor);
+        uint256 strike = _strike(a.params.entryPriceMinor, a.params.promisLoadMinor);
         uint256 lockAmount = uint256(quantity) * strike * bidRate / BridgeMsgCodec.RATE_SCALE;
         if (lockAmount > type(uint64).max) revert BidAmountOverflow(quantity, bidRate);
 

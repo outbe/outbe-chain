@@ -6,7 +6,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::ORIGIN_MESSENGER_ADDRESS;
 use crate::runtime;
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
+use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
 
 const CHAIN_ID: u64 = 1;
 const SERIES_ID: u32 = 20260101;
@@ -33,10 +33,14 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn default_config() -> AuctionConfig {
     AuctionConfig {
+        issuance_currency: 840,
+        reference_currency: 840,
         promis_load_minor: PROMIS_LOAD_MINOR,
+        call_trigger: IntexCallTrigger::default(),
         min_intex_bid_rate: 100,
+        min_intex_bid_quantity: 0,
         // entry_price chosen so the derived strike == RATE_SCALE (lock = qty * rate).
-        entry_price: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
+        entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
     }
 }
 
@@ -582,9 +586,13 @@ fn clear_rate_escrow_scales_by_strike() {
     // strike != RATE_SCALE, so this exercises the * strike / RATE_SCALE.
     with_storage(|s| {
         let cfg = AuctionConfig {
+            issuance_currency: 840,
+            reference_currency: 840,
             promis_load_minor: PROMIS_LOAD_MINOR,
+            call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
-            entry_price: U256::from(20_000_000_000_000u128), // 2e13 → strike = 2 x RATE_SCALE
+            min_intex_bid_quantity: 0,
+            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 → strike = 2 x RATE_SCALE
         };
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();

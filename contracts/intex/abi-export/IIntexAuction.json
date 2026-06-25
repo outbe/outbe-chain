@@ -38,6 +38,16 @@
           "internalType": "struct IIntexAuction.AuctionParams",
           "components": [
             {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -75,7 +85,7 @@
               "internalType": "uint16"
             },
             {
-              "name": "entryPrice",
+              "name": "entryPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -203,6 +213,16 @@
               "internalType": "struct IIntexAuction.AuctionParams",
               "components": [
                 {
+                  "name": "issuanceCurrency",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "referenceCurrency",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
                   "name": "promisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
@@ -240,7 +260,7 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPrice",
+                  "name": "entryPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
                 },
@@ -364,6 +384,16 @@
               "internalType": "struct IIntexAuction.AuctionParams",
               "components": [
                 {
+                  "name": "issuanceCurrency",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "referenceCurrency",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
                   "name": "promisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
@@ -401,7 +431,7 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPrice",
+                  "name": "entryPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
                 },

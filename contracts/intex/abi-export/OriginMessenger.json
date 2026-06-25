@@ -691,6 +691,16 @@
               "internalType": "uint32"
             },
             {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -799,6 +809,11 @@
               "internalType": "uint64"
             },
             {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
               "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
@@ -807,6 +822,11 @@
               "name": "intexCallPeriod",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
             },
             {
               "name": "referenceCurrency",
@@ -1328,6 +1348,16 @@
               "internalType": "uint32"
             },
             {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -1470,6 +1500,11 @@
               "internalType": "uint64"
             },
             {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
               "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
@@ -1478,6 +1513,11 @@
               "name": "intexCallPeriod",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
             },
             {
               "name": "referenceCurrency",

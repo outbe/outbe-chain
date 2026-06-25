@@ -16,6 +16,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
 use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -35,6 +36,13 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 
     let floor_price_minor = derived_floor(params.entry_price_minor, cfg.floor_price_num)?;
     let call_price_minor = derived_call_price(params.entry_price_minor, cfg.call_price_num)?;
+
+    let entry_price_minor_u64 = u64::try_from(params.entry_price_minor)
+        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
+    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
+    let call_price_minor_u64 = u64::try_from(call_price_minor)
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
@@ -60,9 +68,21 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::createSeriesCall {
-            seriesId: params.series_id,
-            issuedIntexCount: params.issued_intex_count,
-            intexCallPeriod: cfg.intex_call_period_secs,
+            params: CreateSeriesParams {
+                seriesId: params.series_id,
+                issuanceCurrency: params.issuance_currency,
+                referenceCurrency: params.reference_currency,
+                issuedIntexCount: params.issued_intex_count,
+                promisLoadMinor: params.promis_load_minor,
+                entryPriceMinor: entry_price_minor_u64,
+                floorPriceMinor: floor_price_minor_u64,
+                callPriceMinor: call_price_minor_u64,
+                callTrigger: IntexCallTrigger {
+                    windowDays: cfg.call_window_days,
+                    thresholdDays: cfg.call_threshold_days,
+                    intexCallPeriod: cfg.intex_call_period_secs,
+                },
+            },
         }
         .abi_encode()
         .into(),
@@ -83,9 +103,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
         costAmountMinor: cost_amount_minor_u64,
+        entryPriceMinor: entry_price_minor_u64,
         floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: cfg.intex_call_period_secs,
-        settlementTokenAlias: params.reference_currency,
+        issuanceCurrency: params.issuance_currency,
+        referenceCurrency: params.reference_currency,
         callWindowDays: cfg.call_window_days,
         callThresholdDays: cfg.call_threshold_days,
         callPriceMinor: call_price_minor_u64,

@@ -175,6 +175,8 @@ contract OriginMessenger is
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
+            p.issuanceCurrency,
+            p.referenceCurrency,
             p.promisLoadMinor,
             p.minIntexBidRate,
             p.entryPrice,
@@ -255,22 +257,24 @@ contract OriginMessenger is
     function _toCodecPayload(IssuanceInstructionsParams calldata p)
         private
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
-        return BridgeMsgCodec.IssuanceInstructionsPayload({
-            seriesId: p.seriesId,
-            issuedIntexCount: p.issuedIntexCount,
-            promisLoadMinor: p.promisLoadMinor,
-            costAmountMinor: p.costAmountMinor,
-            floorPriceMinor: p.floorPriceMinor,
-            intexCallPeriod: p.intexCallPeriod,
-            referenceCurrency: p.referenceCurrency,
-            callWindowDays: p.callWindowDays,
-            callThresholdDays: p.callThresholdDays,
-            callPriceMinor: p.callPriceMinor,
-            recipients: p.recipients,
-            quantities: p.quantities
-        });
+        // Member-wise assignment (rather than a single struct literal) keeps the 14-field payload
+        // within the IR stack bound under via_ir.
+        payload.seriesId = p.seriesId;
+        payload.issuedIntexCount = p.issuedIntexCount;
+        payload.promisLoadMinor = p.promisLoadMinor;
+        payload.costAmountMinor = p.costAmountMinor;
+        payload.entryPriceMinor = p.entryPriceMinor;
+        payload.floorPriceMinor = p.floorPriceMinor;
+        payload.intexCallPeriod = p.intexCallPeriod;
+        payload.issuanceCurrency = p.issuanceCurrency;
+        payload.referenceCurrency = p.referenceCurrency;
+        payload.callWindowDays = p.callWindowDays;
+        payload.callThresholdDays = p.callThresholdDays;
+        payload.callPriceMinor = p.callPriceMinor;
+        payload.recipients = p.recipients;
+        payload.quantities = p.quantities;
     }
 
     /// @inheritdoc IOriginMessenger

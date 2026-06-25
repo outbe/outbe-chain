@@ -71,9 +71,11 @@ contract AuctionTest is Test {
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: minIntexBidRate,
-            entryPrice: entryPrice,
+            entryPriceMinor: entryPrice,
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),

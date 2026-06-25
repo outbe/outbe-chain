@@ -356,37 +356,8 @@ contract TargetMessenger is
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded auction start payload
     function _handleAuctionStageStart(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        (
-            uint32 seriesId,
-            uint32 commitEnd,
-            uint32 revealEnd,
-            uint32 issuanceEnd,
-            uint128 promisLoadMinor,
-            uint32 minIntexBidRate,
-            uint64 entryPrice,
-            uint64 floorPriceMinor,
-            uint64 callPriceMinor,
-            uint32 intexCallPeriod,
-            uint16 callWindowDays,
-            uint16 callThresholdDays,
-            uint16 minIntexBidQuantity
-        ) = BridgeMsgCodec.decodeAuctionStageStart(_message);
-
-        IIntexAuction.AuctionSchedule memory schedule =
-            IIntexAuction.AuctionSchedule({commitEnd: commitEnd, revealEnd: revealEnd, issuanceEnd: issuanceEnd});
-        IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            promisLoadMinor: promisLoadMinor,
-            minIntexBidRate: minIntexBidRate,
-            entryPrice: entryPrice,
-            floorPriceMinor: floorPriceMinor,
-            callPriceMinor: callPriceMinor,
-            callTrigger: IIntexAuction.IntexCallTrigger({
-                windowDays: callWindowDays,
-                thresholdDays: callThresholdDays,
-                intexCallPeriod: intexCallPeriod
-            }),
-            minIntexBidQuantity: minIntexBidQuantity
-        });
+        (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
+            BridgeMsgCodec.decodeAuctionParams(_message);
         _s().auction.auctionStart(seriesId, schedule, params);
 
         emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
@@ -552,7 +523,23 @@ contract TargetMessenger is
         TargetMessengerStorage storage $ = _s();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        $.intex.createSeries(payload.seriesId, payload.issuedIntexCount, payload.intexCallPeriod);
+        $.intex.createSeries(
+            IIntexNFT1155.CreateSeriesParams({
+                seriesId: payload.seriesId,
+                issuanceCurrency: payload.issuanceCurrency,
+                referenceCurrency: payload.referenceCurrency,
+                issuedIntexCount: payload.issuedIntexCount,
+                promisLoadMinor: payload.promisLoadMinor,
+                entryPriceMinor: payload.entryPriceMinor,
+                floorPriceMinor: payload.floorPriceMinor,
+                callPriceMinor: payload.callPriceMinor,
+                callTrigger: IIntexNFT1155.IntexCallTrigger({
+                    windowDays: payload.callWindowDays,
+                    thresholdDays: payload.callThresholdDays,
+                    intexCallPeriod: payload.intexCallPeriod
+                })
+            })
+        );
         $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
 
         emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
