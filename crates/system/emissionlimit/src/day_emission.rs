@@ -1,11 +1,11 @@
-//! Closed-form daily emission cap.
+//! Closed-form day emission cap.
 //!
-//! Computes `INITIAL_DAILY × exp(-K_SOFT × day_number)` clamped to
-//! `FLOOR_DAILY` past `FLOOR_DAY_THRESHOLD`. Uses fixed-point Taylor
+//! Computes `INITIAL_DAY_EMISSION × exp(-K_SOFT × day_number)` clamped to
+//! `FLOOR_DAY_EMISSION` past `FLOOR_DAY_THRESHOLD`. Uses fixed-point Taylor
 //! expansion (SCALE = 10^18, alternating pos/neg sums in unsigned
 //! U256, saturating subtraction, 32 terms). The legacy per-block
 //! formula and its precompile view RPC were removed alongside this
-//! daily-only entry point.
+//! day-only entry point.
 //!
 //! No floating point in production OR tests. All comparisons against
 //! reference values are integer-pinned, computed offline once with the
@@ -18,13 +18,13 @@ use alloy_primitives::{uint, U256};
 /// Fixed-point scale factor: 10^18 (matches token decimals).
 const SCALE: U256 = uint!(1_000_000_000_000_000_000_U256);
 
-/// Initial daily reward in base units: 2^30 tokens × 10^18 wei/token.
+/// Initial day emission in base units: 2^30 tokens × 10^18 wei/token.
 /// 2^30 = 1_073_741_824. Product = 1_073_741_824 × 10^18.
-pub const INITIAL_DAILY: U256 = uint!(1_073_741_824_000_000_000_000_000_000_U256);
+pub const INITIAL_DAY_EMISSION: U256 = uint!(1_073_741_824_000_000_000_000_000_000_U256);
 
-/// Floor daily reward in base units: 2^26 tokens × 10^18 wei/token.
+/// Floor day emission in base units: 2^26 tokens × 10^18 wei/token.
 /// 2^26 = 67_108_864. Product = 67_108_864 × 10^18.
-pub const FLOOR_DAILY: U256 = uint!(67_108_864_000_000_000_000_000_000_U256);
+pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_000_000_000_000_U256);
 
 /// Decay coefficient k_soft = ln(2^4) / 2920 ≈ 9.4952e-4 per day.
 /// Encoded as integer ratio K_NUM / K_DEN. Chosen so that
@@ -38,17 +38,17 @@ pub const FLOOR_DAY_THRESHOLD: u32 = 2920;
 /// Number of Taylor terms; matches `crate::emission` for shape/precision parity.
 const TAYLOR_TERMS: usize = 32;
 
-/// Returns the daily emission cap for `day_number` days since the chain's
+/// Returns the day emission cap for `day_number` days since the chain's
 /// genesis UTC day. Closed-form, no storage I/O, pure function.
-/// Monotonically non-increasing in `day_number`; clamped to `FLOOR_DAILY`
+/// Monotonically non-increasing in `day_number`; clamped to `FLOOR_DAY_EMISSION`
 /// for `day_number >= FLOOR_DAY_THRESHOLD`.
 ///
-/// Boundary: `INITIAL_DAILY × exp_fp / SCALE` cannot overflow U256 —
-/// `INITIAL_DAILY ≈ 1.07e27`, `exp_fp ≤ SCALE = 10^18`, product ≤ 1.07e45,
+/// Boundary: `INITIAL_DAY_EMISSION × exp_fp / SCALE` cannot overflow U256 —
+/// `INITIAL_DAY_EMISSION ≈ 1.07e27`, `exp_fp ≤ SCALE = 10^18`, product ≤ 1.07e45,
 /// well below `2^256 ≈ 1.16e77`.
 pub fn day_emission_limit(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
-        return FLOOR_DAILY;
+        return FLOOR_DAY_EMISSION;
     }
 
     // x_fp = (K_NUM × day) / K_DEN, scaled into fixed-point by × SCALE.
@@ -73,9 +73,9 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
     }
     let exp_fp = pos_sum.saturating_sub(neg_sum);
 
-    let reward = INITIAL_DAILY * exp_fp / SCALE;
-    if reward < FLOOR_DAILY {
-        FLOOR_DAILY
+    let reward = INITIAL_DAY_EMISSION * exp_fp / SCALE;
+    if reward < FLOOR_DAY_EMISSION {
+        FLOOR_DAY_EMISSION
     } else {
         reward
     }
@@ -86,11 +86,11 @@ mod tests {
     use super::*;
 
     /// Pinned sample values, computed once by the implementation itself
-    /// (run `cargo test -p outbe-emissionlimit daily_emission::tests::print_pins -- --ignored --nocapture`
+    /// (run `cargo test -p outbe-emissionlimit day_emission::tests::print_pins -- --ignored --nocapture`
     /// to regenerate after any K_NUM/K_DEN/TAYLOR_TERMS/SCALE change).
     /// Asserted byte-equal to detect any regression in the fixed-point
     /// math, including incidental rounding shifts.
-    const PIN_DAY_0: U256 = INITIAL_DAILY;
+    const PIN_DAY_0: U256 = INITIAL_DAY_EMISSION;
     const PIN_DAY_365: U256 = uint!(759_249_206_514_486_004_915_634_176_U256);
     const PIN_DAY_730: U256 = uint!(536_869_613_074_582_646_657_384_448_U256);
     const PIN_DAY_1460: U256 = uint!(268_434_157_076_153_980_843_720_704_U256);
@@ -98,15 +98,18 @@ mod tests {
     const PIN_DAY_2919: U256 = uint!(67_171_965_393_083_432_817_393_664_U256);
 
     #[test]
-    fn day_zero_equals_initial_daily_exactly() {
-        assert_eq!(day_emission_limit(0), INITIAL_DAILY);
+    fn day_zero_equals_initial_day_emission_exactly() {
+        assert_eq!(day_emission_limit(0), INITIAL_DAY_EMISSION);
     }
 
     #[test]
     fn floor_clamp_at_and_beyond_threshold() {
-        assert_eq!(day_emission_limit(FLOOR_DAY_THRESHOLD), FLOOR_DAILY);
-        assert_eq!(day_emission_limit(FLOOR_DAY_THRESHOLD + 1), FLOOR_DAILY);
-        assert_eq!(day_emission_limit(u32::MAX), FLOOR_DAILY);
+        assert_eq!(day_emission_limit(FLOOR_DAY_THRESHOLD), FLOOR_DAY_EMISSION);
+        assert_eq!(
+            day_emission_limit(FLOOR_DAY_THRESHOLD + 1),
+            FLOOR_DAY_EMISSION
+        );
+        assert_eq!(day_emission_limit(u32::MAX), FLOOR_DAY_EMISSION);
     }
 
     #[test]
@@ -114,9 +117,9 @@ mod tests {
         // 2919 is the last day before the threshold clamp kicks in.
         let v = day_emission_limit(FLOOR_DAY_THRESHOLD - 1);
         // Sanity: greater than or equal to floor (the clamp would
-        // otherwise have returned FLOOR_DAILY) and at most ~10% above.
-        assert!(v >= FLOOR_DAILY);
-        let upper_bound = FLOOR_DAILY * U256::from(110u64) / U256::from(100u64);
+        // otherwise have returned FLOOR_DAY_EMISSION) and at most ~10% above.
+        assert!(v >= FLOOR_DAY_EMISSION);
+        let upper_bound = FLOOR_DAY_EMISSION * U256::from(110u64) / U256::from(100u64);
         assert!(v <= upper_bound, "v={v} > 110% of floor={upper_bound}");
     }
 

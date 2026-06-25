@@ -89,6 +89,20 @@ pub fn dispatch(
                 }
                 oracle.calculate_vwap(pair_id, c.startTime, c.endTime)
             }),
+            getUtcDayVwap(c) => view(c, |c| {
+                let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
+                if pair_id == 0 {
+                    return Err(outbe_primitives::error::PrecompileError::Revert(
+                        "pair not registered".into(),
+                    ));
+                }
+                match oracle.get_utc_day_vwap_for_pair_id(c.utcDay, pair_id)? {
+                    Some(vwap) => Ok(vwap),
+                    None => Err(outbe_primitives::error::PrecompileError::Revert(
+                        "no finalized VWAP for that UTC day".into(),
+                    )),
+                }
+            }),
             getScurveValue(c) => view(c, |c| {
                 let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
                 if pair_id == 0 {

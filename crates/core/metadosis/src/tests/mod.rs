@@ -54,5 +54,20 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
     );
 }
 
+/// Like `run_begin_block`, but returns the result instead of unwrapping, so
+/// tests can assert that a terminal failure propagates out of the begin-zone
+/// system transaction instead of being silently retired.
+fn try_run_begin_block(
+    storage: StorageHandle,
+    block_number: u64,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<()> {
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(block_number, timestamp, outbe_primitives::chain::CHAIN_ID),
+        storage,
+    );
+    crate::runtime::start_metadosis(&ctx)
+}
+
 mod lifecycle;
 mod state;

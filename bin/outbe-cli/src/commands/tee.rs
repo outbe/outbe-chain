@@ -67,11 +67,7 @@ impl TeeCmd {
 /// the Seam-F group key once DKG completes (else the pre-DKG dev key), so a
 /// `--diff-chain` MISMATCH means the registry slot-1 value and the key the enclave
 /// would actually decrypt offers with have diverged.
-async fn pubkey(
-    client: &(impl Rpc + Sync),
-    enclave_socket: &str,
-    diff_chain: bool,
-) -> Result<()> {
+async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bool) -> Result<()> {
     let mut enclave =
         EnclaveClient::connect_endpoint(enclave_socket, &QuotePolicy::dev_accept_any())
             .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
@@ -87,12 +83,24 @@ async fn pubkey(
         Ok(other) => return Err(eyre::eyre!("expected enclave PublicKeys, got {other:?}")),
         Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
     };
-    println!("enclave offer pubkey (recipient_x25519): 0x{}", hex::encode(offer_pub));
-    println!("enclave tee_bls_pub (DKG identity):      0x{}", hex::encode(&tee_bls_pub));
+    println!(
+        "enclave offer pubkey (recipient_x25519): 0x{}",
+        hex::encode(offer_pub)
+    );
+    println!(
+        "enclave tee_bls_pub (DKG identity):      0x{}",
+        hex::encode(&tee_bls_pub)
+    );
     println!("attestation:                             {label}");
     println!("remote-attested (real quote):            {remote_attested}");
-    println!("mrenclave:                               0x{}", hex::encode(mrenclave));
-    println!("mrsigner:                                0x{}", hex::encode(mrsigner));
+    println!(
+        "mrenclave:                               0x{}",
+        hex::encode(mrenclave)
+    );
+    println!(
+        "mrsigner:                                0x{}",
+        hex::encode(mrsigner)
+    );
     println!("isv_svn:                                 {isv_svn}");
     if !diff_chain {
         return Ok(());

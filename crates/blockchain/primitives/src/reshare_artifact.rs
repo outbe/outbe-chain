@@ -31,7 +31,7 @@ const MAGIC: &[u8; 4] = b"OART";
 /// `total_emission_limit` field was dropped from
 /// `ExecutionSummaryArtifact` because per-block emission no longer
 /// exists; the daily cap is computed by the Cycle handler directly
-/// from `outbe_emissionlimit::daily_emission::day_emission_limit`.
+/// from `outbe_emissionlimit::day_emission::day_emission_limit`.
 ///
 /// Version 0x08 adds tag 0x06 carrying
 /// `LateFinalizeCreditsArtifact` — a canonical batch of per-finalized-block

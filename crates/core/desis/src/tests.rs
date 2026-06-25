@@ -749,3 +749,46 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
         "expected AuctionDispatchFailed event on DESIS_ADDRESS"
     );
 }
+
+#[test]
+fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis() {
+    use outbe_promislimit::PromisLimitContract;
+
+    with_storage(|s| {
+        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+
+        // Supply = 3 whole PROMIS_LOAD_MINOR units + 7 dust; only whole units can
+        // be auctioned, so the dust is the remainder the caller must keep.
+        let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+
+        // The dispatch returns the dust to the caller instead of writing it to
+        // PromisLimit, so it cannot collide with the caller's own set/add. (The
+        // bid-settlement path routes unsold whole units separately; no bids here.)
+        assert_eq!(remainder, U256::from(7u64));
+        assert_eq!(
+            PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO,
+            "clearing dispatch must not write the PromisLimit accumulator"
+        );
+    });
+}
+
+#[test]
+fn dispatch_stage_clearing_failure_returns_whole_supply() {
+    // No reveal: auction is still `Started`, so `begin_clearing` rejects the
+    // stage. The best-effort wrapper must return the whole supply so the caller
+    // routes the full budget back to PromisLimit and nothing is lost.
+    with_storage(|s| {
+        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+
+        let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+        assert_eq!(remainder, supply);
+    });
+}

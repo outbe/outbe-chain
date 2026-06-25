@@ -748,6 +748,35 @@
   },
   {
     "type": "function",
+    "name": "getUtcDayVwap",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "quote",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "vwap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getVotePenaltyCounter",
     "inputs": [
       {
@@ -1204,6 +1233,31 @@
         "type": "string",
         "indexed": false,
         "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VwapCalculated",
+    "inputs": [
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pairId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "vwap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

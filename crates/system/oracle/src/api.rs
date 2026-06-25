@@ -62,6 +62,64 @@ pub fn get_worldwide_day_vwap_for_pair_id(
     oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
 }
 
+/// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
+pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "0xUSD");
+
+/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or `None`
+/// when the pair is not registered or the day has no snapshot for it.
+///
+/// This is the single entry point for the day-rate decision: pair resolution and
+/// the snapshot lookup live here, behind one typed interface, so callers never
+/// touch the oracle's internal `pair_hash_to_id` map. Genuine storage faults
+/// propagate as `Err`, keeping "no data yet" (`Ok(None)` → caller's RED fallback)
+/// distinct from "oracle broken".
+pub fn day_type_pair_vwap(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let (base, quote) = DAY_TYPE_PAIR;
+    let pair_id = oracle.get_pair_id(base, quote)?;
+    if pair_id == 0 {
+        return Ok(None);
+    }
+    oracle.get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)
+}
+
+/// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
+/// end_time)`. Returns `true` if a snapshot was written, `false` if the window
+/// held no oracle data (a deterministic no-op, not an error).
+///
+/// Owns the legacy `"no VWAP data"` revert string so callers route off the typed
+/// `bool` instead of matching oracle error text across the module seam.
+pub fn store_worldwide_day_vwap_snapshot(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    start_time: u64,
+    end_time: u64,
+) -> Result<bool> {
+    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
+    match oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time) {
+        Ok(()) => Ok(true),
+        Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+/// Returns the finalized VWAP for `pair_id` on the given UTC calendar day
+/// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
+/// day is not finalized or had no oracle data for that pair. Distinguishing
+/// "not finalized yet" from "finalized, no data" requires comparing `utc_day`
+/// against the oracle's `utc_day_vwap_last_finalized` watermark.
+pub fn get_utc_day_vwap(
+    storage: StorageHandle,
+    utc_day: u32,
+    pair_id: u32,
+) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+}
+
 pub fn get_max_active_scurve_value(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,

@@ -32,7 +32,7 @@ impl TributeFactoryContract<'_> {
         // every validator).
         let metadosis = MetadosisContract::new(self.storage.clone());
         let offering_day = *metadosis
-            .get_active_wwds_by_status(status::OFFERING)?
+            .get_active_wwd_by_status(status::OFFERING)?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
         let tribute_price =

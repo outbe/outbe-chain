@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
@@ -49,9 +49,12 @@ pub struct WorldwideDay {
     pub scheduled_process_time: u64,
 
     #[attribute(order = 7, default = U256::ZERO)]
-    pub previous_vwap: U256,
+    pub metadosis_limit_amount: U256,
 
     #[attribute(order = 8, default = U256::ZERO)]
+    pub previous_vwap: U256,
+
+    #[attribute(order = 9, default = U256::ZERO)]
     pub current_vwap: U256,
 }
 
@@ -68,26 +71,14 @@ pub struct MetadosisContract {
     pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
 
     #[attribute(order = 2)]
-    pub day_limit_amount: outbe_primitives::storage::dsl::Map<WorldwideDayKey, U256>,
+    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u16>,
 
     #[attribute(order = 3)]
-    pub day_limit_used: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
+    pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDayKey>,
 
+    /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
+    /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
+    /// the cap, the oldest is popped from the front and its record deleted.
     #[attribute(order = 4)]
-    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u32>,
-
-    #[attribute(order = 5)]
-    pub active_wwds: outbe_primitives::storage::dsl::Map<u32, u32>,
-
-    #[attribute(order = 6)]
-    pub config_oracle_pair_hash: outbe_primitives::storage::dsl::Value<B256>,
-
-    #[attribute(order = 7)]
-    pub day_limit_exists: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
-
-    #[attribute(order = 8)]
-    pub day_limit_count: outbe_primitives::storage::dsl::Value<u32>,
-
-    #[attribute(order = 9)]
-    pub day_limit_dates: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 }

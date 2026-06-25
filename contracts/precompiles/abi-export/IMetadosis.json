@@ -27,30 +27,6 @@
   },
   {
     "type": "function",
-    "name": "getDayMetadosisLimit",
-    "inputs": [
-      {
-        "name": "date",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "isUsed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getWorldwideDay",
     "inputs": [
       {
@@ -310,10 +286,10 @@
         "internalType": "uint32"
       },
       {
-        "name": "retentionDays",
-        "type": "uint64",
+        "name": "finalStatus",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
