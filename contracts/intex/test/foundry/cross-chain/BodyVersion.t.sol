@@ -48,7 +48,7 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_MARK_CALLED, "markCalled.msgType");
         assertEq(encoded.length, 6, "markCalled.length");
 
-        encoded = BridgeMsgCodec.encodeRefundInstructions(1, new address[](0), new uint64[](0), new uint64[](0));
+        encoded = BridgeMsgCodec.encodeRefundInstructions(1, new address[](0), new uint128[](0), new uint128[](0));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "refund.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, "refund.msgType");
 
@@ -170,7 +170,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_UnknownBodyVersion_RefundInstructions_Reverts() public {
         bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(1, new address[](0), new uint64[](0), new uint64[](0));
+            BridgeMsgCodec.encodeRefundInstructions(1, new address[](0), new uint128[](0), new uint128[](0));
         packet[0] = 0x55;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x55));
         this.exposedDecodeRefundInstructions(packet);
@@ -360,7 +360,7 @@ contract BodyVersionTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, address[] memory, uint64[] memory, uint64[] memory)
+        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }

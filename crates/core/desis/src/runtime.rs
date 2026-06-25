@@ -508,13 +508,14 @@ fn sort_bids(bids: &mut [BidData]) {
 }
 
 /// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
-/// per-Intex `strike`: `qty * strike * rate / RATE_SCALE`, saturating to u64.
-fn rate_lock(qty: u64, strike: u64, rate: u32) -> u64 {
+/// per-Intex `strike`: `qty * strike * rate / RATE_SCALE`, saturating to u128
+/// (wCOEN amounts at 18 decimals exceed u64).
+fn rate_lock(qty: u64, strike: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
         .saturating_mul(U256::from(strike))
         .saturating_mul(U256::from(rate))
         / U256::from(RATE_SCALE);
-    u64::try_from(amount).unwrap_or(u64::MAX)
+    u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
 /// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
@@ -558,8 +559,8 @@ fn calculate_clearing(
     }
 
     let mut all_bidders: Vec<Address> = Vec::with_capacity(len);
-    let mut refunded_amounts: Vec<u64> = Vec::with_capacity(len);
-    let mut paid_amounts: Vec<u64> = Vec::with_capacity(len);
+    let mut refunded_amounts: Vec<u128> = Vec::with_capacity(len);
+    let mut paid_amounts: Vec<u128> = Vec::with_capacity(len);
 
     for (i, bid) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);

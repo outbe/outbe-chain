@@ -550,7 +550,7 @@ contract TargetMessenger is
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded refund payload (bidders + refund/paid amounts)
     function _handleRefundInstructions(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        (uint32 seriesId, address[] memory bidders, uint64[] memory refundedAmounts, uint64[] memory paidAmounts) =
+        (uint32 seriesId, address[] memory bidders, uint128[] memory refundedAmounts, uint128[] memory paidAmounts) =
             BridgeMsgCodec.decodeRefundInstructions(_message);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions =

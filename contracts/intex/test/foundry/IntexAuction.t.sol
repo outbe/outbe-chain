@@ -28,8 +28,8 @@ contract AuctionTest is Test {
         keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
 
     uint32 internal constant RATE_SCALE = 1_000_000;
-    // Strike basis: `_strike(ENTRY_PRICE, PROMIS_LOAD_MINOR) == RATE_SCALE`, so the escrow lock
-    // reduces to `qty * rate` — keeping the rate test values small and exact.
+    // wCOEN escrow: the per-Intex strike is PROMIS_LOAD_MINOR (constant COEN), so the lock is
+    // `qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE`. ENTRY_PRICE feeds only floor/call now.
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
     uint64 internal constant ENTRY_PRICE = 1e13;
 
@@ -167,9 +167,9 @@ contract AuctionTest is Test {
         _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
         _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
 
-        // Strike == RATE_SCALE here, so the escrow lock is exactly `qty * rate`.
-        assertEq(escrow.lockedFunds(seriesId, iba1), uint64(30) * 80);
-        assertEq(escrow.lockedFunds(seriesId, iba2), uint64(40) * 70);
+        // Lock = qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE (wCOEN strike).
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / RATE_SCALE);
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / RATE_SCALE);
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
         (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
@@ -362,7 +362,7 @@ contract AuctionTest is Test {
         _reveal(seriesId, iba1, qty, rate, iba1PrivateKey);
 
         assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
-        assertEq(escrow.lockedFunds(seriesId, iba1), uint64(qty) * rate);
+        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / RATE_SCALE);
     }
 
     function test_Reveal_WithoutCommit() public {

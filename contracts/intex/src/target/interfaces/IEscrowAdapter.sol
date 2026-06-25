@@ -24,11 +24,11 @@ interface IEscrowAdapter {
     }
 
     /// @notice Bid lock data stored per series per bidder.
-    /// @dev Slot-packed: `lockedAmount` (8B) + `lockedAt` (4B) + `status` (1B) + `failedRefund` (8B)
-    ///      + `splitRecorded` (1B) = 22B, one slot.
+    /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) = 21B, one slot;
+    ///      `failedRefund` (16B) + `splitRecorded` (1B) = 17B, a second slot.
     struct BidLock {
         /// @notice Amount of payment-token locked.
-        uint64 lockedAmount;
+        uint128 lockedAmount;
         /// @notice Timestamp when the lock was created (UNIX seconds).
         uint32 lockedAt;
         /// @notice Current status of the lock.
@@ -36,7 +36,7 @@ interface IEscrowAdapter {
         /// @notice Refund-portion of the finalization instruction that failed for this bidder.
         /// @dev Valid only when `splitRecorded` is true. Drives the post-finalize `claimRefund`
         ///      payout so a stranded winner is refunded only what they are owed, not the full lock.
-        uint64 failedRefund;
+        uint128 failedRefund;
         /// @notice Whether a validated failed split was recorded for this bidder.
         bool splitRecorded;
     }
@@ -46,15 +46,15 @@ interface IEscrowAdapter {
         /// @notice Bidder address.
         address bidder;
         /// @notice Amount to refund to the bidder.
-        uint64 refundedAmount;
+        uint128 refundedAmount;
         /// @notice Amount paid out to the vault (winning portion).
-        uint64 paidAmount;
+        uint128 paidAmount;
     }
 
     /// @notice Per-series escrow state.
     struct AuctionEscrowState {
         /// @notice Total payment-token currently locked for the series.
-        uint64 totalLocked;
+        uint128 totalLocked;
         /// @notice Number of bid locks created for the series.
         uint32 lockCount;
         /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds).
@@ -70,7 +70,7 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose funds were locked.
     /// @param amount Amount of payment-token locked.
-    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint64 amount);
+    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
     /// @param guid Inbound LZ packet that triggered the refund, or `bytes32(0)` for a
@@ -78,14 +78,14 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
-    event FundsRefunded(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint64 amount);
+    event FundsRefunded(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are paid out to the vault for a winning bid.
     /// @param guid Inbound LZ packet that triggered the payout.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose winning portion was paid out.
     /// @param amount Amount routed to the vault provider.
-    event FundsClaimed(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint64 amount);
+    event FundsClaimed(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a series escrow is finalized.
     /// @param guid Inbound LZ packet that triggered finalization.
@@ -94,7 +94,7 @@ interface IEscrowAdapter {
     /// @param totalPaid Total paid out to the vault.
     /// @param bidsProcessed Number of bids processed.
     event AuctionEscrowFinalized(
-        bytes32 indexed guid, uint32 indexed seriesId, uint64 totalRefunded, uint64 totalPaid, uint32 bidsProcessed
+        bytes32 indexed guid, uint32 indexed seriesId, uint128 totalRefunded, uint128 totalPaid, uint32 bidsProcessed
     );
 
     /// @notice Emitted on each successful `wire()` call (initial + rotations).
@@ -135,7 +135,7 @@ interface IEscrowAdapter {
     /// @param refundedAmount Amount refunded to the bidder on retry.
     /// @param paidAmount Amount paid out to the vault on retry.
     event BidderRetried(
-        bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint64 refundedAmount, uint64 paidAmount
+        bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 refundedAmount, uint128 paidAmount
     );
 
     /// @notice Emitted when a post-finalize `claimRefund` refunds the failed bidder their refund
@@ -145,14 +145,14 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose vault portion could not be settled.
     /// @param vaultOwed Payout portion left parked in The Compact.
-    event VaultOwedUnsettled(uint32 indexed seriesId, address indexed bidder, uint64 vaultOwed);
+    event VaultOwedUnsettled(uint32 indexed seriesId, address indexed bidder, uint128 vaultOwed);
 
     /// @notice Emitted when `settleVaultOwed` routes a previously-parked payout portion into the
     ///         vault and advances the lock from `RefundClaimed` to `Finalized`.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose parked vault portion was settled.
     /// @param vaultOwed Payout portion deposited into the vault provider.
-    event VaultOwedSettled(uint32 indexed seriesId, address indexed bidder, uint64 vaultOwed);
+    event VaultOwedSettled(uint32 indexed seriesId, address indexed bidder, uint128 vaultOwed);
 
     /// @notice Emitted when `finalizeAuction` settled zero bidders (every instruction failed). The
     ///         series is finalized but degenerate; bidders are recoverable only via `retryFinalize`.
@@ -177,7 +177,7 @@ interface IEscrowAdapter {
     /// @notice Refund + payout amounts do not match the locked amount.
     /// @param locked Locked amount.
     /// @param requested Requested total.
-    error AmountMismatch(uint64 locked, uint64 requested);
+    error AmountMismatch(uint128 locked, uint128 requested);
     /// @notice `attest` was called for a lock id that does not match this escrow's `lockId`.
     /// @param id The unexpected lock id passed to `attest`.
     error UnexpectedLockId(uint256 id);
@@ -189,7 +189,7 @@ interface IEscrowAdapter {
     error NoDeposits();
     /// @notice Cannot rotate the active payment token (or Compact) while funds remain locked.
     /// @dev The ERC6909 balance returned by The Compact is `uint256`; surfacing the full width
-    ///      avoids silent truncation in the revert payload if the balance ever exceeds `uint64`.
+    ///      avoids silent truncation in the revert payload if the balance ever exceeds `uint128`.
     /// @param outstanding Total balance still held in The Compact for live locks.
     error LiveLocksOutstanding(uint256 outstanding);
     /// @notice Self-call helper invoked by an external caller (only `address(this)` is allowed).
@@ -214,7 +214,7 @@ interface IEscrowAdapter {
 
     // --- Class descriptor ---
 
-    /// @notice ISO 4217 numeric alias of the payment-token class (840 = USD). Descriptor only.
+    /// @notice ISO 4217 numeric alias of the payment-token class (43 = COEN). Descriptor only.
     /// @return The ISO 4217 numeric class alias of the payment token.
     function PAYMENT_TOKEN_ALIAS() external view returns (uint16);
 
@@ -241,7 +241,7 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address.
     /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
-    function lockFunds(uint32 seriesId, address bidder, uint64 amount) external;
+    function lockFunds(uint32 seriesId, address bidder, uint128 amount) external;
 
     // --- Bridge Finalization ---
 
@@ -293,5 +293,5 @@ interface IEscrowAdapter {
     function getAuctionStatus(uint32 seriesId)
         external
         view
-        returns (bool hasLocks, bool isFinalized, uint64 totalLocked);
+        returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
 }

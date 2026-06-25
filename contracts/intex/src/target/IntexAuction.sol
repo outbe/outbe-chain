@@ -350,13 +350,12 @@ contract IntexAuction is
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
         if (bidRate > BridgeMsgCodec.RATE_SCALE) revert BidRateAboveMax(bidRate);
 
-        // Escrow the rate against the per-Intex strike: lock = qty * strike * rate / RATE_SCALE.
-        // Computed in 256-bit space so an over-range product surfaces as a typed error rather than
-        // a bare Panic(0x11); lockFunds takes a uint64 amount. The strike derives from entryPrice
-        // identically to the Outbe clearing side, so the lock matches bit-for-bit.
-        uint256 strike = _strike(a.params.entryPriceMinor, a.params.promisLoadMinor);
+        // Escrow in wCOEN: lock = qty * strike * rate / RATE_SCALE, strike = promis_load per Intex
+        // (constant COEN; the COEN VWAP cancels). Matches the Outbe clearing side bit-for-bit. 256-bit
+        // space so an over-range product reverts typed rather than via Panic(0x11).
+        uint256 strike = a.params.promisLoadMinor;
         uint256 lockAmount = uint256(quantity) * strike * bidRate / BridgeMsgCodec.RATE_SCALE;
-        if (lockAmount > type(uint64).max) revert BidAmountOverflow(quantity, bidRate);
+        if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.
         _verifyRevealSignature(seriesId, quantity, bidRate, signature, committedHash);
@@ -380,8 +379,8 @@ contract IntexAuction is
 
         // Interactions
         // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint64).max check above
-        $.escrowContract.lockFunds(seriesId, msg.sender, uint64(lockAmount));
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
+        $.escrowContract.lockFunds(seriesId, msg.sender, uint128(lockAmount));
     }
 
     /// @notice Verify the EIP-712 reveal signature and its binding to the prior commit.
@@ -405,20 +404,6 @@ contract IntexAuction is
         if (signer != msg.sender || keccak256(signature) != committedHash) revert RevealHashMismatch();
     }
 
-    /// @notice Per-Intex strike (payment-token minor units) the bid rate applies against.
-    /// @dev Mirrors Desis `from_entry_price` bit-for-bit so the BNB escrow lock equals the Outbe
-    ///      clearing computation: `strike = entryPrice * PROMIS_LOAD / 1e12`, truncated to uint64,
-    ///      then rounded up to the next multiple of 100. `PROMIS_LOAD = promisLoadMinor / 1e18`.
-    /// @param entryPrice Per-unit entry price (reference ccy).
-    /// @param promisLoadMinor Promis tokens per Intex unit (18 decimals).
-    /// @return The per-Intex strike, saturated to uint64.
-    function _strike(uint64 entryPrice, uint128 promisLoadMinor) internal pure returns (uint64) {
-        uint256 promisLoad = uint256(promisLoadMinor) / 1e18;
-        uint256 raw = uint256(entryPrice) * promisLoad / 1e12;
-        uint64 rawU64 = raw > type(uint64).max ? type(uint64).max : uint64(raw);
-        uint256 rounded = (uint256(rawU64) + 99) / 100 * 100;
-        return rounded > type(uint64).max ? type(uint64).max : uint64(rounded);
-    }
 
     // --- Views ---
     /// @inheritdoc IIntexAuction

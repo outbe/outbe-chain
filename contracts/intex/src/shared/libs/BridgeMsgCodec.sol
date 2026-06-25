@@ -382,8 +382,8 @@ library BridgeMsgCodec {
     function encodeRefundInstructions(
         uint32 _seriesId,
         address[] memory _bidders,
-        uint64[] memory _refundedAmounts,
-        uint64[] memory _paidAmounts
+        uint128[] memory _refundedAmounts,
+        uint128[] memory _paidAmounts
     ) internal pure returns (bytes memory) {
         if (_bidders.length != _refundedAmounts.length || _bidders.length != _paidAmounts.length) {
             revert RefundArrayLengthMismatch(_bidders.length, _refundedAmounts.length, _paidAmounts.length);
@@ -651,8 +651,8 @@ library BridgeMsgCodec {
         returns (
             uint32 seriesId,
             address[] memory bidders,
-            uint64[] memory refundedAmounts,
-            uint64[] memory paidAmounts
+            uint128[] memory refundedAmounts,
+            uint128[] memory paidAmounts
         )
     {
         if (_msg.length < HEADER_LEN) {
@@ -660,7 +660,7 @@ library BridgeMsgCodec {
         }
         _assertBodyVersion(_msg);
         (seriesId, bidders, refundedAmounts, paidAmounts) =
-            abi.decode(_msg[2:], (uint32, address[], uint64[], uint64[]));
+            abi.decode(_msg[2:], (uint32, address[], uint128[], uint128[]));
         // The three arrays are indexed in lockstep downstream; unequal lengths would index
         // out of bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidders.length != refundedAmounts.length || bidders.length != paidAmounts.length) {

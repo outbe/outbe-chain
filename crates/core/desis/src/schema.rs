@@ -65,8 +65,7 @@ pub struct AuctionConfig {
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
-    /// Sole stored price anchor: the strike (`cost_amount_minor()`), floor and call
-    /// all derive from it; nothing else price-related is persisted.
+    /// Floor and call derive from it; the strike is `promis_load` (not entry-derived).
     pub entry_price_minor: U256,
 }
 
@@ -89,15 +88,10 @@ impl AuctionConfig {
         }
     }
 
-    /// Per-Intex strike (payment-token decimals), derived (never stored) from the
-    /// entry price: `entry_price * PROMIS_LOAD / 1e12`, rounded up to the next
-    /// multiple of 100. The bid rate applies against this.
-    pub fn cost_amount_minor(&self) -> u64 {
-        let raw: u64 = (self.entry_price_minor.saturating_mul(U256::from(PROMIS_LOAD))
-            / U256::from(10u128.pow(12)))
-        .try_into()
-        .unwrap_or(u64::MAX);
-        raw.div_ceil(100).saturating_mul(100)
+    /// Per-Intex strike = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
+    /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
+    pub fn cost_amount_minor(&self) -> u128 {
+        self.promis_load_minor
     }
 }
 
@@ -121,8 +115,8 @@ pub struct ClearingResult {
     pub winners: Vec<Address>,
     pub winner_quantities: Vec<U256>,
     pub all_bidders: Vec<Address>,
-    pub refunded_amounts: Vec<u64>,
-    pub paid_amounts: Vec<u64>,
+    pub refunded_amounts: Vec<u128>,
+    pub paid_amounts: Vec<u128>,
 }
 
 /// EVM storage layout for the Desis module.

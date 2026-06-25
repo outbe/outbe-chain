@@ -473,13 +473,13 @@
         },
         {
           "name": "refundedAmounts",
-          "type": "uint64[]",
-          "internalType": "uint64[]"
+          "type": "uint128[]",
+          "internalType": "uint128[]"
         },
         {
           "name": "paidAmounts",
-          "type": "uint64[]",
-          "internalType": "uint64[]"
+          "type": "uint128[]",
+          "internalType": "uint128[]"
         },
         {
           "name": "extraOptions",
@@ -1223,13 +1223,13 @@
         },
         {
           "name": "refundedAmounts",
-          "type": "uint64[]",
-          "internalType": "uint64[]"
+          "type": "uint128[]",
+          "internalType": "uint128[]"
         },
         {
           "name": "paidAmounts",
-          "type": "uint64[]",
-          "internalType": "uint64[]"
+          "type": "uint128[]",
+          "internalType": "uint128[]"
         },
         {
           "name": "extraOptions",

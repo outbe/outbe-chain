@@ -170,9 +170,9 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
         address[] memory bidders = new address[](1);
         bidders[0] = bidder;
-        uint64[] memory refundedAmounts = new uint64[](1);
+        uint128[] memory refundedAmounts = new uint128[](1);
         refundedAmounts[0] = lockedAmount;
-        uint64[] memory paidAmounts = new uint64[](1);
+        uint128[] memory paidAmounts = new uint128[](1);
         paidAmounts[0] = 0;
 
         bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);

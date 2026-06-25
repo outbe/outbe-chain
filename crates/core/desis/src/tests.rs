@@ -562,8 +562,8 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
-        // Winner (bid 300): locked=300, paid=300 (clearing price), refund=0
-        // Loser (bid 200): locked=200, refund=200
+        // strike = promis_load; lock/pay = qty * strike * rate / RATE_SCALE.
+        // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
             .iter()
@@ -574,9 +574,9 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], 300);
+        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], 200);
+        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
         assert_eq!(supply, result.issued_intex_count);
     });
 }
@@ -592,7 +592,7 @@ fn clear_rate_escrow_scales_by_strike() {
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
-            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 → strike = 2 x RATE_SCALE
+            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; strike = promis_load)
         };
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
@@ -633,14 +633,14 @@ fn clear_rate_escrow_scales_by_strike() {
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
 
         assert_eq!(result.clearing_rate, 600_000);
-        // lock/pay = qty * strike(2e6) * rate / 1e6; clearing rate 60%.
+        // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
-        assert_eq!(result.paid_amounts[idx(bidder(0))], 1_200_000);
-        assert_eq!(result.refunded_amounts[idx(bidder(0))], 400_000);
-        assert_eq!(result.paid_amounts[idx(bidder(1))], 1_200_000);
+        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
+        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
-        assert_eq!(result.refunded_amounts[idx(bidder(2))], 800_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
     });
 }
 
@@ -675,22 +675,15 @@ fn test_iface_id_matches_selector_xor() {
 // --- Config construction ---
 
 #[test]
-fn from_entry_price_rounds_cost_amount_up_to_100() {
+fn cost_amount_is_promis_load() {
+    // wCOEN strike = promis_load per Intex; entry no longer drives it.
     let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
-    assert_eq!(
-        cfg.cost_amount_minor() % 100,
-        0,
-        "cost_amount must be a multiple of 100"
-    );
-    assert_eq!(cfg.cost_amount_minor(), 100_000_100);
-
-    let exact = AuctionConfig::from_entry_price(U256::from(2_000_000_000_000_000u128));
-    assert_eq!(exact.cost_amount_minor(), 200_000_000);
+    assert_eq!(cfg.cost_amount_minor(), cfg.promis_load_minor);
 }
 
 // --- Best-effort dispatch API ---
 
-const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 → cost_amount_minor = 200_000_000
+const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry; strike = promis_load, not entry-derived)
 
 #[test]
 fn dispatch_stage_start_success_returns_true() {

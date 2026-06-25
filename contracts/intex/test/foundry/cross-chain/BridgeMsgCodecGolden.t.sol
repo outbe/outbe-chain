@@ -181,14 +181,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xA11CE);
         bidders[1] = address(0xB0B);
-        uint64[] memory refunded = new uint64[](2);
+        uint128[] memory refunded = new uint128[](2);
         refunded[0] = 0x1111111111111111;
         refunded[1] = 0x2222222222222222;
-        uint64[] memory paid = new uint64[](2);
+        uint128[] memory paid = new uint128[](2);
         paid[0] = 0x3333333333333333;
         paid[1] = 0x4444444444444444;
 
-        (uint32 seriesId, address[] memory dBidders, uint64[] memory dRefunded, uint64[] memory dPaid) = this.exposedDecodeRefundInstructions(
+        (uint32 seriesId, address[] memory dBidders, uint128[] memory dRefunded, uint128[] memory dPaid) = this.exposedDecodeRefundInstructions(
             BridgeMsgCodec.encodeRefundInstructions(0x77665544, bidders, refunded, paid)
         );
 
@@ -315,7 +315,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, address[] memory, uint64[] memory, uint64[] memory)
+        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }

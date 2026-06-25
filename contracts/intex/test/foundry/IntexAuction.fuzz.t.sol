@@ -33,9 +33,9 @@ contract IntexAuctionFuzzTest is Test {
     uint32 internal constant MIN_RATE = 10;
     uint32 internal constant RATE_SCALE = 1_000_000;
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
-    // `_strike(ENTRY_PRICE, PROMIS_LOAD_MINOR) == STRIKE`; lock = qty * STRIKE * rate / RATE_SCALE.
+    // Strike == promis_load per Intex; lock = qty * STRIKE * rate / RATE_SCALE.
     uint64 internal constant ENTRY_PRICE = 1e19;
-    uint64 internal constant STRIKE = 1e12;
+    uint128 internal constant STRIKE = PROMIS_LOAD_MINOR;
 
     function setUp() public {
         iba1 = vm.addr(iba1Pk);
@@ -68,7 +68,7 @@ contract IntexAuctionFuzzTest is Test {
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, MIN_RATE, RATE_SCALE));
-        uint64 expected = uint64(uint256(quantity) * STRIKE * rate / RATE_SCALE);
+        uint128 expected = uint128(uint256(quantity) * STRIKE * rate / RATE_SCALE);
 
         uint32 seriesId = 20260202;
         _start(seriesId);

@@ -33,8 +33,8 @@ contract BridgeMsgCodecHardeningHarness {
     function encodeRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts);
     }
@@ -42,7 +42,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeRefundInstructions(bytes calldata m)
         external
         pure
-        returns (uint32, address[] memory, uint64[] memory, uint64[] memory)
+        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(m);
     }
@@ -130,9 +130,9 @@ contract BridgeMsgCodecHardeningTest is Test {
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xB1);
         bidders[1] = address(0xB2);
-        uint64[] memory refundedAmounts = new uint64[](1); // mismatch
+        uint128[] memory refundedAmounts = new uint128[](1); // mismatch
         refundedAmounts[0] = 1;
-        uint64[] memory paidAmounts = new uint64[](2);
+        uint128[] memory paidAmounts = new uint128[](2);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -151,8 +151,8 @@ contract BridgeMsgCodecHardeningTest is Test {
         // a parameterized diagnostic.
         uint256 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
         address[] memory bidders = new address[](n);
-        uint64[] memory refundedAmounts = new uint64[](n);
-        uint64[] memory paidAmounts = new uint64[](n);
+        uint128[] memory refundedAmounts = new uint128[](n);
+        uint128[] memory paidAmounts = new uint128[](n);
         for (uint256 i = 0; i < n; ++i) {
             bidders[i] = address(uint160(i + 1));
             refundedAmounts[i] = 1;

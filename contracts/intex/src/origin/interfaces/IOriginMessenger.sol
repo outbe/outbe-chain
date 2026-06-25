@@ -333,8 +333,8 @@ interface IOriginMessenger {
     function quoteSendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts,
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts,
         bytes calldata extraOptions,
         bool payInLzToken
     ) external view returns (MessagingFee memory fee);
@@ -351,8 +351,8 @@ interface IOriginMessenger {
     function sendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts,
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts,
         bytes calldata extraOptions,
         MessagingFee calldata fee,
         address refundAddress
