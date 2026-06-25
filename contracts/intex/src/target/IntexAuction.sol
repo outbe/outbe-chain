@@ -179,7 +179,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
-                issuedIntexLoadedPromis: 0, auctionIntexClearingRate: 0, issuedIntexCount: 0, wonBidsCount: 0
+                issuedIntexLoadedPromis: 0, auctionClearingRate: 0, issuedIntexCount: 0, wonBidsCount: 0
             })
         });
 
@@ -236,7 +236,7 @@ contract IntexAuction is
     function executeAuctionClearing(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external override onlyRole(RELAYER_ROLE) nonReentrant {
         IntexAuctionStorage storage $ = _s();
@@ -247,25 +247,25 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        if (auctionIntexClearingRate == 0) revert ZeroValue("auctionIntexClearingRate");
+        if (auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
 
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
         // against on-chain counters — winners cannot exceed revealed bids, and the clearing rate
         // cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[seriesId].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
-        if (auctionIntexClearingRate < a.params.minIntexBidRate) {
-            revert ClearingRateBelowMin(auctionIntexClearingRate, a.params.minIntexBidRate);
+        if (auctionClearingRate < a.params.minIntexBidRate) {
+            revert ClearingRateBelowMin(auctionClearingRate, a.params.minIntexBidRate);
         }
 
         // Final data provided by Outbe; `issuedIntexLoadedPromis` is derived on-chain.
         a.result.issuedIntexCount = issuedIntexCount;
-        a.result.auctionIntexClearingRate = auctionIntexClearingRate;
+        a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
-        emit AuctionClearingExecuted(seriesId, auctionIntexClearingRate, issuedIntexCount);
+        emit AuctionClearingExecuted(seriesId, auctionClearingRate, issuedIntexCount);
     }
 
     // --- User Actions ---
@@ -456,7 +456,7 @@ contract IntexAuction is
             return IIntexAuction.AuctionStage.Cancelled;
         }
 
-        if (a.result.auctionIntexClearingRate > 0) {
+        if (a.result.auctionClearingRate > 0) {
             return IIntexAuction.AuctionStage.Completed;
         }
 

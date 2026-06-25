@@ -42,9 +42,7 @@ contract IntexAuctionScheduleSnapTest is Test {
             entryPrice: 100,
             floorPriceMinor: 100,
             callPriceMinor: 100,
-            intexCallPeriod: 0,
-            callWindowDays: 0,
-            callThresholdDays: 0,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
         vm.prank(bridger);

@@ -71,7 +71,7 @@ sol! {
         function quoteSendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingRate,
+            uint64 auctionClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             bool payInLzToken
@@ -80,7 +80,7 @@ sol! {
         function sendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingRate,
+            uint64 auctionClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             MessagingFee calldata fee,

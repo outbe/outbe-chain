@@ -100,7 +100,7 @@ contract IntexAuctionFuzzTest is Test {
         uint32 wonBidsCount = uint32(bound(wonSeed, 0, revealed + 3));
 
         if (clearingRate == 0) {
-            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionIntexClearingRate"));
+            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
             vm.prank(bridger);
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
         } else if (wonBidsCount > revealed) {
@@ -120,7 +120,7 @@ contract IntexAuctionFuzzTest is Test {
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
             IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
             assertEq(a.result.issuedIntexCount, issued, "issuedIntexCount");
-            assertEq(a.result.auctionIntexClearingRate, clearingRate, "clearingRate");
+            assertEq(a.result.auctionClearingRate, clearingRate, "clearingRate");
             assertEq(a.result.wonBidsCount, wonBidsCount, "wonBidsCount");
         }
     }
@@ -173,9 +173,7 @@ contract IntexAuctionFuzzTest is Test {
             entryPrice: ENTRY_PRICE,
             floorPriceMinor: 100,
             callPriceMinor: 200,
-            intexCallPeriod: 0,
-            callWindowDays: 0,
-            callThresholdDays: 0,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: MIN_QTY
         });
         vm.prank(bridger);

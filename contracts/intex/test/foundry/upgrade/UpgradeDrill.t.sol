@@ -114,9 +114,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
             entryPrice: 1,
             floorPriceMinor: 1,
             callPriceMinor: 1,
-            intexCallPeriod: 0,
-            callWindowDays: 0,
-            callThresholdDays: 0,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
 

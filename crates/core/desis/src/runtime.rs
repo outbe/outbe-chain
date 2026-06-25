@@ -412,7 +412,7 @@ pub fn clear_auction(
         IOriginMessenger::quoteSendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingRate: u64::from(result.clearing_rate),
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             payInLzToken: false,
@@ -429,7 +429,7 @@ pub fn clear_auction(
         IOriginMessenger::sendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingRate: u64::from(result.clearing_rate),
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             fee: MessagingFee {

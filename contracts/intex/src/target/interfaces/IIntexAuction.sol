@@ -52,8 +52,17 @@ interface IIntexAuction {
         uint32 issuanceEnd;
     }
 
+    /// @notice Call-trigger parameters governing when a series is forced into Called.
+    struct IntexCallTrigger {
+        /// @notice Call-trigger observation window in days.
+        uint16 windowDays;
+        /// @notice Call-trigger threshold in days.
+        uint16 thresholdDays;
+        /// @notice Called→deadline window in seconds (0 = default).
+        uint32 intexCallPeriod;
+    }
+
     /// @notice Auction input parameters, stored per auction.
-    /// @dev Field order mirrors the AUCTION_STAGE_START wire body (minus the schedule).
     struct AuctionParams {
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
@@ -65,12 +74,8 @@ interface IIntexAuction {
         uint64 floorPriceMinor;
         /// @notice Call price (payment-token minor units).
         uint64 callPriceMinor;
-        /// @notice Called→deadline window in seconds (0 = default).
-        uint32 intexCallPeriod;
-        /// @notice Call-trigger observation window in days.
-        uint16 callWindowDays;
-        /// @notice Call-trigger threshold in days.
-        uint16 callThresholdDays;
+        /// @notice Call-trigger parameters (window/threshold/period).
+        IntexCallTrigger callTrigger;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
     }
@@ -80,7 +85,7 @@ interface IIntexAuction {
         /// @notice Total Promis loaded into the issued Intex (`issuedIntexCount * promisLoadMinor`); derived on-chain at clearing.
         uint128 issuedIntexLoadedPromis;
         /// @notice Uniform auction clearing rate (`1e6` fixed-point) used to issue Intex.
-        uint64 auctionIntexClearingRate;
+        uint64 auctionClearingRate;
         /// @notice Number of Intex units issued.
         uint32 issuedIntexCount;
         /// @notice Number of winning bids (provided by Outbe).
@@ -112,9 +117,9 @@ interface IIntexAuction {
 
     /// @notice Emitted when an auction is cleared.
     /// @param seriesId Auction series id.
-    /// @param auctionIntexClearingRate Uniform auction clearing rate (`1e6` fixed-point).
+    /// @param auctionClearingRate Uniform auction clearing rate (`1e6` fixed-point).
     /// @param issuedIntexCount Total number of issued Intex units.
-    event AuctionClearingExecuted(uint32 indexed seriesId, uint64 auctionIntexClearingRate, uint32 issuedIntexCount);
+    event AuctionClearingExecuted(uint32 indexed seriesId, uint64 auctionClearingRate, uint32 issuedIntexCount);
 
     /// @notice Emitted on `commitBid` with the sealed commit hash.
     /// @param seriesId Auction series id.
@@ -212,12 +217,12 @@ interface IIntexAuction {
     /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedIntexCount * promisLoadMinor`).
     /// @param seriesId Auction series id.
     /// @param issuedIntexCount Final number of issued Intex units.
-    /// @param auctionIntexClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
+    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
     /// @param wonBidsCount Number of winning bids (from Outbe).
     function executeAuctionClearing(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external;
 

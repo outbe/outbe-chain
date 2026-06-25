@@ -76,9 +76,7 @@ contract AuctionTest is Test {
             entryPrice: entryPrice,
             floorPriceMinor: 100,
             callPriceMinor: 200,
-            intexCallPeriod: 0,
-            callWindowDays: 0,
-            callThresholdDays: 0,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: minIntexBidQuantity
         });
     }
@@ -189,7 +187,7 @@ contract AuctionTest is Test {
 
         assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
-        assertEq(fin.result.auctionIntexClearingRate, 75);
+        assertEq(fin.result.auctionClearingRate, 75);
         assertEq(fin.result.issuedIntexCount, 100);
         assertEq(fin.result.wonBidsCount, 2);
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
@@ -565,7 +563,7 @@ contract AuctionTest is Test {
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedIntexCount, 0);
-        assertEq(fin.result.auctionIntexClearingRate, floor);
+        assertEq(fin.result.auctionClearingRate, floor);
         assertEq(fin.result.issuedIntexLoadedPromis, 0);
     }
 
@@ -625,8 +623,8 @@ contract AuctionTest is Test {
         vm.prank(bridger);
         auction.startClearingStage(seriesId);
 
-        // Zero auctionIntexClearingRate
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionIntexClearingRate"));
+        // Zero auctionClearingRate
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
         vm.prank(bridger);
         auction.executeAuctionClearing(seriesId, 100, 0, 1);
     }

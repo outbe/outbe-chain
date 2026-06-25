@@ -124,7 +124,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(SERIES_ID).result;
         assertEq(result.issuedIntexCount, ISSUED_INTEX_COUNT, "issuedIntexCount persisted");
-        assertEq(result.auctionIntexClearingRate, clearingPrice, "clearingPrice persisted");
+        assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
     // --- _handleIssuanceInstructions: createSeries + mintBatch on the local IntexNFT1155 ---
@@ -207,9 +207,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             entryPrice: STRIKE_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             callPriceMinor: STRIKE_PRICE,
-            intexCallPeriod: 0,
-            callWindowDays: 0,
-            callThresholdDays: 0,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
         vm.prank(address(bnbMessenger));

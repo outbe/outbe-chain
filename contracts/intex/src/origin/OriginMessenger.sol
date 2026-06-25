@@ -214,13 +214,13 @@ contract OriginMessenger is
     function quoteSendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         bool payInLzToken
     ) external view returns (MessagingFee memory fee) {
         bytes memory message = BridgeMsgCodec.encodeAuctionResult(
-            seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount
+            seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount
         );
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_AUCTION_RESULT, extraOptions);
         return _quote(BNB_EID, message, options, payInLzToken);
@@ -357,19 +357,19 @@ contract OriginMessenger is
     function sendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         MessagingFee calldata fee,
         address refundAddress
     ) external payable onlyRole(DESIS_ROLE) returns (MessagingReceipt memory receipt) {
         bytes memory message = BridgeMsgCodec.encodeAuctionResult(
-                seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount
+                seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount
             );
         bytes memory options = combineOptions(BNB_EID, BridgeMsgCodec.MSG_AUCTION_RESULT, extraOptions);
 
         receipt = _lzSend(BNB_EID, message, options, fee, refundAddress);
-        emit AuctionResultSent(receipt.guid, seriesId, issuedIntexCount, auctionIntexClearingRate);
+        emit AuctionResultSent(receipt.guid, seriesId, issuedIntexCount, auctionClearingRate);
     }
 
     /// @inheritdoc IOriginMessenger

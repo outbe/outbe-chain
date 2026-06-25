@@ -380,9 +380,11 @@ contract TargetMessenger is
             entryPrice: entryPrice,
             floorPriceMinor: floorPriceMinor,
             callPriceMinor: callPriceMinor,
-            intexCallPeriod: intexCallPeriod,
-            callWindowDays: callWindowDays,
-            callThresholdDays: callThresholdDays,
+            callTrigger: IIntexAuction.IntexCallTrigger({
+                windowDays: callWindowDays,
+                thresholdDays: callThresholdDays,
+                intexCallPeriod: intexCallPeriod
+            }),
             minIntexBidQuantity: minIntexBidQuantity
         });
         _s().auction.auctionStart(seriesId, schedule, params);
@@ -534,12 +536,12 @@ contract TargetMessenger is
     /// @param _srcEid Source endpoint id from `_origin`
     /// @param _message Encoded auction result payload
     function _handleAuctionResult(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingRate, uint32 wonBidsCount) =
+        (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(_message);
 
-        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionIntexClearingRate, wonBidsCount);
+        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount);
 
-        emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionIntexClearingRate);
+        emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionClearingRate);
     }
 
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.

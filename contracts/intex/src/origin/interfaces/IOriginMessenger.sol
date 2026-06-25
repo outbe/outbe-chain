@@ -259,7 +259,7 @@ interface IOriginMessenger {
     /// @notice Quote fee for sending auction result.
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param auctionIntexClearingRate Uniform clearing rate (`1e6` fixed-point)
+    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point)
     /// @param wonBidsCount Number of winning bids
     /// @param extraOptions Additional LayerZero options
     /// @param payInLzToken Whether to pay fee in LZ token
@@ -267,7 +267,7 @@ interface IOriginMessenger {
     function quoteSendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         bool payInLzToken
@@ -276,7 +276,7 @@ interface IOriginMessenger {
     /// @notice Send auction result to BNB. Restricted to `DESIS_ROLE`.
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param auctionIntexClearingRate Uniform clearing rate (`1e6` fixed-point)
+    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point)
     /// @param wonBidsCount Number of winning bids
     /// @param extraOptions Additional LayerZero options
     /// @param fee Messaging fee
@@ -285,7 +285,7 @@ interface IOriginMessenger {
     function sendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingRate,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         MessagingFee calldata fee,

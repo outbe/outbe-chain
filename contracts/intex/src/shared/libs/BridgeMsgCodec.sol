@@ -271,20 +271,20 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionIntexClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
     /// @param _seriesId The auction series identifier.
     /// @param _issuedIntexCount The number of intex issued by the cleared auction.
-    /// @param _auctionIntexClearingRate The uniform auction clearing rate (`1e6` fixed-point).
+    /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @param _wonBidsCount The number of winning bids.
     /// @return The wire-encoded AUCTION_RESULT message.
     function encodeAuctionResult(
         uint32 _seriesId,
         uint32 _issuedIntexCount,
-        uint64 _auctionIntexClearingRate,
+        uint64 _auctionClearingRate,
         uint32 _wonBidsCount
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_AUCTION_RESULT, _seriesId, _issuedIntexCount, _auctionIntexClearingRate, _wonBidsCount
+            BODY_VERSION_V1, MSG_AUCTION_RESULT, _seriesId, _issuedIntexCount, _auctionClearingRate, _wonBidsCount
         );
     }
 
@@ -530,23 +530,23 @@ library BridgeMsgCodec {
 
     /// @notice Decodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionIntexClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
     /// @return seriesId The auction series identifier.
     /// @return issuedIntexCount The number of intex issued by the cleared auction.
-    /// @return auctionIntexClearingRate The uniform auction clearing rate (`1e6` fixed-point).
+    /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @return wonBidsCount The number of winning bids.
     function decodeAuctionResult(bytes calldata _msg)
         internal
         pure
-        returns (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingRate, uint32 wonBidsCount)
+        returns (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount)
     {
         _assertExactLength(_msg, MSG_AUCTION_RESULT, MIN_LEN_AUCTION_RESULT);
         _assertBodyVersion(_msg);
         seriesId = uint32(bytes4(_msg[2:6]));
         issuedIntexCount = uint32(bytes4(_msg[6:10]));
-        auctionIntexClearingRate = uint64(bytes8(_msg[10:18]));
+        auctionClearingRate = uint64(bytes8(_msg[10:18]));
         wonBidsCount = uint32(bytes4(_msg[18:22]));
     }
 
