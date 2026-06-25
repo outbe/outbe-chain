@@ -44,7 +44,7 @@ use crate::zkp_utils::u256_to_fr;
 /// with the `[u32-BE num_public_inputs | N×32B public inputs]` prefix
 /// stripped. The runtime prepends a fresh prefix from `merkle_root`,
 /// `nullifier_hash`, `denom_id`, and `receiver_binding` before calling
-/// `verify_ultra_honk_keccak`, so the proof is bound atomically to the
+/// `Barretenberg::verify_combined`, so the proof is bound atomically to the
 /// runtime-authoritative public inputs — no replay against arbitrary args.
 ///
 /// `receiver_binding` itself folds in an application-derived context

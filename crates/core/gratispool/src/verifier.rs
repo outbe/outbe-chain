@@ -3,7 +3,7 @@
 //! The runtime is the source of truth for the proof's public inputs. Callers
 //! transmit only the bare proof body in `SpendArgs.proof`; this module
 //! prepends the runtime-known public inputs in the exact format
-//! `verify_ultra_honk_keccak` expects (Aztec's "combined proof":
+//! `Barretenberg::verify_combined` expects (Aztec's "combined proof":
 //! `[u32-BE num_public_inputs | pub_in_0:32B | … | pub_in_N:32B | proof_body]`)
 //! before forwarding to the FFI. That makes the binding atomic — a proof
 //! cannot verify against any public inputs other than the ones the runtime
@@ -12,16 +12,16 @@
 //!
 //! ## Verification key artefact
 //!
-//! The verification key is sourced from the canonical-circuit table in
-//! `outbe-zk-canonical` (`COMMITMENT_NULLIFIER.vk_bytes`). The bytes are
-//! derived in the upstream `outbe-circuits` repo via `cargo xtask
-//! regenerate-canonical`; bumping the `outbe-circuits` git tag here picks
-//! up any VK update without changes to this crate.
+//! The verification key is sourced from the canonical-circuit registry in
+//! `outbe-zk-canonical` (`noir::commitment_nullifier_proof::VK_BYTES`). The
+//! bytes are frozen in the upstream `outbe-circuits` repo via `cargo xtask
+//! freeze-circuits`; bumping the `outbe-circuits` git ref here picks up any
+//! VK update without changes to this crate.
 
 use crate::errors::GratisPoolError;
 use alloy_primitives::U256;
 #[cfg(not(any(test, feature = "test-helpers")))]
-use outbe_zk_canonical::COMMITMENT_NULLIFIER;
+use outbe_zk_canonical::noir::commitment_nullifier_proof;
 
 /// Number of public inputs the gratis-pool circuit declares.
 ///
@@ -64,28 +64,25 @@ pub fn verify(
     public_inputs: &[U256; NUM_PUBLIC_INPUTS],
     proof_body: &[u8],
 ) -> Result<(), GratisPoolError> {
+    use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
     let combined = build_combined(public_inputs, proof_body);
-    match outbe_zk_circuit_noir::barretenberg::verify::verify_ultra_honk_keccak(
-        combined,
-        COMMITMENT_NULLIFIER.vk_bytes.to_vec(),
-        // `disable_zk` — must match the prover's setting.
-        // Proofs are produced with ZK enabled, so this is `false`.
-        false,
-    ) {
+    // `Barretenberg::default()` keeps `disable_zk = false`, which must match the
+    // prover's setting — commitment-nullifier proofs are produced with ZK enabled.
+    match Barretenberg::default().verify_combined(commitment_nullifier_proof::VK_BYTES, &combined) {
         Ok(true) => Ok(()),
         Ok(false) => Err(GratisPoolError::ProofInvalid(
             "verifier rejected the proof".to_string(),
         )),
-        Err(e) => Err(GratisPoolError::ProofInvalid(e)),
+        Err(e) => Err(GratisPoolError::ProofInvalid(e.to_string())),
     }
 }
 
 /// Build the Aztec "combined proof" blob: `[u32-BE num_public_inputs |
 /// pub_in_0:32B | … | pub_in_{N-1}:32B | proof_body]`.
 ///
-/// Mirrors `outbe_zk_circuit_noir::combine_proof`. Exposed inside the crate so
-/// the encoding-round-trip parity test can re-parse it with the same
-/// algorithm as `outbe_zk_circuit_noir::split_proof`.
+/// Mirrors the combined-proof layout `outbe_zk_backend`'s
+/// `RawVerifier::verify_combined` parses. Exposed inside the crate so the
+/// encoding-round-trip parity test can re-parse it with the same algorithm.
 //
 // Under the `test-helpers` feature the production `verify` isn't compiled
 // (the mock takes over) so `build_combined` looks dead from the linker's
