@@ -7,8 +7,9 @@
 
 use alloy_primitives::{address, Address};
 
-/// Outbe reserve VaultProvider (settlement deposits).
-pub const RESERVE_VAULT: Address = address!("0x1625264BB175Fe05d1f826a6C72B51ed6cad0905");
+/// Outbe reserve VaultProvider (settlement deposits). Native Rust precompile at
+/// [`outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`].
+pub const RESERVE_VAULT: Address = outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v1.0.0".

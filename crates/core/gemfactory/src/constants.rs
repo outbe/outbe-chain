@@ -12,6 +12,6 @@ pub const SRA_COEFFICIENT_PERCENT: u64 = 64;
 
 /// Vault provider that custodies the deposited stablecoin on settle. The
 /// stablecoin asset itself is resolved at runtime by calling
-/// `IVaultProvider.assetAt(0)` on this address.
-pub const RESERVE_VAULT: Address =
-    alloy_primitives::address!("0xC8ce1EFE882B0fbb1E2ABBEed828316bb282b76d");
+/// `IVaultProvider.assetAt(0)` on this address. Native Rust precompile at
+/// [`outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`].
+pub const RESERVE_VAULT: Address = outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;

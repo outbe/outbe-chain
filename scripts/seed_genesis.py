@@ -162,6 +162,9 @@ MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
 INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
+# VaultProvider precompile. Genesis seeds only slot 0 (owner). Mirrors the Rust
+# constant `outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`.
+VAULT_PROVIDER_ADDRESS = "0000000000000000000000000000000000001017"
 VALIDATOR_SET_ADDRESS = "000000000000000000000000000000000000ee00"
 SLASH_INDICATOR_ADDRESS = "000000000000000000000000000000000000ee01"
 STAKING_ADDRESS = "000000000000000000000000000000000000ee02"
@@ -205,7 +208,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
     NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
-    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS,
+    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
     ZEROFEE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
@@ -833,6 +836,18 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_slot(0, bootstrap_end)
 
 
+def seed_vault_provider(storage: StorageBuilder, owner_address: str):
+    """
+    VaultProvider storage layout (see crates/core/vaultprovider/src/schema.rs):
+      slot 0: owner (admin)
+      slots 1-9: enumerable sets + type maps (written at runtime, not seeded)
+
+    Genesis only sets the owner so it can later register vaults / liquidity
+    sources / targets. Mirrors the ValidatorSet owner pattern (slot 0).
+    """
+    storage.set_slot(0, address_as_u256(owner_address))
+
+
 def seed_validator_set(
     storage: StorageBuilder,
     validators: list[dict],
@@ -1349,6 +1364,17 @@ def main():
             validator_stake=validator_stake,
         )
         alloc[VALIDATOR_SET_ADDRESS].setdefault("storage", {}).update(validator_storage.entries)
+
+        # VaultProvider owner: validator0 by default (overridable via
+        # seed["vault_provider"]["owner"]). The owner can later register vaults
+        # and liquidity sources/targets on the precompile.
+        vault_owner = seed.get("vault_provider", {}).get("owner", validators[0]["address"])
+        vault_provider_storage = StorageBuilder()
+        seed_vault_provider(vault_provider_storage, vault_owner)
+        alloc[VAULT_PROVIDER_ADDRESS].setdefault("storage", {}).update(
+            vault_provider_storage.entries
+        )
+        print(f"  VaultProvider: owner={vault_owner}, slot 0 seeded")
 
         staking_storage = StorageBuilder()
         total_staked = seed_staking(

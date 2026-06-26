@@ -574,9 +574,15 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[w_idx],
+            PROMIS_LOAD_MINOR * 300 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[l_idx],
+            PROMIS_LOAD_MINOR * 200 / 1_000_000
+        );
         assert_eq!(supply, result.issued_intex_count);
     });
 }
@@ -597,8 +603,7 @@ fn clear_rate_escrow_scales_by_strike() {
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -635,12 +640,24 @@ fn clear_rate_escrow_scales_by_strike() {
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
-        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
-        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
-        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 200_000 / 1_000_000
+        );
+        assert_eq!(
+            result.paid_amounts[idx(bidder(1))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
-        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(2))],
+            PROMIS_LOAD_MINOR * 400_000 / 1_000_000
+        );
     });
 }
 

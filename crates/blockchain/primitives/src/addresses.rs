@@ -318,3 +318,10 @@ pub const DEBUG_SUBCALL_PRECOMPILE_ADDRESS: Address =
 /// Desis precompile address. Runs the Intex auction and clearing engine
 /// (bid ingestion, reveal, clearing, issuance handoff to IntexFactory).
 pub const DESIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001016");
+
+/// VaultProvider precompile address. Reserve liquidity router: registers
+/// ERC-4626 vaults per asset, tracks authorized liquidity sources/targets, and
+/// moves funds in/out of the configured vaults on their behalf. Owner is
+/// seeded at genesis. Referenced by gemfactory/intexfactory (`RESERVE_VAULT`)
+/// and by credisfactory/nodfactory (vault-provider call parameter).
+pub const VAULT_PROVIDER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");

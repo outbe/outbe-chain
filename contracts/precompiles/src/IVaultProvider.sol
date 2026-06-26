@@ -49,6 +49,9 @@ interface IVaultProvider {
         uint256 burnedShares
     );
 
+    /// @notice Returns the current owner (admin) of the vault provider.
+    function owner() external view returns (address);
+
     /// @notice Returns the number of assets.
     function assetsCount() external view returns (uint256);
 
@@ -93,4 +96,16 @@ interface IVaultProvider {
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
+
+    /// @notice VaultV2 gate hook: only the provider itself can receive shares.
+    function canReceiveShares(address account) external view returns (bool);
+
+    /// @notice VaultV2 gate hook: only the provider itself can send shares.
+    function canSendShares(address account) external view returns (bool);
+
+    /// @notice VaultV2 gate hook: only the provider itself can receive assets.
+    function canReceiveAssets(address account) external view returns (bool);
+
+    /// @notice VaultV2 gate hook: only the provider itself can send assets.
+    function canSendAssets(address account) external view returns (bool);
 }
