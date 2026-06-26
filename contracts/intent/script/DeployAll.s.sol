@@ -8,6 +8,7 @@ import {DeploySolverEscrow} from "./1_DeploySolverEscrow.s.sol";
 import {DeployAuction} from "./2_DeployAuction.s.sol";
 import {DeployLayerZeroRouter} from "./3_DeployLayerZeroRouter.s.sol";
 import {ConfigureAll} from "./4_ConfigureAll.s.sol";
+import {ICreateX} from "./utils/ICreateX.sol";
 
 /// @dev Full deployment + configuration in a single script.
 ///
@@ -51,6 +52,16 @@ contract DeployAll is
         console2.log("[1/5] Deploy CreateX...");
         address createXAddr = deployCreateX(salt);
         console2.log("  CreateX:", createXAddr);
+
+        // Everything below is deterministic from (CreateX, salt, deployer). If the router already exists, the whole
+        // stack is already deployed — skip it: re-deploying escrow/auction/allocator would waste gas and the router's
+        // CREATE3 would revert on collision anyway.
+        address routerAddr = ICreateX(createXAddr).computeCreate3Address(getRouterSaltHash(salt));
+        if (routerAddr.code.length != 0) {
+            console2.log("Already deployed - skipping. LayerZeroRouter:", routerAddr);
+            vm.stopBroadcast();
+            return;
+        }
 
         // 2. Deploy SolverEscrow
         console2.log("[2/5] Deploy SolverEscrow...");
