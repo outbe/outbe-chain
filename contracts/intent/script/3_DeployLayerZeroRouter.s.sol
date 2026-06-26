@@ -42,12 +42,11 @@ contract DeployLayerZeroRouter is Script {
         console2.log("LayerZeroRouter deployed at:", router);
     }
 
-    /// @dev Router CREATE3 salt. Includes the escrow + auction addresses so a (re)deploy with fresh deps lands at a
-    ///      new address and never collides with a previously deployed router. NOTE: this makes the router address
-    ///      depend on escrow/auction, so it is only equal across chains when those deps share the same addresses.
-    function getRouterSaltHash(string memory salt, address escrow, address auction) public view returns (bytes32) {
+    /// @dev Router CREATE3 salt. Depends only on (salt, deployer), so the router lands at the SAME address on every
+    ///      chain — which the cross-chain wiring (remote == local) relies on.
+    function getRouterSaltHash(string memory salt) public view returns (bytes32) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        return keccak256(abi.encodePacked("LayerZeroRouter", salt, vm.addr(deployerPrivateKey), escrow, auction));
+        return keccak256(abi.encodePacked("LayerZeroRouter", salt, vm.addr(deployerPrivateKey)));
     }
 
     function deployRouter(address createX, string memory salt, address compact, address escrow, address auction)
@@ -60,11 +59,11 @@ contract DeployLayerZeroRouter is Script {
         allocatorAddr = address(allocator);
         console2.log("  RouterAllocator:", allocatorAddr);
 
-        // Deploy router via CreateX (salt is bound to escrow + auction; see getRouterSaltHash)
+        // Deploy router via CreateX (deterministic address across chains; see getRouterSaltHash)
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         address routerOwner = vm.envAddress("ROUTER_OWNER");
 
-        bytes32 saltHash = getRouterSaltHash(salt, escrow, auction);
+        bytes32 saltHash = getRouterSaltHash(salt);
         bytes memory bytecode = abi.encodePacked(
             type(LayerZeroRouter).creationCode, abi.encode(lzEndpoint, routerOwner, compact, lockTag, escrow, auction)
         );
