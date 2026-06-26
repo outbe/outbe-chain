@@ -85,6 +85,14 @@ contract TargetMessenger is
         bool done;
     }
 
+    /// @notice Inbound message parked because its handler (not the codec) reverted, so it can be
+    ///         re-dispatched via `replayInbound` once the blocking condition clears.
+    struct DroppedInbound {
+        uint32 srcEid;
+        bytes message;
+        bool exists;
+    }
+
     /// @custom:storage-location erc7201:outbe.intex.TargetMessenger
     struct TargetMessengerStorage {
         /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
@@ -114,6 +122,8 @@ contract TargetMessenger is
         mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
         /// @dev Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
         uint256 nextPendingIssuanceMintIdx;
+        /// @dev Inbound messages parked for replay, keyed by guid; set when a handler (not the codec) reverts.
+        mapping(bytes32 guid => DroppedInbound) droppedInbound;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -347,11 +357,17 @@ contract TargetMessenger is
         // invariant for the next delivery on this `(srcEid, sender)` channel.
         _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
 
-        // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or any
-        // downstream transition must not escape `_lzReceive` and wedge the ORDERED lane.
+        // Drop-don't-block: the nonce is already advanced, so a revert must not escape `_lzReceive`.
+        // A malformed payload still drops; an authentic transition that reverted downstream parks
+        // under its guid for `replayInbound` instead of being lost.
         try this.dispatchInbound(_guid, _origin.srcEid, _message) {}
         catch (bytes memory reason) {
-            emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            if (_isWireFormatError(reason)) {
+                emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            } else {
+                _s().droppedInbound[_guid] = DroppedInbound({srcEid: _origin.srcEid, message: _message, exists: true});
+                emit InboundParkedForReplay(_guid, _origin.srcEid, reason);
+            }
         }
     }
 
@@ -385,6 +401,41 @@ contract TargetMessenger is
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
+    }
+
+    /// @notice Parked inbound message by guid (scalar fields; the raw message stays internal).
+    /// @param guid LayerZero message GUID.
+    /// @return srcEid Source endpoint id of the parked message.
+    /// @return exists True when a parked message is present.
+    function droppedInbound(bytes32 guid) external view returns (uint32 srcEid, bool exists) {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        return (d.srcEid, d.exists);
+    }
+
+    /// @notice Permissionless re-dispatch of an inbound message parked because its handler reverted.
+    /// @param guid LayerZero message GUID of the parked message.
+    function replayInbound(bytes32 guid) external nonReentrant {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        if (!d.exists) revert NoSuchDropped(guid);
+        // Re-run the same shim; a still-failing handler reverts the whole call so the entry stays parked.
+        this.dispatchInbound(guid, d.srcEid, d.message);
+        delete _s().droppedInbound[guid];
+        emit InboundReplayed(guid);
+    }
+
+    /// @dev True when `reason` is a BridgeMsgCodec wire-format/decode error (malformed payload) rather
+    ///      than a downstream-handler revert. Malformed payloads drop; everything else parks for replay.
+    function _isWireFormatError(bytes memory reason) private pure returns (bool) {
+        if (reason.length < 4) return false;
+        bytes4 sel = bytes4(reason);
+        return sel == BridgeMsgCodec.UnsupportedBodyVersion.selector
+            || sel == BridgeMsgCodec.InvalidPayloadLength.selector || sel == BridgeMsgCodec.UnknownMsgType.selector
+            || sel == BridgeMsgCodec.InvalidGreenDayFlag.selector
+            || sel == BridgeMsgCodec.IssuanceArrayLengthMismatch.selector
+            || sel == BridgeMsgCodec.IssuanceBatchTooLarge.selector
+            || sel == BridgeMsgCodec.RefundArrayLengthMismatch.selector
+            || sel == BridgeMsgCodec.RefundBatchTooLarge.selector || sel == BridgeMsgCodec.PayloadArrayTooLong.selector
+            || sel == BridgeMsgCodec.MalformedAddress.selector;
     }
 
     /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.

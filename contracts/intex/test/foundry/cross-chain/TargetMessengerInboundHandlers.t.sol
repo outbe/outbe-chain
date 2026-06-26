@@ -216,6 +216,49 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         bnbMessenger.flushPendingIssuanceMint(0);
     }
 
+    // --- #73: a downstream-handler revert parks for replay; replayInbound applies it once fixed ---
+    function test_inboundParkedThenReplayedAfterFix() public {
+        bytes32 peer = bytes32(uint256(uint160(address(outbeMessenger))));
+
+        // MARK_QUALIFIED before the series exists: markQualified reverts downstream (not a codec error).
+        vm.expectEmit(true, true, false, false, address(bnbMessenger));
+        emit ITargetMessenger.InboundParkedForReplay(GUID, OUTBE_EID, "");
+        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID));
+
+        (uint32 srcEid, bool exists) = bnbMessenger.droppedInbound(GUID);
+        assertEq(srcEid, OUTBE_EID, "parked srcEid");
+        assertTrue(exists, "transition parked for replay");
+        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "nonce advanced on park");
+
+        // Fix the blocking condition: create the series so markQualified now applies.
+        _seedSeriesOnIntex();
+
+        bnbMessenger.replayInbound(GUID); // permissionless
+
+        assertEq(
+            uint8(intex.readData(SERIES_ID).state),
+            uint8(IIntexNFT1155.IntexState.Qualified),
+            "transition applied on replay"
+        );
+        (, bool stillExists) = bnbMessenger.droppedInbound(GUID);
+        assertFalse(stillExists, "entry cleared on successful replay");
+        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "replay does not touch the nonce");
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchDropped.selector, GUID));
+        bnbMessenger.replayInbound(GUID);
+    }
+
+    // --- #73: a malformed payload still drops terminally and parks nothing ---
+    function test_malformedInboundStillDropped() public {
+        // Unknown msgType (0xFE) -> BridgeMsgCodec.UnknownMsgType, a wire-format error -> dropped, not parked.
+        vm.expectEmit(true, true, false, false, address(bnbMessenger));
+        emit ITargetMessenger.InboundMessageDropped(GUID, OUTBE_EID, "");
+        _deliver(hex"01FE");
+
+        (, bool exists) = bnbMessenger.droppedInbound(GUID);
+        assertFalse(exists, "malformed payload is not parked");
+    }
+
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---
     function test_handleRefundInstructions_finalizesEscrow() public {
         // Lock funds for the bidder so finalizeAuction's per-bidder branch can land.

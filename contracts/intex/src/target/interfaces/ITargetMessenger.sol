@@ -108,6 +108,17 @@ interface ITargetMessenger {
     /// @param reason Raw revert bytes from the dropped dispatch.
     event InboundMessageDropped(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
 
+    /// @notice Emitted when an authentic inbound transition reverts downstream and is parked under its
+    ///         guid for `replayInbound` instead of being dropped.
+    /// @param guid LayerZero message GUID.
+    /// @param srcEid LayerZero source endpoint id.
+    /// @param reason Raw revert bytes from the parked dispatch.
+    event InboundParkedForReplay(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
+
+    /// @notice Emitted when `replayInbound` successfully re-applies a previously parked inbound message.
+    /// @param guid LayerZero message GUID that was replayed.
+    event InboundReplayed(bytes32 indexed guid);
+
     // --- Types ---
     /// @notice Parameters for sending bids batch to Outbe
     struct BidsBatchParams {
@@ -142,6 +153,8 @@ interface ITargetMessenger {
     error NoSuchPendingHoldersRelay(uint256 idx);
     /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
     error NoSuchPendingIssuanceMint(uint256 idx);
+    /// @notice `replayInbound` called for a guid with no parked inbound message.
+    error NoSuchDropped(bytes32 guid);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
     error AlreadyFlushed(uint256 idx);
     /// @notice External entry-funded call supplied less native than the quoted LZ fee.

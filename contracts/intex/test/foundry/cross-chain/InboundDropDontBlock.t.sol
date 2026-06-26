@@ -98,18 +98,28 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
         assertEq(outbeMessenger.inboundNonce(BNB_EID, peer), 2, "second packet processed");
     }
 
-    function test_TM_AuthenticInapplicableTransitionDropped() public {
+    function test_TM_AuthenticInapplicableTransitionParkedForReplay() public {
         bytes32 peer = bytes32(uint256(uint160(address(outbeMessenger))));
 
-        // MARK_CALLED for a series the BNB intex has never seen: intex.markCalled reverts
-        // deterministically. The packet must be dropped and the lane advance, not wedge.
+        // MARK_CALLED for a series the BNB intex has never seen: intex.markCalled reverts downstream
+        // (not a codec error). The transition is parked under its guid for replay, and the lane advances.
         bytes memory packet = BridgeMsgCodec.encodeMarkCalled(99);
         vm.expectEmit(true, true, false, false, address(bnbMessenger));
-        emit ITargetMessenger.InboundMessageDropped(GUID, OUTBE_EID, "");
+        emit ITargetMessenger.InboundParkedForReplay(GUID, OUTBE_EID, "");
         _deliver(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger), 1, packet);
 
-        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "nonce advanced past the dropped transition");
+        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "nonce advanced past the parked transition");
         assertEq(bnbMessenger.nextNonce(OUTBE_EID, peer), 2, "next nonce ready");
+
+        (uint32 srcEid, bool exists) = bnbMessenger.droppedInbound(GUID);
+        assertEq(srcEid, OUTBE_EID, "parked srcEid recorded");
+        assertTrue(exists, "transition parked for replay");
+
+        // Still inapplicable (series 99 never created): replay re-reverts and the entry stays parked.
+        vm.expectRevert();
+        bnbMessenger.replayInbound(GUID);
+        (, bool stillExists) = bnbMessenger.droppedInbound(GUID);
+        assertTrue(stillExists, "entry remains parked after a failed replay");
     }
 
     function test_OM_DispatchInbound_RevertsNotSelf() public {
