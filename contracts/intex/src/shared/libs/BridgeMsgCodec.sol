@@ -59,11 +59,11 @@ library BridgeMsgCodec {
     //     4 static head words + 4 dynamic head offsets + 4 empty length words = 12×32 = 384
     //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
     //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
-    //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
-    //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
+    //   ISSUANCE_INSTRUCTIONS(struct with 11 static + 2 dynamic, dynamic struct):
+    //     outer offset(32) + 11 static + 2 inner offsets + 2 empty length words = 16×32 = 512
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 384;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 512;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -305,7 +305,6 @@ library BridgeMsgCodec {
         uint32 seriesId;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
-        uint64 costAmountMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline; 0 uses default.

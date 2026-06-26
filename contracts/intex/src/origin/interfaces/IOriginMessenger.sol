@@ -129,7 +129,6 @@ interface IOriginMessenger {
         uint32 seriesId;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
-        uint64 costAmountMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).

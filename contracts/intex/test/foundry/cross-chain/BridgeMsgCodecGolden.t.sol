@@ -213,7 +213,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.seriesId = 0x11223344;
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
-        p.costAmountMinor = 0x1122334455667788;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.intexCallPeriod = 0xCAFEBABE;
@@ -231,7 +230,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.seriesId, 0x11223344, "seriesId");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
-        assertEq(d.costAmountMinor, 0x1122334455667788, "costAmountMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");

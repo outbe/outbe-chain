@@ -95,14 +95,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let cost_amount_minor_u64 =
-        u64::try_from(derived_cost_amount(params.entry_price_minor, U256::from(params.promis_load_minor)))
-            .map_err(|_| PrecompileError::Revert("cost amount exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
-        costAmountMinor: cost_amount_minor_u64,
         entryPriceMinor: entry_price_minor_u64,
         floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: cfg.intex_call_period_secs,
