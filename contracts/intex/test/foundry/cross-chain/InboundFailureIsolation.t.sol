@@ -5,7 +5,8 @@ import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/
 import {Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IONFT1155AdapterBatch, MultiRecipientSendParam} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -176,6 +177,43 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         bytes32 guid = bytes32(uint256(0xAAEE));
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 0));
         onftBatchBnb.retryCrosschainMint(guid, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // reclaimToSource — stranded item routes back to its origin chain
+    // ---------------------------------------------------------------
+
+    function test_BatchReceive_ReclaimToSourceConsumesEntryAndSendsReverse() public {
+        address recipient = address(0xCAFE);
+        bytes32 guid = bytes32(uint256(0xAAFF));
+
+        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
+        (,,,, bool existsBefore) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        assertTrue(existsBefore, "bad item parked");
+
+        // Fee for the 1-item reverse reclaimToSource builds (back to the origin endpoint).
+        bytes32[] memory r = new bytes32[](1);
+        r[0] = bytes32(uint256(uint160(recipient)));
+        uint256[] memory t = new uint256[](1);
+        t[0] = TOKEN_BAD;
+        uint256[] memory a = new uint256[](1);
+        a[0] = 75;
+        MessagingFee memory fee = onftBatchBnb.quoteMultiSend(
+            MultiRecipientSendParam({dstEid: OUTBE_EID, recipients: r, tokenIds: t, amounts: a, extraOptions: ""}),
+            false
+        );
+
+        vm.deal(address(this), fee.nativeFee);
+        vm.expectEmit(true, true, true, true, address(onftBatchBnb));
+        emit IONFT1155AdapterBatch.CrosschainMintReclaimed(guid, 1, OUTBE_EID, recipient, TOKEN_BAD, 75);
+        onftBatchBnb.reclaimToSource{value: fee.nativeFee}(guid, 1, fee, address(this));
+
+        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        assertFalse(existsAfter, "entry consumed by reclaim");
+
+        // Consume once: a second reclaim reverts.
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 1));
+        onftBatchBnb.reclaimToSource(guid, 1, fee, address(this));
     }
 
     // ---------------------------------------------------------------

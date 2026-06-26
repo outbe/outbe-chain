@@ -91,6 +91,7 @@ contract ONFT1155AdapterBatch is
         address to;
         uint256 tokenId;
         uint256 amount;
+        uint32 srcEid;
         bytes reason;
         bool exists;
     }
@@ -524,8 +525,9 @@ contract ONFT1155AdapterBatch is
         // ok — crosschainMint landed
         }
         catch (bytes memory reason) {
-            _s().failedCrosschainMints[guid][idx] =
-                FailedCrosschainMint({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
+            _s().failedCrosschainMints[guid][idx] = FailedCrosschainMint({
+                to: to, tokenId: tokenId, amount: amount, srcEid: srcEid, reason: reason, exists: true
+            });
             emit CrosschainMintFailed(srcEid, guid, idx, to, tokenId, amount, reason);
         }
     }
@@ -555,5 +557,37 @@ contract ONFT1155AdapterBatch is
         delete $.failedCrosschainMints[guid][idx];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(guid, idx);
+    }
+
+    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints
+    ///         the holder on the origin chain via a reverse one-item transfer, the only exit that does
+    ///         not re-hit the destination lifecycle gate. Consumes the entry once (CEI delete first).
+    /// @param guid Inbound packet GUID where the item's crosschainMint is stranded.
+    /// @param idx Position of the stranded item in that batch.
+    /// @param fee LayerZero messaging fee for the reverse send (caller-funded).
+    /// @param refundAddress Address refunded any excess native fee.
+    function reclaimToSource(bytes32 guid, uint256 idx, MessagingFee calldata fee, address refundAddress)
+        external
+        payable
+        nonReentrant
+        returns (MessagingReceipt memory msgReceipt)
+    {
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(guid, idx);
+        if (f.srcEid == 0) revert NoSourceEid(guid, idx);
+        delete $.failedCrosschainMints[guid][idx];
+
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = bytes32(uint256(uint160(f.to)));
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = f.tokenId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = f.amount;
+        bytes memory message = ONFT1155BatchMsgCodec.encodeMulti(
+            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        );
+        emit CrosschainMintReclaimed(guid, idx, f.srcEid, f.to, f.tokenId, f.amount);
+        msgReceipt = _lzSend(f.srcEid, message, _receiveOption(1), fee, refundAddress);
     }
 }
