@@ -170,8 +170,11 @@ pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Resu
 /// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
 /// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
 /// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
-pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> U256 {
-    entry_price.saturating_mul(promis_load_minor) / U256::from(10u64).pow(U256::from(30u64))
+pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> Result<U256> {
+    entry_price
+        .checked_mul(promis_load_minor)
+        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
+        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -239,7 +242,7 @@ pub fn settle(
     }
 
     // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
-    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)
+    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)?
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
