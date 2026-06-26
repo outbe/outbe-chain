@@ -15,5 +15,7 @@ interface INodFactory {
 
     event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
-    function mineGratis(uint256 nodId, uint256 nonce, address asset, address vaultProvider) external returns (uint256);
+    /// @dev The reserve vault provider is the canonical `VAULT_PROVIDER_ADDRESS`
+    ///      precompile; it is no longer passed in by the caller.
+    function mineGratis(uint256 nodId, uint256 nonce, address asset) external returns (uint256);
 }

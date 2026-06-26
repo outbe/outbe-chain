@@ -17,11 +17,6 @@
         "name": "asset",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "vaultProvider",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [

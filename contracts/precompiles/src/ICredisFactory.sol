@@ -51,7 +51,9 @@ interface ICredisFactory {
     ///         delivers the stablecoin to `bundleAccount`.
     /// @return positionId Derived from `nullifierHash` and `bundleAccount`.
     /// @return amountStables Stablecoin amount disbursed (oracle-converted).
-    function requestCredis(address asset, address vaultProvider, address bundleAccount, RequestArgs calldata args)
+    /// @dev The reserve vault provider is the canonical `VAULT_PROVIDER_ADDRESS`
+    ///      precompile; it is no longer passed in by the caller.
+    function requestCredis(address asset, address bundleAccount, RequestArgs calldata args)
         external
         returns (uint256 positionId, uint256 amountStables);
 

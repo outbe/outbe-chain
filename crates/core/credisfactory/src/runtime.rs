@@ -26,7 +26,7 @@ use outbe_credis::{AnadosisResult, CredisContract, NUMBER_OF_ANADOSIS};
 use outbe_gratispool::api as pool;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::api::get_exchange_rate;
-use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
@@ -87,7 +87,6 @@ pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
     asset: Address,
-    vault_provider: Address,
     bundle_account: Address,
     args: RequestArgs,
     current_time: u64,
@@ -95,9 +94,6 @@ pub fn request_credis(
 ) -> Result<(U256, U256)> {
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
-    }
-    if vault_provider.is_zero() {
-        return Err(CredisFactoryError::InvalidVaultProvider.into());
     }
     if bundle_account.is_zero() {
         return Err(CredisFactoryError::InvalidBundleAccount.into());
@@ -136,7 +132,7 @@ pub fn request_credis(
     let position_id = credis.create_position(
         args.nullifier_hash,
         bundle_account,
-        vault_provider,
+        VAULT_PROVIDER_ADDRESS,
         asset,
         amount_stables,
         gratis_amount,
@@ -163,7 +159,7 @@ pub fn request_credis(
         receiver: bundle_account,
     }
     .abi_encode();
-    storage.call(vault_provider, U256::ZERO, calldata.into())?;
+    storage.call(VAULT_PROVIDER_ADDRESS, U256::ZERO, calldata.into())?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,

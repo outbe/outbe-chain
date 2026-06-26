@@ -136,7 +136,6 @@ fn full_request_pay_reclaim_unpledge_flow() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args,
                 CREATED_AT,
@@ -246,7 +245,6 @@ fn request_credis_rejects_overdue_anadosis() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args1,
                 CREATED_AT,
@@ -277,7 +275,6 @@ fn request_credis_rejects_overdue_anadosis() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args2,
                 CREATED_AT + SECONDS_PER_MONTH + 1,
@@ -310,7 +307,6 @@ fn request_credis_rejects_zero_asset() {
             storage.clone(),
             alice(),
             Address::ZERO,
-            vault(),
             alice(),
             args,
             CREATED_AT,
@@ -318,34 +314,6 @@ fn request_credis_rejects_zero_asset() {
         )
         .unwrap_err();
         assert!(err.to_string().contains("asset"));
-    });
-}
-
-#[test]
-fn request_credis_rejects_zero_vault_provider() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let args = RequestArgs {
-            merkle_root: U256::ZERO,
-            nullifier_hash: U256::ZERO,
-            denom_id: 1,
-            receiver_binding: U256::ZERO,
-            proof: vec![],
-            reclaim_commitment: U256::ZERO,
-        };
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            Address::ZERO,
-            alice(),
-            args,
-            CREATED_AT,
-            BLOCK_NUMBER,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("vault"));
     });
 }
 
@@ -366,7 +334,6 @@ fn request_credis_rejects_zero_bundle_account() {
             storage.clone(),
             alice(),
             asset(),
-            vault(),
             Address::ZERO,
             args,
             CREATED_AT,
@@ -409,7 +376,6 @@ fn pay_anadosis_rejects_non_owner_caller() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args,
                 CREATED_AT,
@@ -497,7 +463,6 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args,
                 CREATED_AT,
