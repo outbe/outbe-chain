@@ -33,7 +33,7 @@ contract SwitchGateway is Script {
         ERC7786Bridge(bridgeAddr).setGateway(adapter);
         vm.stopBroadcast();
 
-        console2.log("active gateway switched to:", adapter);
+        console2.log("active gateway switched to:", label, adapter);
     }
 
     function _compute(address createX, string memory salt, address deployer, string memory label)

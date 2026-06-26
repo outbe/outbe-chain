@@ -24,8 +24,6 @@ contract ConfigureBridge is Script {
         address createX = vm.envAddress("CREATEX_ADDRESS");
         address deployer = vm.addr(deployerPk);
 
-        uint256[] memory remoteChainIds = vm.envUint("REMOTE_CHAIN_IDS", ",");
-
         bool hasLz = vm.envOr("LZ_ENDPOINT", address(0)) != address(0);
         bool hasHl = vm.envOr("HYPERLANE_MAILBOX", address(0)) != address(0);
 
@@ -33,13 +31,23 @@ contract ConfigureBridge is Script {
         address lzAdapter = hasLz ? _compute(createX, salt, deployer, "LayerZeroGatewayAdapter") : address(0);
         address hlAdapter = hasHl ? _compute(createX, salt, deployer, "HyperlaneGatewayAdapter") : address(0);
 
-        uint256[] memory remoteEids;
-        if (hasLz) {
-            remoteEids = vm.envUint("REMOTE_EIDS", ",");
-            require(remoteEids.length == remoteChainIds.length, "REMOTE_EIDS/REMOTE_CHAIN_IDS length mismatch");
-        }
-
         vm.startBroadcast(deployerPk);
+        configureBridge(bridgeAddr, lzAdapter, hlAdapter);
+        vm.stopBroadcast();
+
+        console2.log("=== Configure bridge complete ===");
+    }
+
+    /// @dev Wires the local hub to its counterparts on each `REMOTE_CHAIN_IDS`. Requires an active broadcast whose
+    ///      sender owns the bridge/adapters. An adapter is wired only when its address is non-zero. Remote
+    ///      bridge/adapter addresses equal the local ones (shared CREATE3 address across chains).
+    function configureBridge(address bridgeAddr, address lzAdapter, address hlAdapter) public {
+        uint256[] memory remoteChainIds = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
+        bool hasLz = lzAdapter != address(0);
+        bool hasHl = hlAdapter != address(0);
+
+        uint256[] memory remoteEids = hasLz ? vm.envOr("REMOTE_EIDS", ",", new uint256[](0)) : new uint256[](0);
+        if (hasLz) require(remoteEids.length == remoteChainIds.length, "REMOTE_EIDS/REMOTE_CHAIN_IDS length mismatch");
 
         for (uint256 i = 0; i < remoteChainIds.length; i++) {
             uint256 chainId = remoteChainIds[i];
@@ -58,8 +66,6 @@ contract ConfigureBridge is Script {
 
             console2.log("wired remote chainId:", chainId);
         }
-
-        vm.stopBroadcast();
     }
 
     function _compute(address createX, string memory salt, address deployer, string memory label)

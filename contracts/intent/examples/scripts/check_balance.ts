@@ -10,7 +10,7 @@ import Table from 'cli-table3';
  * Usage: tsx scripts/check_balance.ts <address> [originChain] [destChain]
  */
 async function main() {
-  console.log('LayerZeroRouter - Check Balance\n');
+  console.log('Router - Check Balance\n');
 
   const [address, originChainName = 'bsc', destChainName = 'outbe_dev'] = process.argv.slice(2);
   if (!address || !ethers.isAddress(address)) {

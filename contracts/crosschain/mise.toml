@@ -73,3 +73,25 @@ run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/SwitchGateway.s.sol:SwitchGateway --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''
+
+# LayerZero-only maintenance: skip a stuck inbound nonce on the adapter so it stops blocking later messages.
+# ADAPTER and its endpoint are read from the bridge (getGateway -> adapter -> endpoint); only SRC_EID is required.
+# Sender defaults to the same-address peer adapter; NONCE defaults to inboundNonce+1.
+# DESTRUCTIVE: skip drops the targeted nonce — if the pathway is not actually stuck it skips the next real message.
+# Run by the adapter's LZ delegate (= BRIDGE_OWNER).
+[tasks.clear-lz-nonce]
+description = "Skip a stuck inbound LZ nonce (BRIDGE_ADDRESS + SRC_EID; opt SRC_SENDER, NONCE). DESTRUCTIVE."
+run = '''
+set -euo pipefail
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+: "${NETWORK:?set NETWORK}"; : "${DEPLOYER_PK:?set DEPLOYER_PK}"; : "${BRIDGE_ADDRESS:?set BRIDGE_ADDRESS}"; : "${SRC_EID:?set SRC_EID}"
+ADAPTER=$(cast call "$BRIDGE_ADDRESS" "getGateway()(address)" --rpc-url "$NETWORK")
+ENDPOINT=$(cast call "$ADAPTER" "endpoint()(address)" --rpc-url "$NETWORK")
+SENDER="${SRC_SENDER:-0x000000000000000000000000${ADAPTER#0x}}"
+if [ -z "${NONCE:-}" ]; then
+  inbound=$(cast call "$ENDPOINT" "inboundNonce(address,uint32,bytes32)(uint64)" "$ADAPTER" "$SRC_EID" "$SENDER" --rpc-url "$NETWORK")
+  NONCE=$((inbound + 1))
+fi
+echo "skip -> adapter=$ADAPTER endpoint=$ENDPOINT srcEid=$SRC_EID sender=$SENDER nonce=$NONCE"
+cast send "$ENDPOINT" "skip(address,uint32,bytes32,uint64)" "$ADAPTER" "$SRC_EID" "$SENDER" "$NONCE" --private-key "$DEPLOYER_PK" --rpc-url "$NETWORK" --legacy
+'''

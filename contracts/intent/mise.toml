@@ -29,7 +29,7 @@ run = '''
 echo 'Exporting ABI for intent contracts'
 mkdir -p ./abi-export
 rm -rf ./abi-export/*.json
-for contract in LayerZeroRouter ERC20 SolverEscrow Auction; do
+for contract in Router ERC20 SolverEscrow Auction; do
   cat ./out/${contract}.sol/${contract}.json | jq -r '.abi' > ./abi-export/${contract}.json
 done
 '''
