@@ -167,11 +167,6 @@ contract EscrowAdapterTest is Test {
         newEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
     }
 
-    // --- PaymentTokenAlias Tests ---
-    function test_PaymentTokenAlias() public view {
-        assertEq(escrow.PAYMENT_TOKEN_ALIAS(), 43);
-    }
-
     // --- LockFunds Tests ---
     function test_LockFunds() public {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);

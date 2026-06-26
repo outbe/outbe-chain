@@ -39,9 +39,6 @@ contract EscrowAdapter is
     /// @notice Role identifier for auction contract integration.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @inheritdoc IEscrowAdapter
-    uint16 public constant override PAYMENT_TOKEN_ALIAS = 43;
-
     /// @notice Pre-finalize safety window before a bidder can claim their refund.
     ///         72h = 259_200 seconds. Applies when `finalizeAuction` was never called.
     uint32 public constant REFUND_DELAY = 72 hours;
