@@ -103,9 +103,9 @@ interface IOriginMessenger {
         uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
-        /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of strike).
+        /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;
-        /// @notice Per-unit entry price (reference ccy); strike derives from it.
+        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
         uint64 entryPrice;
         /// @notice Floor price (payment-token minor units).
         uint64 floorPriceMinor;

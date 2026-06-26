@@ -60,12 +60,12 @@ pub struct AuctionConfig {
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
     pub call_trigger: IntexCallTrigger,
-    /// Minimum acceptable bid rate (1e6 fixed-point, % of strike). 0 → no floor.
+    /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 → no floor.
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
-    /// Floor and call derive from it; the strike is `promis_load` (not entry-derived).
+    /// Floor and call derive from it; the escrow basis is `promis_load` (not entry-derived).
     pub entry_price_minor: U256,
 }
 
@@ -88,9 +88,9 @@ impl AuctionConfig {
         }
     }
 
-    /// Per-Intex strike = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
+    /// Per-Intex escrow basis = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
     /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
-    pub fn cost_amount_minor(&self) -> u128 {
+    pub fn escrow_basis_minor(&self) -> u128 {
         self.promis_load_minor
     }
 }
@@ -99,7 +99,7 @@ impl AuctionConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidData {
     pub bidder_address: Address,
-    /// Bid rate (1e6 fixed-point, % of strike).
+    /// Bid rate (1e6 fixed-point, % of the escrow basis).
     pub intex_bid_rate: u32,
     /// Bid timestamp (ordering only).
     pub timestamp: u32,
@@ -132,7 +132,7 @@ pub struct DesisContract {
     pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
     pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<u32, u32>,
-    // order = 2 retired: the strike is derived from entry_price, no longer stored.
+    // order = 2 retired: the escrow basis is promis_load, no longer stored.
     #[attribute(order = 3)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// Entry price (1e18) captured at auction start; carried to IntexFactory.

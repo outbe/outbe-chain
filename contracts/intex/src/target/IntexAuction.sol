@@ -350,11 +350,10 @@ contract IntexAuction is
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
         if (bidRate > BridgeMsgCodec.RATE_SCALE) revert BidRateAboveMax(bidRate);
 
-        // Escrow in wCOEN: lock = qty * strike * rate / RATE_SCALE, strike = promis_load per Intex
-        // (constant COEN; the COEN VWAP cancels). Matches the Outbe clearing side bit-for-bit. 256-bit
-        // space so an over-range product reverts typed rather than via Panic(0x11).
-        uint256 strike = a.params.promisLoadMinor;
-        uint256 lockAmount = uint256(quantity) * strike * bidRate / BridgeMsgCodec.RATE_SCALE;
+        // Escrow lock in wCOEN = qty * escrowBasis * rate / RATE_SCALE; escrowBasis = promis_load
+        // per Intex. 256-bit math so an over-range product reverts typed, not via Panic(0x11).
+        uint256 escrowBasis = a.params.promisLoadMinor;
+        uint256 lockAmount = uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.RATE_SCALE;
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.
@@ -388,7 +387,7 @@ contract IntexAuction is
     ///      `keccak256(signature)` does not equal the stored commit hash.
     /// @param seriesId Auction series id (yyyymmdd as uint32).
     /// @param quantity Requested Intex quantity.
-    /// @param bidRate Bid rate (`1e6` fixed-point, % of strike).
+    /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param signature 65-byte ECDSA signature over the EIP-712 typed data.
     /// @param committedHash The `keccak256(signature)` previously stored by `commitBid`.
     function _verifyRevealSignature(

@@ -38,7 +38,7 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
     /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
-    ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * strike * rate / RATE_SCALE`.
+    ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * escrowBasis * rate / RATE_SCALE`.
     uint32 internal constant RATE_SCALE = 1_000_000;
 
     // --- Minimum encoded lengths ---
@@ -161,7 +161,7 @@ library BridgeMsgCodec {
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @param _bidderAddresses The bidder addresses (parallel with the other three arrays).
     /// @param _intexQuantities The intex quantities per bidder.
-    /// @param _intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of strike).
+    /// @param _intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
     /// @param _timestamps The bid timestamps per bidder.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
@@ -214,7 +214,7 @@ library BridgeMsgCodec {
     /// @param _referenceCurrency The reference currency (ISO numeric).
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
-    /// @param _entryPrice The per-unit entry price (reference ccy); strike derives from it.
+    /// @param _entryPrice The per-unit entry price (reference ccy); feeds floor/call.
     /// @param _floorPriceMinor The floor price (minor units).
     /// @param _callPriceMinor The call price (minor units).
     /// @param _intexCallPeriod The Called→deadline window in seconds (0 = default).
@@ -458,7 +458,7 @@ library BridgeMsgCodec {
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @return bidderAddresses The bidder addresses (parallel with the other three arrays).
     /// @return intexQuantities The intex quantities per bidder.
-    /// @return intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of strike).
+    /// @return intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
     /// @return timestamps The bid timestamps per bidder.
     function decodeBidsBatch(bytes calldata _msg)
         internal
@@ -511,7 +511,7 @@ library BridgeMsgCodec {
     /// @return referenceCurrency The reference currency (ISO numeric).
     /// @return promisLoadMinor The Promis load (minor units) for the series.
     /// @return minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
-    /// @return entryPrice The per-unit entry price (reference ccy); strike derives from it.
+    /// @return entryPrice The per-unit entry price (reference ccy); feeds floor/call.
     /// @return floorPriceMinor The floor price (minor units).
     /// @return callPriceMinor The call price (minor units).
     /// @return intexCallPeriod The Called→deadline window in seconds (0 = default).
