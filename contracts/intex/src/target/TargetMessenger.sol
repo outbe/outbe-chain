@@ -75,6 +75,16 @@ contract TargetMessenger is
         bool done;
     }
 
+    /// @notice Issuance mint parked because one recipient's `mint` reverted (e.g. a reverting ERC-1155
+    ///         receiver hook); retried via `flushPendingIssuanceMint`.
+    struct PendingIssuanceMint {
+        uint32 seriesId;
+        address recipient;
+        uint256 quantity;
+        bool exists;
+        bool done;
+    }
+
     /// @custom:storage-location erc7201:outbe.intex.TargetMessenger
     struct TargetMessengerStorage {
         /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
@@ -100,6 +110,10 @@ contract TargetMessenger is
         mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
         /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
         uint256 nextPendingHoldersRelayIdx;
+        /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
+        /// @dev Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
+        uint256 nextPendingIssuanceMintIdx;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -200,6 +214,28 @@ contract TargetMessenger is
     /// @return The next enqueue index.
     function nextPendingHoldersRelayIdx() external view returns (uint256) {
         return _s().nextPendingHoldersRelayIdx;
+    }
+
+    /// @notice Parked issuance mint by enqueue index.
+    /// @param idx Enqueue index.
+    /// @return seriesId Series whose recipient mint was deferred.
+    /// @return recipient Recipient whose mint was deferred.
+    /// @return quantity Quantity that failed to mint.
+    /// @return exists True when the index holds a parked mint.
+    /// @return done True when the mint was already flushed.
+    function pendingIssuanceMints(uint256 idx)
+        external
+        view
+        returns (uint32 seriesId, address recipient, uint256 quantity, bool exists, bool done)
+    {
+        PendingIssuanceMint storage p = _s().pendingIssuanceMints[idx];
+        return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
+    }
+
+    /// @notice Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
+    /// @return The next enqueue index.
+    function nextPendingIssuanceMintIdx() external view returns (uint256) {
+        return _s().nextPendingIssuanceMintIdx;
     }
 
     // --- Admin ---
@@ -523,26 +559,63 @@ contract TargetMessenger is
         TargetMessengerStorage storage $ = _s();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        $.intex.createSeries(
-            IIntexNFT1155.CreateSeriesParams({
-                seriesId: payload.seriesId,
-                issuanceCurrency: payload.issuanceCurrency,
-                referenceCurrency: payload.referenceCurrency,
-                issuedIntexCount: payload.issuedIntexCount,
-                promisLoadMinor: payload.promisLoadMinor,
-                entryPriceMinor: payload.entryPriceMinor,
-                floorPriceMinor: payload.floorPriceMinor,
-                callPriceMinor: payload.callPriceMinor,
-                callTrigger: IIntexNFT1155.IntexCallTrigger({
-                    windowDays: payload.callWindowDays,
-                    thresholdDays: payload.callThresholdDays,
-                    intexCallPeriod: payload.intexCallPeriod
+        $.intex
+            .createSeries(
+                IIntexNFT1155.CreateSeriesParams({
+                    seriesId: payload.seriesId,
+                    issuanceCurrency: payload.issuanceCurrency,
+                    referenceCurrency: payload.referenceCurrency,
+                    issuedIntexCount: payload.issuedIntexCount,
+                    promisLoadMinor: payload.promisLoadMinor,
+                    entryPriceMinor: payload.entryPriceMinor,
+                    floorPriceMinor: payload.floorPriceMinor,
+                    callPriceMinor: payload.callPriceMinor,
+                    callTrigger: IIntexNFT1155.IntexCallTrigger({
+                        windowDays: payload.callWindowDays,
+                        thresholdDays: payload.callThresholdDays,
+                        intexCallPeriod: payload.intexCallPeriod
+                    })
                 })
-            })
-        );
-        $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
+            );
+        // Per-recipient self-call: a reverting receiver hook parks just that mint, not the whole batch.
+        uint256 recipientsLen = payload.recipients.length;
+        for (uint256 i = 0; i < recipientsLen; i++) {
+            uint256 quantity = payload.quantities[i];
+            if (quantity == 0) continue;
+            address recipient = payload.recipients[i];
+            try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {
+            // ok — recipient minted
+            }
+            catch (bytes memory reason) {
+                uint256 idx = $.nextPendingIssuanceMintIdx++;
+                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                });
+                emit IssuanceMintDeferred(idx, payload.seriesId, reason);
+            }
+        }
 
         emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
+    }
+
+    /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
+    /// @param seriesId Series identifier the recipient is minted under.
+    /// @param to Recipient address.
+    /// @param quantity Amount of Intex to mint.
+    function mintIssuanceOne(uint32 seriesId, address to, uint256 quantity) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        _s().intex.mint(to, quantity, seriesId);
+    }
+
+    /// @notice Permissionless retry of a previously deferred issuance mint.
+    /// @param idx Index of the parked mint to flush.
+    function flushPendingIssuanceMint(uint256 idx) external nonReentrant {
+        PendingIssuanceMint storage p = _s().pendingIssuanceMints[idx];
+        if (!p.exists) revert NoSuchPendingIssuanceMint(idx);
+        if (p.done) revert AlreadyFlushed(idx);
+        p.done = true;
+        _s().intex.mint(p.recipient, p.quantity, p.seriesId);
+        emit IssuanceMintFlushed(idx, p.seriesId);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.

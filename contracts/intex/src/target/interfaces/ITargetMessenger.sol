@@ -89,6 +89,18 @@ interface ITargetMessenger {
     /// @param tokenId Token id whose holders were bridged.
     event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
 
+    /// @notice Emitted when a single issuance mint reverts (e.g. a reverting recipient ERC-1155 hook) and
+    ///         the recipient is parked for later retry via `flushPendingIssuanceMint`.
+    /// @param idx Index of the parked issuance-mint slot.
+    /// @param seriesId Series identifier whose recipient mint was deferred.
+    /// @param reason Raw revert bytes from the failed `mint`.
+    event IssuanceMintDeferred(uint256 indexed idx, uint32 indexed seriesId, bytes reason);
+
+    /// @notice Emitted when `flushPendingIssuanceMint` successfully mints a previously deferred recipient.
+    /// @param idx Index of the parked issuance-mint slot that was flushed.
+    /// @param seriesId Series identifier whose recipient was minted.
+    event IssuanceMintFlushed(uint256 indexed idx, uint32 indexed seriesId);
+
     /// @notice Emitted when an inbound message reverts during decode or dispatch and is dropped so the
     ///         ORDERED lane keeps advancing. The nonce has already moved; the message is not retried.
     /// @param guid LayerZero message GUID.
@@ -128,6 +140,8 @@ interface ITargetMessenger {
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
     error NoSuchPendingHoldersRelay(uint256 idx);
+    /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
+    error NoSuchPendingIssuanceMint(uint256 idx);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
     error AlreadyFlushed(uint256 idx);
     /// @notice External entry-funded call supplied less native than the quoted LZ fee.
