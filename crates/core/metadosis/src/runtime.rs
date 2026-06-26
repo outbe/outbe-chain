@@ -242,7 +242,11 @@ pub fn create_worldwide_day_for_date(
 
 /// Auction timestamp (scheduled process time) for a worldwide day.
 fn scheduled_auction_ts(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<u64> {
-    metadosis.worldwide_days.entry(wwd).scheduled_process_time().read()
+    metadosis
+        .worldwide_days
+        .entry(wwd)
+        .scheduled_process_time()
+        .read()
 }
 
 fn update_wwd_status_machine(

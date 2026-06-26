@@ -566,7 +566,11 @@ fn calculate_clearing(
         all_bidders.push(bid.bidder_address);
 
         // locked = quantity * escrow_basis * rate / RATE_SCALE (escrowed at bid time).
-        let locked = rate_lock(u64::from(bid.intex_quantity), escrow_basis, bid.intex_bid_rate);
+        let locked = rate_lock(
+            u64::from(bid.intex_quantity),
+            escrow_basis,
+            bid.intex_bid_rate,
+        );
 
         let won = won_by_index[i];
         if won > 0 {
