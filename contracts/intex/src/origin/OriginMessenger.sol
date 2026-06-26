@@ -54,6 +54,14 @@ contract OriginMessenger is
     ///         only accepted inbound source.
     uint32 public immutable BNB_EID;
 
+    /// @notice Inbound message parked because its handler (not the codec) reverted, so it can be
+    ///         re-dispatched via `replayInbound` once the blocking condition clears.
+    struct DroppedInbound {
+        uint32 srcEid;
+        bytes message;
+        bool exists;
+    }
+
     /// @custom:storage-location erc7201:outbe.intex.OriginMessenger
     struct OriginMessengerStorage {
         /// @dev Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
@@ -63,6 +71,8 @@ contract OriginMessenger is
         /// @dev Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
         ///      Backs the `nextNonce` override that switches this OApp into ORDERED-delivery mode.
         mapping(uint32 srcEid => mapping(bytes32 sender => uint64 nonce)) inboundNonce;
+        /// @dev Inbound messages parked for replay, keyed by guid; set when a handler (not the codec) reverts.
+        mapping(bytes32 guid => DroppedInbound) droppedInbound;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -473,11 +483,17 @@ contract OriginMessenger is
         // invariant for the next delivery on this `(srcEid, sender)` channel.
         _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
 
-        // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or the
-        // downstream Desis call must not escape `_lzReceive` and wedge the ORDERED lane.
+        // Drop-don't-block: the nonce is already advanced, so a revert must not escape `_lzReceive`.
+        // A malformed/spoofed payload still drops; an authentic transition whose downstream Desis call
+        // reverted parks under its guid for `replayInbound` instead of being lost.
         try this.dispatchInbound(_guid, _origin.srcEid, _message) {}
         catch (bytes memory reason) {
-            emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            if (_isWireFormatError(reason)) {
+                emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            } else {
+                _s().droppedInbound[_guid] = DroppedInbound({srcEid: _origin.srcEid, message: _message, exists: true});
+                emit InboundParkedForReplay(_guid, _origin.srcEid, reason);
+            }
         }
     }
 
@@ -500,6 +516,39 @@ contract OriginMessenger is
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
+    }
+
+    /// @notice Parked inbound message by guid (scalar fields; the raw message stays internal).
+    /// @param guid LayerZero message GUID.
+    /// @return srcEid Source endpoint id of the parked message.
+    /// @return exists True when a parked message is present.
+    function droppedInbound(bytes32 guid) external view returns (uint32 srcEid, bool exists) {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        return (d.srcEid, d.exists);
+    }
+
+    /// @notice Permissionless re-dispatch of an inbound message parked because its handler reverted.
+    /// @param guid LayerZero message GUID of the parked message.
+    function replayInbound(bytes32 guid) external nonReentrant {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        if (!d.exists) revert NoSuchDropped(guid);
+        // Re-run the same shim; a still-failing handler reverts the whole call so the entry stays parked.
+        this.dispatchInbound(guid, d.srcEid, d.message);
+        delete _s().droppedInbound[guid];
+        emit InboundReplayed(guid);
+    }
+
+    /// @dev True when `reason` is a malformed/spoofed-payload revert (codec wire-format error or the
+    ///      body-srcEid authenticity check) rather than a downstream-handler revert. Malformed payloads
+    ///      drop terminally; everything else parks for replay.
+    function _isWireFormatError(bytes memory reason) private pure returns (bool) {
+        if (reason.length < 4) return false;
+        bytes4 sel = bytes4(reason);
+        return sel == BridgeMsgCodec.UnsupportedBodyVersion.selector
+            || sel == BridgeMsgCodec.InvalidPayloadLength.selector || sel == BridgeMsgCodec.UnknownMsgType.selector
+            || sel == BridgeMsgCodec.BidsArrayLengthMismatch.selector
+            || sel == BridgeMsgCodec.BidsBatchTooLarge.selector || sel == BridgeMsgCodec.MalformedAddress.selector
+            || sel == SrcEidBodyMismatch.selector;
     }
 
     /// @notice Decode a BIDS_BATCH payload, forward it to the Desis recipient, and auto-fire clearing

@@ -25,6 +25,17 @@ interface IOriginMessenger {
     /// @param reason Raw revert bytes from the dropped dispatch.
     event InboundMessageDropped(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
 
+    /// @notice Emitted when an authentic inbound transition reverts downstream and is parked under its
+    ///         guid for `replayInbound` instead of being dropped.
+    /// @param guid LayerZero message GUID.
+    /// @param srcEid LayerZero source endpoint id.
+    /// @param reason Raw revert bytes from the parked dispatch.
+    event InboundParkedForReplay(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
+
+    /// @notice Emitted when `replayInbound` successfully re-applies a previously parked inbound message.
+    /// @param guid LayerZero message GUID that was replayed.
+    event InboundReplayed(bytes32 indexed guid);
+
     /// @notice Emitted when auction stage message is sent to BNB.
     /// @param guid LayerZero message GUID
     /// @param seriesId Series identifier
@@ -174,6 +185,8 @@ interface IOriginMessenger {
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice A self-only function was called by an account other than the contract itself.
     error NotSelf();
+    /// @notice `replayInbound` called for a guid with no parked inbound message.
+    error NoSuchDropped(bytes32 guid);
 
     // --- Admin ---
     /// @notice Wire contract dependencies and grant the demand/supply roles.

@@ -14,6 +14,47 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
+/// @notice Desis stand-in whose `processBidsBatch` reverts while `reject` is set — used to drive the
+///         OriginMessenger inbound replay path (a downstream-handler revert parks for replay).
+contract RevertingDesis {
+    error DesisRejected();
+
+    bool public reject = true;
+
+    function setReject(bool r) external {
+        reject = r;
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
+    }
+
+    function processBidsBatch(
+        uint32,
+        uint32,
+        bool,
+        uint32,
+        address[] calldata,
+        uint16[] calldata,
+        uint32[] calldata,
+        uint32[] calldata
+    ) external view {
+        if (reject) revert DesisRejected();
+    }
+
+    function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
+        return IDesis.AuctionStage.None;
+    }
+
+    function clearAuction(uint32) external payable {}
+
+    function getBidsCount(uint32) external pure returns (uint256) {
+        return 0;
+    }
+}
 
 /// @title InboundDropDontBlockTest
 /// @notice The messengers run ORDERED LZ lanes; a deterministic revert in decode or a downstream
@@ -120,6 +161,44 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
         bnbMessenger.replayInbound(GUID);
         (, bool stillExists) = bnbMessenger.droppedInbound(GUID);
         assertTrue(stillExists, "entry remains parked after a failed replay");
+    }
+
+    function test_OM_AuthenticTransitionParkedThenReplayed() public {
+        bytes32 peer = bytes32(uint256(uint160(address(bnbMessenger))));
+
+        // Re-wire OM to a desis whose processBidsBatch reverts: an authentic BIDS_BATCH now reverts
+        // downstream (not a codec error), so it parks for replay instead of dropping.
+        RevertingDesis badDesis = new RevertingDesis();
+        outbeMessenger.wire(address(badDesis), intexFactory);
+
+        bytes memory bids = BridgeMsgCodec.encodeBidsBatch(
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+        );
+
+        vm.expectEmit(true, true, false, false, address(outbeMessenger));
+        emit IOriginMessenger.InboundParkedForReplay(GUID, BNB_EID, "");
+        _deliver(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger), 1, bids);
+
+        (uint32 srcEid, bool exists) = outbeMessenger.droppedInbound(GUID);
+        assertEq(srcEid, BNB_EID, "parked srcEid recorded");
+        assertTrue(exists, "transition parked for replay");
+        assertEq(outbeMessenger.inboundNonce(BNB_EID, peer), 1, "nonce advanced on park");
+
+        // Still rejecting: replay re-reverts and the entry stays parked.
+        vm.expectRevert();
+        outbeMessenger.replayInbound(GUID);
+        (, bool stillExists) = outbeMessenger.droppedInbound(GUID);
+        assertTrue(stillExists, "entry remains parked after a failed replay");
+
+        // Fix the downstream condition: replay applies and clears the entry, nonce untouched.
+        badDesis.setReject(false);
+        outbeMessenger.replayInbound(GUID);
+        (, bool clearedExists) = outbeMessenger.droppedInbound(GUID);
+        assertFalse(clearedExists, "entry cleared on successful replay");
+        assertEq(outbeMessenger.inboundNonce(BNB_EID, peer), 1, "replay does not touch the nonce");
+
+        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.NoSuchDropped.selector, GUID));
+        outbeMessenger.replayInbound(GUID);
     }
 
     function test_OM_DispatchInbound_RevertsNotSelf() public {
