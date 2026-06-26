@@ -51,6 +51,17 @@ contract DeployLayerZeroRouter is Script {
         public
         returns (address router, address allocatorAddr)
     {
+        bytes32 saltHash = getRouterSaltHash(salt);
+
+        // Idempotent: the router's CREATE3 address is deterministic. If it already exists, reuse it and skip the
+        // allocator deploy too — the live router is bound to its original allocator's lockTag (immutable), so a fresh
+        // allocator here would be orphaned. Returns allocator=0 to signal "already wired".
+        address predicted = ICreateX(createX).computeCreate3Address(saltHash);
+        if (predicted.code.length != 0) {
+            console2.log("  LayerZeroRouter already deployed, reusing:", predicted);
+            return (predicted, address(0));
+        }
+
         // Deploy allocator and build lockTag
         RouterAllocator allocator = new RouterAllocator(compact);
         bytes12 lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays);
@@ -61,7 +72,6 @@ contract DeployLayerZeroRouter is Script {
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         address routerOwner = vm.envAddress("ROUTER_OWNER");
 
-        bytes32 saltHash = getRouterSaltHash(salt);
         bytes memory bytecode = abi.encodePacked(
             type(LayerZeroRouter).creationCode, abi.encode(lzEndpoint, routerOwner, compact, lockTag, escrow, auction)
         );
