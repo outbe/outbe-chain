@@ -59,8 +59,7 @@ contract LockAmountParityTest is Test {
     function test_Parity_AtUint128Boundary() public view {
         // strike = uint128 max, qty = 1, rate = RATE_SCALE → product = strike, the boundary value.
         assertEq(
-            this.bnbLockAmount(1, type(uint128).max, RATE_SCALE),
-            this.desisLockAmount(1, type(uint128).max, RATE_SCALE)
+            this.bnbLockAmount(1, type(uint128).max, RATE_SCALE), this.desisLockAmount(1, type(uint128).max, RATE_SCALE)
         );
         assertEq(this.bnbLockAmount(1, type(uint128).max, RATE_SCALE), type(uint128).max);
     }

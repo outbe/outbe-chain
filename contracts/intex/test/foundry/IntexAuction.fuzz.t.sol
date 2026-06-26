@@ -100,9 +100,7 @@ contract IntexAuctionFuzzTest is Test {
             vm.prank(bridger);
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
         } else if (issued > 0 && clearingRate < MIN_RATE) {
-            vm.expectRevert(
-                abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE)
-            );
+            vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE));
             vm.prank(bridger);
             auction.executeAuctionClearing(seriesId, issued, clearingRate, wonBidsCount);
         } else {

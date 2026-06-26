@@ -404,7 +404,6 @@ contract IntexAuction is
         if (signer != msg.sender || keccak256(signature) != committedHash) revert RevealHashMismatch();
     }
 
-
     // --- Views ---
     /// @inheritdoc IIntexAuction
     function getAuctionInfo(uint32 seriesId)

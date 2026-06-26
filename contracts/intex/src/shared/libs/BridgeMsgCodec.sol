@@ -329,7 +329,11 @@ library BridgeMsgCodec {
     function decodeAuctionParams(bytes calldata _msg)
         external
         pure
-        returns (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params)
+        returns (
+            uint32 seriesId,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params
+        )
     {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
