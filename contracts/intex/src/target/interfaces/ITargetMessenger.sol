@@ -76,19 +76,6 @@ interface ITargetMessenger {
     /// @param seriesId Series identifier whose bids were forwarded.
     event BidsRelayFlushed(uint256 indexed idx, uint32 indexed seriesId);
 
-    /// @notice Emitted when the outbound holders bridge from `_handleMarkCalled` reverts and the
-    ///         holders+amounts snapshot is parked for later retry via `flushPendingHoldersRelay`.
-    /// @param idx Index of the parked relay slot.
-    /// @param tokenId Token id whose holders could not be bridged.
-    /// @param holdersCount Number of holders in the deferred snapshot.
-    /// @param reason Raw revert bytes from the failed `systemMultiSend`.
-    event HoldersRelayDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
-
-    /// @notice Emitted when `flushPendingHoldersRelay` successfully bridges a previously deferred snapshot.
-    /// @param idx Index of the parked relay slot that was flushed.
-    /// @param tokenId Token id whose holders were bridged.
-    event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
-
     /// @notice Emitted when a single issuance mint reverts (e.g. a reverting recipient ERC-1155 hook) and
     ///         the recipient is parked for later retry via `flushPendingIssuanceMint`.
     /// @param idx Index of the parked issuance-mint slot.
@@ -149,8 +136,6 @@ interface ITargetMessenger {
     error NotSelf();
     /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
     error NoSuchPendingBidsRelay(uint256 idx);
-    /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
-    error NoSuchPendingHoldersRelay(uint256 idx);
     /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
     error NoSuchPendingIssuanceMint(uint256 idx);
     /// @notice `replayInbound` called for a guid with no parked inbound message.

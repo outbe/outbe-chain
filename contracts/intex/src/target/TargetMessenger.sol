@@ -63,18 +63,6 @@ contract TargetMessenger is
         bool done;
     }
 
-    /// @notice Deferred holders bridge enqueued because the inbound `_handleMarkCalled` could not
-    ///         forward all holders+amounts via `onftBatchAdapter.systemMultiSend`.
-    /// @dev Snapshot `tokenId`, `holders[]` and `amounts[]` at `_lzReceive` time — markCalled does
-    ///      not change balances afterwards, so the snapshot remains the canonical work to be done.
-    struct PendingHoldersRelay {
-        uint256 tokenId;
-        address[] holders;
-        uint256[] amounts;
-        bool exists;
-        bool done;
-    }
-
     /// @notice Issuance mint parked because one recipient's `mint` reverted (e.g. a reverting ERC-1155
     ///         receiver hook); retried via `flushPendingIssuanceMint`.
     struct PendingIssuanceMint {
@@ -114,10 +102,6 @@ contract TargetMessenger is
         ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
         ///      relay cannot double-count demand.
         mapping(uint32 seriesId => uint32 generation) bidsRelayGeneration;
-        /// @dev Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
-        /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-        uint256 nextPendingHoldersRelayIdx;
         /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
         mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
         /// @dev Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
@@ -208,22 +192,6 @@ contract TargetMessenger is
     /// @return The next enqueue index.
     function nextPendingBidsRelayIdx() external view returns (uint256) {
         return _s().nextPendingBidsRelayIdx;
-    }
-
-    /// @notice Parked holders bridge by enqueue index (scalar fields; arrays stay internal).
-    /// @param idx Enqueue index.
-    /// @return tokenId Token id whose holders bridge was deferred.
-    /// @return exists True when the index holds a parked bridge.
-    /// @return done True when the bridge was already flushed.
-    function pendingHoldersRelays(uint256 idx) external view returns (uint256 tokenId, bool exists, bool done) {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
-        return (p.tokenId, p.exists, p.done);
-    }
-
-    /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-    /// @return The next enqueue index.
-    function nextPendingHoldersRelayIdx() external view returns (uint256) {
-        return _s().nextPendingHoldersRelayIdx;
     }
 
     /// @notice Parked issuance mint by enqueue index.
@@ -702,22 +670,9 @@ contract TargetMessenger is
         uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
-
-        uint256 tokenId = $.intex.issuedTokenId(seriesId);
-        (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
-
-        if (holders.length > 0) {
-            try this.bridgeSeriesHoldersExt(tokenId, holders, amounts) {
-            // ok — holders forwarded
-            }
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingHoldersRelayIdx++;
-                $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                    tokenId: tokenId, holders: holders, amounts: amounts, exists: true, done: false
-                });
-                emit HoldersRelayDeferred(idx, tokenId, holders.length, reason);
-            }
-        }
+        // The adapter reads the series holders itself, burns + bridges them, and owns the retry
+        // recovery; markCalled (the status flip) stays here.
+        $.onftBatchAdapter.bridgeHoldersWithRecovery(seriesId, OUTBE_EID);
 
         emit MarkCalledReceived(_guid, _srcEid, seriesId);
     }
@@ -734,42 +689,6 @@ contract TargetMessenger is
         _s().intex.markQualified(seriesId);
 
         emit MarkQualifiedReceived(_guid, _srcEid, seriesId);
-    }
-
-    /// @notice Self-call shim around `_doBridgeSeriesHolders`. Only callable by this contract itself.
-    /// @param tokenId Token id (series) whose holders are bridged.
-    /// @param holders Source chain holder addresses.
-    /// @param amounts Corresponding balances for each holder.
-    function bridgeSeriesHoldersExt(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts) external {
-        if (msg.sender != address(this)) revert NotSelf();
-        _doBridgeSeriesHolders(tokenId, holders, amounts);
-    }
-
-    /// @notice Permissionless retry of a previously deferred holders bridge.
-    /// @param idx Index of the parked relay to flush.
-    function flushPendingHoldersRelay(uint256 idx) external nonReentrant {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
-        if (!p.exists) revert NoSuchPendingHoldersRelay(idx);
-        if (p.done) revert AlreadyFlushed(idx);
-        p.done = true;
-        _doBridgeSeriesHolders(p.tokenId, p.holders, p.amounts);
-        emit HoldersRelayFlushed(idx, p.tokenId);
-    }
-
-    /// @notice Quote and execute systemMultiSend via ONFT1155AdapterBatch to bridge series holders.
-    /// @dev Uses the pre-funded balance of `onftBatchAdapter` for LZ fees.
-    /// @param tokenId Token ID (series) to bridge
-    /// @param holders Source chain holder addresses
-    /// @param amounts Corresponding balances for each holder
-    function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        TargetMessengerStorage storage $ = _s();
-        bytes memory empty = "";
-        MessagingFee memory fee =
-            $.onftBatchAdapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_EID, empty, false);
-        // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the LayerZero
-        // MessagingReceipt return value is informational and intentionally discarded.
-        // slither-disable-next-line arbitrary-send-eth,unused-return
-        $.onftBatchAdapter.systemMultiSend{value: fee.nativeFee}(tokenId, holders, amounts, OUTBE_EID, empty, fee);
     }
 
     // --- Internal helpers ---
