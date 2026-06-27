@@ -135,7 +135,11 @@ interface IEscrowAdapter {
     /// @param refundedAmount Amount refunded to the bidder on retry.
     /// @param paidAmount Amount paid out to the vault on retry.
     event BidderRetried(
-        bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 refundedAmount, uint128 paidAmount
+        bytes32 indexed guid,
+        uint32 indexed seriesId,
+        address indexed bidder,
+        uint128 refundedAmount,
+        uint128 paidAmount
     );
 
     /// @notice Emitted when a post-finalize `claimRefund` refunds the failed bidder their refund
@@ -201,8 +205,8 @@ interface IEscrowAdapter {
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
     error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
-    /// @notice Post-finalize `claimRefund` has no validated split to pay from (the bidder's
-    ///         finalization failed on an amount mismatch). The relayer must `retryFinalize`.
+    /// @notice Post-finalize `claimRefund` has no validated split (bidder omitted or mismatched).
+    ///         Reverts only until `ABANDON_DELAY`, after which the full principal is refundable.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose split was never recorded.
     error SplitNotRecorded(uint32 seriesId, address bidder);
@@ -254,9 +258,9 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless refund claim after the safety window. Lets a bidder recover
-    ///         their locked principal if the relayer never finalizes the series. Funds are sent
-    ///         to the storage-recorded `bidder` address, not to `msg.sender`.
+    /// @notice Permissionless principal refund: when the relayer never finalizes, or — for a finalized
+    ///         series — once `ABANDON_DELAY` elapses for an omitted/mismatched `Locked` bidder. Pays the
+    ///         stored `bidder`, not `msg.sender`.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address whose locked principal is being claimed.
     function claimRefund(uint32 seriesId, address bidder) external;
