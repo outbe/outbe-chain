@@ -260,6 +260,22 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
     Ok(())
 }
 
+/// Begin-block drain: advance every in-flight distribution by one chunk
+/// (`DIST_CHUNK_LIMIT` payouts). Completed distributions remove themselves from
+/// the active set inside `pay_chunk`, so the snapshot avoids iterating a set
+/// that mutates underneath us.
+pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
+    let count = outbe_intex::api::active_dist_count(storage)?;
+    let mut series_ids = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        series_ids.push(outbe_intex::api::active_dist_at(storage, i)?);
+    }
+    for series_id in series_ids {
+        pay_chunk(storage, series_id, DIST_CHUNK_LIMIT)?;
+    }
+    Ok(())
+}
+
 /// Settle: `settler` is the caller. Gating reads Intex; value movement
 /// (token / vault / NFT) goes via storage.call.
 pub fn settle(

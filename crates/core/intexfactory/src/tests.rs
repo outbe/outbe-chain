@@ -987,3 +987,46 @@ fn distribute_rejects_no_contributors() {
         assert!(err.to_string().to_lowercase().contains("contributors"));
     });
 }
+
+#[test]
+fn begin_block_drain_completes_active_distributions() {
+    with_factory(|s| {
+        // Two series, each left partially distributed (1 of 3 contributors paid).
+        for (sid, owners) in [
+            (7u32, [contrib(1), contrib(2), contrib(3)]),
+            (9u32, [contrib(4), contrib(5), contrib(6)]),
+        ] {
+            outbe_intex::api::record_contributors(
+                &s,
+                sid,
+                &[
+                    (owners[0], U256::from(100u64)),
+                    (owners[1], U256::from(200u64)),
+                    (owners[2], U256::from(300u64)),
+                ],
+            )
+            .unwrap();
+            s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(600u64))
+                .unwrap();
+            outbe_intex::api::start_distribution(&s, sid, U256::from(600u64), U256::from(600u64))
+                .unwrap();
+            // Pay only the first contributor, leaving the series active.
+            runtime::pay_chunk(&s, sid, 1).unwrap();
+        }
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 2);
+
+        // One begin-block drain finishes both (3 <= DIST_CHUNK_LIMIT).
+        runtime::drain_distributions(&s).unwrap();
+
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        // series 7 fully paid
+        assert_eq!(s.balance(contrib(1)).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(contrib(2)).unwrap(), U256::from(200u64));
+        assert_eq!(s.balance(contrib(3)).unwrap(), U256::from(300u64));
+        // series 9 fully paid
+        assert_eq!(s.balance(contrib(4)).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(contrib(5)).unwrap(), U256::from(200u64));
+        assert_eq!(s.balance(contrib(6)).unwrap(), U256::from(300u64));
+    });
+}
