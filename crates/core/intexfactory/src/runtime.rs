@@ -11,8 +11,8 @@ use outbe_intex::IntexState;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
-    POW_DIFFICULTY, RESERVE_VAULT,
+    CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
+    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY, RESERVE_VAULT,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -190,6 +190,74 @@ pub fn set_authorized_settler(
     }
     let mut factory = IntexFactoryContract::new(storage.clone());
     factory.write_authorized_settler(holder, series_id, settler)
+}
+
+/// Distribute auction proceeds (native COEN, arriving as `amount` = msg.value)
+/// to the series' contributing tribute owners, proportional to their nominal
+/// share. Gated to the OriginMessenger. Pays the first chunk in-tx; any
+/// remainder is drained by the begin-block hook. Reverts on no contributors,
+/// returning the native value to the caller via the tx rollback.
+pub fn distribute(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    series_id: u32,
+    amount: U256,
+) -> Result<()> {
+    if caller != ORIGIN_MESSENGER_ADDRESS {
+        return Err(IntexFactoryError::NotOriginMessenger.into());
+    }
+    if amount.is_zero() {
+        return Err(IntexFactoryError::ZeroAmount.into());
+    }
+    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    if total.is_zero() {
+        return Err(IntexFactoryError::NoContributors(series_id).into());
+    }
+    outbe_intex::api::start_distribution(storage, series_id, amount, total)?;
+    pay_chunk(storage, series_id, DIST_CHUNK_LIMIT)
+}
+
+/// Pay up to `limit` contributors of an in-flight distribution, advancing the
+/// cursor. The last contributor absorbs the integer-division remainder so the
+/// full `amount` is paid out exactly. On reaching the last contributor the
+/// distribution is finalized (progress + contributor map cleared). Shared by
+/// `distribute` (first chunk) and the begin-block drain.
+pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32) -> Result<()> {
+    let mut progress = outbe_intex::api::get_progress(storage, series_id)?
+        .ok_or_else(|| IntexFactoryError::NoDistribution(series_id))?;
+    let count = outbe_intex::api::contributor_count(storage, series_id)?;
+    let end = progress.cursor.saturating_add(limit).min(count);
+
+    let mut paid = progress.paid_so_far;
+    for i in progress.cursor..end {
+        let (owner, nominal) = outbe_intex::api::contributor_at(storage, series_id, i)?;
+        // The final contributor absorbs the rounding remainder so the sum of
+        // payouts equals `amount` exactly.
+        let share = if i == count - 1 {
+            progress.amount - paid
+        } else {
+            progress.amount * nominal / progress.total_nominal
+        };
+        storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
+        paid += share;
+    }
+
+    if end == count {
+        outbe_intex::api::clear_distribution(storage, series_id)?;
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::ProceedsDistributed {
+                seriesId: series_id,
+                amount: progress.amount,
+                contributors: count,
+            },
+        )?;
+    } else {
+        progress.cursor = end;
+        progress.paid_so_far = paid;
+        outbe_intex::api::save_progress(storage, &progress)?;
+    }
+    Ok(())
 }
 
 /// Settle: `settler` is the caller. Gating reads Intex; value movement

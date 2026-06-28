@@ -21,6 +21,13 @@ interface IIntexFactory {
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
 
+    /// @notice Distribute auction proceeds (native COEN, sent as msg.value) to
+    ///         the contributing tribute owners of `seriesId`, proportional to
+    ///         each owner's Tribute Nominal Amount. Callable only by the
+    ///         OriginMessenger. Pays the first chunk in this call; any remainder
+    ///         is drained over later blocks by the begin-block hook.
+    function distribute(uint32 seriesId) external payable;
+
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
@@ -35,4 +42,8 @@ interface IIntexFactory {
 
     /// @notice The series was force-called (Qualified → Called).
     event SeriesCalled(uint32 indexed seriesId, uint32 calledAt);
+
+    /// @notice Auction proceeds for `seriesId` were fully paid out to
+    ///         `contributors` tribute owners, totalling `amount` native COEN.
+    event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
 }
