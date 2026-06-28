@@ -830,3 +830,87 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
     });
 }
+
+// ---------------------------------------------------------------------
+// Creator-reward: lysis records the per-owner contributor map
+// ---------------------------------------------------------------------
+
+#[test]
+fn lysis_records_contributors_aggregated_by_owner() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut storage, |storage| {
+        // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        // Distinct owners: lysis derives nod_id from (owner, day), so an owner
+        // can have at most one processed tribute per day.
+        let owner_a = gas_audit_address(1);
+        let owner_b = gas_audit_address(2);
+        let owner_c = gas_audit_address(3);
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)))
+            .unwrap();
+        tribute
+            .issue(&gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)))
+            .unwrap();
+        tribute
+            .issue(&gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)))
+            .unwrap();
+
+        let total_nominal = U256::in_units(600u64);
+        let gratis_allocation = total_nominal / U256::from(10u64);
+
+        let result = crate::runtime::lysis(storage.clone(), wwd, gratis_allocation)
+            .expect("lysis must complete");
+        assert_eq!(
+            result.nod_ids.len(),
+            3,
+            "every tribute must be processed for this fixture"
+        );
+
+        // series_id == wwd; contributors are sorted by address (a < b < c) and
+        // carry each owner's nominal.
+        let series_id = u32::from(wwd);
+        assert_eq!(
+            outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
+            vec![
+                (owner_a, U256::in_units(100u64)),
+                (owner_b, U256::in_units(200u64)),
+                (owner_c, U256::in_units(300u64)),
+            ]
+        );
+        assert_eq!(
+            outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
+            U256::in_units(600u64)
+        );
+    });
+}
