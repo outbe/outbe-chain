@@ -42,7 +42,14 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
 
     let now = ctx.block.timestamp;
-    let r_bin = IntexFactoryContract::price_to_bin(rate)?;
+    // Deterministic out-of-range rate: skip the block's scan instead of halting it.
+    let r_bin = match IntexFactoryContract::price_to_bin(rate) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(target: "outbe::intexfactory", error = ?e, "qualify scan: rate out of range, skipping block");
+            return Ok(0);
+        }
+    };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
     let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
 
@@ -65,15 +72,25 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
             );
         }
         for series_id in series {
-            if try_qualify(
-                &ctx.storage,
-                &mut factory,
-                series_id,
-                maturity_secs,
-                now,
-                rate,
-            )? {
-                promoted = promoted.saturating_add(1);
+            // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
+            // skipped (logged), so one bad series cannot halt the block. Infra errors that recur
+            // every series still surface via the structural reads above, which keep `?`.
+            let res = ctx.storage.with_checkpoint(|| {
+                try_qualify(
+                    &ctx.storage,
+                    &mut factory,
+                    series_id,
+                    maturity_secs,
+                    now,
+                    rate,
+                )
+            });
+            match res {
+                Ok(true) => promoted = promoted.saturating_add(1),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "qualify scan: skipping series");
+                }
             }
         }
 
