@@ -279,7 +279,8 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
         nonce,
         asset: MINE_GRATIS_ASSET,
     };
-    let output = nodfactory_dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO).unwrap();
+    let output =
+        nodfactory_dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO).unwrap();
     let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
     assert_eq!(mined, item.gratis_load_minor);
 
