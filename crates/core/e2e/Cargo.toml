@@ -13,6 +13,7 @@ outbe-metadosis.workspace = true
 outbe-tribute.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
+outbe-vaultprovider.workspace = true
 outbe-gratis.workspace = true
 outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
