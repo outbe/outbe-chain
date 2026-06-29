@@ -18,3 +18,8 @@
 # codegraph index (local code-intelligence cache)
 /.codegraph
 /contracts/account-abstraction/lib/kernel/broadcast
+
+.env
+.build/
+.venv/
+**/__pycache__/**
