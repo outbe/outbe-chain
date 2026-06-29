@@ -52,6 +52,16 @@ interface ITargetMessenger {
         bytes32 indexed guid, uint32 srcEid, uint32 indexed seriesId, uint256 instructionsCount
     );
 
+    /// @notice Emitted when auction proceeds are routed to the Outbe OriginMessenger via the OFT.
+    /// @param seriesId Series identifier carried in the OFT compose message.
+    /// @param amount Proceeds sent in local decimals.
+    /// @param to OFT recipient on Outbe (bytes32).
+    event ProceedsRouted(uint32 indexed seriesId, uint128 amount, bytes32 to);
+
+    /// @notice Emitted when the proceeds OFT route is configured.
+    /// @param receiver OFT recipient on Outbe (bytes32).
+    event ProceedsRouteSet(bytes32 receiver);
+
     /// @notice Emitted when mark called message is received from Outbe.
     /// @param guid LayerZero message GUID
     /// @param srcEid LayerZero source endpoint id (`_origin.srcEid`)
@@ -124,6 +134,8 @@ interface ITargetMessenger {
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice Self-call shim was invoked by an external caller; only `address(this)` is allowed.
     error NotSelf();
+    /// @notice Proceeds cannot be routed because the OFT destination route is unset.
+    error ProceedsRouteNotSet();
     /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
