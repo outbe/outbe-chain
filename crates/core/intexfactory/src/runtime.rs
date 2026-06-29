@@ -330,6 +330,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
+    // TODO pick up the asset ERC20 address properly
     let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
