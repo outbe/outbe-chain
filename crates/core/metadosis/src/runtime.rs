@@ -240,6 +240,15 @@ pub fn create_worldwide_day_for_date(
     Ok(())
 }
 
+/// Auction timestamp (scheduled process time) for a worldwide day.
+fn scheduled_auction_ts(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<u64> {
+    metadosis
+        .worldwide_days
+        .entry(wwd)
+        .scheduled_process_time()
+        .read()
+}
+
 fn update_wwd_status_machine(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -258,11 +267,7 @@ fn update_wwd_status_machine(
     let new_status = metadosis.update_wwd_status(wwd, timestamp)?;
 
     if current_status == status::OFFERING && new_status == status::OFFERING {
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
+        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
         let is_green_day = metadosis.get_wwd_day_type(wwd)? == day_type::GREEN;
         outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), auction_ts, is_green_day)?;
         return Ok(());
@@ -281,11 +286,7 @@ fn update_wwd_status_machine(
 
     if current_status < status::OFFERING && new_status == status::OFFERING {
         tribute.unseal_day(wwd)?;
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
+        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
         let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
         outbe_desis::api::dispatch_stage_start(ctx.storage.clone(), auction_ts, coen_price)?;
     }

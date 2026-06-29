@@ -7,7 +7,7 @@ Byte-for-byte port of `outbe-cli tribute offer`:
   2. (optional) auto-detect the WorldwideDay currently in OFFERING via Metadosis
   3. encrypt the payload to the offer key:
         ephemeral X25519 ECDHE
-        -> HKDF-SHA256(salt=[0x03;32], info="tribute-factory-encryption")
+        -> HKDF-SHA256(salt=OFFER_HKDF_SALT, info="tribute-factory-encryption")
         -> ChaCha20Poly1305 (empty AAD)
      identical to outbe_tee_enclave::crypto::ecdhe_offer_decrypt
   4. ABI-encode + sign (legacy EIP-155) + send `offerTribute` to the
@@ -50,7 +50,10 @@ TRIBUTE_FACTORY_ADDR = Web3.to_checksum_address("0x00000000000000000000000000000
 TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001101")
 
 # Fixed enclave offer salt + HKDF info label (must match the enclave).
-OFFER_SALT = bytes([0x03]) * 32
+# Value: outbe_tee::OFFER_HKDF_SALT = ASCII "outbe/tribute/offer-salt/v1",
+# zero-padded to 32 bytes (see crates/system/tee/src/lib.rs and
+# bin/outbe-tee-enclave/src/keys.rs).
+OFFER_SALT = b"outbe/tribute/offer-salt/v1".ljust(32, b"\0")
 HKDF_INFO = b"tribute-factory-encryption"
 
 # WorldwideDay status values (crates/core/metadosis/src/schema.rs::status).

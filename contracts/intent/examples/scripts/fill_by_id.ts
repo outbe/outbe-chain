@@ -1,6 +1,6 @@
 import { ethers, JsonRpcProvider, formatUnits } from 'ethers';
 import { chains, privateKey, ROUTER } from '../config';
-import { LayerZeroRouter__factory, ERC20__factory, Auction__factory } from '../typechain';
+import { Router__factory, ERC20__factory, Auction__factory } from '../typechain';
 import { estimateGasWithBuffer } from '../lib/gasEstimation';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 
@@ -10,7 +10,7 @@ import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/comm
  * Usage: tsx scripts/fill_by_id.ts <originChain> <orderId> [fillerAddress]
  */
 async function main() {
-  console.log('LayerZeroRouter - Fill Order by ID\n');
+  console.log('Router - Fill Order by ID\n');
 
   const [originChain, orderId, fillerAddressArg] = process.argv.slice(2);
   if (!originChain || !orderId) {
@@ -25,7 +25,7 @@ async function main() {
   const provider = new JsonRpcProvider(chains[originChain].rpc);
   const wallet = new ethers.Wallet(privateKey!, provider);
   const userAddress = await wallet.getAddress();
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   // Read order data from on-chain storage
   const { originData, orderData } = await getOrderData(orderId, router);
@@ -33,7 +33,7 @@ async function main() {
   // Connect to destination
   const destProvider = getProviderByDomain(orderData.destinationDomain);
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   // Get token decimals
   const inputTokenAddress = ethers.toBeHex(orderData.inputToken);

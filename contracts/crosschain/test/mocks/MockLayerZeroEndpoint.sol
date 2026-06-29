@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+// Minimal self-contained EndpointV2 mock for local two-chain simulation. NOT for production.
+// Ported from intent/test/mocks/MockLayerZeroEndpoint.sol. The struct layouts match
+// ILayerZeroEndpointV2 so calls from OApp (send/quote/setDelegate) resolve by selector.
+
 struct Origin {
     uint32 srcEid;
     bytes32 sender;
@@ -36,8 +40,6 @@ interface ILzOAppV2 {
     ) external payable;
 }
 
-/// @notice Упрощённый мок EndpointV2 для локальных тестов.
-/// НЕ для продакшена.
 contract EndpointV2Mock {
     uint32 public immutable EID;
 
@@ -85,7 +87,7 @@ contract EndpointV2Mock {
         pure
         returns (MessagingFee memory)
     {
-        // Return fixed fee of 100 wei (very small for testing)
+        // Fixed fee of 100 wei for testing.
         return MessagingFee({nativeFee: 100, lzTokenFee: 0});
     }
 
@@ -109,10 +111,8 @@ contract EndpointV2Mock {
 
         bytes32 sender = bytes32(uint256(uint160(oapp)));
 
-        // Deliver message to destination endpoint
         dstEndpoint.deliverMessage(EID, sender, _params.message);
 
-        // Return receipt
         return MessagingReceipt({
             guid: keccak256(abi.encodePacked(EID, sender, _params.dstEid)),
             nonce: 1,
@@ -120,7 +120,7 @@ contract EndpointV2Mock {
         });
     }
 
-    /// @notice External hook for delivering message from another endpoint
+    /// @notice External hook for delivering a message from another endpoint.
     function deliverMessage(uint32 _srcEid, bytes32 _sender, bytes calldata _message) external {
         Origin memory origin = Origin({srcEid: _srcEid, sender: _sender, nonce: 1});
 

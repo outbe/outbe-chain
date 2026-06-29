@@ -15,7 +15,6 @@ sol! {
             uint32 seriesId;
             uint32 issuedIntexCount;
             uint128 promisLoadMinor;
-            uint64 costAmountMinor;
             uint64 entryPriceMinor;
             uint64 floorPriceMinor;
             uint32 intexCallPeriod;

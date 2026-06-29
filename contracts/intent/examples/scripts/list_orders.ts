@@ -1,18 +1,18 @@
 import { ethers, JsonRpcProvider, formatUnits } from 'ethers';
 import { chains, ROUTER, QUERY_BLOCKS_BACK } from '../config';
-import { LayerZeroRouter__factory } from '../typechain';
+import { Router__factory } from '../typechain';
 import * as OrderEncoder from '../lib/OrderEncoder';
 import { queryEventsWithChunking } from '../lib/eventQuery';
 import { getProviderByDomain, getTokenDecimals } from '../lib/common';
 import Table from 'cli-table3';
 
 /**
- * List all LayerZeroRouter orders from recent Open events.
+ * List all Router orders from recent Open events.
  *
  * Usage: tsx scripts/list_orders.ts [chain]
  */
 async function main() {
-  console.log('LayerZeroRouter - List Orders\n');
+  console.log('Router - List Orders\n');
 
   const [chainName = 'bsc'] = process.argv.slice(2);
   if (!chains[chainName]) {
@@ -22,7 +22,7 @@ async function main() {
 
   const chain = chains[chainName];
   const provider = new JsonRpcProvider(chain.rpc);
-  const router = LayerZeroRouter__factory.connect(ROUTER, provider);
+  const router = Router__factory.connect(ROUTER, provider);
 
   const currentBlock = await provider.getBlockNumber();
   const fromBlock = Math.max(0, currentBlock - QUERY_BLOCKS_BACK);

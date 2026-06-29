@@ -107,7 +107,6 @@ contract BridgeMsgCodecHardeningTest is Test {
             seriesId: 1,
             issuedIntexCount: 1,
             promisLoadMinor: 1,
-            costAmountMinor: 1,
             entryPriceMinor: 1,
             floorPriceMinor: 1,
             intexCallPeriod: 0,

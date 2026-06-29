@@ -4,10 +4,14 @@ pragma solidity ^0.8.30;
 import {BaseAATest} from "./BaseAATest.sol";
 import {CallerHook} from "src/kernel/CallerHook.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
+import {MockUSD} from "src/mocks/MockUSD.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
 import {IEntryPoint} from "@zerodev/kernel/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
 import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
+import {CALLTYPE_BATCH, EXECTYPE_DEFAULT} from "@zerodev/kernel/types/Constants.sol";
+import {ExecMode, ExecModeSelector, ExecModePayload} from "@zerodev/kernel/types/Types.sol";
+import {Execution} from "@zerodev/kernel/types/Structs.sol";
 
 contract SmartAccountApproach is BaseAATest {
     function test_UserCanSendEth_CcaCantWithdraw() external {
@@ -185,5 +189,143 @@ contract SmartAccountApproach is BaseAATest {
 
         assertEq(token.balanceOf(recipient.addr), 150e18, "recipient should have 150 tokens");
         assertEq(token.balanceOf(smartAccount), 1250e18, "SA should have 1250 tokens");
+    }
+
+    // OIP-00075: cover batch and approval call types in BundleSpendProtectorHook.
+    // The hook previously gated only CALLTYPE_SINGLE + IERC20.transfer, so a CALLTYPE_BATCH
+    // move and the approve/transferFrom allowance path bypassed the freeBalance reserve.
+
+    /// @dev Batch path is a conservative full reject: a batch moving a bundled token at all is
+    ///      blocked, even for an amount within freeBalance. preCheck reads balanceOf once before
+    ///      the batch, so per-sub-call gating would be bypassable by splitting the move.
+    function test_BundleSpendProtector_BlocksBatchTransferOfBundledToken() external {
+        address smartAccount = _setupBundledAccountWithFree(); // total=1400, bundle=1200, free=200
+
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: address(token),
+            value: 0,
+            // 100 <= free 200, yet a batch move of a bundled token is rejected outright
+            callData: abi.encodeWithSelector(token.transfer.selector, recipient.addr, 100e18)
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.balanceOf(recipient.addr), 0, "batch transfer of bundled token must be blocked");
+        assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked batch");
+    }
+
+    /// @dev A batch that touches only non-bundled (free) tokens still executes. Paired with the
+    ///      test above, this isolates the block to the bundled-token check (same batch encoding).
+    function test_BundleSpendProtector_AllowsBatchOfNonBundledToken() external {
+        address smartAccount = _setupBundledAccountWithFree();
+
+        MockUSD freeToken = new MockUSD(); // not part of the bundle
+        freeToken.mint(smartAccount, 500e18);
+
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: address(freeToken),
+            value: 0,
+            callData: abi.encodeWithSelector(freeToken.transfer.selector, recipient.addr, 500e18)
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(freeToken.balanceOf(recipient.addr), 500e18, "batch over a non-bundled token should pass");
+        assertEq(freeToken.balanceOf(smartAccount), 0, "SA free-token balance should have moved out");
+    }
+
+    /// @dev approve of a bundled token is rejected: a static check at grant time cannot bound the
+    ///      grantee's later, unhooked transferFrom. Absent the hook the approve would set a 50e18
+    ///      allowance, so the allowance staying 0 attributes the block to the hook.
+    function test_BundleSpendProtector_BlocksApproveOfBundledToken() external {
+        address smartAccount = _setupBundledAccountWithFree();
+        address spender = makeAddr("spender");
+
+        bytes memory callData = abi.encodePacked(
+            Kernel.executeUserOp.selector,
+            abi.encodeWithSelector(
+                Kernel.execute.selector,
+                _execMode(),
+                ExecLib.encodeSingle(address(token), 0, abi.encodeWithSelector(token.approve.selector, spender, 50e18))
+            )
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.allowance(smartAccount, spender), 0, "approve of bundled token must be blocked");
+    }
+
+    /// @dev transferFrom of a bundled token exceeding freeBalance is blocked. A self-allowance is
+    ///      set directly (not via the hooked root path) so that, absent the hook, the transferFrom
+    ///      WOULD move funds — the balance staying put attributes the block to the hook, not to a
+    ///      missing allowance.
+    function test_BundleSpendProtector_BlocksTransferFromOfBundledTokenOverFree() external {
+        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+
+        vm.prank(smartAccount);
+        token.approve(smartAccount, type(uint256).max);
+
+        // transferFrom(SA, recipient, 250): 250 > free 200, but allowance + balance are sufficient.
+        bytes memory callData = abi.encodePacked(
+            Kernel.executeUserOp.selector,
+            abi.encodeWithSelector(
+                Kernel.execute.selector,
+                _execMode(),
+                ExecLib.encodeSingle(
+                    address(token),
+                    0,
+                    abi.encodeWithSelector(token.transferFrom.selector, smartAccount, recipient.addr, 250e18)
+                )
+            )
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.balanceOf(recipient.addr), 0, "transferFrom over free must be blocked by the hook");
+        assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked transferFrom");
+    }
+
+    // --- helpers ---
+
+    /// @dev Deploys a bundled account (bundle token = `token`, sender = `vault`) and funds it so
+    ///      that total = 1400e18, bundleBalance = 1200e18, freeBalance = 200e18.
+    function _setupBundledAccountWithFree() private returns (address smartAccount) {
+        smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+
+        // SA's own (free) funds, pre-funded so the topUp solvency check passes
+        token.mint(user.addr, 800e18);
+        vm.prank(user.addr);
+        require(token.transfer(smartAccount, 800e18), "user->SA transfer failed");
+
+        // Bundle deposit: 600 from vault → bundleBalance doubles to 1200, total balance 1400
+        token.mint(vault, 600e18);
+        vm.prank(vault);
+        token.approve(smartAccount, 600e18);
+        vm.prank(vault);
+        ITokenBundle(smartAccount).topUp(vault, address(token), 600e18);
+
+        assertEq(token.balanceOf(smartAccount), 1400e18, "setup: SA total balance");
+        assertEq(bundlePlugin.balanceOf(smartAccount, address(token)), 1200e18, "setup: bundle balance");
+    }
+
+    /// @dev Wraps executions as a CALLTYPE_BATCH executeUserOp callData, using the kernel's own
+    ///      ExecLib.encodeBatch (abi.encode(Execution[])) so it decodes via LibERC7579 exactly as
+    ///      the hook reads it.
+    function _batchCallData(Execution[] memory execs) private pure returns (bytes memory) {
+        ExecMode mode =
+            ExecLib.encode(CALLTYPE_BATCH, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
+        bytes memory inner = abi.encodeWithSelector(Kernel.execute.selector, mode, ExecLib.encodeBatch(execs));
+        return abi.encodePacked(Kernel.executeUserOp.selector, inner);
     }
 }

@@ -3,7 +3,7 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "_lzEndpoint",
+        "name": "_bridge",
         "type": "address",
         "internalType": "address"
       },
@@ -187,36 +187,13 @@
   },
   {
     "type": "function",
-    "name": "allowInitializePath",
-    "inputs": [
-      {
-        "name": "origin",
-        "type": "tuple",
-        "internalType": "struct Origin",
-        "components": [
-          {
-            "name": "srcEid",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "sender",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
+    "name": "bridge",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "type": "address",
+        "internalType": "contract IERC7786GatewaySource"
       }
     ],
     "stateMutability": "view"
@@ -241,19 +218,6 @@
   },
   {
     "type": "function",
-    "name": "defaultGasLimit",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "destinationOrderStatus",
     "inputs": [
       {
@@ -267,57 +231,6 @@
         "name": "status",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "domainToEid",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "eidToDomain",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "endpoint",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ILayerZeroEndpointV2"
       }
     ],
     "stateMutability": "view"
@@ -384,52 +297,6 @@
   },
   {
     "type": "function",
-    "name": "isComposeMsgSender",
-    "inputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Origin",
-        "components": [
-          {
-            "name": "srcEid",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "sender",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      },
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "_sender",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isValidNonce",
     "inputs": [
       {
@@ -451,98 +318,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lzReceive",
-    "inputs": [
-      {
-        "name": "_origin",
-        "type": "tuple",
-        "internalType": "struct Origin",
-        "components": [
-          {
-            "name": "srcEid",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "sender",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      },
-      {
-        "name": "_guid",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "_message",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "_executor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_extraData",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "nextNonce",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nonce",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "oAppVersion",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "senderVersion",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "receiverVersion",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -627,25 +402,6 @@
   },
   {
     "type": "function",
-    "name": "peers",
-    "inputs": [
-      {
-        "name": "eid",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "peer",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "pendingOwner",
     "inputs": [],
     "outputs": [
@@ -659,57 +415,56 @@
   },
   {
     "type": "function",
-    "name": "perOrderGas",
-    "inputs": [],
+    "name": "quote",
+    "inputs": [
+      {
+        "name": "_destinationDomain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "payload",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
     "outputs": [
       {
         "name": "",
-        "type": "uint128",
-        "internalType": "uint128"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "quote",
+    "name": "receiveMessage",
     "inputs": [
       {
-        "name": "_dstDomain",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
-        "name": "_payload",
+        "name": "sender",
         "type": "bytes",
         "internalType": "bytes"
       },
       {
-        "name": "_payInLzToken",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "payload",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
       {
-        "name": "fee",
-        "type": "tuple",
-        "internalType": "struct MessagingFee",
-        "components": [
-          {
-            "name": "nativeFee",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lzTokenFee",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -740,6 +495,25 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "remoteRouters",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "recipient",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -884,79 +658,17 @@
   },
   {
     "type": "function",
-    "name": "setDefaultGasLimit",
+    "name": "setRemoteRouter",
     "inputs": [
       {
-        "name": "_newLimit",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setDelegate",
-    "inputs": [
-      {
-        "name": "_delegate",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPeer",
-    "inputs": [
-      {
-        "name": "_eid",
+        "name": "domain",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "_peer",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPeerWithDomain",
-    "inputs": [
-      {
-        "name": "_eid",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "_peer",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "_domain",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPerOrderGas",
-    "inputs": [
-      {
-        "name": "_newPerOrderGas",
-        "type": "uint128",
-        "internalType": "uint128"
+        "name": "interop",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -1030,50 +742,6 @@
       },
       {
         "name": "fillerData",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GasLimitUpdated",
-    "inputs": [
-      {
-        "name": "oldLimit",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      },
-      {
-        "name": "newLimit",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MessageReceived",
-    "inputs": [
-      {
-        "name": "srcEid",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "sender",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "payload",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
@@ -1282,44 +950,6 @@
   },
   {
     "type": "event",
-    "name": "PeerSet",
-    "inputs": [
-      {
-        "name": "eid",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "peer",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PerOrderGasUpdated",
-    "inputs": [
-      {
-        "name": "oldGas",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      },
-      {
-        "name": "newGas",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Refund",
     "inputs": [
       {
@@ -1346,6 +976,25 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemoteRouterRegistered",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "recipient",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -1408,27 +1057,49 @@
   },
   {
     "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientBalance",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteroperableAddressParsingError",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAuction",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "InvalidBridge",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidCompact",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidDelegate",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidEndpoint",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidEndpointCall",
     "inputs": []
   },
   {
@@ -1450,17 +1121,6 @@
     "type": "error",
     "name": "InvalidNonce",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOptionType",
-    "inputs": [
-      {
-        "name": "optionType",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1506,62 +1166,8 @@
   },
   {
     "type": "error",
-    "name": "LzTokenUnavailable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoPeer",
-    "inputs": [
-      {
-        "name": "eid",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotAWinner",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotEnoughNative",
-    "inputs": [
-      {
-        "name": "msgValue",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OnlyEndpoint",
-    "inputs": [
-      {
-        "name": "addr",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OnlyPeer",
-    "inputs": [
-      {
-        "name": "eid",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "sender",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1575,7 +1181,62 @@
   },
   {
     "type": "error",
+    "name": "OwnableInvalidOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemoteRouterNotSet",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RevealNotEnded",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedBridge",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   }
 ]

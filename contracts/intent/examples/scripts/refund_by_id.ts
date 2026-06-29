@@ -1,7 +1,7 @@
 import { ethers, JsonRpcProvider } from 'ethers';
 import { chains, privateKey, ROUTER } from '../config';
-import { LayerZeroRouter__factory } from '../typechain';
-import type { OnchainCrossChainOrderStruct } from '../typechain/LayerZeroRouter';
+import { Router__factory } from '../typechain';
+import type { OnchainCrossChainOrderStruct } from '../typechain/Router';
 import * as OrderEncoder from '../lib/OrderEncoder';
 import { estimateGasWithBuffer, calculateRefundFee } from '../lib/gasEstimation';
 import { getProviderByDomain, getOrderData } from '../lib/common';
@@ -12,7 +12,7 @@ import { getProviderByDomain, getOrderData } from '../lib/common';
  * Usage: tsx scripts/refund_by_id.ts <originChain> <orderId>
  */
 async function main() {
-  console.log('LayerZeroRouter - Refund Order by ID\n');
+  console.log('Router - Refund Order by ID\n');
 
   const [originChain, orderId] = process.argv.slice(2);
   if (!originChain || !orderId) {
@@ -27,7 +27,7 @@ async function main() {
   const origin = chains[originChain];
   const provider = new JsonRpcProvider(origin.rpc);
   const wallet = new ethers.Wallet(privateKey!, provider);
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   // Read order data from on-chain storage
   const blockInfo = await provider.getBlock('latest');
@@ -36,7 +36,7 @@ async function main() {
   // Destination chain
   const destProvider = getProviderByDomain(orderData.destinationDomain);
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   console.log(`  User:     ${orderData.sender}`);
   console.log(`  Amount In:  ${ethers.formatEther(orderData.amountIn)}`);
@@ -72,8 +72,8 @@ async function main() {
     console.log(`\n  Same-chain order — no LZ fee\n`);
   } else {
     const fee = await calculateRefundFee(destRouter, origin.chainId, [orderId]);
-    value = fee.nativeFee;
-    console.log(`\n  LZ Fee: ${ethers.formatEther(fee.nativeFee)}\n`);
+    value = fee;
+    console.log(`\n  LZ Fee: ${ethers.formatEther(fee)}\n`);
   }
 
   console.log('Refunding...');
