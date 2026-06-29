@@ -17,7 +17,7 @@ use crate::constants::{
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -279,18 +279,14 @@ pub fn settle(
         .abi_encode()
         .into(),
     )?;
-    let shares_ret = storage.call(
-        RESERVE_VAULT,
-        U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
-            asset: payment_token,
-            assetsAmount: received,
-        }
-        .abi_encode()
-        .into(),
+    // Deposit into the reserve via the vaultprovider's in-process api. The
+    // intexfactory address is the registered liquidity source.
+    let shares = outbe_vaultprovider::api::deposit_liquidity(
+        storage.clone(),
+        INTEX_FACTORY_ADDRESS,
+        payment_token,
+        received,
     )?;
-    let shares = IVaultProvider::depositLiquidityCall::abi_decode_returns(&shares_ret)
-        .map_err(|_| PrecompileError::Revert("vault depositLiquidity undecodable".into()))?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -336,14 +332,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let ret = storage.staticcall(
-        RESERVE_VAULT,
-        IVaultProvider::assetAtCall { index: U256::ZERO }
-            .abi_encode()
-            .into(),
-    )?;
-    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("vault assetAt undecodable".into()))?;
+    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), U256::ZERO)?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }

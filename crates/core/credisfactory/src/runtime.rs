@@ -34,7 +34,7 @@ use outbe_primitives::units::SCALE_1E18;
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
 use crate::schema::CredisFactoryContract;
-use crate::sol_ext::{IVaultProvider, IERC20};
+use crate::sol_ext::IERC20;
 
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
 pub const NATIVE_TOKEN: &str = "COEN";
@@ -151,15 +151,17 @@ pub fn request_credis(
             .write(&position_id, args.reclaim_commitment)?;
     }
 
-    // Withdraw the matching stablecoin from the vault to the borrower's
-    // smart account. Sub-call revert unwinds bookkeeping via the outer frame.
-    let calldata = IVaultProvider::withdrawLiquidityCall {
+    // Withdraw the matching stablecoin from the vault to the borrower's smart
+    // account via the vaultprovider's in-process api. An error propagates out
+    // and unwinds bookkeeping via the surrounding precompile frame. The
+    // credisfactory address is the registered liquidity target the gate keys on.
+    outbe_vaultprovider::api::withdraw_liquidity(
+        storage.clone(),
+        CREDIS_FACTORY_ADDRESS,
         asset,
-        amount: amount_stables,
-        receiver: bundle_account,
-    }
-    .abi_encode();
-    storage.call(VAULT_PROVIDER_ADDRESS, U256::ZERO, calldata.into())?;
+        amount_stables,
+        bundle_account,
+    )?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
@@ -235,13 +237,15 @@ pub fn pay_anadosis(
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // 3) Vault pulls and deposits into the reserve.
-    let deposit = IVaultProvider::depositLiquidityCall {
+    // 3) Vault pulls and deposits into the reserve via the vaultprovider's
+    //    in-process api. The credisfactory address is the registered liquidity
+    //    source the gate keys on.
+    outbe_vaultprovider::api::deposit_liquidity(
+        storage.clone(),
+        CREDIS_FACTORY_ADDRESS,
         asset,
-        assetsAmount: amount,
-    }
-    .abi_encode();
-    storage.call(vault, U256::ZERO, deposit.into())?;
+        amount,
+    )?;
 
     // 4) If this completed the position, append the per-position reclaim
     //    commitment to the pool so the reclaim secret can later be used to

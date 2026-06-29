@@ -18,6 +18,7 @@
 //! Ownership replaces the Solidity `OwnableUpgradeable`: the owner is a single
 //! storage slot seeded at genesis (see `scripts/seed_genesis.py`).
 
+pub mod api;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;

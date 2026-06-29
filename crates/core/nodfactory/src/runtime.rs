@@ -18,7 +18,7 @@ use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use crate::sol_ext::{IVaultProvider, IERC20};
+use crate::sol_ext::IERC20;
 
 /// Issue a new Nod at the originating owner's (worldwide_day) bucket.
 ///
@@ -145,14 +145,15 @@ pub fn mine_gratis(
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
-        // 3) Vault pulls and deposits into the reserve. The vault classifies
-        //    NOD_FACTORY_ADDRESS via its `liquiditySources` registry.
-        let deposit = IVaultProvider::depositLiquidityCall {
+        // 3) Vault pulls and deposits into the reserve via the vaultprovider's
+        //    in-process api. The vault classifies NOD_FACTORY_ADDRESS via its
+        //    `liquiditySources` registry.
+        outbe_vaultprovider::api::deposit_liquidity(
+            storage.clone(),
+            NOD_FACTORY_ADDRESS,
             asset,
-            assetsAmount: cost,
-        }
-        .abi_encode();
-        storage.call(VAULT_PROVIDER_ADDRESS, U256::ZERO, deposit.into())?;
+            cost,
+        )?;
     }
 
     nod_api::remove_nod(storage, &item)?;

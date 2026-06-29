@@ -13,7 +13,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::VaultProviderError;
@@ -275,6 +275,19 @@ pub fn withdraw_liquidity(
 /// `sharesBalance`: vault shares currently held by this provider.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
+}
+
+/// `assetAt`: bounds-checked read of the registered reserve-asset set, reverting
+/// (like OZ `EnumerableSet.at`) when `index` is out of range. Shared by the
+/// precompile dispatch and the in-process [`crate::api`] surface.
+pub fn asset_at(storage: StorageHandle<'_>, index: U256) -> Result<Address> {
+    let contract = VaultProviderContract::new(storage);
+    let idx =
+        u32::try_from(index).map_err(|_| PrecompileError::Revert("index out of bounds".into()))?;
+    contract
+        .assets
+        .at(idx)?
+        .ok_or_else(|| PrecompileError::Revert("index out of bounds".into()))
 }
 
 // ---------------------------------------------------------------------------

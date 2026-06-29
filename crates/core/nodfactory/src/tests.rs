@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
@@ -41,6 +41,26 @@ fn sample_params() -> NodIssueParams {
 /// `enable_sub_call_stub()` flipped on, so the sub-calls return
 /// `default_success()` without touching real ERC20 or vault state.
 const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
+
+/// Dummy ERC-4626 vault registered for `PAY_ASSET`. The in-process
+/// `deposit_liquidity` call routes its inner vault deposit here; the test pins
+/// this address' `uint256` share return via `stub_sub_call_at` so the runtime's
+/// decode succeeds.
+const PAY_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
+
+/// Seeds the vaultprovider gate + a vault for `PAY_ASSET` so nodfactory's
+/// in-process `deposit_liquidity` (source-gated) passes its gate and vault
+/// lookup. `NOD_FACTORY_ADDRESS` is the registered source; in production
+/// genesis seeds the same registration. The exact `LiquiditySource`
+/// discriminant is irrelevant — the gate only rejects `UNKNOWN`.
+fn seed_reserve_vault(storage: &StorageHandle<'_>) {
+    let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
+    vp.assets.insert(PAY_ASSET).unwrap();
+    vp.asset_vault_set(PAY_ASSET).insert(PAY_VAULT).unwrap();
+    vp.liquidity_source_types
+        .write(&outbe_primitives::addresses::NOD_FACTORY_ADDRESS, 1u8)
+        .unwrap();
+}
 
 fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {
     let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
@@ -474,10 +494,12 @@ fn test_mine_gratis_pays_cost_amount() {
 
     let mut storage = HashMapStorageProvider::new(1);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(PAY_VAULT, Bytes::from(vec![0u8; 32]));
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         factory_api::issue_nod(&s, &params).unwrap();
         qualify_params(&s, &params);
+        seed_reserve_vault(&s);
     });
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));

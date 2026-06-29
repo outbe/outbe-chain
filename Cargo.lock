@@ -6839,6 +6839,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
 
@@ -7075,6 +7076,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
+ "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
 
@@ -7141,6 +7143,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promisfactory",
+ "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",
 ]
@@ -7280,6 +7283,7 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
+ "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",
 ]

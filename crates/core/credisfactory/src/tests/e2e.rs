@@ -13,7 +13,7 @@
 //! sit in front of the verifier (root window, nullifier set, receiver
 //! binding) still execute against real on-chain state.
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{address, keccak256, Address, Bytes, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_gratis::Gratis;
@@ -26,6 +26,7 @@ use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding}
 use outbe_gratispool::verifier::with_verifier_outcome;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -62,6 +63,38 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
+/// Dummy ERC-4626 vault registered for `asset()`. The runtime's in-process
+/// `withdraw_liquidity`/`deposit_liquidity` calls route their inner ERC-20 /
+/// vault sub-calls here; the test pins this address' `uint256` return via
+/// [`HashMapStorageProvider::stub_sub_call_at`] so the runtime's
+/// preview/balance/withdraw/deposit decodes succeed.
+const RESERVE_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
+
+/// A 32-byte zero word — the stubbed return for [`RESERVE_VAULT`] sub-calls,
+/// decoding to `uint256` 0 (`preview == balance == 0`, so the share-sufficiency
+/// gate passes and the ignored share/burn returns are zero).
+fn zero_word() -> Bytes {
+    Bytes::from(vec![0u8; 32])
+}
+
+/// Seeds the vaultprovider gate + a vault for `asset()` so the in-process vault
+/// legs of `request_credis` (withdraw, target-gated) and `pay_anadosis`
+/// (deposit, source-gated) pass. These ran through the sub-call stub before the
+/// vaultprovider was called directly; in production genesis seeds the same
+/// registrations against `CREDIS_FACTORY_ADDRESS`. The exact source/target
+/// discriminant is irrelevant — the gate only rejects `UNKNOWN`.
+fn seed_reserve_vault(storage: StorageHandle<'_>) {
+    let vp = outbe_vaultprovider::VaultProviderContract::new(storage);
+    vp.assets.insert(asset()).unwrap();
+    vp.asset_vault_set(asset()).insert(RESERVE_VAULT).unwrap();
+    vp.liquidity_source_types
+        .write(&CREDIS_FACTORY_ADDRESS, 1u8)
+        .unwrap();
+    vp.liquidity_target_types
+        .write(&CREDIS_FACTORY_ADDRESS, 1u8)
+        .unwrap();
+}
+
 fn build_spend_args(
     storage: StorageHandle<'_>,
     nullifier_secret: U256,
@@ -86,6 +119,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(RESERVE_VAULT, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
         let pledge_amount = denomination(denom_id).unwrap();
@@ -96,6 +130,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
             .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_reserve_vault(storage.clone());
 
         // Alice pre-computes two notes: pledge-side (spent at requestCredis)
         // and reclaim-side (spent at unpledgeGratis after payAnadosis).
@@ -210,6 +245,7 @@ fn request_credis_rejects_overdue_anadosis() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(RESERVE_VAULT, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
         let amount = denomination(denom_id).unwrap();
@@ -218,6 +254,7 @@ fn request_credis_rejects_overdue_anadosis() {
             .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_reserve_vault(storage.clone());
 
         let c1 = commitment_hash(U256::from(1u64), U256::from(2u64), denom_id).unwrap();
         let c2 = commitment_hash(U256::from(3u64), U256::from(4u64), denom_id).unwrap();
@@ -350,12 +387,14 @@ fn pay_anadosis_rejects_non_owner_caller() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(RESERVE_VAULT, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
         let amount = denomination(denom_id).unwrap();
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_reserve_vault(storage.clone());
 
         let pledge_c = commitment_hash(U256::from(11u64), U256::from(12u64), denom_id).unwrap();
         let reclaim_c = commitment_hash(U256::from(13u64), U256::from(14u64), denom_id).unwrap();
@@ -418,6 +457,7 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(RESERVE_VAULT, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
         let pledge_amount = denomination(denom_id).unwrap();
