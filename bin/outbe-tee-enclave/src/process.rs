@@ -88,7 +88,10 @@ fn process_one(
 
     let nominal_amount_minor = compute_nominal(amount_minor, price)?;
 
-    // token_id is Poseidon over the authoritative (decrypted) day + draft id.
+    // token_id is Poseidon over the authoritative (decrypted) owner + day. It is
+    // deterministic in (owner, worldwide_day) so a duplicate offer for the same
+    // owner and day collides and is rejected downstream (TributeAlreadyExists).
+    // draft_id is still validated by compute_token_id but not bound into the id.
     let token_id = compute_token_id(
         offer.owner,
         payload.worldwide_day,

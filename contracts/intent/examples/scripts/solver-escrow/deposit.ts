@@ -1,6 +1,6 @@
 import { ethers, Contract, JsonRpcProvider, Wallet, parseUnits, formatUnits } from 'ethers';
 import { chains, privateKey, ROUTER } from '../../config';
-import { LayerZeroRouter__factory, SolverEscrow__factory, ERC20__factory } from '../../typechain';
+import { Router__factory, SolverEscrow__factory, ERC20__factory } from '../../typechain';
 import { getTokenDecimals, getTokenSymbol, isNativeToken } from '../../lib/common';
 
 const COMPACT_ABI = [
@@ -38,7 +38,7 @@ async function main() {
   const userAddress = await wallet.getAddress();
 
   // Get escrow address from router
-  const router = LayerZeroRouter__factory.connect(ROUTER, provider);
+  const router = Router__factory.connect(ROUTER, provider);
   const escrowAddress = await router.SOLVER_ESCROW();
   if (escrowAddress === ethers.ZeroAddress) {
     console.error('SolverEscrow not configured on router', ROUTER);

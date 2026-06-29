@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {Test, Vm} from "forge-std/Test.sol";
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
@@ -34,8 +35,8 @@ contract BaseTest is Test {
         (karpincho, karpinchoPK) = makeAddrAndKey("karpincho");
         (vegeta, vegetaPK) = makeAddrAndKey("vegeta");
 
-        inputToken = new ERC20("Input Token", "IN");
-        outputToken = new ERC20("Output Token", "OUT");
+        inputToken = new MockERC20("Input Token", "IN");
+        outputToken = new MockERC20("Output Token", "OUT");
 
         deal(address(inputToken), kakaroto, 1_000_000, true);
         deal(address(inputToken), karpincho, 1_000_000, true);

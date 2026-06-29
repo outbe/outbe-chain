@@ -28,7 +28,7 @@ contract AuctionTest is Test {
         keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
 
     uint32 internal constant RATE_SCALE = 1_000_000;
-    // wCOEN escrow: the per-Intex strike is PROMIS_LOAD_MINOR (constant COEN), so the lock is
+    // wCOEN escrow: the per-Intex escrow basis is PROMIS_LOAD_MINOR (constant COEN), so the lock is
     // `qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE`. ENTRY_PRICE feeds only floor/call now.
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
     uint64 internal constant ENTRY_PRICE = 1e13;
@@ -83,7 +83,7 @@ contract AuctionTest is Test {
         });
     }
 
-    /// @dev Build auction params at the canonical entry price (strike == RATE_SCALE).
+    /// @dev Build auction params at the canonical entry price (escrow basis == RATE_SCALE).
     function _params(uint32 minIntexBidRate, uint16 minIntexBidQuantity)
         internal
         pure
@@ -167,7 +167,7 @@ contract AuctionTest is Test {
         _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
         _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
 
-        // Lock = qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE (wCOEN strike).
+        // Lock = qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE (wCOEN escrow basis).
         assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / RATE_SCALE);
         assertEq(uint256(escrow.lockedFunds(seriesId, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / RATE_SCALE);
 

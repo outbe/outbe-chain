@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -102,7 +103,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
     // ============ Constructor ============
 
-    constructor(address _compact, bytes12 _lockTag, uint256 _collateralBps) {
+    constructor(address _compact, bytes12 _lockTag, uint256 _collateralBps) Ownable(msg.sender) {
         if (_collateralBps == 0 || _collateralBps > BPS_DENOMINATOR) revert InvalidBps();
         COMPACT = ITheCompact(_compact);
         LOCK_TAG = _lockTag;

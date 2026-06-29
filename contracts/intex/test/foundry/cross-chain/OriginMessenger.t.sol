@@ -116,7 +116,6 @@ contract OriginMessengerTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             issuedIntexCount: 10_000,
             promisLoadMinor: 1000,
-            costAmountMinor: 100e6,
             entryPriceMinor: 100e6,
             floorPriceMinor: 50e6,
             intexCallPeriod: 0,

@@ -1,6 +1,6 @@
 import { ethers, JsonRpcProvider } from 'ethers';
 import { chains, privateKey, ROUTER } from '../config';
-import { LayerZeroRouter__factory } from '../typechain';
+import { Router__factory } from '../typechain';
 import { estimateGasWithBuffer, calculateSettleFee } from '../lib/gasEstimation';
 import { getProviderByDomain, getOrderData } from '../lib/common';
 
@@ -10,7 +10,7 @@ import { getProviderByDomain, getOrderData } from '../lib/common';
  * Usage: tsx scripts/settle_by_id.ts <originChain> <orderId>
  */
 async function main() {
-  console.log('LayerZeroRouter - Settle Order by ID\n');
+  console.log('Router - Settle Order by ID\n');
 
   const [originChain, orderId] = process.argv.slice(2);
   if (!originChain || !orderId) {
@@ -25,7 +25,7 @@ async function main() {
   const origin = chains[originChain];
   const provider = new JsonRpcProvider(origin.rpc);
   const wallet = new ethers.Wallet(privateKey!, provider);
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   // Read order data from on-chain storage
   const { orderData } = await getOrderData(orderId, router);
@@ -33,7 +33,7 @@ async function main() {
   // Destination chain
   const destProvider = getProviderByDomain(orderData.destinationDomain);
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   console.log(`  User:       ${orderData.sender}`);
   console.log(`  Amount In:  ${ethers.formatEther(orderData.amountIn)}`);
@@ -62,8 +62,8 @@ async function main() {
     console.log(`  Same-chain order — no LZ fee\n`);
   } else {
     const fee = await calculateSettleFee(destRouter, origin.chainId, [orderId], [fillerData]);
-    value = fee.nativeFee;
-    console.log(`  LZ Fee: ${ethers.formatEther(fee.nativeFee)}\n`);
+    value = fee;
+    console.log(`  LZ Fee: ${ethers.formatEther(fee)}\n`);
   }
 
   console.log('Settling...');

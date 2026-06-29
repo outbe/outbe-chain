@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
@@ -49,7 +50,7 @@ contract RouterAllocator is IAllocator, Ownable2Step {
     // ============ Constructor ============
 
     /// @param _compact The Compact contract address
-    constructor(address _compact) {
+    constructor(address _compact) Ownable(msg.sender) {
         COMPACT = ITheCompact(_compact);
 
         // Register this contract as an allocator. The Compact verifies that address(this) has code.

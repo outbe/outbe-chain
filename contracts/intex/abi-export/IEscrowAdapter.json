@@ -3,19 +3,6 @@
   "abi": [
     {
       "type": "function",
-      "name": "PAYMENT_TOKEN_ALIAS",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint16",
-          "internalType": "uint16"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "claimRefund",
       "inputs": [
         {

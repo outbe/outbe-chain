@@ -12,9 +12,9 @@ rev = "bb4ceea94d6f10eeb5b41dc2391c6c8bf8e734ef"
 
 [[dependencies]]
 name = "openzeppelin-contracts"
-version = "4.9.6"
+version = "5.6.1"
 git = "https://github.com/OpenZeppelin/openzeppelin-contracts"
-rev = "dc44c9f1a4c3b10af99492eed84f83ed244203f6"
+rev = "5a3b28fc5bd3976da5ea38d90d88ba26f1e0a335"
 
 [[dependencies]]
 name = "solidity-bytes-utils"

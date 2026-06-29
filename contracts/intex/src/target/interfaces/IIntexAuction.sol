@@ -33,7 +33,7 @@ interface IIntexAuction {
     struct SubmittedBidData {
         /// @notice Bidder IBA address.
         address bidderAddress;
-        /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of strike).
+        /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of the escrow basis).
         uint32 intexBidRate;
         /// @notice Requested quantity (Intex units).
         uint16 intexQuantity;
@@ -73,11 +73,11 @@ interface IIntexAuction {
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
         IntexCallTrigger callTrigger;
-        /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of strike); rejects bids below it on reveal.
+        /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis); rejects bids below it on reveal.
         uint32 minIntexBidRate;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
-        /// @notice Per-unit entry price (reference ccy); the escrow strike derives from it.
+        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
         uint64 entryPriceMinor;
         /// @notice Floor price (reference ccy).
         uint64 floorPriceMinor;
@@ -136,7 +136,7 @@ interface IIntexAuction {
     /// @param seriesId Auction series id.
     /// @param bidder Bidder address.
     /// @param quantity Revealed Intex quantity.
-    /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of strike).
+    /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
     event BidRevealed(uint32 indexed seriesId, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
 
     /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
@@ -169,11 +169,11 @@ interface IIntexAuction {
     error RevealHashMismatch();
     /// @notice Bid rate is below `minIntexBidRate`.
     error BidBelowMinIntexBidRate();
-    /// @notice Bid rate exceeds 100% of strike (`RATE_SCALE`).
+    /// @notice Bid rate exceeds 100% of the escrow basis (`RATE_SCALE`).
     error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice `quantity * strike * bidRate / RATE_SCALE` exceeds the uint64 lock-amount range.
+    /// @notice `quantity * escrowBasis * bidRate / RATE_SCALE` exceeds the uint128 lock-amount range.
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice Auction does not exist.
     error AuctionNotFound();
@@ -251,7 +251,7 @@ interface IIntexAuction {
     /// @notice Reveal a bid.
     /// @param seriesId Auction series id.
     /// @param quantity Requested quantity (Intex units).
-    /// @param bidRate Bid rate (`1e6` fixed-point, % of strike).
+    /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.

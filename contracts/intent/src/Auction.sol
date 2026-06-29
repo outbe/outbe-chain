@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 import {IAuction} from "./interfaces/IAuction.sol";
@@ -67,9 +68,7 @@ contract Auction is IAuction, Ownable2Step {
 
     // ============ Constructor ============
 
-    constructor(address _owner) {
-        _transferOwnership(_owner);
-    }
+    constructor(address _owner) Ownable(_owner) {}
 
     // ============ Commit-Reveal Functions ============
 

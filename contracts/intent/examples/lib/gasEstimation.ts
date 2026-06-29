@@ -3,7 +3,7 @@
  */
 
 import { ethers } from 'ethers';
-import type { LayerZeroRouter } from '../typechain';
+import type { Router } from '../typechain';
 
 /**
  * Estimates gas for a contract call and adds a buffer
@@ -35,46 +35,46 @@ export async function estimateGasWithBuffer(
 
 /**
  * Calculates LayerZero messaging fee for refund operation
- * @param router - LayerZeroRouter contract instance
+ * @param router - Router contract instance
  * @param originChainId - Origin chain domain ID
  * @param orderIds - Array of order IDs to refund
- * @returns MessagingFee with nativeFee and lzTokenFee
+ * @returns native messaging fee in wei
  */
 export async function calculateRefundFee(
-  router: LayerZeroRouter,
+  router: Router,
   originChainId: number,
   orderIds: string[]
-): Promise<{ nativeFee: bigint; lzTokenFee: bigint }> {
-  // Create payload for quote (same as LayerZeroRouterMessage.encodeRefund)
+): Promise<bigint> {
+  // Create payload for quote (same as RouterMessage.encodeRefund)
   const payload = ethers.AbiCoder.defaultAbiCoder().encode(
     ['bool', 'bytes32[]', 'bytes[]'],
     [false, orderIds, []]
   );
 
-  // Get LayerZero messaging fee
-  return await router.quote(originChainId, payload, false);
+  // Bridge messaging fee, native (wei)
+  return await router.quote(originChainId, payload);
 }
 
 /**
  * Calculates LayerZero messaging fee for settle operation
- * @param router - LayerZeroRouter contract instance
+ * @param router - Router contract instance
  * @param originChainId - Origin chain domain ID
  * @param orderIds - Array of order IDs to settle
  * @param ordersFillerData - Array of filler data for each order
- * @returns MessagingFee with nativeFee and lzTokenFee
+ * @returns native messaging fee in wei
  */
 export async function calculateSettleFee(
-  router: LayerZeroRouter,
+  router: Router,
   originChainId: number,
   orderIds: string[],
   ordersFillerData: string[]
-): Promise<{ nativeFee: bigint; lzTokenFee: bigint }> {
-  // Create payload for quote (same as LayerZeroRouterMessage.encodeSettle)
+): Promise<bigint> {
+  // Create payload for quote (same as RouterMessage.encodeSettle)
   const payload = ethers.AbiCoder.defaultAbiCoder().encode(
     ['bool', 'bytes32[]', 'bytes[]'],
     [true, orderIds, ordersFillerData]
   );
 
-  // Get LayerZero messaging fee
-  return await router.quote(originChainId, payload, false);
+  // Bridge messaging fee, native (wei)
+  return await router.quote(originChainId, payload);
 }
