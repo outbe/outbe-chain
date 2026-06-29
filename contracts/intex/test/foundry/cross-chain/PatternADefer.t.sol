@@ -22,6 +22,7 @@ import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
 // Re-import inside contract context not needed; lib usage via `OptionsBuilder for bytes` declared below.
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
@@ -49,7 +50,7 @@ contract StubAuctionWithBids {
             bids[i] = IIntexAuction.SubmittedBidData({
                 bidderAddress: address(uint160(0xCAFE + i)),
                 intexQuantity: 1,
-                intexBidPrice: 100e6,
+                intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp)
             });
         }
@@ -164,7 +165,7 @@ contract PatternADeferTest is TestHelperOz5 {
         bnbMessenger.setEnforcedOptions(params);
 
         // Series for the ONFT compose path.
-        intex.createSeries(SERIES_ID, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
         intex.markQualified(SERIES_ID);
         intex.grantRole(intex.RELAYER_ROLE(), address(onftBnb));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));

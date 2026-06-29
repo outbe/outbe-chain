@@ -8,11 +8,19 @@
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::config::{self, IntexParams};
 use crate::runtime;
-use crate::schema::IssuanceParams;
+use crate::schema::{IntexFactoryContract, IssuanceParams};
 
 /// Create a series and enroll it for autonomous qualification. Called by the
 /// clearing engine after a cleared auction.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     runtime::issue(storage, params)
+}
+
+/// Resolved IntexFactory protocol parameters (genesis profile). The clearing
+/// engine (Desis) reads these to source floor%/call%/call-trigger at auction
+/// start, keeping a single source of truth instead of hardcoding them.
+pub fn read_params(storage: &StorageHandle<'_>) -> Result<IntexParams> {
+    config::read(&IntexFactoryContract::new(storage.clone()))
 }

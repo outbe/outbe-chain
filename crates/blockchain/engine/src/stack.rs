@@ -82,7 +82,8 @@ use outbe_consensus::{
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
     executor::actor::ExecutorActor,
     finalization::{
-        actor::{BlockCacheHandle, FinalizationActor, FinalizationActorDeps},
+        actor::{FinalizationActor, FinalizationActorDeps},
+        block_cache::BlockCache,
         state::new_finalization_view,
     },
     hybrid::{
@@ -757,8 +758,6 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
     status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
     status.next_planned_activation_height = snapshot.next_planned_activation_height;
     status.vrf_expiry_height = snapshot.vrf_expiry_height;
-    status.is_active = snapshot.randomness_status.is_consensus_active();
-    status.has_threshold_shares = snapshot.randomness_status.has_threshold_shares();
     info!(
         randomness_status = ?snapshot.randomness_status,
         vrf_material_version = snapshot.vrf_material_version,
@@ -2205,18 +2204,19 @@ where
                     // under gramine-sgx, unattested-fallback on the dev box.
                     let connect_policy =
                         crate::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-                    let tribute_offer_public = crate::tee_bootstrap::run_tee_dkg_at_startup(
-                        &socket,
-                        &dkg_clock,
-                        n,
-                        dkg_chain_id,
-                        0,
-                        &connect_policy,
-                        dkg_sender,
-                        dkg_receiver,
-                    )
-                    .await
-                    .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
+                    let (tribute_offer_public, tribute_offer_group_public_key) =
+                        crate::tee_bootstrap::run_tee_dkg_at_startup(
+                            &socket,
+                            &dkg_clock,
+                            n,
+                            dkg_chain_id,
+                            0,
+                            &connect_policy,
+                            dkg_sender,
+                            dkg_receiver,
+                        )
+                        .await
+                        .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
                     info!(
                         tribute_offer_public = %B256::from(tribute_offer_public),
                         "TEE DKG complete — shared tribute offer key derived"
@@ -2226,6 +2226,7 @@ where
                         my_validator,
                         committee,
                         B256::from(tribute_offer_public),
+                        tribute_offer_group_public_key,
                         tee_policy,
                         &evm_signer,
                         tee_sender,
@@ -2836,8 +2837,7 @@ where
         last_execution_height,
         recovered_finalized_round,
     );
-    let finalization_block_cache: BlockCacheHandle =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let finalization_block_cache = BlockCache::new();
 
     // Construct the consensus-owned exact-parent certificate handoff store
     // before either the application handler (consumer-side waiter) or the
@@ -2858,6 +2858,21 @@ where
                 parent_cert_dir.display()
             )
         })?;
+
+    // Defensive startup hygiene: a crash between persisting a finalization parent
+    // record and advancing the finalization view can leave an ahead-of-view
+    // record on disk. Drop any finalization record above the recovered finalized
+    // height so the store never retains a height the view has not reached.
+    let pruned_ahead = finalized_parent_cert_store
+        .prune_above_height(last_execution_height)
+        .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
+    if pruned_ahead > 0 {
+        tracing::info!(
+            pruned_ahead,
+            recovered_finalized_height = last_execution_height,
+            "dropped ahead-of-recovered-view finalization parent records at startup"
+        );
+    }
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
@@ -3099,7 +3114,7 @@ where
             verifier_scheme,
             reporter_elector,
             current_epoch,
-            finalized_parent_cert_store.clone(),
+            std::sync::Arc::new(finalized_parent_cert_store.clone()),
             finalize_verify_mailbox.clone(),
         );
 

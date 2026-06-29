@@ -455,8 +455,7 @@ fn finalizer_test_shared(
     let payload_builder: super::PayloadBuilder = super::PayloadBuilder::noop();
     let (executor_tx, _executor_rx) = futures::channel::mpsc::unbounded();
     let finalization_view = crate::finalization::state::new_finalization_view(B256::ZERO, 0, None);
-    let finalization_block_cache: crate::finalization::actor::BlockCacheHandle =
-        Arc::new(StdMutex::new(Default::default()));
+    let finalization_block_cache = crate::finalization::block_cache::BlockCache::new();
 
     let elector_config_provider = HybridElectorConfigProvider::new();
     let committee_provider = CommitteeProvider::new();
@@ -644,22 +643,21 @@ fn exact_parent_wait_drains_block_number_mismatch() {
                 start_marshal_without_available_block(context).await;
             use crate::finalization::parent_cert_store::{
                 CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-                FinalizedParentCertStore,
+                FinalizedParentCertStore, ProofKind,
             };
-            use outbe_primitives::consensus_metadata::ParentParticipationProof;
             let store = FinalizedParentCertStore::new();
             let parent_hash = B256::with_last_byte(0xAA);
             store
                 .put_finalization(CertifiedParentProofRecord {
-                    proof_type: ParentParticipationProof::Finalization,
-                    finalized_block_number: 41,
+                    kind: ProofKind::Finalization {
+                        finalized_block_number: 41,
+                    },
                     finalized_block_hash: parent_hash,
                     finalized_epoch: 1,
                     finalized_view: 7,
                     parent_view: 6,
                     ordered_committee: vec![Address::with_last_byte(1)],
                     signer_bitmap: vec![1],
-                    certificate: Bytes::from_static(b"cert"),
                     encoded_proof: Bytes::from_static(b"cert"),
                     stored_at_height: 41,
                     ..CertifiedParentProofRecord::default()
@@ -1093,7 +1091,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
                 .await
                 .expect("matching parent finalization in marshal must be recovered, not forfeited");
             assert_eq!(recovered.finalized_block_hash, digest.0);
-            assert_eq!(recovered.finalized_block_number, parent_height);
+            assert_eq!(recovered.finalized_block_number(), Some(parent_height));
 
             // Hash-exact guard: a finalization for a DIFFERENT parent hash must not
             // be accepted (prevents recovering the wrong parent).
@@ -1201,8 +1199,8 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
                 }
             };
             assert_eq!(record.finalized_block_hash, parent_digest.0);
-            assert_eq!(record.finalized_block_number, parent_height);
-            let metadata = record.to_v2_metadata();
+            assert_eq!(record.finalized_block_number(), Some(parent_height));
+            let metadata = record.to_v2_metadata(parent_height);
             assert_eq!(metadata.finalized_block_hash, parent_digest.0);
             assert_eq!(metadata.finalized_block_number, parent_height);
 

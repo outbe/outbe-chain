@@ -64,13 +64,18 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 33] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
+        // PromisFactory is a live stateful precompile (in
+        // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
+        // per-block runtime marker is its only EIP-161 preservation path —
+        // mirroring GRATIS_FACTORY / GEM_FACTORY above.
+        PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
@@ -3384,6 +3389,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::ZERO,
             tribute_offer_public_key: B256::ZERO,
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations: Vec::new(),
             policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
             validator_signatures: Vec::new(),
@@ -7103,6 +7109,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: outbe_primitives::consensus::ReshareResult {
                 new_active_set,
                 active_set_hash,

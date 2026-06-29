@@ -48,15 +48,20 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         .collect();
 
     // Announce each enclave's DKG identity (tee_bls_pub, dkg_enc_pub).
-    let identities: Vec<(Vec<u8>, [u8; 32])> = clients
+    let identities: Vec<outbe_tee::protocol::ParticipantAnnounce> = clients
         .iter_mut()
         .map(
             |c| match c.request(&EnclaveRequest::GetPublicKeys).unwrap() {
                 EnclaveResponse::PublicKeys {
                     tee_bls_pub,
                     dkg_enc_pub,
+                    dkg_enc_sig,
                     ..
-                } => (tee_bls_pub, dkg_enc_pub),
+                } => outbe_tee::protocol::ParticipantAnnounce {
+                    bls_pub: tee_bls_pub,
+                    enc_pub: dkg_enc_pub,
+                    enc_sig: dkg_enc_sig,
+                },
                 other => panic!("unexpected GetPublicKeys: {other:?}"),
             },
         )
@@ -65,13 +70,13 @@ fn full_dkg_ceremony_over_real_noise_transport() {
     let index_of: BTreeMap<Vec<u8>, usize> = identities
         .iter()
         .enumerate()
-        .map(|(i, (bls, _))| (bls.clone(), i))
+        .map(|(i, p)| (p.bls_pub.clone(), i))
         .collect();
 
     let ceremony_id = B256::repeat_byte(0x5c);
     let coords: Vec<CeremonyCoordinator> = identities
         .iter()
-        .map(|(bls, _)| CeremonyCoordinator::new(ceremony_id, 0, bls.clone(), identities.clone()))
+        .map(|p| CeremonyCoordinator::new(ceremony_id, 0, p.bls_pub.clone(), identities.clone()))
         .collect();
 
     // Open the ceremony on every enclave.

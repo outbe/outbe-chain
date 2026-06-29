@@ -1,21 +1,27 @@
+use crate::runtime::create_worldwide_day_for_date;
 use alloy_primitives::U256;
+use outbe_common::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::precompile::IMetadosis;
-use crate::runtime::timestamp_to_date_key;
-use crate::schema::MetadosisContract;
+use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
 
 /// Writes the terminal emission allocation into Metadosis-owned state.
 pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
-    let mut metadosis = ctx.contract::<MetadosisContract>();
-    metadosis.record_day_limit_at(ctx.block.timestamp, amount)?;
+    let mut metadosis = MetadosisContract::new(ctx.storage.clone());
 
-    let date = timestamp_to_date_key(ctx.block.timestamp);
-    let total = metadosis.get_day_limit(date.into())?;
+    let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
+    create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
+    metadosis
+        .worldwide_days
+        .entry(wwd)
+        .metadosis_limit_amount()
+        .write(amount)?;
+
     metadosis.emit(IMetadosis::MetadosisAccumulation {
-        date,
+        date: wwd.value(),
         dayMetadosisLimitAmount: amount,
-        totalAccumulated: total,
+        totalAccumulated: amount,
         blockNumber: ctx.block.block_number,
     })?;
 

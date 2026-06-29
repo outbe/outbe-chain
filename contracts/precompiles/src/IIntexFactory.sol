@@ -22,7 +22,7 @@ interface IIntexFactory {
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
 
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 coenPrice);
+    event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
     event Settled(uint32 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);

@@ -25,6 +25,7 @@ members = [
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
+    "crates/core/promisfactory",
     "crates/core/tribute",
     "crates/core/nod",
     "crates/core/nodfactory",
@@ -100,6 +101,7 @@ outbe-teeregistry = { path = "crates/system/teeregistry" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
+outbe-promisfactory = { path = "crates/core/promisfactory" }
 outbe-tribute = { path = "crates/core/tribute" }
 outbe-nod = { path = "crates/core/nod" }
 outbe-nodfactory = { path = "crates/core/nodfactory" }
@@ -208,10 +210,10 @@ ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
 either = "1"
 
 # ZK / Poseidon
-outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.10.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
-outbe-zk-circuit-noir = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
-outbe-crypto-common = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.10.0" }
+outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

@@ -792,6 +792,7 @@ mod tests {
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set,
                 active_set_hash,

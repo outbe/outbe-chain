@@ -19,11 +19,11 @@ pub const MERCHANT_REWARD_PCT: u64 = 4;
 
 pub const PERCENT_DENOMINATOR: u64 = 100;
 
-/// Typed daily-emission sinks. These are fixed, hard-fork governed
+/// Typed day-emission sinks. These are fixed, hard-fork governed
 /// extension points, not dynamically registered runtime plugins.
 ///
 /// replaced the per-block 3-sink table (`Validator 4 %`,
-/// `AgentReward 8 %`, `Metadosis 88 %`) with the daily 6-sink table
+/// `AgentReward 8 %`, `Metadosis 88 %`) with the day 6-sink table
 /// `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Merchant 4 %, Metadosis
 /// terminal)`. The validator pool is forwarded to `outbe-rewards::api`
 /// by the Cycle handler; WAA / SRA / CCA / Merchant are routed through
@@ -42,7 +42,7 @@ pub enum EmissionSinkId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmissionSinkSpec {
     pub id: EmissionSinkId,
-    /// Fixed percentage of the daily cap. `None` marks the terminal
+    /// Fixed percentage of the day cap. `None` marks the terminal
     /// remainder sink.
     pub pct: Option<u64>,
 }
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_allocation_percentages() {
-        // Daily 6-sink table: 5×4 % + Metadosis terminal 80 %.
+        // Day 6-sink table: 5×4 % + Metadosis terminal 80 %.
         let total = U256::from(10000u64);
         let allocations = allocate_emission(total).unwrap();
         for sink in [

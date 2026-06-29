@@ -19,7 +19,9 @@
 use std::fs;
 
 // The DCAP quote parser is shared with the host (single source of truth).
-pub use outbe_tee::quote::{parse_quote_measurements, ReportMeasurements, MIN_QUOTE_LEN};
+pub use outbe_tee::quote::{
+    parse_quote_measurements, ReportMeasurements, MIN_QUOTE_LEN, REPORT_BODY_OFFSET,
+};
 
 const ATTEST_DIR: &str = "/dev/attestation";
 
@@ -140,6 +142,33 @@ pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(quote)
+}
+
+/// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
+/// SGX report (`/dev/attestation/report`), which Gramine produces via EREPORT with
+/// NO DCAP/PCCS provisioning — so it works under `gramine-sgx` even when remote
+/// attestation is disabled (manifest `sgx.remote_attestation = "none"`). EREPORT
+/// needs a target enclave; for a self-report we target THIS enclave by copying
+/// `my_target_info` into `target_info`. `report_data` is written so the local
+/// report still commits to the enclave's cleartext keys. Returns `Err` under
+/// `gramine-direct`/bare (no `/dev/attestation/report`), where the caller falls
+/// back to zero (unmeasured) — never fabricated.
+pub fn local_report_measurements(report_data: &[u8; 64]) -> Result<ReportMeasurements, String> {
+    let mti = format!("{ATTEST_DIR}/my_target_info");
+    let ti = format!("{ATTEST_DIR}/target_info");
+    let my_target_info = fs::read(&mti).map_err(|e| format!("read {mti}: {e}"))?;
+    fs::write(&ti, &my_target_info).map_err(|e| format!("write {ti}: {e}"))?;
+    let urd = format!("{ATTEST_DIR}/user_report_data");
+    fs::write(&urd, &report_data[..]).map_err(|e| format!("write {urd}: {e}"))?;
+    let rf = format!("{ATTEST_DIR}/report");
+    let report = fs::read(&rf).map_err(|e| format!("read {rf}: {e}"))?;
+    // A standalone SGX report (`sgx_report_t`) has its report BODY at offset 0,
+    // whereas `parse_quote_measurements` expects the body after the 48-byte quote
+    // header. Prepend `REPORT_BODY_OFFSET` zero bytes so the single-source-of-truth
+    // parser reads MRENCLAVE/MRSIGNER/ISVSVN at the identical field offsets.
+    let mut as_quote = vec![0u8; REPORT_BODY_OFFSET];
+    as_quote.extend_from_slice(&report);
+    parse_quote_measurements(&as_quote)
 }
 
 /// EGETKEY-derived sealing key from Gramine's `/dev/attestation/keys/<name>`.

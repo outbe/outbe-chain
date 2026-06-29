@@ -126,6 +126,10 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
                 .expect("GAS-08 issued NOD must be readable");
             assert_eq!(item.owner, owners[idx]);
             assert_eq!(item.worldwide_day, wwd);
+            // league_id now comes from the Fidelity league. These owners have no
+            // gratis cohort history, so no account has qualified (the global
+            // synthetic-max ceiling is zero) → everyone lands in the minimum
+            // league (MIN_LEAGUE == 1).
             assert_eq!(item.league_id, 1);
             assert!(
                 !item.gratis_load_minor.is_zero(),
@@ -498,8 +502,9 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             .write(&0u32, cost_of_gratis)
             .unwrap();
 
-        // 2. Open the day and issue a single tribute. Fidelity defaults to 1
-        //    when unset (see `FidelityContract::get_fidelity_index`).
+        // 2. Open the day and issue a single tribute. With no cohort history the
+        //    owner's Fidelity league is MIN_LEAGUE (see `FidelityContract::league`);
+        //    the single-FI fast path is independent of the index value.
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
         tribute
@@ -554,9 +559,9 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
 /// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
 /// integer truncation in the deficit derivation — the assertions can use
 /// strict equality rather than tolerance bands.
-fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u64>, U256) {
+fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
     let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| U256::in_units(10u64 * i)).collect();
-    let tribute_fis = vec![1u64; 15];
+    let tribute_fis = vec![1u16; 15];
     let total_interest: U256 = nominal_amounts
         .iter()
         .copied()
@@ -648,7 +653,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     let nominal_amounts: Vec<U256> = (1u64..=100).map(U256::in_units).collect();
     // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
     // FIs 11..=15 each get 6 — covers every bucket with uneven population.
-    let tribute_fis: Vec<u64> = (0u64..100).map(|i| (i % 15) + 1).collect();
+    let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
     let total_interest: U256 = nominal_amounts
         .iter()
         .copied()
@@ -672,7 +677,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         15,
         "every FI bucket present in input must receive a fraction"
     );
-    for fi in 1u64..=15 {
+    for fi in 1u16..=15 {
         assert!(map.contains_key(&fi), "FI {fi} missing from fraction map");
     }
 
@@ -691,7 +696,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     //    delta absorbed into the last entry) and assert the normalized
     //    `Σ(f_g · y_fp_g)/SCALE ≤ f_fp` post-condition. This is the
     //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
-    let mut group_interest: BTreeMap<u64, U256> = BTreeMap::new();
+    let mut group_interest: BTreeMap<u16, U256> = BTreeMap::new();
     for (i, &fi) in tribute_fis.iter().enumerate() {
         *group_interest.entry(fi).or_insert(U256::ZERO) += nominal_amounts[i];
     }

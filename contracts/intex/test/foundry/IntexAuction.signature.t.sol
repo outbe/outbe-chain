@@ -23,7 +23,7 @@ contract AuctionSignatureTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint64 bidPrice)");
+        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -62,8 +62,8 @@ contract AuctionSignatureTest is Test {
         );
     }
 
-    function _structHash(uint32 seriesId, address bidder, uint16 qty, uint64 price) internal pure returns (bytes32) {
-        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, price));
+    function _structHash(uint32 seriesId, address bidder, uint16 qty, uint32 rate) internal pure returns (bytes32) {
+        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, rate));
     }
 
     function _digest(
@@ -72,11 +72,11 @@ contract AuctionSignatureTest is Test {
         uint32 seriesId,
         address bidder,
         uint16 qty,
-        uint64 price
+        uint32 rate
     ) internal pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(
-                "\x19\x01", _domainSeparator(verifyingContract, chainid), _structHash(seriesId, bidder, qty, price)
+                "\x19\x01", _domainSeparator(verifyingContract, chainid), _structHash(seriesId, bidder, qty, rate)
             )
         );
     }
@@ -88,9 +88,9 @@ contract AuctionSignatureTest is Test {
         uint32 seriesId,
         address bidder,
         uint16 qty,
-        uint64 price
+        uint32 rate
     ) internal pure returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, _digest(verifyingContract, chainid, seriesId, bidder, qty, price));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, _digest(verifyingContract, chainid, seriesId, bidder, qty, rate));
         return abi.encodePacked(r, s, v);
     }
 
@@ -101,10 +101,14 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
-            minIntexBidPrice: 10,
-            costAmountMinor: 100,
+            minIntexBidRate: 10,
+            entryPriceMinor: 100,
             floorPriceMinor: 100,
+            callPriceMinor: 100,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
         vm.prank(bridger);
@@ -209,10 +213,14 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             promisLoadMinor: 1000,
-            minIntexBidPrice: 10,
-            costAmountMinor: 100,
+            minIntexBidRate: 10,
+            entryPriceMinor: 100,
             floorPriceMinor: 100,
+            callPriceMinor: 100,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
         vm.startPrank(bridger);
@@ -309,16 +317,16 @@ contract AuctionSignatureTest is Test {
     ///        seriesId          = 20260108
     ///        bidder            = 0x..00abcd
     ///        quantity          = 5
-    ///        bidPrice          = 1100
+    ///        bidRate           = 1100
     function test_eip712_goldenDigest() public pure {
         address vc = 0x000000000000000000000000000000000000cafE;
         address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0xc130b525e5a8cd0849808bf0237fd3b2b493f5e99b588c8856d059b00cd944f5;
+        bytes32 expected = 0x70716e6ae3662c444c19b813699627b7859e3333edfe1fded1ee2a3863bb710d;
 
         bytes32 domain = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)
         );
-        bytes32 structH = keccak256(abi.encode(REVEAL_BID_TYPEHASH, uint32(20260108), bidder, uint16(5), uint64(1100)));
+        bytes32 structH = keccak256(abi.encode(REVEAL_BID_TYPEHASH, uint32(20260108), bidder, uint16(5), uint32(1100)));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structH));
 
         assertEq(digest, expected, "typed-data digest drift");

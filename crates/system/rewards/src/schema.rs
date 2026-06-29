@@ -51,7 +51,7 @@ pub struct Rewards {
     /// which is block 0 in any chain shipping this refactor. After
     /// initialization the value is immutable and used by
     /// `day_emission_limit(day_number_since_genesis(...))` from
-    /// `outbe_emissionlimit::daily_emission`.
+    /// `outbe_emissionlimit::day_emission`.
     ///
     /// Tamper-resistance: a node that boots with a different
     /// `genesis.json` timestamp will lock in a different `genesis_utc_day`

@@ -16,10 +16,16 @@ sol! {
             uint32 commitEnd;
             uint32 revealEnd;
             uint32 issuanceEnd;
+            uint16 issuanceCurrency;
+            uint16 referenceCurrency;
             uint128 promisLoadMinor;
-            uint64 minIntexBidPrice;
-            uint64 costAmountMinor;
+            uint32 minIntexBidRate;
+            uint64 entryPrice;
             uint64 floorPriceMinor;
+            uint64 callPriceMinor;
+            uint32 intexCallPeriod;
+            uint16 callWindowDays;
+            uint16 callThresholdDays;
             uint16 minIntexBidQuantity;
         }
 
@@ -67,7 +73,7 @@ sol! {
         function quoteSendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingPrice,
+            uint64 auctionClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             bool payInLzToken
@@ -76,7 +82,7 @@ sol! {
         function sendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
-            uint64 auctionIntexClearingPrice,
+            uint64 auctionClearingRate,
             uint32 wonBidsCount,
             bytes calldata extraOptions,
             MessagingFee calldata fee,
@@ -86,8 +92,8 @@ sol! {
         function quoteSendRefundInstructions(
             uint32 seriesId,
             address[] calldata bidders,
-            uint64[] calldata refundedAmounts,
-            uint64[] calldata paidAmounts,
+            uint128[] calldata refundedAmounts,
+            uint128[] calldata paidAmounts,
             bytes calldata extraOptions,
             bool payInLzToken
         ) external view returns (MessagingFee memory fee);
@@ -95,8 +101,8 @@ sol! {
         function sendRefundInstructions(
             uint32 seriesId,
             address[] calldata bidders,
-            uint64[] calldata refundedAmounts,
-            uint64[] calldata paidAmounts,
+            uint128[] calldata refundedAmounts,
+            uint128[] calldata paidAmounts,
             bytes calldata extraOptions,
             MessagingFee calldata fee,
             address refundAddress

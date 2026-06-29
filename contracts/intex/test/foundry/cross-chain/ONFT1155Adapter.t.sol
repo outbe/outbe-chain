@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {IONFT1155Adapter, SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
@@ -62,8 +63,8 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         this.wireOApps(oapps);
 
         // Create series on both chains
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         // Bridge is only allowed in Qualified state for the user-driven adapter.
         tokenA.markQualified(SERIES_ID);
@@ -304,7 +305,7 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         // must park the transfer (not unwind the packet and strand the burned tokens).
         uint32 failSeries = 20260402;
         uint256 failTokenId = uint256(failSeries);
-        tokenA.createSeries(failSeries, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
         tokenA.mint(user, AMOUNT, failSeries);
 
@@ -333,7 +334,7 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         assertEq(amount, AMOUNT);
 
         // Fix the cause on B, then retry → minted and entry cleared.
-        tokenB.createSeries(failSeries, ISSUED_INTEX_COUNT, 0);
+        tokenB.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(failSeries);
         adapterB.retryCrosschainMint(r.guid);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");

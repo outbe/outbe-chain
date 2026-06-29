@@ -8,16 +8,16 @@ contract CodecHarness {
     function encodeAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount);
+        return BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount);
     }
 
     function decodeAuctionResult(bytes calldata msg_)
         external
         pure
-        returns (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionIntexClearingPrice, uint32 wonBidsCount)
+        returns (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount)
     {
         return BridgeMsgCodec.decodeAuctionResult(msg_);
     }

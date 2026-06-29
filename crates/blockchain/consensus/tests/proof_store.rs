@@ -35,11 +35,12 @@ use outbe_consensus::{
     bls::bootstrap_dkg,
     digest::Digest as OutbeDigest,
     finalization::{
-        actor::{BLOCK_CACHE_KEEP_DEPTH, PARENT_CERT_KEEP_DEPTH},
+        actor::PARENT_CERT_KEEP_DEPTH,
+        block_cache::BLOCK_CACHE_KEEP_DEPTH,
         ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
         parent_cert_store::{
             CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-            FinalizedParentCertStore, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
+            FinalizedParentCertStore, ProofKind, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         },
     },
     hybrid::{election::HybridRandom, HybridScheme},
@@ -174,7 +175,7 @@ fn build_reporter(
         verifier_scheme_from(fx),
         HybridRandom::default().build(&fx.participants),
         Epoch::new(0),
-        store,
+        std::sync::Arc::new(store.clone()),
         verify_mailbox,
     );
     (reporter, rx)
@@ -234,11 +235,11 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION
     );
     assert_eq!(
-        restored.proof_type,
+        restored.proof_kind(),
         ParentParticipationProof::CertifiedNotarization
     );
     assert!(
-        restored.local_certification_witness,
+        restored.is_certification_witness(),
         "witness flag must round-trip across restart"
     );
     assert_eq!(
@@ -260,18 +261,19 @@ async fn proof_store_get_best_parent_proof_finalization_first_across_restart() {
     {
         let store = FinalizedParentCertStore::open(&dir).unwrap();
         let fin = CertifiedParentProofRecord {
-            proof_type: ParentParticipationProof::Finalization,
+            kind: ProofKind::Finalization {
+                finalized_block_number: 100,
+            },
             finalized_block_hash: hash,
             finalized_view: 100,
             stored_at_height: 100,
             ..CertifiedParentProofRecord::default()
         };
         let cn = CertifiedParentProofRecord {
-            proof_type: ParentParticipationProof::CertifiedNotarization,
+            kind: ProofKind::CertifiedNotarization,
             finalized_block_hash: hash,
             finalized_view: 100,
             stored_at_height: 100,
-            local_certification_witness: true,
             ..CertifiedParentProofRecord::default()
         };
         store.put_finalization(fin).unwrap();
@@ -281,7 +283,7 @@ async fn proof_store_get_best_parent_proof_finalization_first_across_restart() {
     let reopened = FinalizedParentCertStore::open(&dir).unwrap();
     let best = reopened.get_best_parent_proof(proof_key).unwrap();
     assert_eq!(
-        best.proof_type,
+        best.proof_kind(),
         ParentParticipationProof::Finalization,
         " must hold across restart"
     );
@@ -311,7 +313,9 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
     let stored_height = BLOCK_CACHE_KEEP_DEPTH + 10;
     let proof_key = CertifiedParentProofKey::new(0, stored_height, B256::with_last_byte(0xAA));
     let record = CertifiedParentProofRecord {
-        proof_type: ParentParticipationProof::Finalization,
+        kind: ProofKind::Finalization {
+            finalized_block_number: stored_height,
+        },
         finalized_block_hash: B256::with_last_byte(0xAA),
         finalized_view: stored_height,
         stored_at_height: stored_height,

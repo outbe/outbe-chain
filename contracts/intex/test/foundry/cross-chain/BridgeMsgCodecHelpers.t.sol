@@ -151,18 +151,18 @@ contract BridgeMsgCodecHelpersTest is Test {
         uint256 n = BridgeMsgCodec.MAX_BIDS_BATCH + 1;
         address[] memory bidders = new address[](n);
         uint16[] memory quantities = new uint16[](n);
-        uint64[] memory prices = new uint64[](n);
+        uint32[] memory rates = new uint32[](n);
         uint32[] memory timestamps = new uint32[](n);
         for (uint256 i = 0; i < n; i++) {
             bidders[i] = address(uint160(i + 1));
             quantities[i] = 1;
-            prices[i] = 1;
+            rates[i] = 1;
             timestamps[i] = 1;
         }
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(uint32(42), uint32(1), true, uint32(1), bidders, quantities, prices, timestamps)
+            abi.encode(uint32(42), uint32(1), true, uint32(1), bidders, quantities, rates, timestamps)
         );
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)

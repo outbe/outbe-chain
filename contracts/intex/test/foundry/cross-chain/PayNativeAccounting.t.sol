@@ -87,8 +87,8 @@ contract PayNativeAccountingTest is TestHelperOz5 {
         bidders[0] = address(0xCAFE);
         uint16[] memory qty = new uint16[](1);
         qty[0] = 1;
-        uint64[] memory price = new uint64[](1);
-        price[0] = 100e6;
+        uint32[] memory rate = new uint32[](1);
+        rate[0] = 100e6;
         uint32[] memory ts = new uint32[](1);
         ts[0] = uint32(block.timestamp);
 
@@ -96,7 +96,7 @@ contract PayNativeAccountingTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             bidderAddresses: bidders,
             intexQuantities: qty,
-            intexBidPrices: price,
+            intexBidRates: rate,
             timestamps: ts,
             extraOptions: "",
             refundAddress: address(0)

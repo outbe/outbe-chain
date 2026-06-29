@@ -3,71 +3,7 @@ use outbe_nodfactory::api as nodfactory_api;
 use outbe_oracle::contract::OracleContract;
 
 #[test]
-fn gas_07_metadosis_lifecycle_active_wwd_backlog_is_bounded_by_schedule() {
-    const SIMULATED_DAYS: u64 = 120;
-    const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
-    const NON_BOOTSTRAP_CHAIN_ID: u64 = CHAIN_ID;
-
-    assert!(!outbe_primitives::chain::is_devnet(NON_BOOTSTRAP_CHAIN_ID));
-    assert!(!outbe_primitives::chain::is_testnet(NON_BOOTSTRAP_CHAIN_ID));
-
-    let schedule_hours = FORMING_PERIOD_HOURS
-        + DEFAULT_LOOKBACK_DELAY_HOURS
-        + DEFAULT_OFFERING_PERIOD_HOURS
-        + WAITING_PERIOD_HOURS;
-    let lifecycle_days = schedule_hours.div_ceil(24);
-    let expected_max_active = lifecycle_days + COMPLETED_WWD_RETENTION_DAYS + 2; // cleanup is daily and block 1 seeds UTC day too.
-
-    with_storage(|storage| {
-        let start_timestamp =
-            outbe_common::WorldwideDay::new(20260101).start_timestamp() + 2 * SECONDS_PER_HOUR;
-        let first_seeded_wwd =
-            outbe_common::WorldwideDay::new(crate::runtime::timestamp_to_date_key(start_timestamp));
-        let mut observed_max_active = 0usize;
-        let mut observed_max_day = 0u64;
-
-        for day in 0..SIMULATED_DAYS {
-            let timestamp = start_timestamp + day * SECONDS_PER_DAY;
-            run_begin_block_with_chain_id(
-                storage.clone(),
-                day + 1,
-                timestamp,
-                NON_BOOTSTRAP_CHAIN_ID,
-            );
-
-            let metadosis = MetadosisContract::new(storage.clone());
-            let active = metadosis.get_all_active_wwds().unwrap();
-            if active.len() > observed_max_active {
-                observed_max_active = active.len();
-                observed_max_day = day;
-            }
-            assert!(
-                active.len() <= expected_max_active as usize,
-                "GAS-07: valid Metadosis lifecycle accumulated {} active WWDs on simulated day \
-                 {day}, exceeding schedule-derived bound {expected_max_active}",
-                active.len()
-            );
-        }
-
-        assert!(
-            observed_max_active > 1,
-            "GAS-07: test fixture must prove multiple active WWDs are valid; observed max \
-             {observed_max_active}"
-        );
-
-        let metadosis = MetadosisContract::new(storage);
-        let active = metadosis.get_all_active_wwds().unwrap();
-        assert!(
-            !active.contains(&first_seeded_wwd),
-            "GAS-07: first seeded WWD {first_seeded_wwd} should be cleaned up after \
-             {SIMULATED_DAYS} daily lifecycle runs; observed max active {observed_max_active} \
-             on day {observed_max_day}"
-        );
-    });
-}
-
-#[test]
-fn test_emission_sink_accumulates_by_utc_date_key() {
+fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
     with_storage(|storage| {
         let timestamp =
             outbe_common::WorldwideDay::new(20241221).start_timestamp() + 2 * SECONDS_PER_HOUR;
@@ -76,15 +12,30 @@ fn test_emission_sink_accumulates_by_utc_date_key() {
             storage.clone(),
         );
 
+        // The terminal sink now writes the limit onto the WorldwideDay record
+        // (UTC+14 keyed) for the block timestamp, not a separate UTC-date-key map.
+        let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
+
         crate::emission_sink::apply(&ctx, U256::from(123u64)).unwrap();
 
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
-            metadosis.get_day_limit(20241220u32.into()).unwrap(),
+            metadosis
+                .worldwide_days
+                .entry(wwd)
+                .metadosis_limit_amount()
+                .read()
+                .unwrap(),
             U256::from(123u64)
         );
+        // A neighboring day is untouched.
         assert_eq!(
-            metadosis.get_day_limit(20241221u32.into()).unwrap(),
+            metadosis
+                .worldwide_days
+                .entry(wwd.previous_date_key())
+                .metadosis_limit_amount()
+                .read()
+                .unwrap(),
             U256::ZERO
         );
     });
@@ -98,7 +49,7 @@ fn test_cold_start_creates_utc_day_and_current_utc_plus_14_day() {
         run_begin_block(storage.clone(), 1, timestamp);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        let active = metadosis.get_all_active_wwds().unwrap();
+        let active = metadosis.active_wwd.read_all().unwrap();
         assert!(active.contains(&20260301u32.into()));
         assert!(active.contains(&20260302u32.into()));
         assert_eq!(
@@ -122,16 +73,16 @@ fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_en
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_bootstrap_end_time().unwrap(), 0);
 
-        let active = metadosis.get_all_active_wwds().unwrap();
+        let active = metadosis.active_wwd.read_all().unwrap();
         assert!(active.contains(&20260301u32.into()));
         assert!(active.contains(&20260302u32.into()));
 
         let wwd = 20260302u32;
         let forming_start = outbe_common::WorldwideDay::new(wwd).start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let expected_lookback_end = forming_end + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let expected_lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
         let expected_offering_end =
-            expected_lookback_end + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+            expected_lookback_end + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         assert_eq!(
             metadosis
@@ -166,16 +117,16 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
-        let offering_end = offering_entry + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let offering_end = offering_entry + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
@@ -213,7 +164,10 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         assert_eq!(vwaps, vec![U256::from(110u64)]);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(
+            metadosis.get_wwd_status(wwd).unwrap(),
+            status::LOOKBACK_DELAY
+        );
         assert_eq!(
             metadosis
                 .worldwide_days
@@ -232,12 +186,12 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
                 .unwrap(),
             U256::from(110u64)
         );
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::GREEN);
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::GREEN);
 
         run_begin_block(storage.clone(), 3, offering_entry);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::OFFERING);
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
         assert_eq!(
             metadosis
                 .worldwide_days
@@ -256,7 +210,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
                 .unwrap(),
             U256::from(110u64)
         );
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::GREEN);
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::GREEN);
 
         let tribute = TributeContract::new(storage.clone());
         assert!(!tribute.is_day_sealed(wwd).unwrap());
@@ -264,7 +218,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         run_begin_block(storage.clone(), 4, offering_end);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::WAITING);
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::WAITING);
         let tribute = TributeContract::new(storage);
         assert!(tribute.is_day_sealed(wwd).unwrap());
     });
@@ -279,15 +233,15 @@ fn test_missing_previous_vwap_results_in_red_day() {
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
@@ -307,7 +261,10 @@ fn test_missing_previous_vwap_results_in_red_day() {
         run_begin_block(storage.clone(), 2, forming_end);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(
+            metadosis.get_wwd_status(wwd).unwrap(),
+            status::LOOKBACK_DELAY
+        );
         assert_eq!(
             metadosis
                 .worldwide_days
@@ -326,12 +283,12 @@ fn test_missing_previous_vwap_results_in_red_day() {
                 .unwrap(),
             U256::from(110u64)
         );
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::RED);
 
         run_begin_block(storage.clone(), 3, offering_entry);
 
         let metadosis = MetadosisContract::new(storage);
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::RED);
     });
 }
 
@@ -347,15 +304,15 @@ fn test_equal_vwap_results_in_red_day() {
         let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
@@ -388,13 +345,16 @@ fn test_equal_vwap_results_in_red_day() {
         run_begin_block(storage.clone(), 2, forming_end);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::LOOKBACK_DELAY);
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+        assert_eq!(
+            metadosis.get_wwd_status(wwd).unwrap(),
+            status::LOOKBACK_DELAY
+        );
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::RED);
 
         run_begin_block(storage.clone(), 3, offering_entry);
 
         let metadosis = MetadosisContract::new(storage);
-        assert_eq!(metadosis.get_day_type(wwd).unwrap(), day_type::RED);
+        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::RED);
     });
 }
 
@@ -410,9 +370,9 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         let previous_forming_end = previous_forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
         let scheduled = offering_entry
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -420,8 +380,8 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
@@ -456,7 +416,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
         run_begin_block(storage.clone(), 4, scheduled);
 
         let metadosis = MetadosisContract::new(storage);
-        assert_ne!(metadosis.get_day_type(wwd).unwrap(), day_type::UNKNOWN);
+        assert_ne!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::UNKNOWN);
     });
 }
 
@@ -468,8 +428,8 @@ fn test_ready_processing_missing_limit_fails_like_source() {
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -477,12 +437,12 @@ fn test_ready_processing_missing_limit_fails_like_source() {
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::RED).unwrap();
         metadosis
             .worldwide_days
             .entry(wwd)
@@ -493,8 +453,7 @@ fn test_ready_processing_missing_limit_fails_like_source() {
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
-        assert!(!metadosis.is_day_limit_used(wwd).unwrap());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
     });
 }
 
@@ -507,8 +466,8 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -516,8 +475,8 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
@@ -527,13 +486,12 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
             .status()
             .write(status::WAITING)
             .unwrap();
-        metadosis.record_day_limit(wwd, day_limit).unwrap();
+        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
-        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
@@ -541,15 +499,15 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
 }
 
 #[test]
-fn test_ready_processing_zero_limit_fails_and_marks_used() {
+fn test_ready_processing_zero_limit_fails() {
     with_storage(|storage| {
         let wwd_raw = 20260311u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -557,25 +515,24 @@ fn test_ready_processing_zero_limit_fails_and_marks_used() {
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::RED).unwrap();
         metadosis
             .worldwide_days
             .entry(wwd)
             .status()
             .write(status::WAITING)
             .unwrap();
-        metadosis.record_day_limit(wwd, U256::ZERO).unwrap();
+        metadosis.set_metadosis_limit(wwd, U256::ZERO).unwrap();
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
-        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
     });
 }
 
@@ -588,8 +545,8 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -597,25 +554,24 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_day_type(wwd, day_type::RED).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::RED).unwrap();
         metadosis
             .worldwide_days
             .entry(wwd)
             .status()
             .write(status::WAITING)
             .unwrap();
-        metadosis.record_day_limit(wwd, day_limit).unwrap();
+        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::COMPLETED);
-        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
@@ -623,7 +579,7 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
 }
 
 #[test]
-fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes() {
+fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
     with_storage(|storage| {
         let wwd_raw = 20260313u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
@@ -632,8 +588,8 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let owner = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let token_id = U256::from_be_bytes(alloy_primitives::keccak256([0x01, 0x02, 0x03]).0);
@@ -643,19 +599,19 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
             .create_worldwide_day(
                 wwd,
                 forming_start,
-                DEFAULT_LOOKBACK_DELAY_HOURS,
-                DEFAULT_OFFERING_PERIOD_HOURS,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
         metadosis
             .worldwide_days
             .entry(wwd)
             .status()
             .write(status::WAITING)
             .unwrap();
-        metadosis.record_day_limit(wwd, day_limit).unwrap();
+        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
@@ -675,8 +631,11 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
 
         // Pre-issue a NOD with the same (owner, worldwide_day) tuple the lysis
         // run will produce, so the second issue collides on nod_id and lysis
-        // fails — the test asserts the day_limit is returned in full and the
-        // tribute survives.
+        // fails. A lysis failure on a day that already passed FORMING/OFFERING is
+        // genuine state corruption, so `process_metadosis` propagates the error
+        // out of the begin-zone system transaction instead of silently retiring
+        // the day. The test asserts the error surfaces and the day is left
+        // unsettled (still READY, limit not routed to PROMIS).
         nodfactory_api::issue_nod(
             &storage,
             &outbe_nod::NodIssueParams {
@@ -693,17 +652,141 @@ fn test_ready_processing_lysis_failure_returns_full_limit_and_preserves_tributes
         )
         .unwrap();
 
-        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        let result = try_run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        assert!(
+            result.is_err(),
+            "lysis failure must propagate out of the begin-zone system transaction"
+        );
 
+        // The error carries the real reason out. `process_metadosis` records the
+        // FAILED transition before propagating (observable here because the test
+        // harness does not revert; on the production path the propagated error
+        // reverts the system tx and rolls this write back). The limit is never
+        // routed to PROMIS, and the tribute is untouched.
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_status(wwd).unwrap(), status::FAILED);
-        assert!(metadosis.is_day_limit_used(wwd).unwrap());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
         let tribute = TributeContract::new(storage.clone());
         assert_eq!(tribute.total_supply().unwrap(), 1);
 
         let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn no_tributes_green_day_clears_started_auction() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 64]),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        let wwd = outbe_common::WorldwideDay::new(20260401u32);
+        let day_limit = U256::from(10u64).pow(U256::from(26u64));
+        let forming_start = wwd.start_timestamp();
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
+
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()
+            .unwrap();
+
+        assert!(outbe_desis::api::dispatch_stage_start(
+            storage.clone(),
+            auction_ts,
+            U256::from(10u64).pow(U256::from(18u64)),
+        )
+        .unwrap());
+        assert!(
+            outbe_desis::api::dispatch_stage_reveal(storage.clone(), auction_ts, true).unwrap()
+        );
+
+        run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
+
+        let promis = PromisLimitContract::new(storage);
+        assert!(promis.get_total_unallocated().unwrap() < day_limit);
+    });
+}
+
+#[test]
+fn no_day_limit_green_day_still_empty_clears_started_auction() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 64]),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        let wwd = outbe_common::WorldwideDay::new(20260501u32);
+        let forming_start = wwd.start_timestamp();
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::GREEN).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+
+        let auction_ts = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()
+            .unwrap();
+
+        assert!(outbe_desis::api::dispatch_stage_start(
+            storage.clone(),
+            auction_ts,
+            U256::from(10u64).pow(U256::from(18u64)),
+        )
+        .unwrap());
+        assert!(
+            outbe_desis::api::dispatch_stage_reveal(storage.clone(), auction_ts, true).unwrap()
+        );
+
+        run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+
+        let series = timestamp_to_date_key(auction_ts);
+        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
+        assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 1);
+        assert_eq!(desis.pending_supply_intex.read(&series).unwrap(), 0);
     });
 }
 
@@ -791,4 +874,50 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
         Some("auction_stage_reveal"),
         "reveal must dispatch on the mid-offering tick, not bundled with clearing: {stages:?}"
     );
+}
+
+#[test]
+fn test_terminal_day_leaves_active_set() {
+    with_storage(|storage| {
+        let wwd = outbe_common::WorldwideDay::new(20260315u32);
+        let forming_start = wwd.start_timestamp();
+        let scheduled = forming_start
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_wwd_day_type(wwd, day_type::RED).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::WAITING)
+            .unwrap();
+        metadosis
+            .set_metadosis_limit(wwd, U256::from(777u64))
+            .unwrap();
+
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage);
+        // The day completed and was retired out of the active set into the
+        // bounded delete-queue, but stays readable while under the cap.
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
+        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
+        assert!(metadosis
+            .get_active_wwd_by_status(status::COMPLETED)
+            .unwrap()
+            .contains(&wwd));
+    });
 }

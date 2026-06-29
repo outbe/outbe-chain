@@ -241,6 +241,7 @@ sol! {
         function getTwap(string base, string quote, uint64 lookbackSeconds) external view returns (uint256 twap);
         function getTwaps(uint64 lookbackSeconds) external view returns (uint32[] memory pairIds, uint256[] memory twaps, uint64[] memory lookbackSeconds);
         function getDayVwap(string base, string quote) external view returns (uint256 vwap);
+        function getUtcDayVwap(string base, string quote, uint32 utcDay) external view returns (uint256 vwap);
         function getWorldwideDayVwap(uint64 startTime, uint64 endTime) external view returns (uint32[] memory pairIds, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
         function getWorldwideDayVwapSnapshot(uint32 worldwideDay) external view returns (uint64 startTime, uint64 endTime, uint32[] memory pairIds, uint256[] memory vwaps, uint64[] memory lookbackSeconds);
         function getScurveEntries(string base, string quote) external view returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);

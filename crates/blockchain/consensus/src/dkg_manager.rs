@@ -826,6 +826,9 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         is_full_dkg,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations,
+        // Reshare authority endorsement is produced by the reshare round (R5);
+        // empty here until that flow recovers the prior-committee group signature.
+        endorsement_signature: Bytes::new(),
         reshare: ReshareResult {
             new_active_set,
             active_set_hash,

@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {
     IONFT1155AdapterBatch,
@@ -116,8 +117,8 @@ contract ONFT1155AdapterBatchReentrancyTest is TestHelperOz5 {
         oapps[1] = address(adapterB);
         this.wireOApps(oapps);
 
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);

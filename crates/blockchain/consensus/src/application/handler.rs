@@ -12,25 +12,13 @@
 
 use std::{sync::Arc, time::Duration};
 
-/// Maximum retry attempts for marshal block resolution before structured application failure.
-pub(crate) const FINALIZE_MAX_RETRIES: u32 = 5;
-/// Delay between retry attempts for marshal block resolution.
-pub(crate) const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
-/// Maximum time to wait for marshal block resolution during verify.
-pub(crate) const VERIFY_RESOLUTION_TIMEOUT: Duration = crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
+// Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
+// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` — they are read cross-module
+// by the finalization actor, verify, and epoch-boundary resolution paths.
+use crate::config::{PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT};
+
 /// Delay between Engine API retries while execution reports temporary SYNCING.
 pub(crate) const VERIFY_SYNCING_RETRY_DELAY: Duration = Duration::from_millis(100);
-/// Maximum time to wait for marshal parent resolution during proposal.
-pub(crate) const PROPOSE_RESOLUTION_TIMEOUT: Duration =
-    crate::config::DEFAULT_PEER_RESPONSE_TIMEOUT;
-/// Per-attempt time budget for marshal block resolution during finalization.
-///
-/// Without this bound, a `subscribe_by_digest` waiter that never completes can
-/// wedge the application handler's serial event loop, blocking propose/verify
-/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
-/// Exhaustion is surfaced as a structured application failure, not a direct
-/// process kill from inside the handler.
-pub(crate) const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Log-rate window for repeated critical proposal failures.
 pub(crate) const PROPOSAL_FAILURE_LOG_WINDOW: Duration = Duration::from_secs(5);
 /// epoch boundary: bounded wait inside `handle_genesis` for the
@@ -45,112 +33,6 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-struct MarshalAncestryReader<C: commonware_runtime::Clock> {
-    marshal: crate::marshal_types::MarshalMailbox,
-    block_cache: BlockCacheHandle,
-    readiness: AncestryReadiness,
-    round: Option<Round>,
-    timeout: Duration,
-    // Owned runtime clock used to bound the marshal lookups. Cloned cheaply from
-    // the spawn's context so the trait methods (which carry no context) can apply
-    // a runtime-agnostic timeout without pulling in the tokio reactor.
-    clock: C,
-}
-
-impl<C: commonware_runtime::Clock> MarshalAncestryReader<C> {
-    fn new(
-        marshal: crate::marshal_types::MarshalMailbox,
-        block_cache: BlockCacheHandle,
-        readiness: AncestryReadiness,
-        round: Option<Round>,
-        timeout: Duration,
-        clock: C,
-    ) -> Self {
-        Self {
-            marshal,
-            block_cache,
-            readiness,
-            round,
-            timeout,
-            clock,
-        }
-    }
-}
-
-impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
-    fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a> {
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache
-                .values()
-                .find(|block| block.number() == height)
-                .cloned(),
-            Err(error) => {
-                warn!(%error, height, "block cache unavailable while resolving ancestry by height");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        // `Clock::sleep` returns an owned `'static` future, so we build it from the
-        // borrowed clock here and move it into the lookup future — no clone of the
-        // (non-`Clone`) runtime context needed.
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            // `marshal.get_block(..)` borrows `marshal`, so it is not `'static` and
-            // cannot use `Clock::timeout`. Inline the same biased race the default
-            // `Clock::timeout` uses: prefer the resolved block over the timeout.
-            let lookup = marshal.get_block(Height::new(height));
-            let mut lookup = std::pin::pin!(lookup);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                block = &mut lookup => block,
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a> {
-        let digest = Digest(hash);
-        let cached = match self.block_cache.lock() {
-            Ok(cache) => cache.get(&digest).cloned(),
-            Err(error) => {
-                warn!(%error, %hash, "block cache unavailable while resolving ancestry by hash");
-                None
-            }
-        };
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
-        let marshal = self.marshal.clone();
-        let round = self.round;
-        // Owned `'static` sleep future built from the borrowed clock (no clone).
-        let sleep = self.clock.sleep(self.timeout);
-        Box::pin(async move {
-            let fallback = match round {
-                Some(round) => {
-                    commonware_consensus::marshal::core::DigestFallback::FetchByRound { round }
-                }
-                None => commonware_consensus::marshal::core::DigestFallback::Wait,
-            };
-            let block_future = marshal.subscribe_by_digest(digest, fallback);
-            // Biased race, preferring the resolved block over the timeout
-            // (the `block_future` borrows `marshal`, so it is not `'static`).
-            let mut block_future = std::pin::pin!(block_future);
-            let mut sleep = std::pin::pin!(sleep);
-            commonware_macros::select! {
-                result = &mut block_future => result.ok(),
-                _ = &mut sleep => None,
-            }
-        })
-    }
-
-    fn is_ready(&self) -> bool {
-        self.readiness.is_ready()
-    }
-}
-
 fn unix_now_millis() -> eyre::Result<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -268,10 +150,10 @@ use crate::{
     block::ConsensusBlock,
     committee_provider::CommitteeProvider,
     digest::Digest,
-    dkg_manager::{AncestryReader, BlockLookupFuture, BoundaryRequirement},
+    dkg_manager::{AncestryReader, BoundaryRequirement},
     executor,
     finalization::{
-        actor::BlockCacheHandle,
+        block_cache::BlockCache,
         parent_cert_store::{CertifiedParentProofKey, CertifiedParentProofRecord},
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
@@ -488,7 +370,7 @@ pub(crate) struct ApplicationShared {
 
     /// Shared block cache: proposer inserts on local build, the
     /// FinalizationActor evicts entries below the new finalized height.
-    block_cache: BlockCacheHandle,
+    block_cache: BlockCache,
 
     /// Proposer-side exact-parent certificate selector.
     ///
@@ -536,7 +418,7 @@ pub struct ApplicationDeps {
     pub epoch_fence: ApplicationEpochFence,
     pub ancestry_readiness: AncestryReadiness,
     pub finalization_view: FinalizationViewHandle,
-    pub block_cache: BlockCacheHandle,
+    pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
     pub payload_resolve_time: std::time::Duration,
     pub payload_return_time: std::time::Duration,
@@ -730,6 +612,21 @@ impl ApplicationHandler {
     }
 }
 
+/// Outcome of a `new_payload` execution validation with SYNCING retry. The single
+/// source of truth for how a verify path classifies execution status, so the
+/// parent and block validations can never drift in their SYNCING/retry policy.
+enum PayloadVerification {
+    /// Execution accepted the payload. `saw_syncing` is true if SYNCING was
+    /// observed before acceptance — in that case the verify request may have been
+    /// superseded by a view timeout, so the caller skips its side effects.
+    Valid { saw_syncing: bool },
+    /// Execution rejected the payload; the caller votes `false`.
+    Invalid,
+    /// The single-shot verify response channel closed while waiting; the caller
+    /// returns without side effects.
+    ChannelClosed,
+}
+
 impl ApplicationShared {
     /// Handle genesis request — return the parent digest for `view = 1` of
     /// `genesis.epoch`.
@@ -869,11 +766,7 @@ impl ApplicationShared {
             } else if parent_digest.0 == self.genesis_hash {
                 (Height::zero(), None, None)
             } else {
-                let cached_parent = self
-                    .block_cache
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&parent_digest);
+                let cached_parent = self.block_cache.get_and_remove(&parent_digest);
                 let parent_block = if let Some(block) = cached_parent {
                     block
                 } else {
@@ -1240,7 +1133,7 @@ impl ApplicationShared {
             .dkg_manager
             .pending_boundary_artifact(round.epoch())
             .await;
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
@@ -1254,7 +1147,9 @@ impl ApplicationShared {
             .await
         {
             Ok(BoundaryRequirement::AlreadyCommitted) => {
-                crate::metrics::record_dkg_boundary_requirement("already_committed");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+                );
                 None
             }
             Ok(BoundaryRequirement::MustEmit) => {
@@ -1263,7 +1158,9 @@ impl ApplicationShared {
                         "boundary requirement requested emission without pending artifact"
                     ));
                 };
-                crate::metrics::record_dkg_boundary_requirement("must_emit");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::MustEmit,
+                );
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))
             }
             Ok(BoundaryRequirement::NoPending) if proposed_height == 1 => {
@@ -1273,11 +1170,15 @@ impl ApplicationShared {
                     "block 1 proposal forfeited: DKG boundary artifact for epoch 0 not ready"
                 );
                 crate::metrics::record_genesis_dkg_boundary_not_ready_forfeit();
-                crate::metrics::record_dkg_boundary_unavailable("genesis_boundary_not_ready");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::GenesisBoundaryNotReady,
+                );
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
             Ok(BoundaryRequirement::NoPending) => {
-                crate::metrics::record_dkg_boundary_requirement("no_pending");
+                crate::metrics::record_dkg_boundary_requirement(
+                    crate::metrics::DkgBoundaryDecision::NoPending,
+                );
                 self.dkg_manager
                     .get_dealer_log(round.epoch())
                     .await
@@ -1291,7 +1192,9 @@ impl ApplicationShared {
                     "block proposal forfeited: DKG boundary requirement unavailable"
                 );
                 if error.is_unavailable() {
-                    crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                    crate::metrics::record_dkg_boundary_unavailable(
+                        crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                    );
                 }
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
@@ -1326,9 +1229,12 @@ impl ApplicationShared {
         // metadata's `ParentProofSelector::select_direct_parent_proof`
         // is the upstream caller that decides which record (if any) to feed
         // into Phase 1.
+        // The selector guarantees the chosen record's height resolves to
+        // `parent_height` (Finalization validated to match; CertifiedNotarization
+        // carries no height of its own and is resolved to the parent here).
         let parent_consensus_metadata = parent_proof_record
             .as_ref()
-            .map(CertifiedParentProofRecord::to_v2_metadata);
+            .map(|record| record.to_v2_metadata(parent_height.get()));
         if parent_consensus_metadata.is_some() {
             crate::metrics::record_parent_cert_included();
         }
@@ -1440,19 +1346,62 @@ impl ApplicationShared {
 
         crate::metrics::record_block_proposed(block_number);
 
-        {
-            let mut guard = self
-                .block_cache
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            crate::finalization::actor::insert_block_cache_bounded(
-                &mut guard,
-                digest,
-                consensus_block.clone(),
-            );
-        }
+        self.block_cache
+            .insert_bounded(digest, consensus_block.clone());
 
         Ok(BuildBlockOutcome::Built(digest, consensus_block))
+    }
+
+    /// Drive `engine.new_payload` to a terminal verdict, retrying while execution
+    /// reports SYNCING. Owns the SYNCING/retry policy for both verify paths
+    /// (parent and proposed block) so they cannot diverge. Bails to
+    /// [`PayloadVerification::ChannelClosed`] if the single-shot verify response
+    /// channel closes mid-wait; `kind`/`digest` only scope the diagnostics.
+    async fn verify_payload_with_syncing_retry(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        kind: &'static str,
+        digest: Digest,
+        execution_data: OutbeExecutionData,
+        response: &oneshot::Sender<bool>,
+    ) -> eyre::Result<PayloadVerification> {
+        let mut saw_syncing = false;
+        loop {
+            if response.is_closed() {
+                debug!(
+                    kind,
+                    target = %digest.0,
+                    "verify response channel closed while waiting for execution validation"
+                );
+                return Ok(PayloadVerification::ChannelClosed);
+            }
+            match self.engine.new_payload(execution_data.clone()).await {
+                Ok(status) if status.is_valid() => {
+                    debug!(kind, target = %digest.0, ?status, "payload accepted during verify");
+                    return Ok(PayloadVerification::Valid { saw_syncing });
+                }
+                Ok(status) if status.is_syncing() => {
+                    saw_syncing = true;
+                    warn!(
+                        kind,
+                        target = %digest.0,
+                        ?status,
+                        "new_payload returned SYNCING during verify; keeping verification pending until execution validates"
+                    );
+                    clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
+                }
+                Ok(status) => {
+                    warn!(kind, target = %digest.0, ?status, "payload rejected during verify");
+                    return Ok(PayloadVerification::Invalid);
+                }
+                Err(e) => {
+                    return Err(eyre::eyre!(
+                        "new_payload failed in verify: kind={kind} target={} error={e}",
+                        digest.0
+                    ));
+                }
+            }
+        }
     }
 
     /// Handle verify request.
@@ -1619,7 +1568,7 @@ impl ApplicationShared {
             return Ok(());
         }
 
-        let ancestry = MarshalAncestryReader::new(
+        let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
             self.ancestry_readiness.clone(),
@@ -1633,7 +1582,7 @@ impl ApplicationShared {
             round,
             &context.leader,
             self.chain_id,
-            self.proposer_evm_address.is_none(),
+            ValidatorRole::from_proposer_evm_address(self.proposer_evm_address),
             &self.certificate_scheme_provider,
             &self.committee_provider,
             &self.dkg_manager,
@@ -1644,7 +1593,9 @@ impl ApplicationShared {
             if error.contains("DKG boundary ancestry unavailable")
                 || error.contains("DKG boundary ancestry scan exceeded")
             {
-                crate::metrics::record_dkg_boundary_unavailable("ancestry_unavailable");
+                crate::metrics::record_dkg_boundary_unavailable(
+                    crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
+                );
                 return Err(eyre::eyre!("DKG boundary requirement unavailable: {error}"));
             }
             warn!(
@@ -1683,50 +1634,33 @@ impl ApplicationShared {
                 block: std::sync::Arc::new(parent_block.clone().into_inner()),
             };
 
-            let mut parent_saw_syncing = false;
-            if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
-                warn!(
-                    height = %parent_height,
-                    parent = %parent_digest.0,
-                    "test-marshal-drop: skipping verify parent new_payload"
-                );
-            } else {
-                loop {
-                    if response.is_closed() {
-                        debug!(
-                            parent = %parent_digest.0,
-                            "verify response channel closed while waiting for parent execution validation"
-                        );
-                        return Ok(());
-                    }
-                    match self.engine.new_payload(execution_data.clone()).await {
-                        Ok(status) if status.is_valid() => {
-                            debug!(parent = %parent_digest.0, ?status, "parent accepted during verify");
-                            break;
-                        }
-                        Ok(status) if status.is_syncing() => {
-                            parent_saw_syncing = true;
-                            warn!(
-                                parent = %parent_digest.0,
-                                ?status,
-                                "parent new_payload returned SYNCING during verify; keeping verification pending"
-                            );
-                            clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
-                        }
-                        Ok(status) => {
-                            warn!(parent = %parent_digest.0, ?status, "parent rejected during verify");
+            let parent_saw_syncing =
+                if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
+                    warn!(
+                        height = %parent_height,
+                        parent = %parent_digest.0,
+                        "test-marshal-drop: skipping verify parent new_payload"
+                    );
+                    false
+                } else {
+                    match self
+                        .verify_payload_with_syncing_retry(
+                            clock,
+                            "parent",
+                            parent_digest,
+                            execution_data,
+                            &response,
+                        )
+                        .await?
+                    {
+                        PayloadVerification::ChannelClosed => return Ok(()),
+                        PayloadVerification::Invalid => {
                             let _ = response.send(false);
                             return Ok(());
                         }
-                        Err(e) => {
-                            return Err(eyre::eyre!(
-                                "new_payload for parent failed in verify: parent={} error={e}",
-                                parent_digest.0
-                            ));
-                        }
+                        PayloadVerification::Valid { saw_syncing } => saw_syncing,
                     }
-                }
-            }
+                };
 
             if response.is_closed() || parent_saw_syncing {
                 debug!(
@@ -1765,47 +1699,30 @@ impl ApplicationShared {
         };
 
         let block_height = Height::new(block.number());
-        let mut block_saw_syncing = false;
-        let valid = if crate::test_faults::should_drop_new_payload_for_test(block_height) {
-            warn!(
-                height = %block_height,
-                digest = %payload_digest.0,
-                "test-marshal-drop: skipping verify block new_payload"
-            );
-            true
-        } else {
-            loop {
-                if response.is_closed() {
-                    debug!(
-                        digest = %payload_digest.0,
-                        "verify response channel closed while waiting for execution validation"
-                    );
-                    return Ok(());
+        let (valid, block_saw_syncing) =
+            if crate::test_faults::should_drop_new_payload_for_test(block_height) {
+                warn!(
+                    height = %block_height,
+                    digest = %payload_digest.0,
+                    "test-marshal-drop: skipping verify block new_payload"
+                );
+                (true, false)
+            } else {
+                match self
+                    .verify_payload_with_syncing_retry(
+                        clock,
+                        "block",
+                        payload_digest,
+                        execution_data,
+                        &response,
+                    )
+                    .await?
+                {
+                    PayloadVerification::ChannelClosed => return Ok(()),
+                    PayloadVerification::Invalid => (false, false),
+                    PayloadVerification::Valid { saw_syncing } => (true, saw_syncing),
                 }
-                match self.engine.new_payload(execution_data.clone()).await {
-                    Ok(status) if status.is_valid() => break true,
-                    Ok(status) if status.is_syncing() => {
-                        block_saw_syncing = true;
-                        warn!(
-                            digest = %payload_digest.0,
-                            ?status,
-                            "new_payload returned SYNCING during verify; keeping verification pending until execution validates"
-                        );
-                        clock.sleep(VERIFY_SYNCING_RETRY_DELAY).await;
-                    }
-                    Ok(status) => {
-                        debug!(digest = %payload_digest.0, ?status, "block invalid in verify");
-                        break false;
-                    }
-                    Err(e) => {
-                        return Err(eyre::eyre!(
-                            "new_payload failed in verify: digest={} error={e}",
-                            payload_digest.0
-                        ));
-                    }
-                }
-            }
-        };
+            };
 
         // Step 4: If valid, canonicalize the proposed block only while the
         // single-shot Simplex verify request is still live. A SYNCING retry can
@@ -1871,6 +1788,27 @@ pub(crate) fn parent_round(round: Round, parent_view: View) -> Round {
 // `extract_header_artifact_from_block` moved to
 // `crate::finalization::util` in step 17. Imported at the top of this file.
 
+/// Whether the local node validates live proposals. A share-less verifier (a TEE
+/// full-node with no proposer EVM address) follows FINALIZED blocks only and skips
+/// the leader-binding / DKG-boundary checks (polynomial/DKG-view-dependent, would
+/// diverge on a verifier's stale post-rotation state). Replaces a boolean-blind
+/// `is_verifier` flag so the role choice is explicit in the type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValidatorRole {
+    Signer,
+    VerifierOnly,
+}
+
+impl ValidatorRole {
+    /// A node with no proposer EVM address is a share-less verifier-only follower.
+    fn from_proposer_evm_address(proposer_evm_address: Option<Address>) -> Self {
+        match proposer_evm_address {
+            Some(_) => Self::Signer,
+            None => Self::VerifierOnly,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn validate_header_consensus_artifacts(
     block: &ConsensusBlock,
@@ -1878,7 +1816,7 @@ async fn validate_header_consensus_artifacts(
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
-    is_verifier: bool,
+    role: ValidatorRole,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
@@ -1893,7 +1831,7 @@ async fn validate_header_consensus_artifacts(
     // consensus safety for the follower comes from the finalization certificate, not
     // from re-deriving the live proposal's leader. The verifier never votes (`me()`
     // is None), so accepting the proposal here cannot affect the committee's quorum.
-    if is_verifier {
+    if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }
     validate_rewards_beneficiary(block)?;
@@ -1923,7 +1861,9 @@ async fn validate_header_consensus_artifacts(
                         .to_string(),
                 );
             }
-            crate::metrics::record_dkg_boundary_requirement("already_committed");
+            crate::metrics::record_dkg_boundary_requirement(
+                crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+            );
             return Ok(());
         }
         BoundaryRequirement::MustEmit => {
@@ -2049,7 +1989,7 @@ mod tests {
     use crate::finalization::util::build_signer_bitmap;
     use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 
-    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest};
+    use super::{validate_header_consensus_artifacts, CommitteeProvider, Digest, ValidatorRole};
     use crate::test_fixtures::*;
 
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
@@ -2243,7 +2183,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2282,7 +2222,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2300,7 +2240,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(1)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2330,7 +2270,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[0].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2344,7 +2284,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,
@@ -2373,7 +2313,7 @@ mod tests {
             Round::new(Epoch::new(0), View::new(2)),
             &keys[1].public_key(),
             outbe_primitives::chain::CHAIN_ID,
-            false,
+            ValidatorRole::Signer,
             &scheme_provider,
             &committee_provider,
             &manager,

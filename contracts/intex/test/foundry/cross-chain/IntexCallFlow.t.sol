@@ -9,6 +9,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -127,7 +128,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
     }
 
     // ============================================================
@@ -192,7 +193,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         IIntexNFT1155.SeriesData memory dataBnb = intexBnb.readData(SERIES_ID);
         assertEq(uint8(dataBnb.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(dataBnb.calledAt, calledAt);
-        assertGt(dataBnb.intexCallPeriod, 0);
+        assertGt(dataBnb.callTrigger.intexCallPeriod, 0);
     }
 
     /// @notice Single holder migration.

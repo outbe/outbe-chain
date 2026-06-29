@@ -32,8 +32,8 @@ impl IntexState {
 pub struct IntexCallTrigger {
     pub window_days: u16,
     pub threshold_days: u16,
-    /// COEN price level that arms the forced call (1e18, oracle scale).
-    pub call_price_minor: U256,
+    /// Seconds between `called_at` and the settlement deadline.
+    pub intex_call_period: u32,
 }
 
 /// Identity parameters captured once at series creation.
@@ -46,12 +46,13 @@ pub struct CreateSeriesParams {
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,
-    /// Cost amount (payment-token decimals).
-    pub cost_amount_minor: u64,
-    /// COEN price floor (1e18, oracle scale).
+    /// Entry price (per-unit, reference currency, 1e18 oracle scale). Primary
+    /// anchor; cost/floor/call derive from it.
+    pub entry_price_minor: U256,
+    /// Price floor (1e18, oracle scale).
     pub floor_price_minor: U256,
-    /// Seconds between `called_at` and the settlement deadline.
-    pub intex_call_period: u32,
+    /// Call price level that arms the forced call (1e18, oracle scale).
+    pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
     /// Creation timestamp (UNIX seconds); non-zero, doubles as existence sentinel.
     pub issued_at: u32,
@@ -68,44 +69,46 @@ pub struct SeriesRecord {
     pub series_id: u32,
 
     #[attribute(order = 0)]
-    pub promis_load_minor: U256,
+    pub issuance_currency: u16,
 
     #[attribute(order = 1)]
-    pub cost_amount_minor: u64,
+    pub reference_currency: u16,
 
     #[attribute(order = 2)]
-    pub floor_price_minor: U256,
-
-    #[attribute(order = 3)]
     pub issued_intex_count: u32,
 
+    #[attribute(order = 3)]
+    pub promis_load_minor: U256,
+
     #[attribute(order = 4)]
-    pub call_window_days: u16,
+    pub entry_price_minor: U256,
 
     #[attribute(order = 5)]
-    pub call_threshold_days: u16,
+    pub floor_price_minor: U256,
 
     #[attribute(order = 6)]
     pub call_price_minor: U256,
 
-    /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
+    // call_trigger group — stored flat (the storage DSL has no nested-struct codec),
+    // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
-    pub state: u8,
+    pub call_window_days: u16,
 
     #[attribute(order = 8)]
-    pub issued_at: u32,
+    pub call_threshold_days: u16,
 
-    #[attribute(order = 9, default = 0)]
-    pub called_at: u32,
-
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub intex_call_period: u32,
 
-    #[attribute(order = 11)]
-    pub issuance_currency: u16,
+    #[attribute(order = 10)]
+    pub issued_at: u32,
 
+    #[attribute(order = 11, default = 0)]
+    pub called_at: u32,
+
+    /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
     #[attribute(order = 12)]
-    pub reference_currency: u16,
+    pub state: u8,
 }
 
 impl SeriesRecord {
@@ -117,7 +120,7 @@ impl SeriesRecord {
         IntexCallTrigger {
             window_days: self.call_window_days,
             threshold_days: self.call_threshold_days,
-            call_price_minor: self.call_price_minor,
+            intex_call_period: self.intex_call_period,
         }
     }
 }

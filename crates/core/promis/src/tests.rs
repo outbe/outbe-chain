@@ -82,28 +82,6 @@ fn test_business_failures_return_revert() {
 }
 
 #[test]
-fn test_mine_coen() {
-    with_promis_mut(|p| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        p.mine(alice, U256::from(1000)).unwrap();
-
-        let minted = p.mine_coen(alice, U256::from(400)).unwrap();
-        assert_eq!(minted, U256::from(400));
-        assert_eq!(p.balance_of(alice).unwrap(), U256::from(600));
-        assert_eq!(p.total_supply().unwrap(), U256::from(600));
-    });
-}
-
-#[test]
-fn test_mine_coen_insufficient_fails() {
-    with_promis_mut(|p| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        p.mine(alice, U256::from(100)).unwrap();
-        assert!(p.mine_coen(alice, U256::from(200)).is_err());
-    });
-}
-
-#[test]
 fn test_multiple_users() {
     with_promis_mut(|p| {
         let alice = address!("0x1111111111111111111111111111111111111111");
@@ -116,55 +94,6 @@ fn test_multiple_users() {
         p.burn(alice, U256::from(500)).unwrap();
         assert_eq!(p.balance_of(alice).unwrap(), U256::from(500));
         assert_eq!(p.total_supply().unwrap(), U256::from(2500));
-    });
-}
-
-/// mineCoen must burn synthetic promis AND mint native tokens.
-/// Simulates the precompile dispatch path: mine_coen() + increase_balance().
-#[test]
-fn test_mine_coen_increases_native_balance() {
-    let mut storage = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut storage, |storage| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        let mut p = Promis::new(storage.clone());
-
-        p.mine(alice, U256::from(1000)).unwrap();
-
-        let amount = p.mine_coen(alice, U256::from(400)).unwrap();
-        assert_eq!(amount, U256::from(400));
-
-        // Precompile dispatch calls increase_balance (fix)
-        p.storage.increase_balance(alice, amount).unwrap();
-
-        // Verify: synthetic burned
-        assert_eq!(p.balance_of(alice).unwrap(), U256::from(600));
-
-        // Verify: native balance increased
-        let ctx = storage.clone();
-        assert_eq!(ctx.balance(alice).unwrap(), U256::from(400u64));
-    });
-}
-
-/// mine_coen with insufficient balance must fail without partial burn.
-#[test]
-fn test_mine_coen_failure_no_partial_burn() {
-    with_promis_mut(|p| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        p.mine(alice, U256::from(100)).unwrap();
-
-        let balance_before = p.balance_of(alice).unwrap();
-        let supply_before = p.total_supply().unwrap();
-
-        // Attempt to burn more than available — must fail
-        let result = p.mine_coen(alice, U256::from(200));
-        assert!(
-            result.is_err(),
-            "mine_coen with insufficient balance must fail"
-        );
-
-        // No partial burn: balance and supply unchanged
-        assert_eq!(p.balance_of(alice).unwrap(), balance_before);
-        assert_eq!(p.total_supply().unwrap(), supply_before);
     });
 }
 
@@ -186,7 +115,6 @@ fn test_iface_id_matches_selector_xor() {
         crate::precompile::IPromis::decimalsCall::SELECTOR,
         crate::precompile::IPromis::totalSupplyCall::SELECTOR,
         crate::precompile::IPromis::balanceOfCall::SELECTOR,
-        crate::precompile::IPromis::mineCoenCall::SELECTOR,
     ]
     .into_iter()
     .fold([0u8; 4], |acc, sel| {

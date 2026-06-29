@@ -7,7 +7,7 @@ async function signRevealBid(
   seriesId: number,
   bidderAddress: Address,
   quantity: bigint,
-  bidPrice: bigint,
+  bidRate: bigint,
   chainId: bigint,
   auctionAddress: Address,
   privateKey: Hex,
@@ -20,11 +20,11 @@ async function signRevealBid(
         { name: "seriesId", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
-        { name: "bidPrice", type: "uint64" },
+        { name: "bidRate", type: "uint32" },
       ],
     },
     primaryType: "RevealBid",
-    message: { seriesId, bidder: bidderAddress, quantity: Number(quantity), bidPrice },
+    message: { seriesId, bidder: bidderAddress, quantity: Number(quantity), bidRate: Number(bidRate) },
   });
 }
 
@@ -32,22 +32,22 @@ export async function createCommitHash(
   seriesId: number,
   bidderAddress: Address,
   quantity: bigint,
-  bidPrice: bigint,
+  bidRate: bigint,
   chainId: bigint,
   auctionAddress: Address,
   privateKey: Hex,
 ): Promise<Hex> {
-  return keccak256(await signRevealBid(seriesId, bidderAddress, quantity, bidPrice, chainId, auctionAddress, privateKey));
+  return keccak256(await signRevealBid(seriesId, bidderAddress, quantity, bidRate, chainId, auctionAddress, privateKey));
 }
 
 export async function createRevealSignature(
   seriesId: number,
   bidderAddress: Address,
   quantity: bigint,
-  bidPrice: bigint,
+  bidRate: bigint,
   chainId: bigint,
   auctionAddress: Address,
   privateKey: Hex,
 ): Promise<Hex> {
-  return signRevealBid(seriesId, bidderAddress, quantity, bidPrice, chainId, auctionAddress, privateKey);
+  return signRevealBid(seriesId, bidderAddress, quantity, bidRate, chainId, auctionAddress, privateKey);
 }

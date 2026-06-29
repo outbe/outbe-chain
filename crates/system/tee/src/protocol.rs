@@ -91,6 +91,21 @@ pub struct TributeOfferResult {
 ///
 /// DKG secret-seam variants carry opaque bytes: the host never sees plaintext
 /// shares.
+/// One DKG participant's announced identity, structurally bound so the untrusted
+/// host cannot mis-pair a BLS identity with a different X25519 enc key or collapse
+/// two participants onto one enc key. `enc_sig` is the owner's TEE-BLS signature
+/// over the `(chain_id, enc_pub)` binding, verified at `DkgOpen` before the enc key
+/// is trusted as that identity's share recipient.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParticipantAnnounce {
+    /// Encoded TEE-BLS public key (the participant's DKG identity).
+    pub bls_pub: Vec<u8>,
+    /// Announced X25519 share-encryption public key.
+    pub enc_pub: [u8; 32],
+    /// TEE-BLS signature over the `(chain_id, enc_pub)` binding.
+    pub enc_sig: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
     /// Callable BEFORE the Noise handshake (unauthenticated). `nonce` provides
@@ -104,16 +119,17 @@ pub enum EnclaveRequest {
     /// Load the sealed root seed from disk, or start fresh.
     Initialize,
 
-    /// Open a TEE DKG ceremony session inside the enclave. `participant_bls[i]`
-    /// pairs with `participant_enc[i]` (the announced X25519 share-encryption
-    /// key). The enclave builds the ceremony `Info` from the BLS set and captures
-    /// the enc keys so dealings can be sealed to recipients. All bytes are opaque
-    /// to the host (it relays values it obtained from `PublicKeys`).
+    /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
+    /// bundles a BLS identity, its announced X25519 share-encryption key, and the
+    /// owner's signature binding the two — so the untrusted host cannot mis-pair or
+    /// duplicate enc keys. The enclave verifies every binding, rejects duplicate
+    /// enc keys, then builds the ceremony `Info` from the BLS set and captures the
+    /// enc keys so dealings can be sealed to recipients. The host only relays values
+    /// it obtained from each participant's `PublicKeys`.
     DkgOpen {
         ceremony_id: B256,
         round: u64,
-        participant_bls: Vec<Vec<u8>>,
-        participant_enc: Vec<[u8; 32]>,
+        participants: Vec<ParticipantAnnounce>,
     },
     /// Seam A: deal + seal per-player shares. Returns the public commitment and
     /// one opaque sealed share per participant.
@@ -283,6 +299,10 @@ pub enum EnclaveResponse {
         tee_bls_pub: Vec<u8>,
         /// X25519 share-encryption public key; dealers seal DKG shares to it.
         dkg_enc_pub: [u8; 32],
+        /// TEE-BLS signature over the `(chain_id, dkg_enc_pub)` binding, proving
+        /// this enc key belongs to `tee_bls_pub`. Relayed by the host into peers'
+        /// `DkgOpen` and verified there before the enc key is trusted.
+        dkg_enc_sig: Vec<u8>,
     },
     Initialized {
         sealed_loaded: bool,
@@ -321,6 +341,11 @@ pub enum EnclaveResponse {
     /// group signature (the secret stays resident in the enclave).
     DkgTributeOfferKey {
         tribute_offer_public: [u8; 32],
+        /// The committee's DKG group public KEY (constant term) — the public
+        /// verification key for this committee's threshold group signatures.
+        /// Carried into the bootstrap payload so a later reshare endorsement can be
+        /// verified on-chain against this committee's key.
+        group_public_key: Vec<u8>,
     },
     /// Key-handoff SERVER result: the resident group signature sealed to the
     /// newcomer's X25519 key (an opaque `EncryptedShare` blob the host relays).

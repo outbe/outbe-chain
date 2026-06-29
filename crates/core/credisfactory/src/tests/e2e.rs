@@ -16,7 +16,6 @@
 use alloy_primitives::{keccak256, Address, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
-use outbe_fidelity::FidelityContract;
 use outbe_gratis::Gratis;
 use outbe_gratisfactory::runtime as gf;
 use outbe_gratispool::constants::{
@@ -42,9 +41,21 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         .unwrap();
 }
 
-fn seed_fidelity(storage: StorageHandle<'_>, account: Address, idx: u64) {
-    let mut fidelity = FidelityContract::new(storage);
-    fidelity.set_fidelity_index(account, idx).unwrap();
+/// Gives `account` a positive RCFI by recording a gratis cohort acquired one
+/// year before the test's block time. The fidelity gate now lives in
+/// `gratisfactory::pledge_gratis` (it requires `get_rcfi(caller) > 0`), so the
+/// e2e flow must seed this before its pledge leg or `pledge_gratis` rejects.
+/// The zero-RCFI rejection itself is asserted in the gratisfactory crate
+/// (`pledge_rejects_zero_rcfi`).
+fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    outbe_fidelity::api::cohort_in(
+        storage,
+        account,
+        U256::from(100u64),
+        CREATED_AT - ONE_YEAR_SECS,
+    )
+    .unwrap();
 }
 
 fn one_e18() -> U256 {
@@ -83,7 +94,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
         Gratis::new(storage.clone())
             .mine(alice(), pledge_amount)
             .unwrap();
-        seed_fidelity(storage.clone(), alice(), 1);
+        seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
         // Alice pre-computes two notes: pledge-side (spent at requestCredis)
@@ -206,7 +217,7 @@ fn request_credis_rejects_overdue_anadosis() {
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
-        seed_fidelity(storage.clone(), alice(), 1);
+        seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
         let c1 = commitment_hash(U256::from(1u64), U256::from(2u64), denom_id).unwrap();
@@ -278,47 +289,9 @@ fn request_credis_rejects_overdue_anadosis() {
     });
 }
 
-#[test]
-fn request_credis_rejects_fidelity_not_one() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let amount = denomination(denom_id).unwrap();
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
-        seed_fidelity(storage.clone(), alice(), 2);
-        seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
-
-        let pledge_c = commitment_hash(U256::from(1u64), U256::from(2u64), denom_id).unwrap();
-        let reclaim_c = commitment_hash(U256::from(3u64), U256::from(4u64), denom_id).unwrap();
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
-
-        let args = RequestArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(U256::from(2u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, reclaim_c)
-                .unwrap(),
-            proof: vec![0u8; 32],
-            reclaim_commitment: reclaim_c,
-        };
-        let err = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                vault(),
-                alice(),
-                args,
-                CREATED_AT,
-                BLOCK_NUMBER,
-            )
-            .unwrap_err()
-        });
-        assert!(err.to_string().contains("fidelity"));
-    });
-}
+// Zero-RCFI rejection is no longer a credisfactory concern: the fidelity gate
+// moved to `gratisfactory::pledge_gratis`. The rejection is asserted in the
+// gratisfactory crate (`pledge_rejects_zero_rcfi`).
 
 #[test]
 fn request_credis_rejects_zero_asset() {
@@ -414,7 +387,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let denom_id: u8 = 1;
         let amount = denomination(denom_id).unwrap();
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
-        seed_fidelity(storage.clone(), alice(), 1);
+        seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
         let pledge_c = commitment_hash(U256::from(11u64), U256::from(12u64), denom_id).unwrap();
@@ -486,7 +459,7 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
         Gratis::new(storage.clone())
             .mine(alice(), pledge_amount)
             .unwrap();
-        seed_fidelity(storage.clone(), alice(), 1);
+        seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
         let pledge_secret = U256::from(0xA1u64);

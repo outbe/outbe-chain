@@ -449,10 +449,10 @@ fn merkle_node_uses_arity_2_with_tag_added_into_left_input() {
 
 #[test]
 fn build_combined_lays_out_count_inputs_then_body() {
-    // The combined proof shape `verify_ultra_honk_keccak` expects is
+    // The combined proof shape `Barretenberg::verify_combined` expects is
     // `[u32-BE num_public_inputs | pub_in_0:32B | … | pub_in_{N-1}:32B |
-    // proof_body]`. Mirror the parse from `outbe_zk_circuit_noir::split_proof`
-    // to assert the build round-trips byte-for-byte.
+    // proof_body]`. Mirror the parse `verify_combined` performs to assert the
+    // build round-trips byte-for-byte.
     let public_inputs: [U256; NUM_PUBLIC_INPUTS] = [
         U256::from(0xAA_u64),
         U256::from(0xBB_u64),

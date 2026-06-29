@@ -1,9 +1,11 @@
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
+    time::{previous_date_key, timestamp_to_date_key},
 };
 
 use crate::contract::OracleContract;
+use crate::logic::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
 use crate::scurve;
 use crate::tally;
 
@@ -81,6 +83,50 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
             }
         }
         oracle.scurve_last_processed_day.write(current_day)?;
+    }
+
+    // Finalize per-UTC-day VWAP for every calendar day that has fully closed.
+    // `calculate_vwaps` reads the committed daily aggregates for the closed
+    // `[midnight, +24h)` window, so the value is identical on proposer and
+    // validators. The monotonic `utc_day_vwap_last_finalized` watermark makes
+    // this idempotent across the many blocks within a day and bounds catch-up
+    // after a gap.
+    if timestamp > 0 {
+        let current_utc_day = timestamp_to_date_key(timestamp);
+        let most_recent_closed = previous_date_key(current_utc_day);
+        let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
+
+        // yyyymmdd keys order chronologically as integers; only step via the
+        // calendar-aware helpers (never `+1` on the key).
+        if last_finalized < most_recent_closed {
+            // On the very first finalization (watermark 0) only close the single
+            // most-recent day — do not sweep backward into pre-genesis history
+            // that has no data. Otherwise resume from the watermark.
+            let lower_bound = if last_finalized == 0 {
+                previous_date_key(most_recent_closed)
+            } else {
+                last_finalized
+            };
+
+            // Collect up to the cap of most-recent unfinalized days walking
+            // backward, then finalize ascending so writes/events stay
+            // chronological. After a gap wider than the cap, the oldest days are
+            // skipped — their source aggregates are already evicted past
+            // retention, so they could not be recomputed anyway.
+            let mut days: Vec<u32> = Vec::new();
+            let mut day = most_recent_closed;
+            while day > lower_bound && days.len() < MAX_UTC_DAY_VWAP_BACKFILL_DAYS as usize {
+                days.push(day);
+                day = previous_date_key(day);
+            }
+            for &d in days.iter().rev() {
+                oracle.finalize_utc_day_vwap(d)?;
+            }
+
+            oracle
+                .utc_day_vwap_last_finalized
+                .write(most_recent_closed)?;
+        }
     }
 
     Ok(())

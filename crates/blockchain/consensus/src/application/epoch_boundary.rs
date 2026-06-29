@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 use alloy_primitives::B256;
 use commonware_consensus::types::{Epoch, Height, Round, View};
 
-use crate::application::handler::PROPOSE_RESOLUTION_TIMEOUT;
 use crate::block::ConsensusBlock;
+use crate::config::PROPOSE_RESOLUTION_TIMEOUT;
 use crate::digest::Digest;
 use crate::finalization::parent_cert_store::CertifiedParentProofKey;
 use crate::finalization::state::{FinalizationViewAccess, FinalizationViewHandle};

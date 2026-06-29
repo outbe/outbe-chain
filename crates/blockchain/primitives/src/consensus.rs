@@ -224,6 +224,13 @@ pub struct DkgBoundaryArtifact {
     /// begin-zone `BoundaryOutcome` handler writes these into `TeeRegistry`. The
     /// offer key is preserved across a reshare. OART wire `v0.08`.
     pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
+    /// Prior- (outgoing-) committee threshold GROUP signature over
+    /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
+    /// authorizing the incoming committee's TEE re-registrations. The begin-zone
+    /// handler verifies it against the stored prior group public key before applying
+    /// `tee_reshare_registrations` — so a malicious supermajority of the NEW committee
+    /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
+    pub endorsement_signature: Bytes,
 }
 
 /// A single validator entry for genesis initialization.
@@ -312,10 +319,6 @@ pub struct ConsensusStatus {
     pub current_view: u64,
     /// Number of connected consensus peers.
     pub connected_peers: u32,
-    /// Whether the node is synced and participating in consensus.
-    pub is_active: bool,
-    /// Whether DKG shares are present and valid.
-    pub has_threshold_shares: bool,
     /// Last finalized block number.
     pub last_finalized_block: u64,
     /// Last VRF seed (from the most recent finalized certificate).
@@ -330,6 +333,21 @@ pub struct ConsensusStatus {
     pub next_planned_activation_height: u64,
     /// Last block height at which old VRF material may still be used.
     pub vrf_expiry_height: u64,
+}
+
+impl ConsensusStatus {
+    /// Whether the node is synced and participating in consensus. Derived from
+    /// `randomness_status` (single source of truth) rather than stored, so it can
+    /// never drift from the VRF/DKG safety state it is computed from.
+    pub fn is_active(&self) -> bool {
+        self.randomness_status.is_consensus_active()
+    }
+
+    /// Whether usable DKG/threshold shares are present. Derived from
+    /// `randomness_status`; see [`ConsensusStatus::is_active`].
+    pub fn has_threshold_shares(&self) -> bool {
+        self.randomness_status.has_threshold_shares()
+    }
 }
 
 /// Thread-safe bridge for passive consensus/execution status and caches.

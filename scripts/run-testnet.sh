@@ -224,7 +224,15 @@ do_start() {
             # feature supplies a stable sealing key so the restart fast-path is
             # still testable without SGX.
             if [ -z "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
-                { [ -e /dev/sgx_enclave ] || [ -e /dev/sgx/enclave ]; } && sgx_dev=(--device /dev/sgx_enclave)
+                if [ -e /dev/sgx_enclave ] || [ -e /dev/sgx/enclave ]; then
+                    sgx_dev=(--device /dev/sgx_enclave)
+                    # Provisioning device + AESM socket: gramine-sgx may need them
+                    # at enclave load (even with remote_attestation = "none"). Pass
+                    # them through when present; harmless otherwise.
+                    [ -e /dev/sgx_provision ] && sgx_dev+=(--device /dev/sgx_provision)
+                    [ -S /var/run/aesmd/aesm.socket ] &&
+                        sgx_dev+=(-v /var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket)
+                fi
             fi
             # OUTBE_TEE_SEAL=1 enables the sealed restart fast-path: the enclave
             # seals its DKG-derived offer key + share to a PERSISTENT per-validator
@@ -241,6 +249,14 @@ do_start() {
                 tee_seal_mount=(-v "$(readlink -f "$tee_data_dir"):/tee")
                 tee_seal_args=(--tee-dir /tee --chain-id "$tee_chain_hex")
             fi
+            # DKG identity source. The mock (gramine-direct, no EGETKEY) uses a
+            # deterministic per-index --dkg-seed. Real gramine-sgx WITH sealing
+            # (OUTBE_TEE_SEAL) instead lets the enclave SELF-GENERATE and seal its
+            # identity (survives restart), so NO host seed is supplied.
+            local -a tee_dkg_arg=(--dkg-seed "$tee_dkg_seed")
+            if [ -z "${OUTBE_TEE_ENCLAVE_MOCK:-}" ] && [ -n "${OUTBE_TEE_SEAL:-}" ]; then
+                tee_dkg_arg=()
+            fi
             docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
             docker run -d --name "$tee_ctr" \
                 --security-opt seccomp=unconfined \
@@ -249,7 +265,7 @@ do_start() {
                 "${tee_seal_mount[@]}" \
                 -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
                 outbe-tee-enclave-gramine \
-                --socket "$tee_endpoint" --dkg-seed "$tee_dkg_seed" "${tee_seal_args[@]}" >/dev/null
+                --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_seal_args[@]}" >/dev/null
             echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             local tee_up=""
             for _ in $(seq 1 200); do

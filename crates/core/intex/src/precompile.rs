@@ -42,7 +42,7 @@ fn to_abi_data(r: &SeriesRecord) -> IIntex::SeriesData {
     IIntex::SeriesData {
         seriesId: r.series_id,
         promisLoadMinor: r.promis_load_minor,
-        costAmountMinor: r.cost_amount_minor,
+        entryPriceMinor: r.entry_price_minor,
         floorPriceMinor: r.floor_price_minor,
         issuedIntexCount: r.issued_intex_count,
         callWindowDays: r.call_window_days,

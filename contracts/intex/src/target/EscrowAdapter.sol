@@ -40,7 +40,7 @@ contract EscrowAdapter is
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
     /// @inheritdoc IEscrowAdapter
-    uint16 public constant override PAYMENT_TOKEN_ALIAS = 840;
+    uint16 public constant override PAYMENT_TOKEN_ALIAS = 43;
 
     /// @notice Pre-finalize safety window before a bidder can claim their refund.
     ///         72h = 259_200 seconds. Applies when `finalizeAuction` was never called.
@@ -155,7 +155,7 @@ contract EscrowAdapter is
     function bidLocks(uint32 seriesId, address bidder)
         external
         view
-        returns (uint64 lockedAmount, uint32 lockedAt, LockStatus status, uint64 failedRefund, bool splitRecorded)
+        returns (uint128 lockedAmount, uint32 lockedAt, LockStatus status, uint128 failedRefund, bool splitRecorded)
     {
         BidLock storage l = _s().bidLocks[seriesId][bidder];
         return (l.lockedAmount, l.lockedAt, l.status, l.failedRefund, l.splitRecorded);
@@ -165,7 +165,7 @@ contract EscrowAdapter is
     function auctionEscrowState(uint32 seriesId)
         external
         view
-        returns (uint64 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
+        returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
     {
         AuctionEscrowState storage e = _s().auctionEscrowState[seriesId];
         return (e.totalLocked, e.lockCount, e.finalizedAt, e.finalized);
@@ -197,6 +197,8 @@ contract EscrowAdapter is
             // aderyn-fp-next-line(reentrancy-state-change)
             uint256 outstanding = $.lockId == 0 ? 0 : IERC6909(address($.compact)).balanceOf(address(this), $.lockId);
             if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
+            // Reset lockId so the first deposit under the new token/Compact re-bootstraps the lock.
+            $.lockId = 0;
         }
 
         // Revoke role from the previous auction if rewiring.
@@ -279,7 +281,7 @@ contract EscrowAdapter is
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(uint32 seriesId, address bidder, uint64 amount)
+    function lockFunds(uint32 seriesId, address bidder, uint128 amount)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -308,8 +310,8 @@ contract EscrowAdapter is
         $.auctionEscrowState[seriesId].finalized = true;
         $.auctionEscrowState[seriesId].finalizedAt = uint32(block.timestamp);
 
-        uint64 totalRefunded = 0;
-        uint64 totalPaid = 0;
+        uint128 totalRefunded = 0;
+        uint128 totalPaid = 0;
         uint32 bidsProcessed = 0;
         uint32 bidsSettled = 0;
 
@@ -379,7 +381,7 @@ contract EscrowAdapter is
         if (lock.status != LockStatus.Locked) revert LockNotActive();
 
         AuctionEscrowState storage state = $.auctionEscrowState[seriesId];
-        uint64 lockedAmount = lock.lockedAmount;
+        uint128 lockedAmount = lock.lockedAmount;
 
         if (state.finalized) {
             // Post-finalize: the bidder's instruction failed during finalization. Refund only the
@@ -390,8 +392,8 @@ contract EscrowAdapter is
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
             if (!lock.splitRecorded) revert SplitNotRecorded(seriesId, bidder);
 
-            uint64 refundAmount = lock.failedRefund;
-            uint64 vaultOwed = lockedAmount - refundAmount;
+            uint128 refundAmount = lock.failedRefund;
+            uint128 vaultOwed = lockedAmount - refundAmount;
 
             // Refund the bidder's portion unconditionally — never blocked by vault health. Mark
             // RefundClaimed first so the top-of-function status guard blocks any double-claim, and
@@ -456,7 +458,7 @@ contract EscrowAdapter is
     function _settleVaultOwed(uint32 seriesId, address bidder) internal {
         EscrowAdapterStorage storage $ = _s();
         BidLock storage lock = $.bidLocks[seriesId][bidder];
-        uint64 vaultOwed = lock.lockedAmount - lock.failedRefund;
+        uint128 vaultOwed = lock.lockedAmount - lock.failedRefund;
 
         // Effects
         lock.status = LockStatus.Finalized;
@@ -480,7 +482,7 @@ contract EscrowAdapter is
         external
         view
         override
-        returns (bool hasLocks, bool isFinalized, uint64 totalLocked)
+        returns (bool hasLocks, bool isFinalized, uint128 totalLocked)
     {
         AuctionEscrowState memory state = _s().auctionEscrowState[seriesId];
         return (state.lockCount > 0, state.finalized, state.totalLocked);
@@ -493,7 +495,7 @@ contract EscrowAdapter is
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
-    function _validateLockInputs(uint32 seriesId, address bidder, uint64 amount) internal view {
+    function _validateLockInputs(uint32 seriesId, address bidder, uint128 amount) internal view {
         // Cheap sanity floor: the AUCTION_ROLE gate already guarantees a real, stage-gated series,
         // but a zero id is obviously bogus and is rejected before any state write.
         if (seriesId == 0) revert ZeroValue("seriesId");
@@ -513,7 +515,7 @@ contract EscrowAdapter is
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealBid`,
     ///      forwarded through the `AUCTION_ROLE`-gated `lockFunds` entry point. Safety relies
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
-    function _executeLock(uint32 seriesId, address bidder, uint64 amount) internal {
+    function _executeLock(uint32 seriesId, address bidder, uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
         // writing. Per-call bidLocks / auctionEscrowState writes follow for locality and could
@@ -560,8 +562,8 @@ contract EscrowAdapter is
         bytes32 guid,
         uint32 seriesId,
         address bidder,
-        uint64 refundedAmount,
-        uint64 paidAmount
+        uint128 refundedAmount,
+        uint128 paidAmount
     ) internal {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
@@ -569,11 +571,12 @@ contract EscrowAdapter is
         BidLock storage lock = $.bidLocks[seriesId][bidder];
         if (lock.status != LockStatus.Locked) revert LockNotActive();
 
-        // Validate the refund + payout split matches the locked amount.
-        uint64 lockedAmount = lock.lockedAmount;
-        uint64 total = refundedAmount + paidAmount;
+        // Validate the refund + payout split matches the locked amount. Sum in uint256 so a
+        // mismatch is surfaced rather than silently wrapping when the split exceeds the lock.
+        uint128 lockedAmount = lock.lockedAmount;
+        uint256 total = uint256(refundedAmount) + paidAmount;
         if (total != lockedAmount) {
-            revert AmountMismatch(lockedAmount, total);
+            revert AmountMismatch(lockedAmount, uint128(total));
         }
 
         // CEI ok: state writes below precede every external call in this function.
@@ -600,7 +603,7 @@ contract EscrowAdapter is
     /// @dev Reverts `NoDeposits` if `lockId` is unset and `ForcedWithdrawalFailed` if the reset
     ///      period has not elapsed (The Compact returns false).
     /// @param amount Amount to withdraw.
-    function _withdrawFromCompact(uint64 amount) internal {
+    function _withdrawFromCompact(uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
         if ($.lockId == 0) revert NoDeposits();
         // The Compact itself checks the reset period - if not ready, returns false.

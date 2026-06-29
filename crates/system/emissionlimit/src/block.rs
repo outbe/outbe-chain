@@ -3,7 +3,7 @@
 //! After (Phase 4 of the Cycle epic) EmissionLimit is no
 //! longer wired into the per-block lifecycle. The previous
 //! `EmissionLimitLifecycle::begin_block` / `run_begin_block` /
-//! `dispatch_block_emission` triple has been removed; the daily
+//! `dispatch_block_emission` triple has been removed; the day
 //! orchestration runs out of the new Cycle module which
 //! reads the closed-form `day_emission_limit`, calls
 //! [`crate::allocation::allocate_emission`] with the 6-sink active
@@ -28,7 +28,7 @@ use outbe_primitives::{
 ///
 /// Delayed settlement happens when finalized metadata is executed —
 /// which may be later than the finalized block itself — and when the
-/// Cycle daily handler dispatches the previous UTC day's terminal
+/// Cycle day handler dispatches the previous UTC day's terminal
 /// Metadosis amount. The terminal sink must use the finalized /
 /// previous-day timestamp so Metadosis worldwide-day accounting lands
 /// in the right bucket regardless of when the call physically runs.

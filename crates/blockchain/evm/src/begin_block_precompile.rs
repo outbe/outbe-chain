@@ -153,12 +153,13 @@ pub fn dispatch(
 ///   != ZERO) — the allowlist matches that genesis hash and every registration's
 ///   MRSIGNER/MRENCLAVE/isv_svn satisfies the AND-policy. The policy hash is read
 ///   from EVM storage so the gate is deterministic on proposer + verifier.
-///
-/// Deferred (does not block writing a verified payload; `tee_bootstrap_policy_and_snapshot_binding`,
-/// label `arch_debt`):
-///
-/// - binding `committee_snapshot_hash` to the frozen V2 `committee_set_hash`
-///   (the producing tribute-DKG slice fixes the snapshot identity it
+/// - `committee_snapshot_hash` binds the bootstrap to the epoch-0
+///   `CommitteeSnapshotStore` that Phase 3's `BoundaryOutcome` wrote earlier in
+///   this block: the gate recomputes `committee_set_hash_v2(0, snapshot)`, stores
+///   it as the authoritative value, and rejects a non-zero payload value that
+///   disagrees. Resolves `arch_debt` `tee_bootstrap_policy_and_snapshot_binding`
+///   (commit `af7cdb8`); the producer still sends `ZERO`, which the verifier
+///   recompute accepts and overwrites — cosmetic, not a binding gap.
 pub(crate) fn run_tee_bootstrap(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap::TeeBootstrapPayload,
@@ -323,6 +324,31 @@ pub(crate) fn run_tee_bootstrap(
         })
         .collect();
 
+    // B2: bind the bootstrap to the on-chain committee snapshot. Block 1's mandatory
+    // BoundaryOutcome (Phase 3) runs before this Phase 3b tx and is the single writer
+    // of the epoch-0 CommitteeSnapshotStore, so recompute that committee's canonical
+    // V2 identity hash and bind it as the source of truth. Genesis-safe: a ZERO payload
+    // value (the producer does not yet compute it) is accepted; a non-zero payload value
+    // must match the on-chain snapshot, so a forged committee binding is rejected.
+    let committee_snapshot_hash =
+        match outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
+        {
+            Some(snapshot) => {
+                let recomputed = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+                if payload.committee_snapshot_hash != B256::ZERO
+                    && payload.committee_snapshot_hash != recomputed
+                {
+                    return Err(PrecompileError::Revert(
+                        "TeeBootstrap committee_snapshot_hash does not match the on-chain \
+                         committee snapshot"
+                            .to_string(),
+                    ));
+                }
+                recomputed
+            }
+            None => payload.committee_snapshot_hash,
+        };
+
     registry.write_bootstrap(&TeeBootstrapData {
         tribute_offer_public_key: payload.tribute_offer_public_key,
         policy_hash: payload.policy_hash,
@@ -330,7 +356,8 @@ pub(crate) fn run_tee_bootstrap(
         tribute_offer_epoch: payload.tribute_offer_epoch,
         dkg_transcript_hash: payload.dkg_transcript_hash,
         committee_snapshot_block: payload.committee_snapshot_block,
-        committee_snapshot_hash: payload.committee_snapshot_hash,
+        committee_snapshot_hash,
+        tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
         registrations,
     })
 }
@@ -518,6 +545,50 @@ pub(crate) fn run_boundary_outcome(
     // state deterministically. The offer key itself is preserved across the
     // reshare, so it is NOT touched here. Empty for non-reshare boundaries.
     if !artifact.tee_reshare_registrations.is_empty() {
+        // Reshare authority (membership gate): every re-registered enclave key must
+        // belong to a validator in the committee this boundary activates. The host
+        // relays the artifact; an injected registration for a non-member would
+        // otherwise place an attacker-controlled enclave key into the registry (and
+        // let it request the offer-key handoff). `new_active_set` is part of the
+        // hash-committed artifact, so this gate is byte-deterministic across
+        // validators. This bounds a malicious host / below-quorum collusion; the
+        // prior-committee endorsement below is still required to bound a malicious
+        // supermajority of the new committee itself.
+        let authorized: std::collections::BTreeSet<alloy_primitives::Address> =
+            artifact.reshare.new_active_set.iter().copied().collect();
+        for r in &artifact.tee_reshare_registrations {
+            if !authorized.contains(&r.validator) {
+                return Err(PrecompileError::Revert(format!(
+                    "reshare TEE registration for validator {} is not in the activated committee",
+                    r.validator
+                )));
+            }
+        }
+        // Reshare authority (prior-committee endorsement): the OUTGOING committee must
+        // have threshold-signed this incoming committee + the preserved offer key.
+        // This is the only check a malicious supermajority of the NEW committee cannot
+        // forge (the membership gate above is self-certifying for a >2/3-new attacker).
+        // Verified against the stored prior group public key via deterministic plain
+        // pairing, so every validator reaches the same verdict.
+        let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+        let prior_group_pub = registry.prior_group_public_key()?;
+        let offer_pub = registry.offer_public_key()?;
+        let chain_id = alloy_primitives::B256::left_padding_from(&ctx.block.chain_id.to_be_bytes());
+        let endorsement_msg = outbe_tee::endorsement::reshare_endorsement_message(
+            chain_id,
+            artifact.committee_set_hash,
+            offer_pub.0,
+        );
+        if !outbe_consensus::proof::seed_partial::verify_group_signature(
+            &prior_group_pub,
+            outbe_tee::endorsement::TEE_ENDORSE_NAMESPACE,
+            endorsement_msg.as_slice(),
+            &artifact.endorsement_signature,
+        ) {
+            return Err(PrecompileError::Revert(
+                "reshare TEE registrations lack a valid prior-committee endorsement".to_string(),
+            ));
+        }
         let regs: Vec<(
             alloy_primitives::Address,
             alloy_primitives::B256,
@@ -923,6 +994,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![VALIDATOR],
                 active_set_hash: active_set_hash(&[VALIDATOR]),
@@ -1125,6 +1197,61 @@ mod tests {
         provider.enter(|storage| {
             let reg = outbe_teeregistry::TeeRegistry::new(storage);
             assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), recipient);
+        });
+    }
+
+    fn reshare_registration(
+        validator: alloy_primitives::Address,
+    ) -> outbe_primitives::consensus::TeeReshareRegistration {
+        outbe_primitives::consensus::TeeReshareRegistration {
+            validator,
+            recipient_x25519: B256::repeat_byte(0x01),
+            attestation_pub: B256::repeat_byte(0x02),
+            noise_static_pub: B256::repeat_byte(0x03),
+        }
+    }
+
+    #[test]
+    fn boundary_outcome_rejects_reshare_registration_for_non_committee_validator() {
+        // `boundary_noop` activates new_active_set = [VALIDATOR]; a registration for
+        // any other address is not authorized by the committee and must revert.
+        let mut provider = configured_storage(2, 2);
+        provider.enter(|storage| {
+            let outsider = alloy_primitives::Address::repeat_byte(0xBE);
+            let mut artifact = boundary_noop();
+            artifact.tee_reshare_registrations = vec![reshare_registration(outsider)];
+            let input = SystemTxInputV2::BoundaryOutcome { artifact }
+                .encode()
+                .unwrap();
+            assert!(
+                dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).is_err(),
+                "reshare registration for a non-committee validator must be rejected"
+            );
+        });
+    }
+
+    #[test]
+    fn boundary_outcome_rejects_reshare_registration_without_endorsement() {
+        // Even for a committee member (VALIDATOR is in `new_active_set`, so the
+        // membership gate passes), a reshare registration is rejected unless the
+        // artifact carries a valid prior-committee endorsement (B3). Here no group key
+        // is stored and the endorsement is empty, so the authority check fails closed.
+        // The happy path (a real recovered group signature) is exercised end-to-end on
+        // the SGX localnet, since constructing a threshold group signature needs the
+        // DKG primitives, not a unit fixture.
+        let mut provider = configured_storage(2, 2);
+        provider.enter(|storage| {
+            let mut artifact = boundary_noop();
+            artifact.tee_reshare_registrations = vec![reshare_registration(VALIDATOR)];
+            let input = SystemTxInputV2::BoundaryOutcome { artifact }
+                .encode()
+                .unwrap();
+            let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
+                .expect_err("a reshare registration without an endorsement must be rejected");
+            assert!(
+                format!("{err:?}").contains("endorsement"),
+                "must fail on the missing prior-committee endorsement, got: {err:?}"
+            );
         });
     }
 
@@ -1337,6 +1464,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0x72),
             tribute_offer_public_key: B256::repeat_byte(0x73),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations,
             policy,
             validator_signatures: Vec::new(),
@@ -1388,6 +1516,75 @@ mod tests {
         assert!(is_bootstrapped(&mut provider));
     }
 
+    /// Write an epoch-0 `CommitteeSnapshot` (as block 1's `BoundaryOutcome` would)
+    /// and return its canonical V2 identity hash.
+    fn write_epoch0_snapshot(provider: &mut HashMapStorageProvider, members: &[Address]) -> B256 {
+        use outbe_consensus::proof::{CommitteeEntry, CommitteeSnapshot};
+        let snapshot = CommitteeSnapshot {
+            committee: members
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let mut pk = [7u8; 48];
+                    pk[0] = i as u8;
+                    CommitteeEntry {
+                        address: *a,
+                        consensus_pubkey: pk,
+                    }
+                })
+                .collect(),
+            vrf_material_version: 1,
+            vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        provider.enter(|storage| {
+            outbe_validatorset::state::write_committee_snapshot(storage, 0, &snapshot).unwrap();
+        });
+        outbe_validatorset::committee_set_hash_v2(0, &snapshot)
+    }
+
+    /// B2: a non-zero `committee_snapshot_hash` that disagrees with the on-chain
+    /// epoch-0 snapshot must revert (forged committee binding rejected).
+    #[test]
+    fn tee_bootstrap_rejects_committee_snapshot_hash_mismatch() {
+        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
+        let mut provider = tee_committee_storage(5, &members(&ks));
+        write_epoch0_snapshot(&mut provider, &members(&ks));
+        // `tee_payload` sets committee_snapshot_hash = 0x71, which cannot equal the
+        // recomputed snapshot hash, so the bind must reject.
+        let payload = tee_payload(5, &ks[..3]);
+        let err = run_bootstrap(&mut provider, &payload).expect_err(
+            "a committee_snapshot_hash disagreeing with the on-chain snapshot must revert",
+        );
+        assert!(
+            format!("{err:?}").contains("committee_snapshot_hash does not match"),
+            "must reject on the snapshot bind, got: {err:?}"
+        );
+        assert!(!is_bootstrapped(&mut provider));
+    }
+
+    /// B2: a `committee_snapshot_hash` equal to the recomputed on-chain snapshot
+    /// hash is accepted and the bootstrap completes.
+    #[test]
+    fn tee_bootstrap_accepts_matching_committee_snapshot_hash() {
+        let ks = keys(&[0x11, 0x22, 0x33, 0x44]);
+        let mut provider = tee_committee_storage(5, &members(&ks));
+        let csh = write_epoch0_snapshot(&mut provider, &members(&ks));
+        let mut payload = tee_payload(5, &ks[..3]);
+        payload.committee_snapshot_hash = csh;
+        // Re-sign: committee_snapshot_hash is part of the signed body.
+        let signing_hash = payload.signing_hash();
+        payload.validator_signatures = ks[..3]
+            .iter()
+            .map(|key| TeeValidatorSignature {
+                validator: tee_evm_address(key),
+                signature: tee_sign(key, &signing_hash),
+            })
+            .collect();
+        run_bootstrap(&mut provider, &payload).expect("matching snapshot hash accepted");
+        assert!(is_bootstrapped(&mut provider));
+    }
+
     /// Seed the genesis teePolicy hash into `TeeRegistry` slot 2 (simulating
     /// `scripts/seed_genesis.py`), so Phase 3b enforces the allowlist.
     fn seed_genesis_policy(provider: &mut HashMapStorageProvider, policy: &TeePolicy) {
@@ -1418,6 +1615,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0x72),
             tribute_offer_public_key: B256::repeat_byte(0x73),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations,
             policy,
             validator_signatures: Vec::new(),
@@ -1695,11 +1893,19 @@ mod tests {
                 "window marked settled"
             );
 
-            // Residue recycled into terminal Metadosis day-limit headroom.
-            let date = outbe_metadosis::runtime::timestamp_to_date_key(timestamp);
+            // Residue recycled into terminal Metadosis emission headroom. The
+            // terminal sink now keys the credit on the WorldwideDay record
+            // (UTC+14) for the block timestamp, i.e. date_key(timestamp + UTC+14).
+            use outbe_metadosis::schema::WorldwideDayEntryExt;
+            let wwd = outbe_metadosis::runtime::timestamp_to_date_key(
+                timestamp + outbe_metadosis::constants::UTC_PLUS_14_OFFSET,
+            );
             let recorded = ctx
                 .contract::<outbe_metadosis::schema::MetadosisContract>()
-                .get_day_limit(date.into())
+                .worldwide_days
+                .entry(wwd.into())
+                .metadosis_limit_amount()
+                .read()
                 .unwrap();
             assert_eq!(recorded, each, "residue routed to terminal Metadosis");
         });

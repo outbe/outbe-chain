@@ -12,8 +12,14 @@
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 
+use alloy_primitives::B256;
+use rand_core::RngCore as _;
+
 use crate::keys::EnclaveKeys;
-use crate::seal::EnclaveBootConfig;
+use crate::seal::{
+    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
+    KeyPolicy, SealHeader, SEAL_FORMAT,
+};
 use crate::transport::{serve, serve_tcp};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]; the
@@ -87,29 +93,25 @@ pub fn run(opts: RunOpts) -> i32 {
     }
 
     let tribute_offer_secret = dev_bytes_from_env("TEE_DEV_OFFER_SECRET", [0x07; 32]);
-    // Distinct per-validator DKG identity seed. `--dkg-seed <hex32>` (or env
-    // `TEE_DEV_DKG_SEED`) makes this enclave a distinct DKG participant; absent,
-    // the DKG identity falls back to the (shared) offer secret — fine only for a
-    // single-enclave run, degenerate for a real multi-party ceremony.
-    let dkg_seed = arg_value(&args, "--dkg-seed")
+    // Explicit, deterministic DKG identity seed (dev/CI): `--dkg-seed <hex32>` or
+    // env `TEE_DEV_DKG_SEED`. The gramine-direct mock path uses this since it has
+    // no EGETKEY and so cannot persist a self-generated identity across restart.
+    let cli_dkg_seed = arg_value(&args, "--dkg-seed")
         .and_then(|hex| parse_hex32(&hex))
         .or_else(|| {
             std::env::var("TEE_DEV_DKG_SEED")
                 .ok()
                 .and_then(|h| parse_hex32(&h))
         });
+    // Resolve the identity seed: explicit seed > self-generated-and-sealed (real
+    // SGX) > offer-secret fallback. See `resolve_dkg_identity_seed`.
+    let (dkg_seed, dkg_id) = resolve_dkg_identity_seed(&args, cli_dkg_seed);
     let keys = match EnclaveKeys::new(tribute_offer_secret, dkg_seed) {
         Ok(keys) => keys,
         Err(err) => {
             eprintln!("outbe-tee-enclave: key init failed: {err}");
             return 1;
         }
-    };
-
-    let dkg_id = if dkg_seed.is_some() {
-        "distinct --dkg-seed"
-    } else {
-        "offer-secret fallback"
     };
 
     // Optional seal/unseal boot configuration. Present only when the
@@ -191,6 +193,100 @@ pub fn run(opts: RunOpts) -> i32 {
         return 1;
     }
     0
+}
+
+/// Resolve this enclave's DKG identity seed and a label for the startup banner.
+///
+/// Priority:
+///  1. **Explicit** `--dkg-seed` / `TEE_DEV_DKG_SEED` (deterministic). Used by the
+///     gramine-direct mock e2e/CI, which has no EGETKEY and so cannot persist a
+///     self-generated identity across restart.
+///  2. **Self-generated + sealed** (the honest SGX path): when no explicit seed is
+///     given but `--tee-dir` is set and EGETKEY sealing is available (real
+///     `gramine-sgx`), generate a RANDOM identity seed from hardware RNG on first
+///     boot and SEAL it to `<tee-dir>/sealed_identity.bin`, so the enclave is an
+///     INDEPENDENT DKG participant whose identity SURVIVES restart — with no
+///     host-supplied `--dkg-seed`. The 32-byte seed is sealed (reusing the
+///     offer-key seal with an empty group-sig) and the existing HKDF in
+///     `EnclaveKeys::new` reconstructs the full BLS+share-decrypt identity from it.
+///  3. **None**: no seed and no sealing → `EnclaveKeys` falls back to the shared
+///     offer secret (fine only for a single-enclave dev run, degenerate for a real
+///     ceremony).
+fn resolve_dkg_identity_seed(
+    args: &[String],
+    cli_seed: Option<[u8; 32]>,
+) -> (Option<[u8; 32]>, &'static str) {
+    if let Some(seed) = cli_seed {
+        return (Some(seed), "explicit --dkg-seed");
+    }
+    // Self-gen needs a tee-dir to persist the sealed identity and real EGETKEY.
+    let Some(tee_dir) = arg_value(args, "--tee-dir").map(std::path::PathBuf::from) else {
+        return (None, "offer-secret fallback (no seed, no --tee-dir)");
+    };
+    let sealing_key = match crate::gramine::sealing_key_256(true) {
+        Ok(k) => k,
+        Err(_) => return (None, "offer-secret fallback (no EGETKEY — not real SGX)"),
+    };
+    let chain_id = B256::from(
+        arg_value(args, "--chain-id")
+            .and_then(|h| parse_hex32(&h))
+            .unwrap_or([0u8; 32]),
+    );
+    // Running SGX SVN for the anti-rollback floor, read from the local report.
+    let isv_svn = crate::gramine::local_report_measurements(&[0u8; 64])
+        .map(|m| m.isv_svn)
+        .unwrap_or(0);
+    // The tee dir is also created later by `build_boot_config`; ensure it exists
+    // now so first-boot identity sealing can persist.
+    let _ = std::fs::create_dir_all(&tee_dir);
+    let path = tee_dir.join("sealed_identity.bin");
+
+    // Restore a previously self-generated identity if one is sealed here.
+    if let Ok(blob) = std::fs::read(&path) {
+        match unseal_tribute_offer_and_group_sig(&blob, &sealing_key, chain_id, isv_svn) {
+            Ok((seed, _empty_group_sig, _hdr)) => {
+                return (Some(*seed), "self-generated (restored from seal)");
+            }
+            Err(err) => {
+                eprintln!(
+                    "outbe-tee-enclave: sealed identity at {} did not unseal ({err}); \
+                     regenerating",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    // First boot (or unreadable blob): generate a fresh random identity and seal it.
+    let mut seed = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut seed);
+    let mut nonce = [0u8; 12];
+    rand_core::OsRng.fill_bytes(&mut nonce);
+    let header = SealHeader {
+        format_version: SEAL_FORMAT,
+        key_policy: KeyPolicy::MrSigner,
+        isv_svn,
+        key_epoch: 0,
+        tribute_offer_epoch: 0,
+        nonce,
+    };
+    match seal_tribute_offer_and_group_sig(&seed, &[], &sealing_key, chain_id, &header) {
+        Ok(blob) => match std::fs::write(&path, blob) {
+            Ok(()) => (Some(seed), "self-generated (fresh, sealed)"),
+            Err(err) => {
+                eprintln!(
+                    "outbe-tee-enclave: could not persist sealed identity to {} ({err}); \
+                     identity will NOT survive restart",
+                    path.display()
+                );
+                (Some(seed), "self-generated (fresh, NOT persisted)")
+            }
+        },
+        Err(err) => {
+            eprintln!("outbe-tee-enclave: identity seal failed ({err}); identity not persisted");
+            (Some(seed), "self-generated (fresh, NOT persisted)")
+        }
+    }
 }
 
 /// Build the optional seal/unseal boot configuration from CLI args.

@@ -31,7 +31,7 @@ contract EscrowAdapterTest is Test {
     uint32 seriesId1 = 1;
     uint32 seriesId2 = 2;
 
-    uint64 constant LOCK_AMOUNT = 1000 * 10 ** 6; // 1000 USDC
+    uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6; // 1000 USDC
 
     /// @dev Stand-in for the inbound LZ packet GUID that carries refund instructions. Threaded
     ///      through `finalizeAuction`/`retryFinalize` into the emitted events.
@@ -169,7 +169,7 @@ contract EscrowAdapterTest is Test {
 
     // --- PaymentTokenAlias Tests ---
     function test_PaymentTokenAlias() public view {
-        assertEq(escrow.PAYMENT_TOKEN_ALIAS(), 840);
+        assertEq(escrow.PAYMENT_TOKEN_ALIAS(), 43);
     }
 
     // --- LockFunds Tests ---
@@ -189,7 +189,7 @@ contract EscrowAdapterTest is Test {
         assertTrue(lock.lockedAt > 0);
 
         // Check auction stats
-        (bool hasLocks, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertTrue(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, LOCK_AMOUNT);
@@ -204,7 +204,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(seriesId1, bidder2, LOCK_AMOUNT * 2);
 
         // Check auction stats
-        (bool hasLocks, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertTrue(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, LOCK_AMOUNT * 3);
@@ -274,7 +274,7 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + LOCK_AMOUNT);
 
         // Check auction status
-        (bool hasLocks, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertTrue(hasLocks); // Count stays, but amount is 0
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
@@ -307,7 +307,7 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(address(mockVault)), vaultBalanceBefore + LOCK_AMOUNT);
 
         // Check accounting cleared
-        (, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
     }
@@ -319,8 +319,8 @@ contract EscrowAdapterTest is Test {
 
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
         uint256 vaultBalanceBefore = paymentToken.balanceOf(address(mockVault));
-        uint64 refundedAmount = LOCK_AMOUNT * 30 / 100; // 30% refund
-        uint64 paidAmount = LOCK_AMOUNT - refundedAmount; // 70% claim
+        uint128 refundedAmount = LOCK_AMOUNT * 30 / 100; // 30% refund
+        uint128 paidAmount = LOCK_AMOUNT - refundedAmount; // 70% claim
 
         // Finalize with partial refund and claim
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -363,7 +363,7 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(seriesId1, GUID, instructions);
 
         // All escrow drained for the series.
-        (, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
@@ -573,7 +573,7 @@ contract EscrowAdapterTest is Test {
 
     function test_GetAuctionStatus() public {
         // Before any locks
-        (bool hasLocks, bool isFinalized, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertFalse(hasLocks);
         assertFalse(isFinalized);
         assertEq(totalLocked, 0);
@@ -785,8 +785,8 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        uint64 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint64 paidPortion = LOCK_AMOUNT - refundPortion;
+        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
+        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
         provider.setRevertOnDeposit(true); // payout deposit fails, but the split is valid
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -810,7 +810,7 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.RefundClaimed));
         // The parked payout portion is still accounted for in totalLocked and still in The Compact.
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertEq(totalLocked, paidPortion);
         assertEq(_liveCompactBalance(), paidPortion);
     }
@@ -821,8 +821,8 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        uint64 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint64 paidPortion = LOCK_AMOUNT - refundPortion;
+        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
+        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
         provider.setRevertOnDeposit(true); // payout deposit fails during finalize
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -847,7 +847,7 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion);
         assertEq(paymentToken.balanceOf(address(mockVault)), vaultBefore + paidPortion);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
     }
@@ -858,8 +858,8 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        uint64 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint64 paidPortion = LOCK_AMOUNT - refundPortion;
+        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
+        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
         provider.setRevertOnDeposit(true);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -885,7 +885,7 @@ contract EscrowAdapterTest is Test {
 
         assertEq(paymentToken.balanceOf(address(mockVault)), vaultBefore + paidPortion);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
     }

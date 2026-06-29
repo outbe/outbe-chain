@@ -89,7 +89,7 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
 
         // nonce 2: a valid bids batch lands (BidsBatchReceived), proving the lane was not wedged.
         bytes memory bids = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         vm.expectEmit(true, true, false, true, address(outbeMessenger));
         emit IOriginMessenger.BidsBatchReceived(GUID, BNB_EID, 42, 0);

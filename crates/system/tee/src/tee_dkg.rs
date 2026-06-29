@@ -350,8 +350,10 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     }
 
     let partials: Vec<Vec<u8>> = sealed_for_me.into_values().collect();
-    outcome.tribute_offer_public =
+    let (tribute_offer_public, tribute_offer_group_public_key) =
         coord.recover_tribute_offer(enclave, &partials, chain_id, tribute_offer_epoch)?;
+    outcome.tribute_offer_public = tribute_offer_public;
+    outcome.tribute_offer_group_public_key = tribute_offer_group_public_key;
     Ok(outcome)
 }
 
@@ -374,6 +376,11 @@ pub struct CeremonyOutcome {
     /// for all honest parties; clients encrypt offers to it. Set by
     /// [`run_tee_dkg_ceremony`]; `[0u8; 32]` until Seam F completes.
     pub tribute_offer_public: [u8; 32],
+    /// The committee's DKG group public KEY (constant term, encoded) — the public
+    /// verification key for its threshold group signatures. Set alongside
+    /// `tribute_offer_public` at Seam F; carried into the bootstrap payload so a
+    /// later reshare endorsement verifies against this committee's key.
+    pub tribute_offer_group_public_key: Vec<u8>,
 }
 
 /// Coordinator errors: a transport failure, or an unexpected enclave response.
@@ -397,27 +404,24 @@ pub struct CeremonyCoordinator {
     ceremony_id: B256,
     round: u64,
     my_bls: Vec<u8>,
-    participant_bls: Vec<Vec<u8>>,
-    participant_enc: Vec<[u8; 32]>,
+    participants: Vec<crate::protocol::ParticipantAnnounce>,
 }
 
 impl CeremonyCoordinator {
-    /// `participants` is the announced `(bls_pub, x25519_enc_pub)` of every
-    /// participant (from each enclave's `GetPublicKeys`), including this node.
+    /// `participants` is each enclave's announced `ParticipantAnnounce` (BLS
+    /// identity + X25519 enc key + the owner's binding signature), obtained from
+    /// each enclave's `GetPublicKeys`, including this node.
     pub fn new(
         ceremony_id: B256,
         round: u64,
         my_bls: Vec<u8>,
-        participants: Vec<(Vec<u8>, [u8; 32])>,
+        participants: Vec<crate::protocol::ParticipantAnnounce>,
     ) -> Self {
-        let participant_bls = participants.iter().map(|(b, _)| b.clone()).collect();
-        let participant_enc = participants.iter().map(|(_, e)| *e).collect();
         Self {
             ceremony_id,
             round,
             my_bls,
-            participant_bls,
-            participant_enc,
+            participants,
         }
     }
 
@@ -431,8 +435,7 @@ impl CeremonyCoordinator {
         match ch.request(&EnclaveRequest::DkgOpen {
             ceremony_id: self.ceremony_id,
             round: self.round,
-            participant_bls: self.participant_bls.clone(),
-            participant_enc: self.participant_enc.clone(),
+            participants: self.participants.clone(),
         })? {
             EnclaveResponse::Ack => Ok(()),
             _ => Err(CeremonyError::UnexpectedResponse("DkgOpen")),
@@ -531,6 +534,7 @@ impl CeremonyCoordinator {
                 share_commitment,
                 // Filled by `run_tee_dkg_ceremony` after Seam F.
                 tribute_offer_public: [0u8; 32],
+                tribute_offer_group_public_key: Vec::new(),
             }),
             _ => Err(CeremonyError::UnexpectedResponse("DkgPlayerFinalize")),
         }
@@ -562,7 +566,7 @@ impl CeremonyCoordinator {
         sealed_partials: &[Vec<u8>],
         chain_id: B256,
         tribute_offer_epoch: u64,
-    ) -> Result<[u8; 32]> {
+    ) -> Result<([u8; 32], Vec<u8>)> {
         match ch.request(&EnclaveRequest::DkgRecoverTributeOffer {
             ceremony_id: self.ceremony_id,
             sealed_partials: sealed_partials.to_vec(),
@@ -571,7 +575,8 @@ impl CeremonyCoordinator {
         })? {
             EnclaveResponse::DkgTributeOfferKey {
                 tribute_offer_public,
-            } => Ok(tribute_offer_public),
+                group_public_key,
+            } => Ok((tribute_offer_public, group_public_key)),
             EnclaveResponse::Error { message } => Err(CeremonyError::EnclaveError(message)),
             _ => Err(CeremonyError::UnexpectedResponse("DkgRecoverTributeOffer")),
         }

@@ -131,7 +131,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
         // Sanity: no worldwide day exists before begin_block.
         let before = outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone());
         assert!(
-            before.get_all_active_wwds().unwrap().is_empty(),
+            before.active_wwd.read_all().unwrap().is_empty(),
             "no worldwide day should exist before block-1 begin_block"
         );
         drop(before);
@@ -140,7 +140,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
 
         let metadosis = outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone());
         assert!(
-            !metadosis.get_all_active_wwds().unwrap().is_empty(),
+            !metadosis.active_wwd.read_all().unwrap().is_empty(),
             "block-1 begin_block must create the genesis worldwide day"
         );
 
@@ -320,7 +320,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         dispatch_triggers(&ctx_anchor).unwrap();
 
         // Step 2: block past first slot. prev_day = genesis_utc_day
-        // (20240101); day_number_since_genesis = 0; cap = INITIAL_DAILY.
+        // (20240101); day_number_since_genesis = 0; cap = INITIAL_DAY_EMISSION.
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);

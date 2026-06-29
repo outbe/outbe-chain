@@ -35,9 +35,9 @@ interface IOriginMessenger {
     /// @param guid LayerZero message GUID
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param clearingPrice Uniform clearing price
+    /// @param clearingRate Uniform clearing rate (`1e6` fixed-point)
     event AuctionResultSent(
-        bytes32 indexed guid, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingPrice
+        bytes32 indexed guid, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are sent to BNB.
@@ -97,14 +97,26 @@ interface IOriginMessenger {
         uint32 revealEnd;
         /// @notice End of the issuance stage (UNIX seconds).
         uint32 issuanceEnd;
+        /// @notice Issuance currency (ISO numeric).
+        uint16 issuanceCurrency;
+        /// @notice Reference currency (ISO numeric).
+        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
-        /// @notice Minimum acceptable bid price per Intex unit.
-        uint64 minIntexBidPrice;
-        /// @notice Cost amount (payment-token minor units).
-        uint64 costAmountMinor;
+        /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of strike).
+        uint32 minIntexBidRate;
+        /// @notice Per-unit entry price (reference ccy); strike derives from it.
+        uint64 entryPrice;
         /// @notice Floor price (payment-token minor units).
         uint64 floorPriceMinor;
+        /// @notice Call price (payment-token minor units).
+        uint64 callPriceMinor;
+        /// @notice Called→deadline window in seconds (0 = default).
+        uint32 intexCallPeriod;
+        /// @notice Call-trigger observation window in days.
+        uint16 callWindowDays;
+        /// @notice Call-trigger threshold in days.
+        uint16 callThresholdDays;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
     }
@@ -118,9 +130,11 @@ interface IOriginMessenger {
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 costAmountMinor;
+        uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
         uint32 intexCallPeriod;
+        uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint16 callWindowDays;
         uint16 callThresholdDays;
@@ -251,7 +265,7 @@ interface IOriginMessenger {
     /// @notice Quote fee for sending auction result.
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param auctionIntexClearingPrice Uniform clearing price
+    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point)
     /// @param wonBidsCount Number of winning bids
     /// @param extraOptions Additional LayerZero options
     /// @param payInLzToken Whether to pay fee in LZ token
@@ -259,7 +273,7 @@ interface IOriginMessenger {
     function quoteSendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         bool payInLzToken
@@ -268,7 +282,7 @@ interface IOriginMessenger {
     /// @notice Send auction result to BNB. Restricted to `DESIS_ROLE`.
     /// @param seriesId Series identifier
     /// @param issuedIntexCount Number of Intex units issued
-    /// @param auctionIntexClearingPrice Uniform clearing price
+    /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point)
     /// @param wonBidsCount Number of winning bids
     /// @param extraOptions Additional LayerZero options
     /// @param fee Messaging fee
@@ -277,7 +291,7 @@ interface IOriginMessenger {
     function sendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
-        uint64 auctionIntexClearingPrice,
+        uint64 auctionClearingRate,
         uint32 wonBidsCount,
         bytes calldata extraOptions,
         MessagingFee calldata fee,
@@ -319,8 +333,8 @@ interface IOriginMessenger {
     function quoteSendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts,
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts,
         bytes calldata extraOptions,
         bool payInLzToken
     ) external view returns (MessagingFee memory fee);
@@ -337,8 +351,8 @@ interface IOriginMessenger {
     function sendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
-        uint64[] calldata refundedAmounts,
-        uint64[] calldata paidAmounts,
+        uint128[] calldata refundedAmounts,
+        uint128[] calldata paidAmounts,
         bytes calldata extraOptions,
         MessagingFee calldata fee,
         address refundAddress

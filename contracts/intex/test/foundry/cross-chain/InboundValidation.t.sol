@@ -191,7 +191,7 @@ contract InboundValidationTest is TestHelperOz5 {
     }
 
     function test_TM_ShortIssuanceInstructions_DroppedInvalidPayloadLength() public {
-        // ISSUANCE_INSTRUCTIONS has the largest minimum (HEADER_LEN + 480): a struct with two
+        // ISSUANCE_INSTRUCTIONS has the largest minimum (HEADER_LEN + 544): a struct with two
         // arrays. One byte under the floor must trip the per-type length check.
         uint256 minLen = BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS;
         bytes memory packet = abi.encodePacked(
@@ -269,7 +269,7 @@ contract InboundValidationTest is TestHelperOz5 {
         // Build a well-formed BIDS_BATCH whose body-srcEid (0xDEAD) disagrees with the
         // transport-layer _origin.srcEid (BNB_EID = 1) → SrcEidBodyMismatch.
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, 0xDEAD, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, 0xDEAD, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         _expectDropped(
             address(outbeMessenger),
@@ -283,7 +283,7 @@ contract InboundValidationTest is TestHelperOz5 {
         // Empty-arrays BIDS_BATCH = HEADER_LEN + 384 = 386 bytes. Send a one-byte-short packet
         // (truncate the last byte of the trailing length word) to trip the per-type minimum-length check.
         bytes memory full = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         bytes memory truncated = new bytes(full.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
@@ -307,12 +307,12 @@ contract InboundValidationTest is TestHelperOz5 {
         uint256 n = BridgeMsgCodec.MAX_BIDS_BATCH + 1;
         address[] memory bidders = new address[](n);
         uint16[] memory quantities = new uint16[](n);
-        uint64[] memory prices = new uint64[](n);
+        uint32[] memory rates = new uint32[](n);
         uint32[] memory timestamps = new uint32[](n);
         for (uint256 i = 0; i < n; i++) {
             bidders[i] = address(uint160(i + 1));
             quantities[i] = 1;
-            prices[i] = 1;
+            rates[i] = 1;
             timestamps[i] = 1;
         }
         // Hand-build the over-cap payload: the outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN (64),
@@ -322,7 +322,7 @@ contract InboundValidationTest is TestHelperOz5 {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(uint32(42), BNB_EID, true, uint32(1), bidders, quantities, prices, timestamps)
+            abi.encode(uint32(42), BNB_EID, true, uint32(1), bidders, quantities, rates, timestamps)
         );
         _expectDropped(
             address(outbeMessenger),

@@ -1,11 +1,11 @@
 /// Forming period: 50 hours (UTC-12 to UTC+14 = 50h span).
 pub const FORMING_PERIOD_HOURS: u64 = 50;
 
-/// Default lookback delay: 502 hours (~21 days).
-pub const DEFAULT_LOOKBACK_DELAY_HOURS: u64 = 502;
+/// lookback delay: 502 hours (~21 days).
+pub const LOOKBACK_DELAY_HOURS: u64 = 502;
 
-/// Default offering period: 50 hours.
-pub const DEFAULT_OFFERING_PERIOD_HOURS: u64 = 50;
+/// offering period: 50 hours.
+pub const OFFERING_PERIOD_HOURS: u64 = 50;
 
 /// Waiting period before processing: 12 hours.
 pub const WAITING_PERIOD_HOURS: u64 = 12;
@@ -25,11 +25,8 @@ pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
 /// Bootstrap offering period: 48 hours.
 pub const BOOTSTRAP_OFFERING_PERIOD_HOURS: u64 = 48;
 
-/// Maximum day metadosis limit records kept.
-pub const MAX_DAY_LIMITS_KEPT: usize = 30;
-
-/// Completed worldwide day retention (days).
-pub const COMPLETED_WWD_RETENTION_DAYS: u64 = 30;
+/// Maximum wwd records kept.
+pub const MAX_RECORDS_KEPT: usize = 365;
 
 /// UTC+14 offset in seconds (14 * 3600).
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;

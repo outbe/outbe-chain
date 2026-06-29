@@ -12,14 +12,14 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 contract MockAuctionEscrow {
     error MockLockReverted();
 
-    mapping(uint32 => mapping(address => uint64)) public lockedFunds;
+    mapping(uint32 => mapping(address => uint128)) public lockedFunds;
     bool public lockShouldRevert;
 
     IntexAuction public reentryTarget;
     bytes public reentryCalldata;
     bool public reentryArmed;
 
-    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint64 amount);
+    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     function setLockShouldRevert(bool v) external {
         lockShouldRevert = v;
@@ -31,7 +31,7 @@ contract MockAuctionEscrow {
         reentryArmed = true;
     }
 
-    function lockFunds(uint32 seriesId, address bidder, uint64 amount) external {
+    function lockFunds(uint32 seriesId, address bidder, uint128 amount) external {
         if (lockShouldRevert) revert MockLockReverted();
         if (reentryArmed) {
             reentryArmed = false;

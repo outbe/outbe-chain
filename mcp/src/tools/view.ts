@@ -132,10 +132,10 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "fidelity_index",
-    "Fidelity index for an account.",
+    "fidelity_rcfi",
+    "Fidelity RCFI (Retention Component of Fidelity Index) for an account, in decayed days.",
     { account: addr },
-    handler(async ({ account }) => ok(await view(ctx, "fidelity", "getFidelityIndex", [account]))),
+    handler(async ({ account }) => ok(await view(ctx, "fidelity", "getRcfi", [account]))),
   );
 
   server.tool(

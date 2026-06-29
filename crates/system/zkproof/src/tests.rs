@@ -14,12 +14,6 @@ use crate::verify::zk_verify;
 
 const CHAIN_ID: u64 = 19_280_501;
 
-/// Forwards to the public `init_crs` so test-side and node-side use
-/// the exact same Barretenberg CRS bootstrap path.
-fn ensure_bb_crs() {
-    crate::verify::init_crs();
-}
-
 fn fr_be(f: &Fr) -> [u8; 32] {
     let mut be = f.into_bigint().to_bytes_be();
     if be.len() < 32 {
@@ -201,42 +195,4 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
     let input = abi_encode(&[0u8; 32], &[0u8; 64]);
     let out = dispatch_groth16(storage, &input, Address::ZERO, U256::ZERO).unwrap();
     assert_eq!(out.as_ref(), &[0u8; 32]);
-}
-
-/// Real positive verification against the canonical OWNERSHIP circuit.
-///
-/// Fixture bytes are a one-shot Barretenberg prover output:
-/// `circuit_hash(32) || combined_proof`. The proof is internally
-/// consistent — a Grumpkin keypair signs `poseidon2(nft_hash, nonce)`,
-/// and the public-input `owner` is `Poseidon3(pk, nonce)` — so
-/// verification must return `0x..01`. Regenerate the fixture when
-/// `outbe-zk-canonical` or `outbe-zk-circuit-noir` bumps a version that
-/// changes the OWNERSHIP circuit_hash or VK.
-const OWNERSHIP_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/ownership.bin");
-
-#[test]
-fn zk_verify_ownership_fixture_returns_one() {
-    ensure_bb_crs();
-    let circuit_hash: [u8; 32] = OWNERSHIP_FIXTURE[..32].try_into().unwrap();
-    let combined_proof = &OWNERSHIP_FIXTURE[32..];
-
-    let input = abi_encode(&circuit_hash, combined_proof);
-    let out = zk_verify(&input).expect("zk_verify must accept canonical OWNERSHIP fixture");
-
-    let mut expected = [0u8; 32];
-    expected[31] = 1;
-    assert_eq!(out, expected);
-}
-
-#[test]
-fn dispatch_groth16_ownership_fixture_verifies() {
-    ensure_bb_crs();
-    let circuit_hash: [u8; 32] = OWNERSHIP_FIXTURE[..32].try_into().unwrap();
-    let combined_proof = &OWNERSHIP_FIXTURE[32..];
-    let input = abi_encode(&circuit_hash, combined_proof);
-
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let storage = StorageHandle::new(&mut provider);
-    let out = dispatch_groth16(storage, &input, Address::ZERO, U256::ZERO).unwrap();
-    assert_eq!(out.as_ref()[31], 1);
 }

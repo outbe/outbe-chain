@@ -90,19 +90,73 @@
       "name": "createSeries",
       "inputs": [
         {
-          "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "issuedIntexCount",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "intexCallPeriod",
-          "type": "uint32",
-          "internalType": "uint32"
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct IIntexNFT1155.CreateSeriesParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "issuedIntexCount",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callTrigger",
+              "type": "tuple",
+              "internalType": "struct IIntexNFT1155.IntexCallTrigger",
+              "components": [
+                {
+                  "name": "windowDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "thresholdDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "intexCallPeriod",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                }
+              ]
+            }
+          ]
         }
       ],
       "outputs": [],
@@ -589,6 +643,63 @@
           "internalType": "struct IIntexNFT1155.SeriesData",
           "components": [
             {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "issuedIntexCount",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callTrigger",
+              "type": "tuple",
+              "internalType": "struct IIntexNFT1155.IntexCallTrigger",
+              "components": [
+                {
+                  "name": "windowDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "thresholdDays",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "intexCallPeriod",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                }
+              ]
+            },
+            {
               "name": "issuedAt",
               "type": "uint32",
               "internalType": "uint32"
@@ -599,22 +710,7 @@
               "internalType": "uint32"
             },
             {
-              "name": "intexCallPeriod",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
               "name": "totalSupply",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "issuedIntexCount",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "mintedCount",
               "type": "uint32",
               "internalType": "uint32"
             },

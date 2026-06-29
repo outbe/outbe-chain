@@ -16,6 +16,7 @@ import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCode
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @dev Fallback-only stub used as `auction` for nonce-advancement tests so the TM dispatch
@@ -89,7 +90,7 @@ contract DuplicateProtectionTest is TestHelperOz5 {
 
         // Seed the receiving NFT contracts with a series + RELAYER role so ONFT crosschainMints succeed
         // and so TM's `_handleMarkCalled` reaches `intex.markCalled` without an auth revert.
-        intex.createSeries(SERIES_ID, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
         intex.markQualified(SERIES_ID);
         intex.grantRole(intex.RELAYER_ROLE(), address(onftBnb));
         intex.grantRole(intex.RELAYER_ROLE(), address(onftBatchBnb));
@@ -124,12 +125,12 @@ contract DuplicateProtectionTest is TestHelperOz5 {
     /// @dev `STAGE_START` has the simplest downstream — single `auction.auctionStart` call with
     ///      no return values. NoOp fallback accepts it without needing typed stubs.
     function _stageStartPacket(uint32 seriesId) internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeAuctionStageStart(seriesId, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 3);
+        return BridgeMsgCodec.encodeAuctionStageStart(seriesId, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
     }
 
     function _bidsBatchPacket(uint32 seriesId, uint32 srcEid) internal pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            seriesId, srcEid, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
     }
 
