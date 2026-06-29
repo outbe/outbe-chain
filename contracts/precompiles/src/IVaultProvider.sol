@@ -49,9 +49,6 @@ interface IVaultProvider {
         uint256 burnedShares
     );
 
-    /// @notice Returns the current owner (admin) of the vault provider.
-    function owner() external view returns (address);
-
     /// @notice Returns the number of assets.
     function assetsCount() external view returns (uint256);
 
@@ -93,6 +90,10 @@ interface IVaultProvider {
     function depositLiquidity(address asset, uint256 assetsAmount) external returns (uint256 sharesAmount);
 
     function withdrawLiquidity(address asset, uint256 amount, address receiver) external returns (uint256 burnedShares);
+
+    // TODO remove these methods after implementation governance
+    /// @notice Returns the current owner (admin) of the vault provider.
+    function owner() external view returns (address);
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
