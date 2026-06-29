@@ -86,6 +86,15 @@ interface IOriginMessenger {
     /// @param amount Amount of native tokens (wei) swept.
     event NativeSwept(address indexed to, uint256 amount);
 
+    /// @notice OFT-delivered auction proceeds distributed to a series' creators.
+    event ComposeProceedsDistributed(uint32 indexed seriesId, uint256 amount);
+
+    /// @notice Distribute reverted; the native proceeds were parked for retry.
+    event ComposeProceedsParked(uint32 indexed seriesId, uint256 amount, bytes reason);
+
+    /// @notice Proceeds compose route configured.
+    event ComposeRouteSet(address oftAdapter, address wcoen);
+
     // --- Types ---
     /// @notice Auction stage start parameters grouped to keep the calldata layout
     ///         resilient against EVM stack depth limits at call sites.
@@ -173,6 +182,10 @@ interface IOriginMessenger {
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice A self-only function was called by an account other than the contract itself.
     error NotSelf();
+    /// @notice `lzCompose` caller is neither the LZ endpoint nor the wired OFT adapter.
+    error UnauthorizedComposer(address caller);
+    /// @notice `retryDistribute` called for a series with no parked proceeds.
+    error NoPendingDistribution(uint32 seriesId);
 
     // --- Admin ---
     /// @notice Wire contract dependencies and grant the demand/supply roles.

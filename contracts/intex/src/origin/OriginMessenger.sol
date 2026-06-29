@@ -15,10 +15,14 @@ import {
     OAppOptionsType3Upgradeable
 } from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 
+import {ILayerZeroComposer} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroComposer.sol";
 import {IOriginMessenger} from "./interfaces/IOriginMessenger.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
+import {IIntexFactory} from "./interfaces/IIntexFactory.sol";
+import {IWCOEN} from "./interfaces/IWCOEN.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {LzGasEstimator} from "../shared/libs/LzGasEstimator.sol";
+import {OFTComposeMsgCodec} from "../vendor/layerzero/libs/OFTComposeMsgCodec.sol";
 
 /// @title OriginMessenger
 /// @author Outbe
@@ -29,6 +33,7 @@ import {LzGasEstimator} from "../shared/libs/LzGasEstimator.sol";
 ///      messages are keyed by `seriesId` (uint32).
 contract OriginMessenger is
     IOriginMessenger,
+    ILayerZeroComposer,
     OAppUpgradeable,
     OAppOptionsType3Upgradeable,
     AccessControlUpgradeable,
@@ -63,6 +68,12 @@ contract OriginMessenger is
         /// @dev Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
         ///      Backs the `nextNonce` override that switches this OApp into ORDERED-delivery mode.
         mapping(uint32 srcEid => mapping(bytes32 sender => uint64 nonce)) inboundNonce;
+        /// @dev Outbe-side OFT adapter authorized to deliver auction proceeds via `lzCompose`.
+        address oftAdapter;
+        /// @dev WCOEN token unwrapped to native COEN before distribution.
+        address wcoen;
+        /// @dev Native proceeds parked for a permissionless retry after a failed distribute.
+        mapping(uint32 seriesId => uint256 amount) pendingDistribution;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -121,6 +132,17 @@ contract OriginMessenger is
         return _s().inboundNonce[srcEid][sender];
     }
 
+    /// @notice OFT adapter and WCOEN token used to receive auction proceeds via `lzCompose`.
+    function composeRoute() external view returns (address oftAdapter, address wcoen) {
+        OriginMessengerStorage storage $ = _s();
+        return ($.oftAdapter, $.wcoen);
+    }
+
+    /// @notice Native proceeds parked for a series after a failed distribute.
+    function pendingDistribution(uint32 seriesId) external view returns (uint256) {
+        return _s().pendingDistribution[seriesId];
+    }
+
     // --- Admin ---
     /// @inheritdoc IOriginMessenger
     function wire(address _desis, address _intexFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -142,6 +164,16 @@ contract OriginMessenger is
         _grantRole(INTEX_FACTORY_ROLE, _intexFactory);
 
         emit DependenciesWired(desisOld, _desis, intexFactoryOld, _intexFactory);
+    }
+
+    /// @notice Set the proceeds compose route (OFT adapter + WCOEN token).
+    function setComposeRoute(address _oftAdapter, address _wcoen) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_oftAdapter == address(0)) revert ZeroAddress("oftAdapter");
+        if (_wcoen == address(0)) revert ZeroAddress("wcoen");
+        OriginMessengerStorage storage $ = _s();
+        $.oftAdapter = _oftAdapter;
+        $.wcoen = _wcoen;
+        emit ComposeRouteSet(_oftAdapter, _wcoen);
     }
 
     /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA or does not advertise
@@ -562,6 +594,43 @@ contract OriginMessenger is
     /// @return The next inbound nonce the endpoint must deliver on this channel.
     function nextNonce(uint32 _srcEid, bytes32 _sender) public view override returns (uint64) {
         return _s().inboundNonce[_srcEid][_sender] + 1;
+    }
+
+    // --- Proceeds (lzCompose) ---
+    /// @notice Unwrap OFT-delivered WCOEN to native COEN and pay the series creators; a failed
+    ///         distribute is parked for `retryDistribute`.
+    function lzCompose(address _from, bytes32, bytes calldata _message, address, bytes calldata)
+        external
+        payable
+        override
+        nonReentrant
+    {
+        OriginMessengerStorage storage $ = _s();
+        if (msg.sender != address(endpoint)) revert UnauthorizedComposer(msg.sender);
+        if (_from != $.oftAdapter) revert UnauthorizedComposer(_from);
+
+        uint256 amount = OFTComposeMsgCodec.amountLD(_message);
+        uint32 seriesId = abi.decode(OFTComposeMsgCodec.composeMsg(_message), (uint32));
+
+        // The OFT already credited `amount` WCOEN to this contract; unwrap to native COEN.
+        IWCOEN($.wcoen).withdraw(amount);
+
+        try IIntexFactory($.intexFactory).distribute{value: amount}(seriesId) {
+            emit ComposeProceedsDistributed(seriesId, amount);
+        } catch (bytes memory reason) {
+            $.pendingDistribution[seriesId] += amount;
+            emit ComposeProceedsParked(seriesId, amount, reason);
+        }
+    }
+
+    /// @notice Re-attempt a parked distribute; permissionless, amount fixed by state.
+    function retryDistribute(uint32 seriesId) external nonReentrant {
+        OriginMessengerStorage storage $ = _s();
+        uint256 amount = $.pendingDistribution[seriesId];
+        if (amount == 0) revert NoPendingDistribution(seriesId);
+        $.pendingDistribution[seriesId] = 0;
+        IIntexFactory($.intexFactory).distribute{value: amount}(seriesId);
+        emit ComposeProceedsDistributed(seriesId, amount);
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.
