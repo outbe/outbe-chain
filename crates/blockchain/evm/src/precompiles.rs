@@ -19,8 +19,8 @@ use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
     PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
     SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
-    ZKPROOF_POSEIDON_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS, VOTE_ADDRESS, ZEROFEE_ADDRESS,
+    ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
@@ -201,6 +201,12 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             outbe_teeregistry::precompile::dispatch,
             default_base_gas,
         ),
+        a if a == VOTE_ADDRESS => ("vote", outbe_vote::precompile::dispatch, default_base_gas),
+        a if a == UPDATE_ADDRESS => (
+            "update",
+            outbe_update::precompile::dispatch,
+            default_base_gas,
+        ),
         _ => return None,
     };
     Some(entry)
@@ -294,6 +300,8 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
         ZKPROOF_POSEIDON_ADDRESS,
         ZKPROOF_GROTH16_ADDRESS,
         TEE_REGISTRY_ADDRESS,
+        VOTE_ADDRESS,
+        UPDATE_ADDRESS,
     ]
 }
 

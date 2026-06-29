@@ -191,6 +191,18 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// handler through `StorageHandle::contract`, not via the public ABI.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
+/// On-chain upgrade governance precompile address.
+///
+/// Hosts proposal/vote state and the active protocol version. Callable
+/// dispatch is registered at `UPDATE_ADDRESS`; lifecycle activation is wired later.
+pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
+
+/// Generic on-chain vote precompile address.
+///
+/// Hosts reusable proposal/voting state. Callable dispatch is registered
+/// at `VOTE_ADDRESS`.
+pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
+
 /// Whitelist of `to` addresses accepted on the EIP-7702 sponsored
 /// (zero-fee) path enabled by [`ZEROFEE_ADDRESS`].
 ///
