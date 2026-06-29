@@ -13,6 +13,7 @@ outbe-nodfactory.workspace = true
 outbe-tribute.workspace = true
 outbe-fidelity.workspace = true
 outbe-oracle.workspace = true
+outbe-intex.workspace = true
 alloy-primitives.workspace = true
 
 [dev-dependencies]

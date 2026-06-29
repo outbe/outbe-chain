@@ -2,6 +2,7 @@ use alloy_primitives::{address, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -1035,5 +1036,157 @@ fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
         assert_eq!(f.config_profile.slot(), U256::from(13));
+    });
+}
+
+// ---------------------------------------------------------------------
+// Creator-reward: distribute (paginated, native COEN, dust to last)
+// ---------------------------------------------------------------------
+
+fn contrib(n: u8) -> Address {
+    Address::from([n; 20])
+}
+
+#[test]
+fn distribute_pays_contributors_proportionally_with_dust_to_last() {
+    with_factory(|s| {
+        let owners = [contrib(1), contrib(2), contrib(3)];
+        outbe_intex::api::record_contributors(
+            &s,
+            7,
+            &[
+                (owners[0], U256::from(100u64)),
+                (owners[1], U256::from(200u64)),
+                (owners[2], U256::from(300u64)),
+            ],
+        )
+        .unwrap();
+        // Simulate the native value arriving on the precompile via distribute{value}.
+        let amount = U256::from(1000u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
+
+        runtime::distribute(&s, crate::constants::ORIGIN_MESSENGER_ADDRESS, 7, amount).unwrap();
+
+        // floor shares (amount * nominal / total); the last owner absorbs the
+        // rounding remainder, so the sum is exactly `amount`.
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(166u64)); // 1000*100/600
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(333u64)); // 1000*200/600
+        assert_eq!(s.balance(owners[2]).unwrap(), U256::from(501u64)); // 1000-166-333
+                                                                       // precompile fully drained, progress + contributors cleared.
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(outbe_intex::api::get_progress(&s, 7).unwrap(), None);
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+    });
+}
+
+#[test]
+fn distribute_paginates_across_chunks() {
+    with_factory(|s| {
+        let owners = [contrib(1), contrib(2), contrib(3)];
+        outbe_intex::api::record_contributors(
+            &s,
+            7,
+            &[
+                (owners[0], U256::from(100u64)),
+                (owners[1], U256::from(200u64)),
+                (owners[2], U256::from(300u64)),
+            ],
+        )
+        .unwrap();
+        let amount = U256::from(600u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
+        outbe_intex::api::start_distribution(&s, 7, amount, U256::from(600u64)).unwrap();
+
+        // Chunk 1 (limit 2): pays the first two, cursor advances, still active.
+        runtime::pay_chunk(&s, 7, 2).unwrap();
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(200u64));
+        assert_eq!(s.balance(owners[2]).unwrap(), U256::ZERO);
+        assert_eq!(
+            outbe_intex::api::get_progress(&s, 7)
+                .unwrap()
+                .unwrap()
+                .cursor,
+            2
+        );
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        // Chunk 2: pays the last and finalizes.
+        runtime::pay_chunk(&s, 7, 2).unwrap();
+        assert_eq!(s.balance(owners[2]).unwrap(), U256::from(300u64));
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(outbe_intex::api::get_progress(&s, 7).unwrap(), None);
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+    });
+}
+
+#[test]
+fn distribute_rejects_non_origin_messenger() {
+    with_factory(|s| {
+        outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
+            .unwrap();
+        let err = runtime::distribute(&s, holder(), 7, U256::from(100u64)).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("origin messenger"));
+    });
+}
+
+#[test]
+fn distribute_rejects_no_contributors() {
+    with_factory(|s| {
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
+            .unwrap();
+        let err = runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_MESSENGER_ADDRESS,
+            7,
+            U256::from(100u64),
+        )
+        .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("contributors"));
+    });
+}
+
+#[test]
+fn begin_block_drain_completes_active_distributions() {
+    with_factory(|s| {
+        // Two series, each left partially distributed (1 of 3 contributors paid).
+        for (sid, owners) in [
+            (7u32, [contrib(1), contrib(2), contrib(3)]),
+            (9u32, [contrib(4), contrib(5), contrib(6)]),
+        ] {
+            outbe_intex::api::record_contributors(
+                &s,
+                sid,
+                &[
+                    (owners[0], U256::from(100u64)),
+                    (owners[1], U256::from(200u64)),
+                    (owners[2], U256::from(300u64)),
+                ],
+            )
+            .unwrap();
+            s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(600u64))
+                .unwrap();
+            outbe_intex::api::start_distribution(&s, sid, U256::from(600u64), U256::from(600u64))
+                .unwrap();
+            // Pay only the first contributor, leaving the series active.
+            runtime::pay_chunk(&s, sid, 1).unwrap();
+        }
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 2);
+
+        // One begin-block drain finishes both (3 <= DIST_CHUNK_LIMIT).
+        runtime::drain_distributions(&s).unwrap();
+
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        // series 7 fully paid
+        assert_eq!(s.balance(contrib(1)).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(contrib(2)).unwrap(), U256::from(200u64));
+        assert_eq!(s.balance(contrib(3)).unwrap(), U256::from(300u64));
+        // series 9 fully paid
+        assert_eq!(s.balance(contrib(4)).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(contrib(5)).unwrap(), U256::from(200u64));
+        assert_eq!(s.balance(contrib(6)).unwrap(), U256::from(300u64));
     });
 }

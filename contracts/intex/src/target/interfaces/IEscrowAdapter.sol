@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /**
  * @title EscrowAdapter Contract Interface
  * @author Outbe
@@ -241,6 +243,10 @@ interface IEscrowAdapter {
     /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
     function lockFunds(uint32 seriesId, address bidder, uint128 amount) external;
 
+    /// @notice Active payment token used for bid escrow (the WCOEN OFT).
+    /// @return The wired payment token.
+    function paymentToken() external view returns (IERC20);
+
     // --- Bridge Finalization ---
 
     /// @notice Finalize a series escrow with per-bidder refund/payout instructions.
@@ -248,7 +254,10 @@ interface IEscrowAdapter {
     /// @param guid Inbound LZ packet GUID that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.
     /// @param instructions Array of finalization instructions per bidder.
-    function finalizeAuction(uint32 seriesId, bytes32 guid, FinalizationInstruction[] calldata instructions) external;
+    /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to creators.
+    function finalizeAuction(uint32 seriesId, bytes32 guid, FinalizationInstruction[] calldata instructions)
+        external
+        returns (uint128 totalPaid);
 
     // --- Recovery ---
 

@@ -9,12 +9,12 @@
 //! `issued_at` existence sentinel. Business validation (caps, defaults, zero
 //! economic parameters) belongs to the caller (IntexFactory).
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::IntexError;
-use crate::schema::{CreateSeriesParams, IntexContract, IntexState, SeriesRecord};
+use crate::schema::{CreateSeriesParams, DistProgress, IntexContract, IntexState, SeriesRecord};
 
 /// Create a new Intex series record. Always born in `Issued`. Rejects a
 /// duplicate `series_id` (via the record-level create) and a zero `issued_at`
@@ -102,4 +102,102 @@ pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
 /// `series_id` at a dense enumeration index.
 pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<u32> {
     IntexContract::new(storage.clone()).read_series_id_at(index)
+}
+
+// -------------------------------------------------------------------------
+// Creator-reward: contributors + paginated distribution
+// -------------------------------------------------------------------------
+
+/// Record the (pre-deduplicated) contributor list for a series. Called once
+/// per series by lysis, before the tributes are burned. Each entry is
+/// `(tribute owner, Σ nominal_amount_minor)`.
+pub fn record_contributors(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    contributors: &[(Address, U256)],
+) -> Result<()> {
+    IntexContract::new(storage.clone()).write_contributors(series_id, contributors)
+}
+
+/// Number of contributors recorded for a series (0 if none).
+pub fn contributor_count(storage: &StorageHandle<'_>, series_id: u32) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_contributor_count(series_id)
+}
+
+/// Σ of all contributor nominals for a series (the proportionality denominator).
+pub fn contributor_total(storage: &StorageHandle<'_>, series_id: u32) -> Result<U256> {
+    IntexContract::new(storage.clone()).read_contributor_total(series_id)
+}
+
+/// `(owner, nominal)` of the contributor at a dense index.
+pub fn contributor_at(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    index: u32,
+) -> Result<(Address, U256)> {
+    IntexContract::new(storage.clone()).read_contributor_at(series_id, index)
+}
+
+/// Full contributor list for a series.
+pub fn read_contributors(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<Vec<(Address, U256)>> {
+    let registry = IntexContract::new(storage.clone());
+    let count = registry.read_contributor_count(series_id)?;
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        out.push(registry.read_contributor_at(series_id, i)?);
+    }
+    Ok(out)
+}
+
+/// Open a paginated distribution for a series: create the progress record
+/// (cursor 0, nothing paid yet) and enroll the series in the active set the
+/// begin-block hook drains.
+pub fn start_distribution(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    amount: U256,
+    total_nominal: U256,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.create_dist_progress(&DistProgress {
+        series_id,
+        amount,
+        total_nominal,
+        paid_so_far: U256::ZERO,
+        cursor: 0,
+        active: 1,
+    })?;
+    registry.push_active_dist(series_id)
+}
+
+/// In-flight distribution progress for a series; `None` when none is open.
+pub fn get_progress(storage: &StorageHandle<'_>, series_id: u32) -> Result<Option<DistProgress>> {
+    IntexContract::new(storage.clone()).get_dist_progress(series_id)
+}
+
+/// Persist an updated progress record (advanced cursor / paid total).
+pub fn save_progress(storage: &StorageHandle<'_>, progress: &DistProgress) -> Result<()> {
+    IntexContract::new(storage.clone()).update_dist_progress(progress)
+}
+
+/// Finish a distribution: drop the progress record, the active-set entry, and
+/// the (now spent) contributor list.
+pub fn clear_distribution(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.delete_dist_progress(series_id)?;
+    registry.remove_active_dist(series_id)?;
+    registry.clear_contributors(series_id)
+}
+
+/// Number of in-flight distributions (for the begin-block drain).
+pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_active_dist_count()
+}
+
+/// `series_id` of the active distribution at a dense index.
+pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_active_dist_at(index)
 }

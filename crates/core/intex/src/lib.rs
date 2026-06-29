@@ -13,7 +13,9 @@ pub mod schema;
 pub(crate) mod state;
 
 pub use errors::IntexError;
-pub use schema::{CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesRecord};
+pub use schema::{
+    CreateSeriesParams, DistProgress, IntexCallTrigger, IntexContract, IntexState, SeriesRecord,
+};
 
 #[cfg(test)]
 mod tests;

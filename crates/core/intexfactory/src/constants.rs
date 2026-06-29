@@ -22,6 +22,10 @@ pub const ORIGIN_MESSENGER_ADDRESS: Address =
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
 
+/// Max contributor payouts per `distribute` pass (pagination chunk size).
+/// Large series are drained across several blocks by the begin-block hook.
+pub const DIST_CHUNK_LIMIT: u32 = 200;
+
 /// Qualification maturity in days since issuance (mirrors Nod's MATURITY_PERIOD_DAYS).
 pub const MATURITY_PERIOD_DAYS: u64 = 21;
 /// Derived seconds, for comparison against block timestamps.

@@ -21,6 +21,7 @@ import {ITargetMessenger} from "./interfaces/ITargetMessenger.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {LzGasEstimator} from "../shared/libs/LzGasEstimator.sol";
 import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IOFT, SendParam} from "../vendor/layerzero/interfaces/IOFT.sol";
 
 /// @title TargetMessenger
 /// @author Outbe
@@ -100,6 +101,10 @@ contract TargetMessenger is
         mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
         /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
         uint256 nextPendingHoldersRelayIdx;
+        /// @dev Outbe OriginMessenger as the OFT recipient for routed auction proceeds (bytes32).
+        bytes32 proceedsReceiver;
+        /// @dev Executor options for the proceeds OFT send (lzCompose gas allotment).
+        bytes proceedsExtraOptions;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -160,6 +165,21 @@ contract TargetMessenger is
     /// @return The wired batch adapter.
     function onftBatchAdapter() external view returns (IONFT1155AdapterBatch) {
         return _s().onftBatchAdapter;
+    }
+
+    /// @notice Outbe OriginMessenger that routed auction proceeds are sent to, plus send options.
+    function proceedsRoute() external view returns (bytes32 receiver, bytes memory extraOptions) {
+        TargetMessengerStorage storage $ = _s();
+        return ($.proceedsReceiver, $.proceedsExtraOptions);
+    }
+
+    /// @notice Set the proceeds OFT route: Outbe OriginMessenger recipient and executor options.
+    function setProceedsRoute(bytes32 receiver, bytes calldata extraOptions) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (receiver == bytes32(0)) revert ZeroAddress("receiver");
+        TargetMessengerStorage storage $ = _s();
+        $.proceedsReceiver = receiver;
+        $.proceedsExtraOptions = extraOptions;
+        emit ProceedsRouteSet(receiver);
     }
 
     /// @notice Last inbound LayerZero nonce successfully processed for a `(srcEid, sender)` pair.
@@ -563,9 +583,38 @@ contract TargetMessenger is
             });
         }
 
-        _s().escrowAdapter.finalizeAuction(seriesId, _guid, instructions);
+        uint128 totalPaid = _s().escrowAdapter.finalizeAuction(seriesId, _guid, instructions);
+        if (totalPaid > 0) {
+            _routeProceeds(seriesId, totalPaid);
+        }
 
         emit RefundInstructionsReceived(_guid, _srcEid, seriesId, bidders.length);
+    }
+
+    /// @notice Route finalized auction proceeds to the Outbe OriginMessenger via the payment OFT.
+    /// @dev The OFT burns `amount` here and unlocks it on Outbe, where the compose message triggers
+    ///      distribution to the series creators. The LZ fee is paid from this contract's native float.
+    /// @param seriesId Series identifier, carried in the compose message.
+    /// @param amount Proceeds to send, in local decimals.
+    function _routeProceeds(uint32 seriesId, uint128 amount) internal {
+        TargetMessengerStorage storage $ = _s();
+        bytes32 receiver = $.proceedsReceiver;
+        if (receiver == bytes32(0)) revert ProceedsRouteNotSet();
+
+        IOFT oft = IOFT(address($.escrowAdapter.paymentToken()));
+        SendParam memory sendParam = SendParam({
+            dstEid: OUTBE_EID,
+            to: receiver,
+            amountLD: amount,
+            minAmountLD: amount,
+            extraOptions: $.proceedsExtraOptions,
+            composeMsg: abi.encode(seriesId),
+            oftCmd: ""
+        });
+        MessagingFee memory fee = oft.quoteSend(sendParam, false);
+        oft.send{value: fee.nativeFee}(sendParam, fee, address(this));
+
+        emit ProceedsRouted(seriesId, amount, receiver);
     }
 
     /// @notice Decode MARK_CALLED, apply it to IntexNFT1155, then bridge all series holders to Outbe.
