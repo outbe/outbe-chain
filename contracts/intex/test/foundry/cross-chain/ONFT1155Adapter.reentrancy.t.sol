@@ -2,6 +2,8 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -81,21 +83,11 @@ contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[aEid]), address(this), bEid)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[bEid]), address(this), aEid)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
@@ -105,8 +97,8 @@ contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
         oapps[1] = address(adapterB);
         this.wireOApps(oapps);
 
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);

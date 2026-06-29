@@ -123,15 +123,24 @@ enum DealerBundleAction {
 
 /// Run a DKG ceremony over P2P (initial or reshare).
 ///
-/// Blocks until the ceremony completes or times out.
-/// Requires at least 2f+1 validators to be online (N3f1 fault model).
-/// One or more offline validators will not block the ceremony.
+/// Blocks until the ceremony completes or times out. The completion quorum
+/// depends on the mode:
+/// - **Chain-finalized reshare**: completes on `>= 2f+1` (N3f1) finalized dealer
+///   logs. The chain carrier makes the selected subset canonical, so one or more
+///   offline validators do NOT block the ceremony.
+/// - **Initial interactive bootstrap (genesis)**: requires ALL `n` genesis dealer
+///   logs. There is no canonical carrier yet, so every validator must agree on
+///   the identical complete dealer-log set to derive the same public polynomial;
+///   a `2f+1` subset would be non-deterministic and could fork the genesis
+///   committee. A single offline founder therefore stalls genesis until the
+///   timeout — by design (see the completion guard below and
+///   `test_bootstrap_dkg_waits_for_all_genesis_nodes_*`).
 ///
 /// # Arguments
 /// * `signing_key` — this validator's BLS individual private key (MinPk)
 /// * `participants` — ordered set of all validator BLS public keys
-/// * `previous_output` — `None` for initial DKG, `Some(output)` for reshare (A-12)
-/// * `previous_share` — `None` for initial DKG, `Some(share)` for reshare (A-12)
+/// * `previous_output` — `None` for initial DKG, `Some(output)` for reshare
+/// * `previous_share` — `None` for initial DKG, `Some(share)` for reshare
 /// * `round` — DKG round number (0 for initial, incremented for reshares)
 /// * `finalized_log_rx` — finalized chain-carried dealer logs for this ceremony
 /// * `sender` — P2P sender for the DKG channel
@@ -177,17 +186,17 @@ pub async fn run_initial_dkg(
     );
 
     let ceremony_id = DkgCeremonyId::new(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         round,
         previous_output.as_ref(),
         &participants,
     );
 
-    // A-12: Build DKG Info with optional previous output for reshare.
+    // Build DKG Info with optional previous output for reshare.
     // For initial: round=0, previous=None.
     // For reshare: round>0, previous=Some(Output), dealers must be from previous players.
     let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         round,
         previous_output,
         Mode::NonZeroCounter,
@@ -196,7 +205,7 @@ pub async fn run_initial_dkg(
     )
     .map_err(|e| eyre::eyre!("failed to create DKG info: {e:?}"))?;
 
-    // A-12: Old share holders are dealers in a reshare. New validators are
+    // Old share holders are dealers in a reshare. New validators are
     // players only until they receive a fresh threshold share.
     let (mut dealer, my_pub_msg, priv_msgs) = if is_local_dealer {
         let (dealer, my_pub_msg, priv_msgs) =
@@ -223,13 +232,14 @@ pub async fn run_initial_dkg(
     // Build a map of unsent private shares: public_key → DealerPrivMsg.
     let mut unsent_shares: BTreeMap<bls12381::PublicKey, _> = priv_msgs.into_iter().collect();
 
-    // A-19: Use HashSet for unique ack tracking instead of a counter.
-    // A-20: Start empty — only count self-ack if self-dealing succeeded below.
-    let mut acked_players: std::collections::HashSet<bls12381::PublicKey> =
-        std::collections::HashSet::new();
+    // Use a BTreeSet for unique ack tracking instead of a counter
+    // (BTreeSet, not HashSet — deterministic iteration order on the consensus path).
+    // Start empty — only count self-ack if self-dealing succeeded below.
+    let mut acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
+        std::collections::BTreeSet::new();
 
     // Handle self-dealing locally (no network round-trip).
-    // A-20: Only count self-ack if self-dealing validation succeeds.
+    // Only count self-ack if self-dealing validation succeeds.
     if let (Some(my_pub_msg), Some(my_priv_msg)) =
         (my_pub_msg.as_ref(), unsent_shares.remove(&my_pk))
     {
@@ -254,8 +264,8 @@ pub async fn run_initial_dkg(
         bls12381::PublicKey,
         SignedDealerLog<MinSig, bls12381::PrivateKey>,
     > = BTreeMap::new();
-    let mut invalid_dealers: std::collections::HashSet<bls12381::PublicKey> =
-        std::collections::HashSet::new();
+    let mut invalid_dealers: std::collections::BTreeSet<bls12381::PublicKey> =
+        std::collections::BTreeSet::new();
     let mut accepted_dealer_acks: BTreeMap<bls12381::PublicKey, AcceptedDealerAck> =
         BTreeMap::new();
     let max_players = NonZeroU32::new(n)
@@ -275,7 +285,7 @@ pub async fn run_initial_dkg(
     // Runtime-agnostic deadline + retry tick (commonware `Clock`, runs on both the
     // tokio and deterministic runtimes; no wall-clock on the consensus path).
     //
-    // `tokio::time::interval` fires immediately on first poll; the previous code
+    // A periodic interval timer fires immediately on first poll; the previous code
     // consumed that first tick before the loop so the first in-loop retry fired one
     // `RETRY_INTERVAL` after start. We replicate that exactly: seed `next_retry_tick`
     // one period out and advance it by a fixed `RETRY_INTERVAL` each fire
@@ -356,7 +366,7 @@ pub async fn run_initial_dkg(
                     }
                     DkgMessage::Ack { ack, .. } => {
                         // We are a Dealer receiving an ack from a Player.
-                        // A-19: Only count unique acks per player.
+                        // Only count unique acks per player.
                         if let Some(ref mut d) = dealer {
                             match d.receive_player_ack(from.clone(), ack) {
                                 Ok(()) => {
@@ -436,7 +446,7 @@ pub async fn run_initial_dkg(
 
             _ = clock.sleep_until(next_retry_tick) => {
                 // Advance on the fixed interval schedule (matches the previous
-                // `tokio::time::interval` cadence, no drift from wakeup latency).
+                // interval-timer cadence, no drift from wakeup latency).
                 next_retry_tick += RETRY_INTERVAL;
                 if should_retry_share_distribution(dealer.is_some(), &unsent_shares) {
                     if let Some(my_pub_msg) = my_pub_msg.as_ref() {
@@ -504,17 +514,7 @@ pub async fn run_initial_dkg(
 
             // Broadcast our finalized log to all peers.
             unsent_shares.clear();
-            let payload = DkgMessage::FinalizedLog {
-                ceremony_id,
-                signed_log,
-            }
-            .encode();
-            if sender.send(Recipients::All, payload, true).is_empty() {
-                // commonware 2026.5.0 `Sender::send` returns the accepting peers; an
-                // empty Vec means none accepted THIS attempt — which includes benign
-                // rate-limit/backpressure, not just "no peers". The DKG retry tick
-                // re-gossips finalized logs (and peers also pull), so this is
-                // informational, not a hard failure.
+            if !send_finalized_log(&mut sender, ceremony_id, signed_log) {
                 debug!("finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the DKG retry tick");
             }
         }
@@ -609,6 +609,29 @@ pub async fn run_initial_dkg(
 
     info!("DKG ceremony complete — threshold material obtained");
 
+    // surface validators whose individual share evaluation was publicly
+    // REVEALED during the ceremony (they were offline/non-acking, so
+    // `feldman_desmedt` reveals their share so recovery can complete). The
+    // reveals are permanently committed on-chain in the `DealerLog` artifacts,
+    // and a revealed share makes that validator's VRF threshold partial publicly
+    // forgeable — bounded (VRF drives leader election/fairness, not BFT safety:
+    // the BLS individual aggregate stays authoritative), but operators must
+    // rotate the affected validator's consensus key. `Output::revealed()` was
+    // previously never consumed.
+    let revealed = output.revealed();
+    if !revealed.is_empty() {
+        crate::metrics::record_dkg_revealed_shares(revealed.len());
+        for pk in revealed.iter() {
+            warn!(
+                target: "outbe::dkg",
+                revealed_validator = %pk,
+                "DKG: a validator's individual share was REVEALED (offline during the ceremony); \
+                 its VRF threshold partial is now publicly forgeable — rotate this validator's \
+                 consensus key"
+            );
+        }
+    }
+
     Ok(DkgComplete {
         output,
         share,
@@ -651,7 +674,7 @@ pub async fn run_reshare_dealer_only(
     let player_threshold = participants.quorum::<N3f1>();
     let previous_output_for_id = previous_output.clone();
     let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         round,
         Some(previous_output),
         Mode::NonZeroCounter,
@@ -672,7 +695,7 @@ pub async fn run_reshare_dealer_only(
     let max_players = NonZeroU32::new(participants.len() as u32)
         .ok_or_else(|| eyre::eyre!("dealer-only DKG requires at least one target player"))?;
     let ceremony_id = DkgCeremonyId::new(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         round,
         Some(&previous_output_for_id),
         &participants,
@@ -683,8 +706,8 @@ pub async fn run_reshare_dealer_only(
     };
 
     let mut unsent_shares: BTreeMap<bls12381::PublicKey, _> = priv_msgs.into_iter().collect();
-    let mut acked_players: std::collections::HashSet<bls12381::PublicKey> =
-        std::collections::HashSet::new();
+    let mut acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
+        std::collections::BTreeSet::new();
     send_shares(&mut sender, ceremony_id, &my_pub_msg, &unsent_shares).await;
 
     // Same runtime-agnostic deadline + interval-cadence retry tick as
@@ -787,15 +810,7 @@ pub async fn run_reshare_dealer_only(
         )))
         .map_err(|_| eyre::eyre!("failed to publish dealer-only DKG local dealer log"))?;
 
-    let payload = DkgMessage::FinalizedLog {
-        ceremony_id,
-        signed_log,
-    }
-    .encode();
-    if sender.send(Recipients::All, payload, true).is_empty() {
-        // Empty = no peers accepted this attempt (rate-limit/backpressure under
-        // 2026.5.0 sync send), not necessarily a hard failure; recovered by the
-        // retry tick and peer gossip/pull.
+    if !send_finalized_log(&mut sender, ceremony_id, signed_log) {
         debug!("dealer-only finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the retry tick");
     }
 
@@ -841,6 +856,43 @@ fn handle_dealer_bundle(
     DealerBundleAction::SendAck(ack)
 }
 
+/// Encode and send one DKG message over the P2P sender. The single owner of the
+/// `encode → send → "empty accepted-set is benign backpressure"` recipe, so every
+/// DKG send interprets the result identically.
+///
+/// Returns `true` if at least one recipient accepted this attempt. An empty
+/// accepted-set (commonware 2026.5.0 sync `Sender::send` returns the accepting
+/// peers) means none accepted *this attempt* — benign rate-limit/backpressure,
+/// recovered by the ceremony retry tick and peer pull — never a hard failure.
+/// `#[must_use]`: callers must observe acceptance (typically to log backpressure).
+#[must_use]
+fn send_dkg_message(
+    sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
+    recipients: Recipients<bls12381::PublicKey>,
+    message: DkgMessage,
+) -> bool {
+    !sender.send(recipients, message.encode(), true).is_empty()
+}
+
+/// Broadcast one finalized dealer log to all peers. The single site that encodes
+/// `DkgMessage::FinalizedLog` to `Recipients::All`, shared by the gossip loop and
+/// the two one-shot post-finalize broadcasts.
+#[must_use]
+fn send_finalized_log(
+    sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
+    ceremony_id: DkgCeremonyId,
+    signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+) -> bool {
+    send_dkg_message(
+        sender,
+        Recipients::All,
+        DkgMessage::FinalizedLog {
+            ceremony_id,
+            signed_log,
+        },
+    )
+}
+
 async fn send_ack(
     sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
     ceremony_id: DkgCeremonyId,
@@ -848,14 +900,14 @@ async fn send_ack(
     ack: PlayerAck<bls12381::PublicKey>,
     success_message: &'static str,
 ) {
-    let payload = DkgMessage::Ack { ceremony_id, ack }.encode();
-    if sender
-        .send(Recipients::One(dealer.clone()), payload, true)
-        .is_empty()
-    {
-        debug!(?dealer, "ack had no accepting recipient this attempt (rate-limited/backpressure); retried by the ceremony loop");
-    } else {
+    if send_dkg_message(
+        sender,
+        Recipients::One(dealer.clone()),
+        DkgMessage::Ack { ceremony_id, ack },
+    ) {
         debug!(?dealer, message = success_message, "sent DKG ack");
+    } else {
+        debug!(?dealer, "ack had no accepting recipient this attempt (rate-limited/backpressure); retried by the ceremony loop");
     }
 }
 
@@ -943,12 +995,7 @@ async fn gossip_finalized_logs(
     signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PrivateKey>>,
 ) {
     for (dealer, signed_log) in signed_logs {
-        let payload = DkgMessage::FinalizedLog {
-            ceremony_id,
-            signed_log: signed_log.clone(),
-        }
-        .encode();
-        if sender.send(Recipients::All, payload, true).is_empty() {
+        if !send_finalized_log(sender, ceremony_id, signed_log.clone()) {
             debug!(
                 ?dealer,
                 "finalized-log gossip had no accepting recipients this attempt \
@@ -969,23 +1016,19 @@ async fn send_shares(
     >,
 ) {
     for (player_pk, priv_msg) in unsent {
-        let msg = DkgMessage::DealerBundle {
+        let message = DkgMessage::DealerBundle {
             ceremony_id,
             pub_msg: pub_msg.clone(),
             priv_msg: priv_msg.clone(),
         };
-        let payload = msg.encode();
-        if sender
-            .send(Recipients::One(player_pk.clone()), payload, true)
-            .is_empty()
-        {
+        if send_dkg_message(sender, Recipients::One(player_pk.clone()), message) {
+            debug!(?player_pk, "sent share to player");
+        } else {
             debug!(
                 ?player_pk,
                 "share send had no accepting recipient this attempt \
                  (rate-limited/backpressure); retried by send_shares"
             );
-        } else {
-            debug!(?player_pk, "sent share to player");
         }
     }
 }
@@ -1155,7 +1198,7 @@ mod tests {
             .try_collect()
             .unwrap();
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             0,
             None,
             Mode::NonZeroCounter,
@@ -1267,172 +1310,186 @@ mod tests {
 
     #[test]
     fn test_initial_dkg_3_nodes() {
-        use commonware_runtime::{Runner as _, Supervisor as _};
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            // Generate 3 validator keys, sorted by public key (same as bootstrap).
-            let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-                .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
-                .collect();
-            keys.sort_by_key(|a| a.public_key().encode());
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                // Generate 3 validator keys, sorted by public key (same as bootstrap).
+                let mut keys: Vec<bls12381::PrivateKey> = (0..3)
+                    .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+                    .collect();
+                keys.sort_by_key(|a| a.public_key().encode());
 
-            let participants: Set<bls12381::PublicKey> = keys
-                .iter()
-                .map(|k| k.public_key())
-                .try_collect::<Set<bls12381::PublicKey>>()
-                .unwrap();
+                let participants: Set<bls12381::PublicKey> = keys
+                    .iter()
+                    .map(|k| k.public_key())
+                    .try_collect::<Set<bls12381::PublicKey>>()
+                    .unwrap();
 
-            let (senders, receivers) = build_mock_network(&keys);
+                let (senders, receivers) = build_mock_network(&keys);
 
-            // Spawn all 3 DKG ceremonies concurrently.
-            let mut handles = Vec::new();
-            for (i, ((key, sender), receiver)) in
-                keys.iter().cloned().zip(senders).zip(receivers).enumerate()
-            {
-                let p = participants.clone();
-                // `Context` is not `Clone` on commonware 2026.5.0; obtain a
-                // fresh owned clock for the spawned ceremony via `Supervisor::child`.
-                let clock = context.child("dkg_ceremony");
-                handles.push(tokio::spawn(async move {
-                    let result = run_initial_dkg(
-                        &clock, key, p, None, None, 0, None, None, sender, receiver,
-                    )
-                    .await;
-                    (i, result)
-                }));
-            }
-
-            // Collect results.
-            let mut results = Vec::new();
-            for handle in handles {
-                let (i, result) = handle.await.unwrap();
-                let complete = result.unwrap_or_else(|e| panic!("node {i} DKG failed: {e}"));
-                results.push(complete);
-            }
-
-            // All nodes must get the same polynomial (Output).
-            let poly_0 = results[0].output.public().encode();
-            for (i, r) in results.iter().enumerate().skip(1) {
-                assert_eq!(
-                    poly_0,
-                    r.output.public().encode(),
-                    "node {i} polynomial differs from node 0"
-                );
-            }
-
-            // All shares must be distinct.
-            let share_bytes: Vec<Vec<u8>> =
-                results.iter().map(|r| r.share.encode().to_vec()).collect();
-            for i in 0..share_bytes.len() {
-                for j in (i + 1)..share_bytes.len() {
-                    assert_ne!(
-                        share_bytes[i], share_bytes[j],
-                        "shares {i} and {j} are identical"
+                // Spawn all 3 DKG ceremonies concurrently.
+                let mut handles = Vec::new();
+                for (i, ((key, sender), receiver)) in
+                    keys.iter().cloned().zip(senders).zip(receivers).enumerate()
+                {
+                    let p = participants.clone();
+                    // `Context` is not `Clone` on commonware 2026.5.0; obtain a
+                    // fresh owned clock for the spawned ceremony via `Supervisor::child`.
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                let result = run_initial_dkg(
+                                    &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                )
+                                .await;
+                                (i, result)
+                            }),
                     );
                 }
-            }
 
-            // Participant sets must be identical.
-            for (i, r) in results.iter().enumerate().skip(1) {
-                assert_eq!(
-                    results[0].participants.len(),
-                    r.participants.len(),
-                    "node {i} participant count differs"
-                );
-            }
-        });
+                // Collect results.
+                let mut results = Vec::new();
+                for handle in handles {
+                    let (i, result) = handle.await.unwrap();
+                    let complete = result.unwrap_or_else(|e| panic!("node {i} DKG failed: {e}"));
+                    results.push(complete);
+                }
+
+                // All nodes must get the same polynomial (Output).
+                let poly_0 = results[0].output.public().encode();
+                for (i, r) in results.iter().enumerate().skip(1) {
+                    assert_eq!(
+                        poly_0,
+                        r.output.public().encode(),
+                        "node {i} polynomial differs from node 0"
+                    );
+                }
+
+                // All shares must be distinct.
+                let share_bytes: Vec<Vec<u8>> =
+                    results.iter().map(|r| r.share.encode().to_vec()).collect();
+                for i in 0..share_bytes.len() {
+                    for j in (i + 1)..share_bytes.len() {
+                        assert_ne!(
+                            share_bytes[i], share_bytes[j],
+                            "shares {i} and {j} are identical"
+                        );
+                    }
+                }
+
+                // Participant sets must be identical.
+                for (i, r) in results.iter().enumerate().skip(1) {
+                    assert_eq!(
+                        results[0].participants.len(),
+                        r.participants.len(),
+                        "node {i} participant count differs"
+                    );
+                }
+            });
     }
 
     #[test]
     fn test_initial_dkg_4_nodes() {
-        use commonware_runtime::{Runner as _, Supervisor as _};
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-                .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
-                .collect();
-            keys.sort_by_key(|a| a.public_key().encode());
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut keys: Vec<bls12381::PrivateKey> = (0..4)
+                    .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+                    .collect();
+                keys.sort_by_key(|a| a.public_key().encode());
 
-            let participants: Set<bls12381::PublicKey> = keys
-                .iter()
-                .map(|k| k.public_key())
-                .try_collect::<Set<bls12381::PublicKey>>()
-                .unwrap();
+                let participants: Set<bls12381::PublicKey> = keys
+                    .iter()
+                    .map(|k| k.public_key())
+                    .try_collect::<Set<bls12381::PublicKey>>()
+                    .unwrap();
 
-            let (senders, receivers) = build_mock_network(&keys);
+                let (senders, receivers) = build_mock_network(&keys);
 
-            let mut handles = Vec::new();
-            for (key, sender, receiver) in keys
-                .iter()
-                .cloned()
-                .zip(senders)
-                .zip(receivers)
-                .map(|((k, s), r)| (k, s, r))
-            {
-                let p = participants.clone();
-                let clock = context.child("dkg_ceremony");
-                handles.push(tokio::spawn(async move {
-                    run_initial_dkg(&clock, key, p, None, None, 0, None, None, sender, receiver)
-                        .await
-                }));
-            }
+                let mut handles = Vec::new();
+                for (key, sender, receiver) in keys
+                    .iter()
+                    .cloned()
+                    .zip(senders)
+                    .zip(receivers)
+                    .map(|((k, s), r)| (k, s, r))
+                {
+                    let p = participants.clone();
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                run_initial_dkg(
+                                    &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                )
+                                .await
+                            }),
+                    );
+                }
 
-            let mut outputs = Vec::new();
-            for (i, handle) in handles.into_iter().enumerate() {
-                let result = handle.await.unwrap();
-                outputs.push(result.unwrap_or_else(|e| panic!("node {i} DKG failed: {e}")));
-            }
+                let mut outputs = Vec::new();
+                for (i, handle) in handles.into_iter().enumerate() {
+                    let result = handle.await.unwrap();
+                    outputs.push(result.unwrap_or_else(|e| panic!("node {i} DKG failed: {e}")));
+                }
 
-            // All nodes share the same polynomial.
-            let poly_0 = outputs[0].output.public().encode();
-            for (i, o) in outputs.iter().enumerate().skip(1) {
-                assert_eq!(poly_0, o.output.public().encode(), "node {i} poly differs");
-            }
+                // All nodes share the same polynomial.
+                let poly_0 = outputs[0].output.public().encode();
+                for (i, o) in outputs.iter().enumerate().skip(1) {
+                    assert_eq!(poly_0, o.output.public().encode(), "node {i} poly differs");
+                }
 
-            // 4 distinct shares.
-            let mut share_set = std::collections::HashSet::new();
-            for o in &outputs {
-                assert!(share_set.insert(o.share.encode()), "duplicate share");
-            }
-        });
+                // 4 distinct shares.
+                let mut share_set = std::collections::BTreeSet::new();
+                for o in &outputs {
+                    assert!(share_set.insert(o.share.encode()), "duplicate share");
+                }
+            });
     }
 
     #[test]
     fn test_bootstrap_dkg_recovers_dropped_finalized_log_with_retry() {
-        use commonware_runtime::{Runner as _, Supervisor as _};
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-                .map(|seed| bls12381::PrivateKey::from_seed(seed + 1))
-                .collect();
-            keys.sort_by_key(|key| key.public_key().encode());
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut keys: Vec<bls12381::PrivateKey> = (0..4)
+                    .map(|seed| bls12381::PrivateKey::from_seed(seed + 1))
+                    .collect();
+                keys.sort_by_key(|key| key.public_key().encode());
 
-            let participants: Set<bls12381::PublicKey> = keys
-                .iter()
-                .map(|key| key.public_key())
-                .try_collect::<Set<bls12381::PublicKey>>()
-                .unwrap();
+                let participants: Set<bls12381::PublicKey> = keys
+                    .iter()
+                    .map(|key| key.public_key())
+                    .try_collect::<Set<bls12381::PublicKey>>()
+                    .unwrap();
 
-            let drop_rule = Arc::new(Mutex::new(DropFinalizedLogOnce {
-                from: keys[0].public_key(),
-                to: keys[1].public_key(),
-                dropped: false,
-            }));
-            let (senders, receivers) = build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
-
-            let mut handles = Vec::new();
-            for (i, ((key, sender), receiver)) in
-                keys.iter().cloned().zip(senders).zip(receivers).enumerate()
-            {
-                let p = participants.clone();
-                let clock = context.child("dkg_ceremony");
-                handles.push(tokio::spawn(async move {
-                    let result = run_initial_dkg(
-                        &clock, key, p, None, None, 0, None, None, sender, receiver,
-                    )
-                    .await;
-                    (i, result)
+                let drop_rule = Arc::new(Mutex::new(DropFinalizedLogOnce {
+                    from: keys[0].public_key(),
+                    to: keys[1].public_key(),
+                    dropped: false,
                 }));
-            }
+                let (senders, receivers) =
+                    build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
 
-            let results = tokio::time::timeout(Duration::from_secs(5), async move {
+                let mut handles = Vec::new();
+                for (i, ((key, sender), receiver)) in
+                    keys.iter().cloned().zip(senders).zip(receivers).enumerate()
+                {
+                    let p = participants.clone();
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                let result = run_initial_dkg(
+                                    &clock, key, p, None, None, 0, None, None, sender, receiver,
+                                )
+                                .await;
+                                (i, result)
+                            }),
+                    );
+                }
+
                 let mut results = Vec::new();
                 for handle in handles {
                     let (i, result) = handle.await.unwrap();
@@ -1440,103 +1497,248 @@ mod tests {
                         panic!("node {i} DKG failed after finalized-log retry: {error}")
                     }));
                 }
-                results
-            })
-            .await
-            .expect("bootstrap DKG should recover a dropped finalized log via retry gossip");
 
-            assert!(
-                drop_rule.lock().expect("drop rule lock").dropped,
-                "test must drop the first finalized log to exercise retry gossip"
-            );
-
-            let public_0 = results[0].output.public().encode();
-            for (i, result) in results.iter().enumerate().skip(1) {
-                assert_eq!(
-                    public_0,
-                    result.output.public().encode(),
-                    "node {i} polynomial differs after finalized-log retry"
+                assert!(
+                    drop_rule.lock().expect("drop rule lock").dropped,
+                    "test must drop the first finalized log to exercise retry gossip"
                 );
-            }
-        });
+
+                let public_0 = results[0].output.public().encode();
+                for (i, result) in results.iter().enumerate().skip(1) {
+                    assert_eq!(
+                        public_0,
+                        result.output.public().encode(),
+                        "node {i} polynomial differs after finalized-log retry"
+                    );
+                }
+            });
     }
 
     #[test]
     fn reshare_allows_new_player_without_previous_share() {
-        use commonware_runtime::{Runner as _, Supervisor as _};
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let mut old_keys: Vec<bls12381::PrivateKey> =
-                (1..=4).map(bls12381::PrivateKey::from_seed).collect();
-            old_keys.sort_by_key(|key| key.public_key().encode());
-            let (old_participants, previous_output, previous_shares) =
-                run_direct_initial_round(&old_keys);
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut old_keys: Vec<bls12381::PrivateKey> =
+                    (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+                old_keys.sort_by_key(|key| key.public_key().encode());
+                let (old_participants, previous_output, previous_shares) =
+                    run_direct_initial_round(&old_keys);
 
-            let new_key = bls12381::PrivateKey::from_seed(100);
-            let new_pk = new_key.public_key();
-            let mut target_keys = old_keys.clone();
-            target_keys.push(new_key);
-            target_keys.sort_by_key(|key| key.public_key().encode());
-            let target_participants: Set<bls12381::PublicKey> = target_keys
-                .iter()
-                .map(|key| key.public_key())
-                .try_collect()
-                .unwrap();
-
-            let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-                crate::config::NAMESPACE,
-                1,
-                Some(previous_output.clone()),
-                Mode::NonZeroCounter,
-                old_participants.clone(),
-                target_participants.clone(),
-            )
-            .unwrap();
-            let max_players = NonZeroU32::new(target_participants.len() as u32).unwrap();
-
-            let (senders, receivers) = build_mock_network(&target_keys);
-            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-            let mut finalized_log_txs = Vec::new();
-            let mut handles = Vec::new();
-
-            for ((key, sender), receiver) in target_keys.iter().cloned().zip(senders).zip(receivers)
-            {
-                let participants = target_participants.clone();
-                let prev_output = previous_output.clone();
-                let prev_share = old_keys
+                let new_key = bls12381::PrivateKey::from_seed(100);
+                let new_pk = new_key.public_key();
+                let mut target_keys = old_keys.clone();
+                target_keys.push(new_key);
+                target_keys.sort_by_key(|key| key.public_key().encode());
+                let target_participants: Set<bls12381::PublicKey> = target_keys
                     .iter()
-                    .position(|old_key| old_key.public_key() == key.public_key())
-                    .map(|idx| previous_shares[idx].clone());
-                let progress_tx = progress_tx.clone();
-                let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
-                finalized_log_txs.push(finalized_log_tx);
+                    .map(|key| key.public_key())
+                    .try_collect()
+                    .unwrap();
 
-                let clock = context.child("dkg_ceremony");
-                handles.push(tokio::spawn(async move {
-                    run_initial_dkg(
-                        &clock,
-                        key,
-                        participants,
-                        Some(prev_output),
-                        prev_share,
-                        1,
-                        Some(progress_tx),
-                        Some(finalized_log_rx),
-                        sender,
-                        receiver,
-                    )
-                    .await
-                }));
-            }
-            drop(progress_tx);
+                let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+                    &crate::config::outbe_app_namespace(),
+                    1,
+                    Some(previous_output.clone()),
+                    Mode::NonZeroCounter,
+                    old_participants.clone(),
+                    target_participants.clone(),
+                )
+                .unwrap();
+                let max_players = NonZeroU32::new(target_participants.len() as u32).unwrap();
 
-            let log_threshold = old_participants.quorum::<N3f1>();
-            let mut chain_logs = BTreeMap::new();
-            while chain_logs.len() < log_threshold as usize {
-                let progress = tokio::time::timeout(Duration::from_secs(5), progress_rx.recv())
-                    .await
-                    .expect("reshare dealers should finalize before timeout")
-                    .expect("progress channel should remain open");
-                if let DkgProgress::LocalDealerLog(bytes) = progress {
+                let (senders, receivers) = build_mock_network(&target_keys);
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                let mut finalized_log_txs = Vec::new();
+                let mut handles = Vec::new();
+
+                for ((key, sender), receiver) in
+                    target_keys.iter().cloned().zip(senders).zip(receivers)
+                {
+                    let participants = target_participants.clone();
+                    let prev_output = previous_output.clone();
+                    let prev_share = old_keys
+                        .iter()
+                        .position(|old_key| old_key.public_key() == key.public_key())
+                        .map(|idx| previous_shares[idx].clone());
+                    let progress_tx = progress_tx.clone();
+                    let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
+                    finalized_log_txs.push(finalized_log_tx);
+
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                run_initial_dkg(
+                                    &clock,
+                                    key,
+                                    participants,
+                                    Some(prev_output),
+                                    prev_share,
+                                    1,
+                                    Some(progress_tx),
+                                    Some(finalized_log_rx),
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            }),
+                    );
+                }
+                drop(progress_tx);
+
+                let log_threshold = old_participants.quorum::<N3f1>();
+                let mut chain_logs = BTreeMap::new();
+                while chain_logs.len() < log_threshold as usize {
+                    let progress = progress_rx
+                        .recv()
+                        .await
+                        .expect("progress channel should remain open");
+                    if let DkgProgress::LocalDealerLog(bytes) = progress {
+                        let mut reader = bytes.as_ref();
+                        let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+                            &mut reader,
+                            &max_players,
+                        )
+                        .unwrap();
+                        let (dealer, _log) = signed_log.check(&info).unwrap();
+                        assert_ne!(dealer, new_pk, "new player must not act as reshare dealer");
+                        chain_logs.entry(dealer).or_insert(bytes);
+                    }
+                }
+
+                for bytes in chain_logs.values() {
+                    for tx in &finalized_log_txs {
+                        tx.send(bytes.clone()).unwrap();
+                    }
+                }
+
+                let mut results = Vec::new();
+                for handle in handles {
+                    results.push(handle.await.unwrap().unwrap());
+                }
+
+                let expected_public = results[0].output.public().encode();
+                for result in &results {
+                    assert_eq!(result.output.public().encode(), expected_public);
+                    assert_eq!(result.participants, target_participants);
+                }
+                assert!(
+                    results
+                        .iter()
+                        .any(|result| result.participants.position(&new_pk).is_some()),
+                    "new player must be part of the reshared participant set"
+                );
+            });
+    }
+
+    #[test]
+    fn removed_old_validator_can_deal_without_being_target_player() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut old_keys: Vec<bls12381::PrivateKey> =
+                    (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+                old_keys.sort_by_key(|key| key.public_key().encode());
+                let (old_participants, previous_output, previous_shares) =
+                    run_direct_initial_round(&old_keys);
+
+                let removed_key = old_keys[0].clone();
+                let removed_pk = removed_key.public_key();
+                let target_keys: Vec<bls12381::PrivateKey> = old_keys
+                    .iter()
+                    .filter(|key| key.public_key() != removed_pk)
+                    .cloned()
+                    .collect();
+                let target_participants: Set<bls12381::PublicKey> = target_keys
+                    .iter()
+                    .map(|key| key.public_key())
+                    .try_collect()
+                    .unwrap();
+                assert!(target_participants.position(&removed_pk).is_none());
+
+                let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+                    &crate::config::outbe_app_namespace(),
+                    1,
+                    Some(previous_output.clone()),
+                    Mode::NonZeroCounter,
+                    old_participants.clone(),
+                    target_participants.clone(),
+                )
+                .unwrap();
+                let max_players = NonZeroU32::new(target_participants.len() as u32).unwrap();
+
+                let (senders, receivers) = build_mock_network(&old_keys);
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                let mut finalized_log_txs = Vec::new();
+                let mut player_handles = Vec::new();
+                let mut dealer_only_handle = None;
+
+                for ((key, sender), receiver) in
+                    old_keys.iter().cloned().zip(senders).zip(receivers)
+                {
+                    let participants = target_participants.clone();
+                    let prev_output = previous_output.clone();
+                    let progress_tx = progress_tx.clone();
+                    let idx = old_keys
+                        .iter()
+                        .position(|old_key| old_key.public_key() == key.public_key())
+                        .unwrap();
+                    let prev_share = previous_shares[idx].clone();
+
+                    if key.public_key() == removed_pk {
+                        dealer_only_handle = Some(context.child("dkg_ceremony").spawn(
+                            move |clock| async move {
+                                run_reshare_dealer_only(
+                                    &clock,
+                                    key,
+                                    participants,
+                                    prev_output,
+                                    prev_share,
+                                    1,
+                                    progress_tx,
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            },
+                        ));
+                    } else {
+                        let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
+                        finalized_log_txs.push(finalized_log_tx);
+                        player_handles.push(context.child("dkg_ceremony").spawn(
+                            move |clock| async move {
+                                run_initial_dkg(
+                                    &clock,
+                                    key,
+                                    participants,
+                                    Some(prev_output),
+                                    Some(prev_share),
+                                    1,
+                                    Some(progress_tx),
+                                    Some(finalized_log_rx),
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            },
+                        ));
+                    }
+                }
+                drop(progress_tx);
+
+                let log_threshold = old_participants.quorum::<N3f1>();
+                let mut chain_logs = BTreeMap::new();
+                while chain_logs.len() < log_threshold as usize
+                    || !chain_logs.contains_key(&removed_pk)
+                {
+                    let progress = progress_rx
+                        .recv()
+                        .await
+                        .expect("progress channel should remain open");
+                    let DkgProgress::LocalDealerLog(bytes) = progress else {
+                        continue;
+                    };
                     let mut reader = bytes.as_ref();
                     let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
                         &mut reader,
@@ -1544,204 +1746,53 @@ mod tests {
                     )
                     .unwrap();
                     let (dealer, _log) = signed_log.check(&info).unwrap();
-                    assert_ne!(dealer, new_pk, "new player must not act as reshare dealer");
                     chain_logs.entry(dealer).or_insert(bytes);
                 }
-            }
 
-            for bytes in chain_logs.values() {
-                for tx in &finalized_log_txs {
-                    tx.send(bytes.clone()).unwrap();
+                assert!(
+                    chain_logs.contains_key(&removed_pk),
+                    "removed old validator must publish a valid dealer log"
+                );
+                let mut selected_logs = Vec::with_capacity(log_threshold as usize);
+                selected_logs.push(chain_logs.get(&removed_pk).unwrap().clone());
+                for (dealer, bytes) in &chain_logs {
+                    if dealer == &removed_pk {
+                        continue;
+                    }
+                    selected_logs.push(bytes.clone());
+                    if selected_logs.len() == log_threshold as usize {
+                        break;
+                    }
                 }
-            }
-
-            let results = tokio::time::timeout(Duration::from_secs(5), async move {
-                let mut out = Vec::new();
-                for handle in handles {
-                    out.push(handle.await.unwrap().unwrap());
+                assert_eq!(
+                    selected_logs.len(),
+                    log_threshold as usize,
+                    "test must feed a threshold set including the removed dealer"
+                );
+                for bytes in selected_logs {
+                    for tx in &finalized_log_txs {
+                        tx.send(bytes.clone()).unwrap();
+                    }
                 }
-                out
-            })
-            .await
-            .expect("reshare should complete after chain-finalized old dealer logs");
 
-            let expected_public = results[0].output.public().encode();
-            for result in &results {
-                assert_eq!(result.output.public().encode(), expected_public);
-                assert_eq!(result.participants, target_participants);
-            }
-            assert!(
-                results
-                    .iter()
-                    .any(|result| result.participants.position(&new_pk).is_some()),
-                "new player must be part of the reshared participant set"
-            );
-        });
-    }
-
-    #[test]
-    fn removed_old_validator_can_deal_without_being_target_player() {
-        use commonware_runtime::{Runner as _, Supervisor as _};
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let mut old_keys: Vec<bls12381::PrivateKey> =
-                (1..=4).map(bls12381::PrivateKey::from_seed).collect();
-            old_keys.sort_by_key(|key| key.public_key().encode());
-            let (old_participants, previous_output, previous_shares) =
-                run_direct_initial_round(&old_keys);
-
-            let removed_key = old_keys[0].clone();
-            let removed_pk = removed_key.public_key();
-            let target_keys: Vec<bls12381::PrivateKey> = old_keys
-                .iter()
-                .filter(|key| key.public_key() != removed_pk)
-                .cloned()
-                .collect();
-            let target_participants: Set<bls12381::PublicKey> = target_keys
-                .iter()
-                .map(|key| key.public_key())
-                .try_collect()
-                .unwrap();
-            assert!(target_participants.position(&removed_pk).is_none());
-
-            let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-                crate::config::NAMESPACE,
-                1,
-                Some(previous_output.clone()),
-                Mode::NonZeroCounter,
-                old_participants.clone(),
-                target_participants.clone(),
-            )
-            .unwrap();
-            let max_players = NonZeroU32::new(target_participants.len() as u32).unwrap();
-
-            let (senders, receivers) = build_mock_network(&old_keys);
-            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-            let mut finalized_log_txs = Vec::new();
-            let mut player_handles = Vec::new();
-            let mut dealer_only_handle = None;
-
-            for ((key, sender), receiver) in old_keys.iter().cloned().zip(senders).zip(receivers) {
-                let participants = target_participants.clone();
-                let prev_output = previous_output.clone();
-                let progress_tx = progress_tx.clone();
-                let idx = old_keys
-                    .iter()
-                    .position(|old_key| old_key.public_key() == key.public_key())
-                    .unwrap();
-                let prev_share = previous_shares[idx].clone();
-
-                if key.public_key() == removed_pk {
-                    let clock = context.child("dkg_ceremony");
-                    dealer_only_handle = Some(tokio::spawn(async move {
-                        run_reshare_dealer_only(
-                            &clock,
-                            key,
-                            participants,
-                            prev_output,
-                            prev_share,
-                            1,
-                            progress_tx,
-                            sender,
-                            receiver,
-                        )
-                        .await
-                    }));
-                } else {
-                    let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
-                    finalized_log_txs.push(finalized_log_tx);
-                    let clock = context.child("dkg_ceremony");
-                    player_handles.push(tokio::spawn(async move {
-                        run_initial_dkg(
-                            &clock,
-                            key,
-                            participants,
-                            Some(prev_output),
-                            Some(prev_share),
-                            1,
-                            Some(progress_tx),
-                            Some(finalized_log_rx),
-                            sender,
-                            receiver,
-                        )
-                        .await
-                    }));
-                }
-            }
-            drop(progress_tx);
-
-            let log_threshold = old_participants.quorum::<N3f1>();
-            let mut chain_logs = BTreeMap::new();
-            while chain_logs.len() < log_threshold as usize || !chain_logs.contains_key(&removed_pk)
-            {
-                let progress = tokio::time::timeout(Duration::from_secs(5), progress_rx.recv())
+                let dealer_only_result = dealer_only_handle
+                    .expect("dealer-only task must be spawned for removed validator")
                     .await
-                    .expect("reshare dealers should finalize before timeout")
-                    .expect("progress channel should remain open");
-                let DkgProgress::LocalDealerLog(bytes) = progress else {
-                    continue;
-                };
-                let mut reader = bytes.as_ref();
-                let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
-                    &mut reader,
-                    &max_players,
-                )
-                .unwrap();
-                let (dealer, _log) = signed_log.check(&info).unwrap();
-                chain_logs.entry(dealer).or_insert(bytes);
-            }
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(dealer_only_result.participants, target_participants);
 
-            assert!(
-                chain_logs.contains_key(&removed_pk),
-                "removed old validator must publish a valid dealer log"
-            );
-            let mut selected_logs = Vec::with_capacity(log_threshold as usize);
-            selected_logs.push(chain_logs.get(&removed_pk).unwrap().clone());
-            for (dealer, bytes) in &chain_logs {
-                if dealer == &removed_pk {
-                    continue;
-                }
-                selected_logs.push(bytes.clone());
-                if selected_logs.len() == log_threshold as usize {
-                    break;
-                }
-            }
-            assert_eq!(
-                selected_logs.len(),
-                log_threshold as usize,
-                "test must feed a threshold set including the removed dealer"
-            );
-            for bytes in selected_logs {
-                for tx in &finalized_log_txs {
-                    tx.send(bytes.clone()).unwrap();
-                }
-            }
-
-            let dealer_only_result = tokio::time::timeout(
-                Duration::from_secs(5),
-                dealer_only_handle.expect("dealer-only task must be spawned for removed validator"),
-            )
-            .await
-            .expect("dealer-only task should complete")
-            .unwrap()
-            .unwrap();
-            assert_eq!(dealer_only_result.participants, target_participants);
-
-            let results = tokio::time::timeout(Duration::from_secs(5), async move {
-                let mut out = Vec::new();
+                let mut results = Vec::new();
                 for handle in player_handles {
-                    out.push(handle.await.unwrap().unwrap());
+                    results.push(handle.await.unwrap().unwrap());
                 }
-                out
-            })
-            .await
-            .expect("target players should complete using old dealer logs");
 
-            let expected_public = results[0].output.public().encode();
-            for result in &results {
-                assert_eq!(result.output.public().encode(), expected_public);
-                assert_eq!(result.participants, target_participants);
-            }
-        });
+                let expected_public = results[0].output.public().encode();
+                for result in &results {
+                    assert_eq!(result.output.public().encode(), expected_public);
+                    assert_eq!(result.participants, target_participants);
+                }
+            });
     }
 
     // -----------------------------------------------------------------------
@@ -1753,11 +1804,11 @@ mod tests {
     /// `online` nodes. Offline nodes' receivers are dropped so they never
     /// participate. Returns results from online nodes only.
     async fn run_partial_dkg(
-        clock: &commonware_runtime::tokio::Context,
+        clock: &commonware_runtime::deterministic::Context,
         n: usize,
         online: usize,
     ) -> Vec<Result<DkgComplete>> {
-        use commonware_runtime::Supervisor as _;
+        use commonware_runtime::{Spawner as _, Supervisor as _};
         assert!(online <= n);
 
         let mut keys: Vec<bls12381::PrivateKey> = (0..n)
@@ -1786,8 +1837,7 @@ mod tests {
             .map(|((k, s), r)| (k, s, r))
         {
             let p = participants.clone();
-            let clock = clock.child("dkg_ceremony");
-            handles.push(tokio::spawn(async move {
+            handles.push(clock.child("dkg_ceremony").spawn(move |clock| async move {
                 run_initial_dkg(&clock, key, p, None, None, 0, None, None, sender, receiver).await
             }));
         }
@@ -1807,14 +1857,19 @@ mod tests {
     /// P2P subset that could diverge across validators.
     #[test]
     fn test_bootstrap_dkg_waits_for_all_genesis_nodes_one_offline() {
-        use commonware_runtime::Runner as _;
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let result =
-                tokio::time::timeout(Duration::from_secs(5), run_partial_dkg(&context, 4, 3)).await;
-            assert!(
-                result.is_err(),
-                "bootstrap DKG must not complete from a non-canonical 3/4 P2P subset"
-            );
+        use commonware_runtime::{Clock as _, Runner as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60))
+            .start(|context| async move {
+            // Non-completion within a bounded virtual-time window (matches the
+            // original outer 5s timeout): a non-canonical 3/4 subset must keep
+            // waiting, never finalize. `select!` is biased; the sleep arm winning
+            // is the pass condition.
+            commonware_macros::select! {
+                _ = run_partial_dkg(&context, 4, 3) => {
+                    panic!("bootstrap DKG must not complete from a non-canonical 3/4 P2P subset");
+                },
+                _ = context.sleep(std::time::Duration::from_secs(5)) => {},
+            }
         });
     }
 
@@ -1824,14 +1879,15 @@ mod tests {
     /// reshare after blocks exist.
     #[test]
     fn test_bootstrap_dkg_waits_for_all_genesis_nodes_max_offline() {
-        use commonware_runtime::Runner as _;
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let result =
-                tokio::time::timeout(Duration::from_secs(5), run_partial_dkg(&context, 7, 5)).await;
-            assert!(
-                result.is_err(),
-                "bootstrap DKG must not complete from a non-canonical 5/7 P2P subset"
-            );
+        use commonware_runtime::{Clock as _, Runner as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60))
+            .start(|context| async move {
+            commonware_macros::select! {
+                _ = run_partial_dkg(&context, 7, 5) => {
+                    panic!("bootstrap DKG must not complete from a non-canonical 5/7 P2P subset");
+                },
+                _ = context.sleep(std::time::Duration::from_secs(5)) => {},
+            }
         });
     }
 
@@ -1839,21 +1895,21 @@ mod tests {
     /// The ceremony must time out, not hang forever.
     #[test]
     fn test_dkg_fails_below_threshold() {
-        use commonware_runtime::Runner as _;
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        use commonware_runtime::{Clock as _, Runner as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60))
+            .start(|context| async move {
             // Use a short timeout to avoid slow test.
             // The DKG has DKG_TIMEOUT=120s, but we wrap with a shorter outer timeout.
             // The ceremony should not complete — it will hit DKG_TIMEOUT internally,
             // but we can't wait 120s in a test. Instead, verify it doesn't complete
             // within a reasonable window.
-            let result =
-                tokio::time::timeout(Duration::from_secs(5), run_partial_dkg(&context, 4, 2)).await;
-
-            // Should time out — 2 nodes can't reach threshold=3.
-            assert!(
-                result.is_err(),
-                "DKG should NOT complete with only 2/4 nodes online (below threshold=3)"
-            );
+            // Should not complete — 2 nodes can't reach threshold=3.
+            commonware_macros::select! {
+                _ = run_partial_dkg(&context, 4, 2) => {
+                    panic!("DKG should NOT complete with only 2/4 nodes online (below threshold=3)");
+                },
+                _ = context.sleep(std::time::Duration::from_secs(5)) => {},
+            }
         });
     }
 
@@ -1861,22 +1917,24 @@ mod tests {
     /// output that could later mismatch another validator's boundary artifact.
     #[test]
     fn test_bootstrap_dkg_does_not_return_threshold_subset_output() {
-        use commonware_runtime::Runner as _;
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let result =
-                tokio::time::timeout(Duration::from_secs(5), run_partial_dkg(&context, 4, 3)).await;
-            assert!(
-                result.is_err(),
-                "bootstrap DKG must wait for the complete genesis dealer-log set"
-            );
-        });
+        use commonware_runtime::{Clock as _, Runner as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60)).start(
+            |context| async move {
+                commonware_macros::select! {
+                    _ = run_partial_dkg(&context, 4, 3) => {
+                        panic!("bootstrap DKG must wait for the complete genesis dealer-log set");
+                    },
+                    _ = context.sleep(std::time::Duration::from_secs(5)) => {},
+                }
+            },
+        );
     }
 
     // -----------------------------------------------------------------------
-    // A-19: Ack dedup — HashSet ignores duplicate inserts
+    // Ack dedup — HashSet ignores duplicate inserts
     // -----------------------------------------------------------------------
 
-    /// A-19: Verify that acked_players HashSet correctly deduplicates.
+    /// Verify that acked_players HashSet correctly deduplicates.
     /// In production, duplicate P2P ack messages from the same player
     /// must not inflate the ack count.
     #[test]
@@ -1888,7 +1946,7 @@ mod tests {
         let key_b = bls12381::PrivateKey::from_seed(2);
         let pk_b = key_b.public_key();
 
-        let mut acked_players = std::collections::HashSet::new();
+        let mut acked_players = std::collections::BTreeSet::new();
 
         // First insert — count goes to 1
         acked_players.insert(pk_a.clone());
@@ -1912,16 +1970,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // A-20: Self-dealing ack count — only on success
+    // Self-dealing ack count — only on success
     // -----------------------------------------------------------------------
 
-    /// A-20: Verify that self-ack is counted only when self-dealing succeeds.
+    /// Verify that self-ack is counted only when self-dealing succeeds.
     /// The acked_players HashSet starts empty and self-ack is inserted only
     /// after successful receive_player_ack.
     #[test]
     fn test_self_ack_starts_empty() {
-        let acked_players: std::collections::HashSet<commonware_cryptography::bls12381::PublicKey> =
-            std::collections::HashSet::new();
+        let acked_players: std::collections::BTreeSet<
+            commonware_cryptography::bls12381::PublicKey,
+        > = std::collections::BTreeSet::new();
 
         // Starts at 0 (not 1 as the old code had)
         assert_eq!(acked_players.len(), 0, "acked_players must start empty");
@@ -1934,7 +1993,7 @@ mod tests {
         let mut unsent_shares = BTreeMap::new();
         unsent_shares.insert(player_pk.clone(), ());
 
-        let mut acked_players = std::collections::HashSet::new();
+        let mut acked_players = std::collections::BTreeSet::new();
         acked_players.insert(player_pk.clone());
         unsent_shares.remove(&player_pk);
 
@@ -1953,7 +2012,7 @@ mod tests {
             .try_collect()
             .unwrap();
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             0,
             None,
             Mode::NonZeroCounter,
@@ -2006,7 +2065,7 @@ mod tests {
             .try_collect()
             .unwrap();
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             0,
             None,
             Mode::NonZeroCounter,
@@ -2078,7 +2137,7 @@ mod tests {
             .try_collect()
             .unwrap();
         let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
-            crate::config::NAMESPACE,
+            &crate::config::outbe_app_namespace(),
             0,
             None,
             Mode::NonZeroCounter,

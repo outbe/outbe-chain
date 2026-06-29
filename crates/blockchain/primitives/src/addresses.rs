@@ -15,6 +15,12 @@ pub const GRATIS_POOL_ADDRESS: Address = address!("0x000000000000000000000000000
 /// Promis token precompile address.
 pub const PROMIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001337");
 
+/// Promis factory precompile address (orchestrator: mint/burn orchestration via
+/// cross-module API, `mineCoen` on the ABI). Wraps the Promis token at
+/// [`PROMIS_ADDRESS`], records Fidelity cohorts, and mints native COEN on
+/// `mineCoen`. Carries no persistent storage of its own.
+pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
+
 /// Tribute NFT precompile address.
 pub const TRIBUTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001101");
 
@@ -29,15 +35,15 @@ pub const NOD_FACTORY_ADDRESS: Address = address!("0x000000000000000000000000000
 /// Gem NFT precompile address. ERC-721 non-transferable registry.
 pub const GEM_ADDRESS: Address = address!("0x0000000000000000000000000000000000001013");
 
-/// IntexRegistry address. Canonical, cross-chain Intex series ledger
+/// Intex address. Canonical, cross-chain Intex series ledger
 /// (identity + lifecycle). Writes are Rust-to-Rust only (IntexFactory); the
 /// precompile at this address dispatches read-only series views for off-chain
 /// observability.
-pub const INTEX_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
+pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
 /// Issued→Qualified→Called lifecycle, and two-step settlement; series state is
-/// written to [`INTEX_REGISTRY_ADDRESS`].
+/// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
 /// Gem factory precompile address (orchestrator: `mint_gem` via cross-module
@@ -203,6 +209,7 @@ pub const SPONSORED_TARGET_WHITELIST: &[Address] = &[
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
     PROMIS_ADDRESS,
+    PROMIS_FACTORY_ADDRESS,
     TRIBUTE_ADDRESS,
     NOD_ADDRESS,
     NOD_FACTORY_ADDRESS,

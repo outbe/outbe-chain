@@ -5,13 +5,14 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::date_key_to_timestamp;
+use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_promislimit::PromisLimitContract;
 
+use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
+
 use crate::constants::{
-    BID_QUANTITY_FLOOR_BPS, DEFAULT_CALL_THRESHOLD_DAYS, DEFAULT_CALL_WINDOW_DAYS,
-    DEFAULT_INTEX_CALL_PERIOD, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
-    REVEAL_WINDOW_SECONDS,
+    BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
+    QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -29,12 +30,12 @@ use crate::sol_ext::{IOriginMessenger, MessagingFee};
 pub fn start_auction(
     storage: StorageHandle<'_>,
     series_id: u32,
-    config: AuctionConfig,
+    mut config: AuctionConfig,
 ) -> Result<()> {
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
     }
-    if config.intex_size == 0 || config.intex_strike_price == 0 {
+    if config.promis_load_minor == 0 || config.cost_amount_minor() == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
@@ -59,10 +60,19 @@ pub fn start_auction(
         }
     };
 
+    // Genesis IntexFactory profile: floor/call derive from entry; window/threshold/
+    // period are the call-trigger params relayed to the target chain. Sourced here
+    // (storage in reach) and folded into the config before it is persisted, so the
+    // demand-side config carries the same values the wire message ships.
+    let iparams = outbe_intexfactory::read_params(&storage)?;
+    config.min_intex_bid_quantity = min_bid_qty;
+    config.call_trigger = crate::schema::IntexCallTrigger {
+        window_days: iparams.call_window_days,
+        threshold_days: iparams.call_threshold_days,
+        intex_call_period: iparams.intex_call_period_secs,
+    };
+
     contract.write_auction_config(series_id, &config)?;
-    contract
-        .config_min_bid_quantity
-        .write(&series_id, u32::from(min_bid_qty))?;
     contract.write_stage(series_id, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
         seriesId: series_id,
@@ -70,26 +80,41 @@ pub fn start_auction(
 
     // Send AUCTION_STAGE_START to BNB.
     // revealEnd = noon of the series day; commitEnd/issuanceEnd are protocol offsets.
-    let noon = u32::try_from(date_key_to_timestamp(series_id) + 12 * 3600)
+    let noon = u32::try_from(date_key_to_utc_timestamp(series_id) + 12 * 3600)
         .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
-    let coen_floor = config
-        .coen_price
-        .checked_mul(U256::from(108u64))
-        .map(|v| v / U256::from(100u64))
-        .ok_or_else(|| PrecompileError::Revert("coen price floor overflow".into()))?;
-    let coen_floor_u64 = u64::try_from(coen_floor)
-        .map_err(|_| PrecompileError::Revert("coen price floor exceeds u64".into()))?;
+    let floor_price = config
+        .entry_price_minor
+        .checked_mul(U256::from(iparams.floor_price_num))
+        .map(|v| v / U256::from(FLOOR_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry floor overflow".into()))?;
+    let call_price = config
+        .entry_price_minor
+        .checked_mul(U256::from(iparams.call_price_num))
+        .map(|v| v / U256::from(CALL_PRICE_DEN))
+        .ok_or_else(|| PrecompileError::Revert("entry call overflow".into()))?;
+    let entry_price_u64 = u64::try_from(config.entry_price_minor)
+        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
+    let floor_price_u64 = u64::try_from(floor_price)
+        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
+    let call_price_u64 = u64::try_from(call_price)
+        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let stage_params = IOriginMessenger::AuctionStageStartParams {
         seriesId: series_id,
         commitEnd: commit_end,
         revealEnd: noon,
         issuanceEnd: issuance_end,
-        intexSize: config.intex_size,
-        minIntexBidPrice: config.min_intex_bid_price,
-        intexStrikePrice: config.intex_strike_price,
-        coenPriceFloor: coen_floor_u64,
+        issuanceCurrency: config.issuance_currency,
+        referenceCurrency: config.reference_currency,
+        promisLoadMinor: config.promis_load_minor,
+        minIntexBidRate: config.min_intex_bid_rate,
+        entryPrice: entry_price_u64,
+        floorPriceMinor: floor_price_u64,
+        callPriceMinor: call_price_u64,
+        intexCallPeriod: iparams.intex_call_period_secs,
+        callWindowDays: iparams.call_window_days,
+        callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
     };
     let quote_ret = storage.staticcall(
@@ -180,7 +205,7 @@ pub fn reveal_auction(
 }
 
 /// Signal `Revealing` → clearing: store supply; returns the Promis rounding
-/// remainder (supply_promis % intex_size) to be returned to PromisLimit.
+/// remainder (supply_promis % promis_load_minor) to be returned to PromisLimit.
 pub fn begin_clearing(
     storage: StorageHandle<'_>,
     series_id: u32,
@@ -191,18 +216,16 @@ pub fn begin_clearing(
     require_stage(&contract, series_id, AuctionStage::Revealing)?;
 
     let config = contract.read_auction_config(series_id)?;
-    if config.intex_size == 0 {
+    if config.promis_load_minor == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
-    let supply_intex = supply_promis / config.intex_size;
-    if supply_intex == 0 {
-        return Err(DesisError::InvalidSeriesId(series_id).into());
-    }
+    let supply_intex = supply_promis / config.promis_load_minor;
     let supply_intex32 =
         u32::try_from(supply_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
-    let rounding_remainder = supply_promis % config.intex_size;
+    let rounding_remainder = supply_promis % config.promis_load_minor;
 
+    contract.clearing_initiated.write(&series_id, 1u8)?;
     contract
         .pending_supply_intex
         .write(&series_id, supply_intex32)?;
@@ -248,12 +271,14 @@ pub fn begin_clearing(
 /// transitions to `BidsReceived` if any bids exist, else to `Cancelled`.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
+    caller: Address,
     series_id: u32,
     src_eid: u32,
     is_last: bool,
     generation: u32,
     bids: Vec<BidData>,
 ) -> Result<()> {
+    require_origin_messenger(caller)?;
     require_nonzero_series_id(series_id)?;
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, series_id, AuctionStage::Revealing)?;
@@ -308,13 +333,18 @@ pub fn process_bids_batch(
 ///
 /// Returns the `ClearingResult` so the caller (precompile) can dispatch
 /// AUCTION_RESULT and REFUND_INSTRUCTIONS messages.
-pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<ClearingResult> {
+pub fn clear_auction(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    series_id: u32,
+) -> Result<ClearingResult> {
+    require_origin_messenger(caller)?;
     require_nonzero_series_id(series_id)?;
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, series_id, AuctionStage::BidsReceived)?;
 
     let supply = contract.pending_supply_intex.read(&series_id)?;
-    if supply == 0 {
+    if contract.clearing_initiated.read(&series_id)? == 0 {
         return Err(DesisError::PendingClearingDataMissing(series_id).into());
     }
 
@@ -339,18 +369,27 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
     // Clear bid working-set and pending inputs (CEI: state writes before external calls).
     contract.bid_count.write(&series_id, 0)?;
     contract.pending_supply_intex.write(&series_id, 0)?;
+    contract.clearing_initiated.write(&series_id, 0u8)?;
 
-    contract.emit(IDesis::AuctionCleared {
-        seriesId: series_id,
-        issuedIntexCount: result.issued_intex_count,
-        clearingPrice: result.clearing_price,
-        totalDemand: total_demand,
-    })?;
+    if result.issued_intex_count == 0 {
+        contract.emit(IDesis::AuctionClearedEmpty {
+            seriesId: series_id,
+            totalDemand: total_demand,
+        })?;
+    } else {
+        contract.emit(IDesis::AuctionCleared {
+            seriesId: series_id,
+            issuedIntexCount: result.issued_intex_count,
+            clearingRate: result.clearing_rate,
+            totalDemand: total_demand,
+        })?;
+    }
 
     // Return unused Promis to PromisLimit.
     let remaining_supply = supply - result.issued_intex_count;
     if remaining_supply > 0 {
-        let unused_promis = U256::from(remaining_supply as u128) * U256::from(config.intex_size);
+        let unused_promis =
+            U256::from(remaining_supply as u128) * U256::from(config.promis_load_minor);
         contract.emit(IDesis::UnusedSupplyReported {
             seriesId: series_id,
             unusedPromis: unused_promis,
@@ -358,20 +397,21 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
     }
 
-    // Hand issuance to IntexFactory.
-    let params = outbe_intexfactory::schema::IssuanceParams {
-        series_id,
-        issued_intex_count: result.issued_intex_count,
-        intex_size: config.intex_size,
-        intex_strike_price: config.intex_strike_price,
-        coen_price: config.coen_price,
-        intex_call_period: DEFAULT_INTEX_CALL_PERIOD,
-        call_window_days: DEFAULT_CALL_WINDOW_DAYS,
-        call_threshold_days: DEFAULT_CALL_THRESHOLD_DAYS,
-        recipients: result.winners.clone(),
-        quantities: result.winner_quantities.clone(),
-    };
-    outbe_intexfactory::api::issue(&storage, params)?;
+    // Hand issuance to IntexFactory; an empty clearing issues nothing and
+    // creates no series.
+    if result.issued_intex_count > 0 {
+        let params = outbe_intexfactory::schema::IssuanceParams {
+            series_id,
+            issued_intex_count: result.issued_intex_count,
+            promis_load_minor: config.promis_load_minor,
+            entry_price_minor: config.entry_price_minor,
+            issuance_currency: QUALIFIER_ISSUANCE_ISO,
+            reference_currency: QUALIFIER_REFERENCE_ISO,
+            recipients: result.winners.clone(),
+            quantities: result.winner_quantities.clone(),
+        };
+        outbe_intexfactory::api::issue(&storage, params)?;
+    }
 
     // Send AUCTION_RESULT to BNB.
     let won_bids_count = u32::try_from(result.winners.len())
@@ -381,7 +421,7 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
         IOriginMessenger::quoteSendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingPrice: result.clearing_price,
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             payInLzToken: false,
@@ -398,7 +438,7 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
         IOriginMessenger::sendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
-            auctionIntexClearingPrice: result.clearing_price,
+            auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
             extraOptions: Bytes::new(),
             fee: MessagingFee {
@@ -458,18 +498,28 @@ pub fn clear_auction(storage: StorageHandle<'_>, series_id: u32) -> Result<Clear
 // Clearing algorithm (pure)
 // ---------------------------------------------------------------------------
 
-/// Sort bids: descending price, ascending timestamp on tie.
+/// Sort bids: descending rate, ascending timestamp on tie.
 fn sort_bids(bids: &mut [BidData]) {
     bids.sort_by(|a, b| {
-        b.intex_bid_price
-            .cmp(&a.intex_bid_price)
+        b.intex_bid_rate
+            .cmp(&a.intex_bid_rate)
             .then_with(|| a.timestamp.cmp(&b.timestamp))
     });
 }
 
-/// Uniform-price clearing. Walks sorted bids from highest to lowest price,
-/// allocates until `supply` is exhausted, and sets the clearing price to the
-/// last allocated bid's price. Computes per-bidder paid/refund amounts.
+/// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
+/// per-Intex `strike`: `qty * strike * rate / RATE_SCALE`, saturating to u128
+/// (wCOEN amounts at 18 decimals exceed u64).
+fn rate_lock(qty: u64, strike: u128, rate: u32) -> u128 {
+    let amount = U256::from(qty)
+        .saturating_mul(U256::from(strike))
+        .saturating_mul(U256::from(rate))
+        / U256::from(RATE_SCALE);
+    u128::try_from(amount).unwrap_or(u128::MAX)
+}
+
+/// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
+/// clearing rate is the last allocated bid's. lock/pay = qty * strike * rate / RATE_SCALE.
 fn calculate_clearing(
     bids: &[BidData],
     config: &AuctionConfig,
@@ -481,14 +531,15 @@ fn calculate_clearing(
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
+    let strike = config.cost_amount_minor();
     let mut total_allocated: u32 = 0;
-    let mut clearing_price: u64 = config.min_intex_bid_price;
+    let mut clearing_rate: u32 = config.min_intex_bid_rate;
 
     for (i, bid) in bids.iter().enumerate() {
         if total_allocated >= supply {
             break;
         }
-        if bid.intex_bid_price < config.min_intex_bid_price {
+        if bid.intex_bid_rate < config.min_intex_bid_rate {
             continue;
         }
         if bid.intex_quantity < min_qty {
@@ -503,35 +554,36 @@ fn calculate_clearing(
             winner_quantities.push(alloy_primitives::U256::from(allocated));
             won_by_index[i] = allocated;
             total_allocated += allocated;
-            clearing_price = bid.intex_bid_price;
+            clearing_rate = bid.intex_bid_rate;
         }
     }
 
     let mut all_bidders: Vec<Address> = Vec::with_capacity(len);
-    let mut refunded_amounts: Vec<u64> = Vec::with_capacity(len);
-    let mut paid_amounts: Vec<u64> = Vec::with_capacity(len);
+    let mut refunded_amounts: Vec<u128> = Vec::with_capacity(len);
+    let mut paid_amounts: Vec<u128> = Vec::with_capacity(len);
 
     for (i, bid) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
 
-        // locked = quantity * bid_price; saturate on overflow (extreme values stay u64-bounded)
-        let locked_wide = u64::from(bid.intex_quantity).saturating_mul(bid.intex_bid_price);
+        // locked = quantity * strike * rate / RATE_SCALE (escrowed at bid time).
+        let locked = rate_lock(u64::from(bid.intex_quantity), strike, bid.intex_bid_rate);
 
         let won = won_by_index[i];
         if won > 0 {
-            let paid = (won as u64).saturating_mul(clearing_price);
-            let refunded = locked_wide.saturating_sub(paid);
+            // Uniform clearing: winners pay at the clearing rate; refund the rest.
+            let paid = rate_lock(u64::from(won), strike, clearing_rate);
+            let refunded = locked.saturating_sub(paid);
             paid_amounts.push(paid);
             refunded_amounts.push(refunded);
         } else {
             paid_amounts.push(0);
-            refunded_amounts.push(locked_wide);
+            refunded_amounts.push(locked);
         }
     }
 
     ClearingResult {
         issued_intex_count: total_allocated,
-        clearing_price,
+        clearing_rate,
         winners,
         winner_quantities,
         all_bidders,
@@ -543,6 +595,13 @@ fn calculate_clearing(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn require_origin_messenger(caller: Address) -> Result<()> {
+    if caller != ORIGIN_MESSENGER_ADDRESS {
+        return Err(DesisError::UnauthorizedOrigin(caller).into());
+    }
+    Ok(())
+}
 
 fn require_nonzero_series_id(series_id: u32) -> Result<()> {
     if series_id == 0 {

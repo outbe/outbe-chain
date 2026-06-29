@@ -1,22 +1,27 @@
 use alloy_primitives::{address, Address};
 
 /// OriginMessenger on Outbe (outbound LayerZero sends).
-/// CREATE2 via Arachnid, salt 0x4f726967696e4d657373656e6765720000000000000000000000000000000000 ("OriginMessenger").
+/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginMessenger:v1.0.0".
 pub const ORIGIN_MESSENGER_ADDRESS: Address =
-    address!("0xE679410bD1fFB32238581Aa165749ca0f68Af38d");
+    address!("0x53c5DB9AAf0Ecf8A8c734b2d6C88fE2e56F2f955");
 
 /// Reference-currency ISO for settlement (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
+/// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
+pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
+
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// BNB-side auction phase timing: bid-reveal window before noon of the series day.
-pub const REVEAL_WINDOW_SECONDS: u32 = 12 * 3600;
-/// BNB-side auction phase timing: issuance window after noon of the series day.
-pub const ISSUANCE_WINDOW_SECONDS: u32 = 24 * 3600;
+/// Promis load: 100k Promis per 1 Intex (scaled to 18-dec minor on the wire as `promis_load_minor`).
+pub const PROMIS_LOAD: u128 = 100_000;
 
-/// Issuance config defaults forwarded to IntexFactory at clearing.
-pub const DEFAULT_INTEX_CALL_PERIOD: u32 = 21 * 24 * 3600;
-pub const DEFAULT_CALL_WINDOW_DAYS: u16 = 30;
-pub const DEFAULT_CALL_THRESHOLD_DAYS: u16 = 20;
+/// Fixed-point scale for bid rates: 1_000_000 = 100% of strike. Must match the
+/// target chain (`BridgeMsgCodec` / `IntexAuction`).
+pub const RATE_SCALE: u32 = 1_000_000;
+
+/// BNB-side auction phase timing: bid-reveal window before noon of the series day.
+pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
+/// BNB-side auction phase timing: issuance window after noon of the series day.
+pub const ISSUANCE_WINDOW_SECONDS: u32 = 12 * 3600;

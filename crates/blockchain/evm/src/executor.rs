@@ -7,8 +7,8 @@ use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
 use alloy_evm::{
     block::{
-        BlockExecutionError, BlockExecutor, CommitChanges, ExecutableTx, GasOutput,
-        InternalBlockExecutionError, OnStateHook, StateDB,
+        BlockExecutionError, BlockExecutor, BlockValidationError, CommitChanges, ExecutableTx,
+        GasOutput, InternalBlockExecutionError, OnStateHook, StateDB,
     },
     eth::{EthBlockExecutor, EthTxResult},
     revm::context::Block as _,
@@ -34,7 +34,7 @@ use reth_ethereum::{
 };
 use reth_evm::execute::WithTxEnv;
 use reth_primitives_traits::Recovered;
-use revm::context::result::{ExecutionResult, HaltReason, OutOfGasError};
+use revm::context::result::{ExecutionResult, HaltReason, InvalidTransaction, OutOfGasError};
 use revm::state::Account;
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -64,13 +64,18 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 33] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
+        // PromisFactory is a live stateful precompile (in
+        // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
+        // per-block runtime marker is its only EIP-161 preservation path —
+        // mirroring GRATIS_FACTORY / GEM_FACTORY above.
+        PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
@@ -82,7 +87,7 @@ pub mod marker_addresses {
         // runtime marker is their only preservation path.
         GEM_ADDRESS,
         GEM_FACTORY_ADDRESS,
-        INTEX_REGISTRY_ADDRESS,
+        INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
         AGENT_REWARD_ADDRESS,
@@ -210,6 +215,13 @@ fn committee_snapshot_from_boundary(
         committee,
         vrf_material_version: boundary.vrf_material_version,
         vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
+        // Derived from the already-consensus-validated boundary `outcome` (the
+        // full DKG output), so a proposer cannot forge it. Lets SlashIndicator
+        // verify an invalid-seed-partial slash; ZERO when no full polynomial is
+        // carried (group-key-only bootstrap).
+        vrf_public_polynomial_hash: outbe_consensus::dkg_manager::boundary_outcome_polynomial_hash(
+            boundary.outcome.as_ref(),
+        ),
     })
 }
 
@@ -714,6 +726,12 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// on the validator path (the body carries it via `expected_begin_system_txs`)
     /// and until the tribute-DKG bootstrap producer supplies a payload.
     pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Number of zero-fee soft-failure receipts emitted in THIS
+    /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
+    /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
+    /// fresh per block, so this resets per block; it is identical on the
+    /// proposer (build) and validator (re-execution) paths.
+    zero_fee_soft_failures: u32,
 }
 
 // test-only opt-out: scoped flag that disables the Phase 1
@@ -785,6 +803,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             // proposer-only; set via `with_pending_tee_bootstrap` from the
             // execution ctx. `None` keeps the begin-zone unchanged.
             pending_tee_bootstrap: None,
+            zero_fee_soft_failures: 0,
         }
     }
 
@@ -833,6 +852,54 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// outside the EVM (zero-fee policy). The value mirrors the
     /// 21_000 intrinsic-gas baseline of every EVM transaction.
     const SOFT_FAILURE_GAS: u64 = 21_000;
+
+    /// Maximum number of zero-fee soft-failure receipts a single
+    /// block may carry.
+    ///
+    /// Quota-exhausted EIP-7702-sponsored txs and duplicate/losing
+    /// zero-fee oracle votes are soft-receipted (`status=0`, 21k gas) so
+    /// they land in the block rather than aborting the build (the 2026-05-15
+    /// halt). Without a bound, an attacker can stuff a whole block with
+    /// thousands of zero-cost 21k soft-failures, crowding out real transactions.
+    /// 64 is far above the handful of soft-failures honest operation produces
+    /// per block, yet caps stuffing at `64 * 21k ≈ 1.34M` gas — under ~5% of a
+    /// 30M-gas block. Protocol constant: both the proposer (build) and validator
+    /// (re-execution) read it, so they agree on the bound.
+    const MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK: u32 = 64;
+
+    /// Account for one zero-fee soft-failure and enforce the
+    /// per-block cap.
+    ///
+    /// Returns `Ok(())` when the soft-failure is within the per-block budget (and
+    /// records it); past [`Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK`] it
+    /// returns `Err(BlockValidationError::InvalidTx)`, which the payload builder
+    /// SKIPS (`mark_invalid` + continue — the tx is excluded from the block and
+    /// evicted from the pool) while a validator REJECTS a block that exceeds the
+    /// cap (the `?` on the re-execution path propagates it as a block failure).
+    /// The counter is the number of zero-fee soft-receipts in the block and is
+    /// identical on both paths, so an honest block (`<= cap`) never trips the
+    /// validator and a byzantine over-cap block is rejected deterministically by
+    /// every validator. `InvalidTransaction::Str` is a tx-level validation error
+    /// (not nonce-too-low, so the builder marks it invalid rather than retrying),
+    /// keeping it out of the fatal `BlockExecutionError::Internal` class that
+    /// would abort the build.
+    fn record_zero_fee_soft_failure(&mut self, tx_hash: B256) -> Result<(), BlockExecutionError> {
+        if self.zero_fee_soft_failures >= Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK {
+            let reason = format!(
+                "zero-fee soft-failure cap ({}) exceeded for this block; tx rejected to bound \
+                 block stuffing",
+                Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK
+            );
+            return Err(BlockExecutionError::Validation(
+                BlockValidationError::InvalidTx {
+                    hash: tx_hash,
+                    error: Box::new(InvalidTransaction::Str(std::borrow::Cow::Owned(reason))),
+                },
+            ));
+        }
+        self.zero_fee_soft_failures = self.zero_fee_soft_failures.saturating_add(1);
+        Ok(())
+    }
 
     /// Pushes a `status=0` system synthetic receipt with exactly one
     /// `OutbeFailure(code, reason)` log, charges the visible system tx gas to
@@ -928,10 +995,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 /// - 299 — other halt reasons (precompile error, opcode not found, …)
 pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltReason>) -> u16 {
     match result {
-        ExecutionResult::Success { .. } => {
-            debug_assert!(false, "system_tx_failure_code_for_result called on Success");
-            299
-        }
+        // Callers only reach this fn under `!result.is_success()`, so the Success
+        // arm is unreachable in practice; map it to the generic 299 fallback
+        // deterministically rather than `debug_assert!`-panicking (no panic-class
+        // macro on the executor path).
+        ExecutionResult::Success { .. } => 299,
         ExecutionResult::Revert { .. } => 201,
         ExecutionResult::Halt { reason, .. } => match reason {
             HaltReason::OutOfGas(OutOfGasError::Basic)
@@ -1946,25 +2014,20 @@ where
             }
         };
         if !result.result.is_success() {
+            // Phase 1 (CertifiedParentAccounting) is consensus-critical
+            // (`SystemTxKind::revert_fails_block()` is true for it), so a revert here
+            // is a hard block failure, not a soft-receipt skip — its finalized-parent
+            // accounting is one-shot and never retried. The revert is deterministic in
+            // committed chain state, so every validator rejects the same block.
             let reason = format!(
-                "Phase 1 commit pre-exec: precompile did not succeed: {:?}",
+                "critical system tx CertifiedParentAccounting did not succeed (revert/halt) in \
+                 Phase 1 pre-exec commit: {:?}",
                 result.result
             );
-            tracing::warn!(target: "outbe::executor", %reason);
-            self.push_system_failure_receipt(
-                alloy_consensus::TxType::Legacy,
-                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                299,
-                reason,
-                visible_gas_used,
-                result.result.tx_gas_used(),
-            );
-            self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-                body_index: 0,
-                tx_hash: cached_tx_hash,
-                receipt_index: 0,
-            };
-            return Ok(());
+            tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(reason.into()),
+            ));
         }
         // Commit state + push receipt[0] + signal state-root task via the
         // standard EthBlockExecutor machinery. This holds because
@@ -2454,12 +2517,34 @@ where
                     target: "outbe::executor",
                     ?expected_phase,
                     body_index,
+                    block_number,
                     gas_used = result.result.tx_gas_used(),
                     gas_limit = tx.gas_limit(),
                     result = ?result.result,
                     "system tx failed"
                 );
                 let code = system_tx_failure_code_for_result(&result.result);
+                // a revert/halt in a consensus- or economic-critical
+                // begin-zone phase is a hard block failure, not a soft-receipt
+                // skip. Their work is one-shot and never retried, so swallowing a
+                // revert permanently loses it (stranded fee escrow, dropped
+                // emission/reshare, unrecorded parent accounting). The revert is a
+                // deterministic function of committed chain state, so every
+                // validator rejects the same block identically — no state-root
+                // split. Non-critical phases (OracleSlashWindow, TeeBootstrap)
+                // keep the soft-receipt skip.
+                if expected_phase.revert_fails_block() {
+                    let reason = format!(
+                        "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
+                         body_index={body_index}, block_number={block_number}, \
+                         failure_code={code}: {:?}",
+                        result.result
+                    );
+                    tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
+                    return Err(BlockExecutionError::Internal(
+                        InternalBlockExecutionError::Other(reason.into()),
+                    ));
+                }
                 let reason = format!(
                     "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
                     result.result
@@ -2519,6 +2604,11 @@ where
         let zero_fee = match outbe_zerofee::registry().classify(&zero_fee_tx) {
             Ok(value) => value,
             Err(err) => {
+                // account for this zero-fee soft-failure and reject
+                // it past the per-block cap (skipped on build, block rejected on
+                // validate) so it cannot stuff the block with zero-cost 21k
+                // soft-failures.
+                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
                 let tx_type = tx.tx_type();
                 let code = err.code();
                 self.push_failure_receipt(
@@ -2552,6 +2642,11 @@ where
                     .map(|_| ())
             };
             if let Err(err) = authorize_outcome {
+                // account for this zero-fee soft-failure and reject
+                // it past the per-block cap (skipped on build, block rejected on
+                // validate) so it cannot stuff the block with zero-cost 21k
+                // soft-failures.
+                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
                 let tx_type = tx.tx_type();
                 let code = err.code();
                 self.push_failure_receipt(
@@ -2725,6 +2820,11 @@ where
             }
 
             if let Err(err) = authorize_outcome {
+                // account for this zero-fee soft-failure and reject
+                // it past the per-block cap (skipped on build, block rejected on
+                // validate) so it cannot stuff the block with zero-cost 21k
+                // soft-failures.
+                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
                 let tx_type = tx.tx_type();
                 let code = err.code();
                 self.push_failure_receipt(
@@ -3289,6 +3389,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::ZERO,
             tribute_offer_public_key: B256::ZERO,
+            tribute_offer_group_public_key: alloy_primitives::Bytes::new(),
             registrations: Vec::new(),
             policy: outbe_primitives::tee_bootstrap::TeePolicy::default(),
             validator_signatures: Vec::new(),
@@ -4273,7 +4374,7 @@ mod tests {
     }
 
     #[test]
-    fn gas_09_system_oog_failure_is_soft_and_keeps_user_gas_lane_clean() {
+    fn gas_09_noncritical_system_oog_failure_is_soft_and_keeps_user_gas_lane_clean() {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let user_tx = test_regular_tx()
@@ -4319,22 +4420,36 @@ mod tests {
         let cycle_visible_gas = cycle_tx.tx().gas_limit();
         let oracle_visible_gas = oracle_tx.tx().gas_limit();
 
+        // CycleTick is consensus-critical (a revert/OOG there fails the
+        // block), so the soft-receipt path is exercised against
+        // OracleSlashWindow, a non-critical begin-zone phase whose OOG still
+        // soft-fails and keeps the user gas lane clean. CycleTick executes
+        // successfully first (receipt 0).
+        let cycle_gas = executor
+            .execute_transaction(cycle_tx)
+            .expect("CycleTick should execute successfully")
+            .tx_gas_used();
+        assert_eq!(cycle_gas, cycle_visible_gas);
+
         let failure_gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
-            executor.execute_transaction(cycle_tx)
+            executor.execute_transaction(oracle_tx)
         })
-        .expect("forced system OOG must become a soft-failure receipt")
+        .expect("forced non-critical system OOG must become a soft-failure receipt")
         .tx_gas_used();
         assert_eq!(
-            failure_gas, cycle_visible_gas,
+            failure_gas, oracle_visible_gas,
             "GAS-09: soft-failed OOG system tx should return visible envelope gas"
         );
 
         let failure_receipt = executor
             .receipts()
-            .first()
-            .expect("failed system tx must emit a receipt");
+            .get(1)
+            .expect("soft-failed oracle tx must emit a receipt");
         assert!(!failure_receipt.success);
-        assert_eq!(failure_receipt.cumulative_gas_used, cycle_visible_gas);
+        assert_eq!(
+            failure_receipt.cumulative_gas_used,
+            cycle_visible_gas + oracle_visible_gas
+        );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
         assert_eq!(
@@ -4350,11 +4465,6 @@ mod tests {
             "GAS-09: system OOG soft-failure receipt must use OutbeFailure code 202"
         );
 
-        let oracle_gas = executor
-            .execute_transaction(oracle_tx)
-            .expect("next begin-zone system tx must still execute after OOG soft failure")
-            .tx_gas_used();
-        assert_eq!(oracle_gas, oracle_visible_gas);
         let user_gas = executor
             .execute_transaction(user_tx)
             .expect("user tx must execute after OOG soft failure")
@@ -4430,7 +4540,7 @@ mod tests {
     }
 
     #[test]
-    fn gas_11_reverted_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
+    fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let user_tx = test_regular_tx()
@@ -4476,21 +4586,31 @@ mod tests {
         let cycle_visible_gas = cycle_tx.tx().gas_limit();
         let oracle_visible_gas = oracle_tx.tx().gas_limit();
 
+        // CycleTick is consensus-critical (a revert there fails the block),
+        // so the soft-receipt path is exercised against OracleSlashWindow, a
+        // non-critical begin-zone phase. CycleTick executes successfully first.
+        executor
+            .execute_transaction(cycle_tx)
+            .expect("CycleTick should execute successfully");
+
         let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
-            executor.execute_transaction(cycle_tx)
+            executor.execute_transaction(oracle_tx)
         })
-        .expect("EVM-level system tx revert should soft-fail")
+        .expect("EVM-level non-critical system tx revert should soft-fail")
         .tx_gas_used();
         assert_eq!(
-            revert_gas, cycle_visible_gas,
+            revert_gas, oracle_visible_gas,
             "GAS-11: reverted system tx should charge visible envelope gas"
         );
         let failure_receipt = executor
             .receipts()
-            .first()
+            .get(1)
             .expect("reverted system tx must emit a failure receipt");
         assert!(!failure_receipt.success);
-        assert_eq!(failure_receipt.cumulative_gas_used, cycle_visible_gas);
+        assert_eq!(
+            failure_receipt.cumulative_gas_used,
+            cycle_visible_gas + oracle_visible_gas
+        );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
         assert_eq!(
@@ -4506,18 +4626,123 @@ mod tests {
             "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
         );
 
-        executor
-            .execute_transaction(oracle_tx)
-            .expect("remaining begin-zone system tx should still execute");
-
         let user_gas = executor
             .execute_transaction(user_tx)
-            .expect("user txs must execute after a soft-failed mandatory begin-zone system tx")
+            .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
             .tx_gas_used();
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
             cycle_visible_gas + oracle_visible_gas + user_gas,
             "GAS-11: soft-failed system tx must charge only visible envelope gas"
+        );
+    }
+
+    /// A revert in a consensus-critical begin-zone phase (here
+    /// CycleTick) is a hard block failure, not a soft-receipt skip — its one-shot
+    /// work (a day's emission / terminal Metadosis) must never be silently
+    /// dropped. No receipt is pushed; the block aborts.
+    #[test]
+    fn critical_cycle_tick_revert_fails_block() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution changes should apply");
+        let cycle_tx =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer)
+                .into_iter()
+                .next()
+                .expect("CycleTick system tx should be present");
+
+        let err = crate::factory::with_forced_outbe_system_call_revert(|| {
+            executor.execute_transaction(cycle_tx)
+        })
+        .expect_err("a revert in the critical CycleTick phase must fail the block");
+        assert!(
+            err.to_string()
+                .contains("critical system tx CycleTick did not succeed"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            executor.receipts().is_empty(),
+            "a critical-phase revert must not push a soft receipt"
+        );
+    }
+
+    /// An OOG halt in a consensus-critical begin-zone phase also
+    /// fails the block (not a soft skip), via the same `revert_fails_block` gate.
+    #[test]
+    fn critical_cycle_tick_oog_fails_block() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution changes should apply");
+        let cycle_tx =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer)
+                .into_iter()
+                .next()
+                .expect("CycleTick system tx should be present");
+
+        let err = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+            executor.execute_transaction(cycle_tx)
+        })
+        .expect_err("an OOG halt in the critical CycleTick phase must fail the block");
+        assert!(
+            err.to_string()
+                .contains("critical system tx CycleTick did not succeed"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            executor.receipts().is_empty(),
+            "a critical-phase OOG halt must not push a soft receipt"
+        );
+    }
+
+    /// The per-block zero-fee soft-failure cap admits up to
+    /// `MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK` soft-failures, then rejects further
+    /// ones with a tx-level `InvalidTx` — the variant the payload builder SKIPS
+    /// (mark_invalid + continue) and a validator REJECTS the block on, NOT a
+    /// fatal `Internal` error that would abort the build (the 2026-05-15 halt).
+    #[test]
+    fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
+        use alloy_evm::block::{BlockExecutionError, BlockValidationError};
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+
+        let mut admitted = 0u32;
+        let rejected_err = loop {
+            match executor.record_zero_fee_soft_failure(B256::ZERO) {
+                Ok(()) => {
+                    admitted += 1;
+                    assert!(admitted <= 4096, "cap never enforced");
+                }
+                Err(err) => break err,
+            }
+        };
+        assert_eq!(
+            admitted, 64,
+            "zero-fee soft-failure cap must admit exactly MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK (64)"
+        );
+        assert!(
+            matches!(
+                rejected_err,
+                BlockExecutionError::Validation(BlockValidationError::InvalidTx { .. })
+            ),
+            "over-cap zero-fee soft-failure must be a tx-level InvalidTx (skip-on-build / \
+             reject-on-validate), got: {rejected_err:?}"
         );
     }
 
@@ -4929,11 +5154,21 @@ mod tests {
         use commonware_math::algebra::Random as _;
         use outbe_consensus::digest::Digest as OutbeDigest;
         use outbe_consensus::proof::{
-            committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot, OUTBE_FINALIZE_NAMESPACE_V2,
+            committee_set_hash_v2, finalize_namespace, CommitteeEntry, CommitteeSnapshot,
         };
         use outbe_primitives::reshare_artifact::{
             decode_outbe_block_artifacts, LateFinalizeCreditsArtifact, PerBlockCredit,
         };
+
+        // Mirror production startup: the consensus chain id is installed into the
+        // namespace source of truth BEFORE anything signs or verifies. The
+        // executor below constructs `OutbeEvmConfig`, which now installs it for
+        // every constructor; install it here too so the finalize
+        // aggregate signed below uses the same `finalize_namespace` the verify
+        // path reads — otherwise the late-finalize BLS check fails on a namespace
+        // mismatch (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at
+        // verify time). CHAIN_ID matches `test_chain_spec()` (MAINNET id 1).
+        outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
 
         let epoch = 0u64;
         // Real BLS committee of 4 (committee addresses are the late-credit voters).
@@ -4956,6 +5191,7 @@ mod tests {
                 .collect(),
             vrf_material_version: 1,
             vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let csh = committee_set_hash_v2(epoch, &snapshot);
 
@@ -4995,9 +5231,13 @@ mod tests {
             OutbeDigest(fb_hash),
         );
         let msg = proposal.encode().to_vec();
+        // finalize votes bind the ordered committee; build the canonical
+        // `Set` from the same committee the snapshot/verifier uses.
+        let committee_set: commonware_utils::ordered::Set<bls12381::PublicKey> =
+            commonware_utils::ordered::Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
         let sigs: Vec<bls12381::Signature> = [0usize, 1, 2]
             .iter()
-            .map(|&i| keys[i].sign(OUTBE_FINALIZE_NAMESPACE_V2, &msg))
+            .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &msg))
             .collect();
         let agg = aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
         let mut aggregate_signature = [0u8; 96];
@@ -6849,6 +7089,7 @@ mod tests {
                 .collect(),
             vrf_material_version: 0,
             vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let active_set_hash = super::hash_boundary_active_set(&new_active_set);
         let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
@@ -6868,6 +7109,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: outbe_primitives::consensus::ReshareResult {
                 new_active_set,
                 active_set_hash,
@@ -7507,7 +7749,7 @@ mod tests {
             assert_eq!(receipts.len(), 1);
 
             // Find the SponsorshipAuthorized log on the receipt — this
-            // is the H-2 guarantee. Topic[0] must match the event sig
+            // is the guarantee. Topic[0] must match the event sig
             // hash; signer is topic[1] indexed.
             let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
             let sponsorship_log = receipts[0]

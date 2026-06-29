@@ -2,6 +2,8 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {
     IONFT1155AdapterBatch,
@@ -14,7 +16,7 @@ import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.s
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 
 /// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
-///      mid-`_lzReceive` (via `token.credit` → `_mint`), re-enters the adapter's
+///      mid-`_lzReceive` (via `token.crosschainMint` → `_mint`), re-enters the adapter's
 ///      `multiSend` entrypoint. With both `_lzReceive` and `multiSend` carrying
 ///      OZ `nonReentrant`, the inner call reverts with `ReentrancyGuardReentrantCall`
 ///      at the modifier check (before the empty-batch validation), and we capture
@@ -73,7 +75,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 /// @title ONFT1155AdapterBatchReentrancyTest
 /// @notice Behavioral test that `_lzReceive` and `multiSend` are mutually `nonReentrant`-guarded.
 /// @dev Source chain (A) caller initiates a single-recipient batch transfer to the hostile probe
-///      on the destination chain (B). On B, `_lzReceive` → `_handleBatchReceive` → `token.credit`
+///      on the destination chain (B). On B, `_lzReceive` → `_handleBatchReceive` → `token.crosschainMint`
 ///      → `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
 ///      `ReentrancyGuardReentrantCall` — proving the guard is held by `_lzReceive` AND that
@@ -101,21 +103,11 @@ contract ONFT1155AdapterBatchReentrancyTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(tokenA), address(endpoints[aEid]), address(this))
-                ))
-        );
-        adapterB = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(tokenB), address(endpoints[bEid]), address(this))
-                ))
-        );
+        adapterA = DeployProxy.onftAdapterBatch(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapterBatch(address(tokenB), address(endpoints[bEid]), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
@@ -125,8 +117,8 @@ contract ONFT1155AdapterBatchReentrancyTest is TestHelperOz5 {
         oapps[1] = address(adapterB);
         this.wireOApps(oapps);
 
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);

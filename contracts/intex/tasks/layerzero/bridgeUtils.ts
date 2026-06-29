@@ -10,9 +10,12 @@ import {
   PACKET_SENT_TOPIC,
   type PacketV1,
   getEnvRpcAndPk,
+  makeChain,
   makePublicClient,
   parsePacketV1,
 } from "../../scripts/shared/layerzero.js";
+import { getNetworkName } from "../../scripts/shared/taskUtils.js";
+import { loadAbi } from "../../scripts/shared/abi.js";
 
 const ENDPOINT_ABI = [
   {
@@ -56,35 +59,23 @@ const ENDPOINT_READ_ABI = [
   { inputs: [{ name: "_lib", type: "address" }], name: "isRegisteredLibrary", outputs: [{ type: "bool" }], stateMutability: "view", type: "function" },
 ] as const;
 
-/** Hardhat 3: NetworkManager has no .name; get it from the connection or NETWORK env var. */
 async function resolveNetworkName(hre: unknown): Promise<string> {
-  const fromEnv = process.env.NETWORK;
-  if (fromEnv) return fromEnv;
-  const conn = await (hre as Hre).network.connect();
-  return conn.networkName;
+  return getNetworkName(hre);
 }
 
-/** Outbe: viem + defineChain (hardhat-viem does not know custom chain IDs). Others: network.connect() */
+/** viem read/write facade for the network, built from its RPC + key, with ABIs from abi-export. */
 async function getViemForLz(hre: unknown): Promise<{ getContractAt: (name: string, address: `0x${string}`) => Promise<unknown> }> {
   const networkName = await resolveNetworkName(hre);
-  if (!(networkName in OUTBE_CHAINS)) {
-    const { viem } = await (hre as Hre).network.connect();
-    return viem;
-  }
-  const chain = OUTBE_CHAINS[networkName as keyof typeof OUTBE_CHAINS];
-  const rpc = process.env.OUTBE_RPC_URL ?? chain.rpcUrls.default.http[0];
-  const pk = process.env.OUTBE_PRIVATE_KEY;
-  if (!pk) throw new Error("OUTBE_PRIVATE_KEY required for Outbe networks");
+  const { rpc, pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const chain = makeChain(networkName, rpc);
   const account = privateKeyToAccount(pk as `0x${string}`);
   const transport = http(rpc);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
-  const artifacts = (hre as { artifacts: { readArtifact: (name: string) => Promise<{ abi: unknown[] }> } }).artifacts;
   return {
-    getContractAt: async (name: string, address: `0x${string}`) => {
-      const { abi } = await artifacts.readArtifact(name);
-      return getContract({ address, abi, client: { public: publicClient, wallet: walletClient } });
-    },
+    getContractAt: async (name: string, address: `0x${string}`) =>
+      getContract({ address, abi: loadAbi(name), client: { public: publicClient, wallet: walletClient } }),
   };
 }
 
@@ -119,18 +110,6 @@ interface SetEnforcedOptionsArgs {
   lzConfig: string;
   /** Contract name (default from config: ONFT1155Adapter, ONFT1155AdapterBatch, or TargetMessenger/OriginMessenger by network) */
   contract?: string;
-}
-
-interface Hre {
-  network: {
-    connect: () => Promise<{
-      networkName: string;
-      viem: {
-        getWalletClients: () => Promise<Array<{ account: { address: `0x${string}` } }>>;
-        getContractAt: (name: string, address: `0x${string}`) => Promise<unknown>;
-      };
-    }>;
-  };
 }
 
 interface GrantBridgeRoleArgs {
@@ -231,7 +210,7 @@ const grantBridgeRole = task(
 
 // ============================================================================
 // Grant SYSTEM_RELAYER_ROLE
-// IntexNFT1155 gates `debit`/`credit` in the `Called` state behind this role.
+// IntexNFT1155 gates `crosschainBurn`/`crosschainMint` in the `Called` state behind this role.
 // Used to whitelist the system batch adapter (ONFT1155AdapterBatch) which moves
 // holder balances cross-chain after `markCalled`.
 // ============================================================================
@@ -517,16 +496,19 @@ const checkPeer = task("lz:check-peer", "Check peer configuration for an adapter
 // ============================================================================
 
 const quoteSendAction = async (args: QuoteSendArgs, hre: unknown) => {
-  const { viem } = await (hre as Hre).network.connect();
-  
+  const networkName = await resolveNetworkName(hre);
+  const { pk } = getEnvRpcAndPk(networkName);
+  if (!pk) throw new Error(`Private key required for ${networkName}`);
+  const account = privateKeyToAccount(pk as `0x${string}`);
+  const viem = await getViemForLz(hre);
+
   const dstEid = parseInt(args.dstEid, 10);
   const tokenId = BigInt(args.tokenId);
   const amount = BigInt(args.amount);
 
   console.log(`Quoting send cost...`);
 
-  const [walletClient] = await viem.getWalletClients();
-  const recipient = (args.to || walletClient.account.address) as `0x${string}`;
+  const recipient = (args.to || account.address) as `0x${string}`;
   const toBytes32 = `0x${recipient.slice(2).padStart(64, "0")}` as `0x${string}`;
 
   const adapter = (await viem.getContractAt(

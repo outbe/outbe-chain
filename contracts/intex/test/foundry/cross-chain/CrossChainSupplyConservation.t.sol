@@ -2,6 +2,8 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
 import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -13,10 +15,10 @@ import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/
 ///   - SI-08: `Σ totalSupply(issuedId)` across chains is never larger than the on-chain
 ///     `issuedIntexCount` cap of the underlying series. Mint+bridge+round-trip moves balances
 ///     between chains but cannot inflate the global pool.
-///   - SI-09: a `debit` of `amount` on the source credits exactly `amount` on the destination,
-///     even when the inbound credit fails: the parked-amount `failedCredits[guid].amount` holds
+///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
+///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[guid].amount` holds
 ///     the in-flight units until retry, so the source-burned amount equals
-///     `destination-credited + destination-parked` at every step.
+///     `destination-minted + destination-parked` at every step.
 contract CrossChainSupplyConservationTest is TestHelperOz5 {
     using OptionsBuilder for bytes;
 
@@ -40,21 +42,11 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[A_EID]), address(this), B_EID)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[B_EID]), address(this), A_EID)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[A_EID]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[B_EID]), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
@@ -64,8 +56,8 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         oapps[1] = address(adapterB);
         this.wireOApps(oapps);
 
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);
@@ -78,7 +70,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         uint256 bridged = 60;
         _send(adapterA, B_EID, user, TOKEN_ID, bridged);
 
-        // Source debits exactly `bridged`; destination credits exactly `bridged`.
+        // Source burns exactly `bridged`; destination mints exactly `bridged`.
         assertEq(tokenA.totalSupply(TOKEN_ID), minted - bridged, "A.totalSupply -= bridged");
         assertEq(tokenB.totalSupply(TOKEN_ID), bridged, "B.totalSupply += bridged");
 
@@ -105,13 +97,13 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
     }
 
-    function test_ParkBranch_ConservesAcrossDebitAndPark() public {
-        // Pick a fresh series that exists on A but not on B: the inbound credit reverts
+    function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
+        // Pick a fresh series that exists on A but not on B: the inbound crosschainMint reverts
         // NonexistentToken and the transfer parks on B. Tokens are burned on A but not yet
-        // minted on B — the missing amount lives in failedCredits.
+        // minted on B — the missing amount lives in failedCrosschainMints.
         uint32 parkSeries = 20260601;
         uint256 parkTokenId = uint256(parkSeries);
-        tokenA.createSeries(parkSeries, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
@@ -123,24 +115,24 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         // Source-side: the source intex burned the bridged amount; the cap-respecting supply on A
         // is the remainder.
         assertEq(tokenA.totalSupply(parkTokenId), minted - bridged, "A.totalSupply -= bridged");
-        assertEq(tokenB.totalSupply(parkTokenId), 0, "B not credited (series missing)");
+        assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
 
         // Park entry holds the in-flight amount, so the global accounting still adds up.
-        (,, uint256 parkedAmount,,, bool exists) = adapterB.failedCredits(r.guid);
+        (,, uint256 parkedAmount,,, bool exists) = adapterB.failedCrosschainMints(r.guid);
         assertTrue(exists, "park entry present");
         assertEq(parkedAmount, bridged, "park amount == bridged");
 
         uint256 total = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId) + parkedAmount;
-        assertEq(total, minted, "SI-09: source-debited == dest-credited + dest-parked");
+        assertEq(total, minted, "SI-09: source-burned == dest-minted + dest-parked");
 
         // Fix the destination cause and retry — parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.createSeries(parkSeries, ISSUED_INTEX_COUNT, 0);
+        tokenB.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(parkSeries);
-        adapterB.retryCredit(r.guid);
+        adapterB.retryCrosschainMint(r.guid);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
-        (,,,,, bool stillExists) = adapterB.failedCredits(r.guid);
+        (,,,,, bool stillExists) = adapterB.failedCrosschainMints(r.guid);
         assertFalse(stillExists, "park entry cleared on retry");
 
         uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);

@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 
 use crate::error::{PrecompileError, Result};
 use crate::storage::types::{
-    BinaryHeap as StorageBinaryHeap, Mapping, Slot, Storable, StorageKey, StorageSet, StorageVec,
+    BinaryHeap as StorageBinaryHeap, Mapping, Slot, Storable, StorageCircularBuffer, StorageDeque,
+    StorageKey, StorageSet, StorageVec,
 };
 use crate::storage::StorageHandle;
 
@@ -11,6 +12,8 @@ pub type Value<'storage, T> = Slot<'storage, T>;
 pub type List<'storage, T> = StorageVec<'storage, T>;
 pub type Set<'storage, T> = StorageSet<'storage, T>;
 pub type BinaryHeap<'storage, T> = StorageBinaryHeap<'storage, T>;
+pub type Deque<'storage, T> = StorageDeque<'storage, T>;
+pub type CircularBuffer<'storage, T> = StorageCircularBuffer<'storage, T>;
 pub type Optional<T> = Option<T>;
 pub type Deprecated<T> = T;
 

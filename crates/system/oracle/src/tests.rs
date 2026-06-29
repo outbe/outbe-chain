@@ -1180,6 +1180,8 @@ mod oracle_tests {
             let day_1 = crate::scurve::DAY_SECONDS;
             let day_2 = 2 * crate::scurve::DAY_SECONDS;
             let day_3 = 3 * crate::scurve::DAY_SECONDS;
+            let day_4 = 4 * crate::scurve::DAY_SECONDS;
+            // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
             oracle
                 .write_snapshot(day_1 + 60, &[(pair_id, U256::in_units(100u64), SCALE_1E18)])
                 .unwrap();
@@ -1190,8 +1192,10 @@ mod oracle_tests {
                 .write_snapshot(day_3 + 60, &[(pair_id, U256::in_units(120u64), SCALE_1E18)])
                 .unwrap();
 
+            // Hook fires on the first block of day_4 — the current day has NO
+            // close yet, mirroring the real start-of-day boundary block.
             let runtime_ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(3, day_3 + 120, 1),
+                BlockContext::empty_for_tests(4, day_4 + 120, 1),
                 storage.clone(),
             );
             <crate::hooks::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
@@ -1203,10 +1207,10 @@ mod oracle_tests {
                 oracle.scurve_peak_price.read(&0).unwrap(),
                 U256::in_units(150u64)
             );
-            assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_3);
+            assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
 
             let active_value =
-                crate::scurve::get_max_active_scurve_value(&oracle, pair_id, day_3).unwrap();
+                crate::scurve::get_max_active_scurve_value(&oracle, pair_id, day_4).unwrap();
             assert!(!active_value.is_zero());
             assert!(active_value < U256::in_units(150u64));
         });
@@ -1398,7 +1402,7 @@ mod oracle_tests {
         use alloy_sol_types::SolInterface;
         use std::collections::HashSet;
 
-        const EXPECTED_IORACLE_FUNCTIONS: usize = 36;
+        const EXPECTED_IORACLE_FUNCTIONS: usize = 37;
 
         let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
         assert_eq!(
@@ -1868,6 +1872,250 @@ mod oracle_tests {
     }
 
     #[test]
+    fn test_api_day_type_pair_vwap_and_snapshot_store() {
+        with_storage(|storage| {
+            let wwd = outbe_common::WorldwideDay::new(20260302u32);
+
+            // Pair not registered yet → typed None, not an error.
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                None
+            );
+
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .write_snapshot(1_500, &[(1, U256::from(110u64), U256::from(1u64))])
+                .unwrap();
+
+            // No window data → store is a deterministic no-op returning false,
+            // not a "no VWAP data" revert leaking to the caller.
+            assert!(
+                !crate::api::store_worldwide_day_vwap_snapshot(storage.clone(), wwd, 100, 200)
+                    .unwrap()
+            );
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                None,
+                "no snapshot written → None"
+            );
+
+            // Window with data → store writes (true) and the COEN VWAP resolves.
+            assert!(crate::api::store_worldwide_day_vwap_snapshot(
+                storage.clone(),
+                wwd,
+                1_000,
+                3_000
+            )
+            .unwrap());
+            assert_eq!(
+                crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
+                Some(U256::from(110u64))
+            );
+        });
+    }
+
+    #[test]
+    fn test_finalize_utc_day_vwap_writes_and_reads() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let coen = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let eth = oracle.register_pair("ETH", "0xUSD").unwrap();
+
+            let utc_day = 20260624u32;
+            let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
+
+            // Two COEN samples within the day → volume-weighted:
+            // (100*2 + 200*1) / (2 + 1) = 400 / 3 = 133.
+            oracle
+                .write_snapshot(
+                    day_start + 100,
+                    &[(coen, U256::from(100u64), U256::from(2u64))],
+                )
+                .unwrap();
+            oracle
+                .write_snapshot(
+                    day_start + 200,
+                    &[(coen, U256::from(200u64), U256::from(1u64))],
+                )
+                .unwrap();
+            // ETH single sample → VWAP == rate.
+            oracle
+                .write_snapshot(
+                    day_start + 300,
+                    &[(eth, U256::from(2_200u64), U256::from(1u64))],
+                )
+                .unwrap();
+
+            oracle.finalize_utc_day_vwap(utc_day).unwrap();
+
+            assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 2);
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(utc_day, coen).unwrap(),
+                Some(U256::from(133u64))
+            );
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(utc_day, eth).unwrap(),
+                Some(U256::from(2_200u64))
+            );
+
+            let (pairs, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
+            assert_eq!(pairs, vec![coen, eth]);
+            assert_eq!(vwaps, vec![U256::from(133u64), U256::from(2_200u64)]);
+
+            // Unknown pair on a finalized day, and an unfinalized day, both read None.
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(utc_day, 999).unwrap(),
+                None
+            );
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(20260101, coen).unwrap(),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn test_finalize_empty_utc_day_writes_nothing() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let coen = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let utc_day = 20260624u32;
+
+            // No snapshots for the day → finalize is a no-op, nothing written.
+            oracle.finalize_utc_day_vwap(utc_day).unwrap();
+
+            assert_eq!(oracle.utc_day_vwap_pair_count.read(&utc_day).unwrap(), 0);
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(utc_day, coen).unwrap(),
+                None
+            );
+            let (pairs, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
+            assert!(pairs.is_empty() && vwaps.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_get_utc_day_vwap_precompile() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let coen = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let utc_day = 20260624u32;
+            let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
+            oracle
+                .write_snapshot(
+                    day_start + 100,
+                    &[(coen, U256::from(150u64), U256::from(1u64))],
+                )
+                .unwrap();
+            oracle.finalize_utc_day_vwap(utc_day).unwrap();
+
+            use crate::precompile::IOracle;
+            use alloy_sol_types::SolCall;
+
+            // Finalized day → returns the stored VWAP.
+            let call = IOracle::getUtcDayVwapCall {
+                base: "COEN".into(),
+                quote: "0xUSD".into(),
+                utcDay: utc_day,
+            }
+            .abi_encode();
+            let decoded = IOracle::getUtcDayVwapCall::abi_decode_returns(
+                &crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(decoded, U256::from(150u64));
+
+            // Unfinalized day → revert.
+            let unfinalized = IOracle::getUtcDayVwapCall {
+                base: "COEN".into(),
+                quote: "0xUSD".into(),
+                utcDay: 20260625u32,
+            }
+            .abi_encode();
+            assert!(crate::precompile::dispatch(
+                storage.clone(),
+                &unfinalized,
+                Address::ZERO,
+                U256::ZERO
+            )
+            .is_err());
+        });
+    }
+
+    #[test]
+    fn test_lifecycle_finalizes_closed_utc_day() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.config_is_initialized.write(true).unwrap();
+            oracle.config_vote_period.write(2).unwrap();
+            let coen = oracle.register_pair("COEN", "0xUSD").unwrap();
+
+            let day_d = 20260624u32;
+            let day_d1 = 20260625u32;
+            let day_d2 = 20260626u32;
+            let d_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d);
+            let d1_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d1);
+            let d2_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d2);
+
+            oracle
+                .write_snapshot(
+                    d_start + 1_000,
+                    &[(coen, U256::from(170u64), U256::from(1u64))],
+                )
+                .unwrap();
+
+            // First block of day D+1 → day D is now fully closed and finalized.
+            // Odd block number avoids the vote-period tally path (period == 2).
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(11, d1_start + 5, 1),
+                storage.clone(),
+            );
+            <crate::hooks::OracleLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
+
+            assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(day_d, coen).unwrap(),
+                Some(U256::from(170u64))
+            );
+            // The in-progress current day is not finalized.
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(day_d1, coen).unwrap(),
+                None
+            );
+
+            // Idempotent: a later block on the same UTC day neither advances the
+            // watermark nor re-finalizes.
+            let ctx2 = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(13, d1_start + 50, 1),
+                storage.clone(),
+            );
+            <crate::hooks::OracleLifecycle as BlockLifecycle>::begin_block(&ctx2).unwrap();
+            assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
+
+            // Next rollover finalizes the next day contiguously (non-zero
+            // watermark path).
+            oracle
+                .write_snapshot(
+                    d1_start + 2_000,
+                    &[(coen, U256::from(190u64), U256::from(1u64))],
+                )
+                .unwrap();
+            let ctx3 = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(15, d2_start + 5, 1),
+                storage.clone(),
+            );
+            <crate::hooks::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();
+            assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d1);
+            assert_eq!(
+                oracle.get_utc_day_vwap_for_pair_id(day_d1, coen).unwrap(),
+                Some(U256::from(190u64))
+            );
+        });
+    }
+
+    #[test]
     fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
         // Measures gas cost of calculate_vwap for a 50-hour window
         // with increasing snapshot counts (simulating real testnet load).
@@ -2112,6 +2360,40 @@ mod oracle_tests {
                 slot, 55,
                 "macro-assigned reference_currencies slot changed; update scripts/seed_genesis.py"
             );
+        });
+    }
+
+    /// Parity guard for the `settlement_iso_to_pair` base slot used by
+    /// `scripts/seed_genesis.py` (slot 42). Writes a distinctive marker, then
+    /// scans base slots 0..128 to recover the macro-assigned slot via the
+    /// known `keccak256(left_pad(key, 32) || be(base, 32))` derivation.
+    #[test]
+    fn test_settlement_iso_to_pair_slot_parity() {
+        use alloy_primitives::{keccak256, B256};
+        use outbe_primitives::addresses::ORACLE_ADDRESS;
+
+        with_storage(|storage| {
+            let oracle = OracleContract::new(storage.clone());
+            let iso: u16 = 840;
+            let marker = B256::repeat_byte(0xAB);
+            oracle.settlement_iso_to_pair.write(&iso, marker).unwrap();
+
+            for base in 0u64..128 {
+                let mut buf = [0u8; 64];
+                buf[30..32].copy_from_slice(&iso.to_be_bytes());
+                buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
+                let slot = U256::from_be_bytes(keccak256(buf).0);
+                let word = storage.sload(ORACLE_ADDRESS, slot).unwrap();
+                if word == U256::from_be_bytes(marker.0) {
+                    assert_eq!(
+                        base, 42,
+                        "macro-assigned settlement_iso_to_pair slot changed; \
+                         update scripts/seed_genesis.py"
+                    );
+                    return;
+                }
+            }
+            panic!("could not locate settlement_iso_to_pair base slot in 0..128");
         });
     }
 }

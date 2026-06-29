@@ -41,9 +41,10 @@ interface IMetadosis {
         string action
     );
 
-    event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint64 retentionDays);
-
-    event DesisDispatchFailed(uint32 indexed worldwideDay, string stage, string reason);
+    /// @notice Emitted when a terminal WorldwideDay record is evicted from the
+    /// bounded delete-queue (oldest-first, once terminal records exceed the cap).
+    /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
+    event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
 
     function getWorldwideDay(uint32 wwd)
         external
@@ -59,8 +60,6 @@ interface IMetadosis {
             uint256 previousVwap,
             uint256 currentVwap
         );
-
-    function getDayMetadosisLimit(uint32 date) external view returns (uint256 amount, bool isUsed);
 
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);

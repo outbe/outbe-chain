@@ -21,13 +21,13 @@ export interface AuctionFlowTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  entryPrice?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   skipStart?: boolean;
   skipReveal?: boolean;
@@ -43,9 +43,9 @@ export interface AuctionStartTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  entryPrice?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
 }
 
@@ -59,7 +59,7 @@ export interface AuctionClearingTaskArgs extends CommonAuctionTaskArgs {
 
 export interface AuctionExecuteTaskArgs extends CommonAuctionTaskArgs {
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   finalizeEscrow?: string | boolean;
   escrowAdapterContract?: string;
@@ -93,15 +93,15 @@ export interface AuctionInteractiveTaskArgs extends CommonAuctionTaskArgs {
   commitEnd?: string;
   revealEnd?: string;
   issuanceEnd?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
-  coenPriceFloor?: string;
+  promisLoadMinor?: string;
+  entryPrice?: string;
+  floorPriceMinor?: string;
   minIntexBidQuantity?: string;
   isGreenDay?: string | boolean;
   wallets?: string;
   commitsFile?: string;
   issuedIntexCount?: string;
-  clearingPrice?: string;
+  clearingRate?: string;
   wonBidsCount?: string;
   finalizeEscrow?: string | boolean;
   escrowAdapterContract?: string;
@@ -123,35 +123,6 @@ export interface Intex1155IssuanceTaskArgs extends TaskArgs {
 }
 
 // =============================================================================
-// Settlement Tasks
-// =============================================================================
-
-export interface SettlementInteractiveTaskArgs extends TaskArgs {
-  desisContract?: string;
-  intexBscContract?: string;
-  intexOutbeContract?: string;
-  targetMessengerContract?: string;
-  series?: string;
-  bscNetwork?: string;
-  msgValue?: string;
-  skipFund?: string | boolean;
-}
-
-export interface SettlementSettleTaskArgs extends TaskArgs {
-  settlementContract?: string;
-  intexContract?: string;
-  promisContract?: string;
-  series?: string;
-  intexHolder?: string;
-}
-
-export interface SettlementFullFlowTaskArgs extends SettlementInteractiveTaskArgs {
-  settlementContract?: string;
-  promisContract?: string;
-  intexHolder?: string;
-}
-
-// =============================================================================
 // Outbe Mock Tasks
 // =============================================================================
 
@@ -161,8 +132,8 @@ export interface OutbeMockInteractiveTaskArgs extends TaskArgs {
   series?: string;
   floor?: string;
   clearingTimestamp?: string;
-  intexSize?: string;
-  intexStrikePrice?: string;
+  promisLoadMinor?: string;
+  entryPrice?: string;
   minIntexBidQuantity?: string;
   supply?: string;
   msgValue?: string;

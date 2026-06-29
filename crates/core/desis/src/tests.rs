@@ -6,11 +6,11 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::ORIGIN_MESSENGER_ADDRESS;
 use crate::runtime;
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
+use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
 
 const CHAIN_ID: u64 = 1;
 const SERIES_ID: u32 = 20260101;
-const INTEX_SIZE: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -33,10 +33,14 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn default_config() -> AuctionConfig {
     AuctionConfig {
-        intex_size: INTEX_SIZE,
-        min_intex_bid_price: 100,
-        intex_strike_price: 500,
-        coen_price: U256::ZERO,
+        issuance_currency: 840,
+        reference_currency: 840,
+        promis_load_minor: PROMIS_LOAD_MINOR,
+        call_trigger: IntexCallTrigger::default(),
+        min_intex_bid_rate: 100,
+        min_intex_bid_quantity: 0,
+        // entry_price chosen so the derived strike == RATE_SCALE (lock = qty * rate).
+        entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
     }
 }
 
@@ -93,7 +97,7 @@ fn begin_clearing_stores_pending() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        let supply_promis = 10 * INTEX_SIZE;
+        let supply_promis = 10 * PROMIS_LOAD_MINOR;
         let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
         assert_eq!(remainder, 0); // no rounding with exact multiple
         let contract = s.contract::<DesisContract>();
@@ -108,9 +112,10 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
             s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
             true,
@@ -118,14 +123,14 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
             (0..100u8)
                 .map(|i| BidData {
                     bidder_address: bidder(i),
-                    intex_bid_price: 200,
+                    intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
                 })
                 .collect(),
         )
         .unwrap();
-        runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
 
         // Second auction for a different series_id: min_bid_qty must be 4% of 100 = 4.
         runtime::start_auction(s.clone(), SERIES_ID + 1, default_config()).unwrap();
@@ -143,19 +148,76 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         // Stage is Started, not Revealing — must be rejected.
-        assert!(
-            runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(2, 200)).is_err()
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(2, 200)
+        )
+        .is_err());
+    });
+}
+
+// --- Origin gate (OriginMessenger-only entries) ---
+
+#[test]
+fn process_bids_rejects_non_origin_caller() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        // Series is in Revealing, so the only admission gate left is the caller check.
+        let attacker = bidder(99);
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            attacker,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200)
+        )
+        .is_err());
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.bid_count.read(&SERIES_ID).unwrap(), 0);
+    });
+}
+
+#[test]
+fn clear_auction_rejects_non_origin_caller() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        // Series is in BidsReceived, so the only admission gate left is the caller check.
+        let attacker = bidder(99);
+        assert!(runtime::clear_auction(s.clone(), attacker, SERIES_ID).is_err());
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::BidsReceived
         );
     });
 }
 
 // --- Bid ingestion ---
 
-fn bids(n: u8, price: u64) -> Vec<BidData> {
+fn bids(n: u8, rate: u32) -> Vec<BidData> {
     (0..n)
         .map(|i| BidData {
             bidder_address: bidder(i),
-            intex_bid_price: price,
+            intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
         })
@@ -169,8 +231,26 @@ fn process_bids_accumulate_then_finalize() {
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         // Two partial batches; only last=true finalizes.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(3, 200)).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(2, 150)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(2, 150),
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 5);
@@ -187,9 +267,27 @@ fn higher_generation_replaces_bids() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(5, 200)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(5, 200),
+        )
+        .unwrap();
         // Gen 2 replaces.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 2, bids(2, 150)).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            2,
+            bids(2, 150),
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 2);
@@ -202,10 +300,26 @@ fn stale_generation_is_rejected() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 2, bids(1, 200)).unwrap();
-        assert!(
-            runtime::process_bids_batch(s.clone(), SERIES_ID, 1, false, 1, bids(1, 200)).is_err()
-        );
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            2,
+            bids(1, 200),
+        )
+        .unwrap();
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            false,
+            1,
+            bids(1, 200)
+        )
+        .is_err());
     });
 }
 
@@ -214,7 +328,16 @@ fn no_bids_last_batch_cancels() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, vec![]).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            vec![],
+        )
+        .unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -232,10 +355,20 @@ fn clear_auction_allocates_up_to_supply() {
         let supply = 3u32;
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // 5 bidders competing for 3 supply units.
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(5, 200)).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(5, 200),
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
@@ -246,9 +379,64 @@ fn clear_auction_transitions_to_cleared() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, INTEX_SIZE).unwrap();
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, bids(1, 200)).unwrap();
-        runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Cleared
+        );
+    });
+}
+
+#[test]
+fn begin_clearing_accepts_zero_supply() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        assert_eq!(remainder, 0);
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.pending_supply_intex.read(&SERIES_ID).unwrap(), 0);
+        assert_eq!(contract.clearing_initiated.read(&SERIES_ID).unwrap(), 1);
+    });
+}
+
+#[test]
+fn clear_auction_empty_supply_refunds_all_bidders() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+
+        assert_eq!(result.issued_intex_count, 0);
+        assert!(result.winners.is_empty());
+        assert_eq!(result.all_bidders.len(), 3);
+        assert!(result.paid_amounts.iter().all(|&p| p == 0));
+        assert!(result.refunded_amounts.iter().all(|&r| r > 0));
+
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(SERIES_ID).unwrap(),
@@ -263,32 +451,42 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // Three bids at descending prices: 300, 200, 150.
         let three_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(2),
-                intex_bid_price: 150,
+                intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, three_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
-        // Supply 2 → top 2 bids win (300 and 200); clearing price = 200.
-        assert_eq!(result.clearing_price, 200);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            three_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
+        assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
     });
 }
@@ -298,23 +496,33 @@ fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap(); // min_bid_price=100
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 3 * INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 3 * PROMIS_LOAD_MINOR).unwrap();
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 50,
+                intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, low_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            low_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -326,26 +534,36 @@ fn clear_refunds_equal_locked_minus_paid() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 1u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, INTEX_SIZE).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
         // Winner bids 300, clearing price will be 300 (only one slot).
         let two_bids = vec![
             BidData {
                 bidder_address: bidder(0),
-                intex_bid_price: 300,
+                intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
             },
             BidData {
                 bidder_address: bidder(1),
-                intex_bid_price: 200,
+                intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
             },
         ];
-        runtime::process_bids_batch(s.clone(), SERIES_ID, 1, true, 1, two_bids).unwrap();
-        let result = runtime::clear_auction(s.clone(), SERIES_ID).unwrap();
-        // Winner (bid 300): locked=300, paid=300 (clearing price), refund=0
-        // Loser (bid 200): locked=200, refund=200
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            two_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        // strike = promis_load; lock/pay = qty * strike * rate / RATE_SCALE.
+        // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
             .iter()
@@ -356,10 +574,73 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], 300);
+        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], 200);
+        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
         assert_eq!(supply, result.issued_intex_count);
+    });
+}
+
+#[test]
+fn clear_rate_escrow_scales_by_strike() {
+    // strike != RATE_SCALE, so this exercises the * strike / RATE_SCALE.
+    with_storage(|s| {
+        let cfg = AuctionConfig {
+            issuance_currency: 840,
+            reference_currency: 840,
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            call_trigger: IntexCallTrigger::default(),
+            min_intex_bid_rate: 0,
+            min_intex_bid_quantity: 0,
+            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; strike = promis_load)
+        };
+        runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        let supply = 2u32;
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
+        let rate_bids = vec![
+            BidData {
+                bidder_address: bidder(0),
+                intex_bid_rate: 800_000,
+                timestamp: 0,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(1),
+                intex_bid_rate: 600_000,
+                timestamp: 1,
+                intex_quantity: 1,
+            },
+            BidData {
+                bidder_address: bidder(2),
+                intex_bid_rate: 400_000,
+                timestamp: 2,
+                intex_quantity: 1,
+            },
+        ];
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_MESSENGER_ADDRESS,
+            SERIES_ID,
+            1,
+            true,
+            1,
+            rate_bids,
+        )
+        .unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+
+        assert_eq!(result.clearing_rate, 600_000);
+        // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
+        let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
+        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
+        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
+        assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
+        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
     });
 }
 
@@ -389,4 +670,125 @@ fn test_iface_id_matches_selector_xor() {
         crate::precompile::IDESIS_INTERFACE_ID,
         "IDESIS_INTERFACE_ID is stale; update it to match the new selector XOR"
     );
+}
+
+// --- Config construction ---
+
+#[test]
+fn cost_amount_is_promis_load() {
+    // wCOEN strike = promis_load per Intex; entry no longer drives it.
+    let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
+    assert_eq!(cfg.cost_amount_minor(), cfg.promis_load_minor);
+}
+
+// --- Best-effort dispatch API ---
+
+const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry; strike = promis_load, not entry-derived)
+
+#[test]
+fn dispatch_stage_start_success_returns_true() {
+    with_storage(|s| {
+        let accepted = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            U256::from(ENTRY_PRICE),
+        )
+        .unwrap();
+        assert!(accepted, "valid start should be accepted");
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Started
+        );
+    });
+}
+
+#[test]
+fn dispatch_stage_start_failure_returns_false_and_emits_event() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 64]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+
+    // Second start hits the duplicate guard, so the best-effort wrapper swallows the
+    // error, returns false, and emits AuctionDispatchFailed instead of propagating.
+    let (first, second) = StorageHandle::enter(&mut storage, |s| {
+        let first = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            U256::from(ENTRY_PRICE),
+        )
+        .unwrap();
+        let second = crate::api::dispatch_stage_start(
+            s.clone(),
+            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            U256::from(ENTRY_PRICE),
+        )
+        .unwrap();
+        (first, second)
+    });
+    assert!(first, "first dispatch should succeed");
+    assert!(!second, "duplicate dispatch should fail best-effort");
+
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
+    let found = storage.get_events(desis_addr).iter().any(|log| {
+        log.topics().first() == Some(&fail_sig)
+            && IDesis::AuctionDispatchFailed::decode_log_data(log)
+                .map(|ev| ev.seriesId == SERIES_ID && ev.stage == "auction_stage_start")
+                .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected AuctionDispatchFailed event on DESIS_ADDRESS"
+    );
+}
+
+#[test]
+fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis() {
+    use outbe_promislimit::PromisLimitContract;
+
+    with_storage(|s| {
+        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+
+        // Supply = 3 whole PROMIS_LOAD_MINOR units + 7 dust; only whole units can
+        // be auctioned, so the dust is the remainder the caller must keep.
+        let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+
+        // The dispatch returns the dust to the caller instead of writing it to
+        // PromisLimit, so it cannot collide with the caller's own set/add. (The
+        // bid-settlement path routes unsold whole units separately; no bids here.)
+        assert_eq!(remainder, U256::from(7u64));
+        assert_eq!(
+            PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO,
+            "clearing dispatch must not write the PromisLimit accumulator"
+        );
+    });
+}
+
+#[test]
+fn dispatch_stage_clearing_failure_returns_whole_supply() {
+    // No reveal: auction is still `Started`, so `begin_clearing` rejects the
+    // stage. The best-effort wrapper must return the whole supply so the caller
+    // routes the full budget back to PromisLimit and nothing is lost.
+    with_storage(|s| {
+        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+
+        let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+        assert_eq!(remainder, supply);
+    });
 }

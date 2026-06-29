@@ -135,7 +135,7 @@ fn test_qualify_bucket_sets_flag_for_dimensions() {
 }
 
 #[test]
-fn test_hook_qualifies_bucket_when_oracle_rate_reaches_floor_price() {
+fn test_hook_qualifies_bucket_when_oracle_rate_exceeds_floor_price() {
     use outbe_oracle::contract::OracleContract;
     use outbe_oracle::logic::{init_from_genesis, OracleGenesisConfig};
     use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
@@ -207,7 +207,7 @@ fn test_hook_qualifies_bucket_when_oracle_rate_reaches_floor_price() {
                 .unwrap_or(false));
         }
 
-        // Rate >= floor: qualifies on next tick.
+        // Rate == floor: strict comparison keeps it unqualified.
         {
             let mut oracle = OracleContract::new(storage.clone());
             oracle
@@ -216,6 +216,30 @@ fn test_hook_qualifies_bucket_when_oracle_rate_reaches_floor_price() {
                     "COEN",
                     "0xUSD",
                     params.floor_price_minor,
+                    0,
+                    0,
+                )
+                .unwrap();
+        }
+        <crate::hooks::NodLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
+        {
+            let nod = NodContract::new(storage.clone());
+            assert!(!nod
+                .get_bucket(bucket_key)
+                .unwrap()
+                .map(|b| b.is_qualified)
+                .unwrap_or(false));
+        }
+
+        // Rate strictly above floor: qualifies on next tick.
+        {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle
+                .set_exchange_rate(
+                    Address::ZERO,
+                    "COEN",
+                    "0xUSD",
+                    params.floor_price_minor + U256::from(1u64),
                     0,
                     0,
                 )
@@ -577,7 +601,8 @@ fn test_hook_drains_many_buckets_same_bin_one_block() {
             assert!(tree_math::contains(&nod, bin_id).unwrap());
         }
 
-        run_qualifier_with_rate(storage.clone(), floor);
+        // Rate strictly above the shared floor (same bin) qualifies all 10.
+        run_qualifier_with_rate(storage.clone(), floor + U256::from(1u64));
 
         let nod = NodContract::new(storage.clone());
         for bk in &bucket_keys {
@@ -621,9 +646,10 @@ fn test_hook_drains_only_bins_at_or_below_rate_bin() {
         for (i, p) in prices.iter().enumerate() {
             let bk = NodContract::bucket_key((20241200 + i as u32).into(), *p);
             let qualified = nod.get_bucket(bk).unwrap().unwrap().is_qualified;
-            // Prices <= rate qualify; strictly higher prices stay unqualified.
-            // Same-bin tail is exact-checked: prices[2] (== rate) qualifies.
-            let expected = *p <= prices[2];
+            // Prices strictly below the rate qualify; prices >= rate stay
+            // unqualified. Same-bin tail is exact-checked: prices[2] (== rate)
+            // does NOT qualify under the strict comparison.
+            let expected = *p < prices[2];
             assert_eq!(qualified, expected, "price {p}: expected={expected}");
         }
     });
@@ -756,7 +782,7 @@ fn test_precompile_nod_data_missing_reverts() {
 }
 
 #[test]
-fn test_qualify_buckets_with_rate_qualifies_buckets_at_or_below_rate() {
+fn test_qualify_buckets_with_rate_qualifies_buckets_below_rate() {
     use crate::hooks::qualify_buckets_with_rate;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use std::collections::BTreeMap;
@@ -830,7 +856,7 @@ fn test_qualify_buckets_with_rate_qualifies_buckets_at_or_below_rate() {
 
         {
             let nod = NodContract::new(storage.clone());
-            // At rate=17: floor<=17 qualifies (10, 15), floor=20 does not.
+            // At rate=17: floor<17 qualifies (10, 15), floor=20 does not.
             // Both day=20260101 and day=20260104 share floor=10 → both must
             // qualify in the same bin-walk pass.
             let after_17: BTreeMap<u32, bool> = BTreeMap::from([
@@ -853,5 +879,54 @@ fn test_qualify_buckets_with_rate_qualifies_buckets_at_or_below_rate() {
                 .collect();
             assert_qualified(&nod, &after_22);
         }
+    });
+}
+
+#[test]
+fn test_qualify_buckets_with_rate_keeps_floor_equal_to_rate_unqualified() {
+    use crate::hooks::qualify_buckets_with_rate;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+
+    let owner = address!("0x1111111111111111111111111111111111111111");
+    let day: u32 = 20260101;
+    let floor: u64 = 17;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut storage, |storage| {
+        {
+            let mut nod = NodContract::new(storage.clone());
+            let params = NodIssueParams {
+                owner,
+                worldwide_day: day.into(),
+                league_id: 1,
+                floor_price_minor: U256::from(floor),
+                gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+                entry_price_minor: U256::from(floor - 3),
+                cost_amount_minor: U256::from(500_000_000_000_000_000u128),
+                issuance_currency: 840,
+                reference_currency: 840,
+            };
+            seed_nod(&mut nod, &params, T_NOW);
+        }
+
+        let bucket_key = NodContract::bucket_key(day.into(), U256::from(floor));
+        let is_qualified = || {
+            NodContract::new(storage.clone())
+                .nod_buckets
+                .get(bucket_key)
+                .unwrap()
+                .expect("bucket present")
+                .is_qualified
+        };
+
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, 1, 1), storage.clone());
+
+        // rate == floor: strict comparison keeps the bucket unqualified.
+        qualify_buckets_with_rate(&ctx, U256::from(floor)).unwrap();
+        assert!(!is_qualified(), "floor == rate must stay unqualified");
+
+        // rate one minor unit above floor: now it qualifies.
+        qualify_buckets_with_rate(&ctx, U256::from(floor + 1)).unwrap();
+        assert!(is_qualified(), "floor < rate must qualify");
     });
 }

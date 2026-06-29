@@ -14,7 +14,7 @@
 //!    max attempts, max bytes; rejects hash-mismatch responses
 //!    ([`ProofFetchOutcome::NoProofForExactParent`]); gates persistence
 //!    on a local certification witness already being present
-//! ([`ProofFetchOutcome::NoLocalCertificationWitness`]).
+//!    ([`ProofFetchOutcome::NoLocalCertificationWitness`]).
 //! 3. The structured outcome enum [`ProofFetchOutcome`] consumed by
 //!    's V2 proposer selector.
 //!
@@ -26,30 +26,26 @@
 
 use std::{future::Future, time::Duration};
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+use crate::finalization::committee_prelude::build_committee_prelude;
+use crate::proof::SnapshotBuildError;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
     simplex::types::Notarization, types::Round, Epochable as _, Viewable as _,
 };
-use commonware_cryptography::{
-    bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
-};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::Set as OrderedSet;
-use outbe_primitives::{
-    consensus_metadata::ParentParticipationProof, protocol_schedule::OutbeProtocolSchedule,
-};
+use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 
 use crate::{
     digest::Digest,
     finalization::parent_cert_store::{
         CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-        FinalizedParentCertStore, ParentProofStoreError,
+        FinalizedParentCertStore, ParentProofStoreError, ProofKind,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{bls_batch_verification_rng, HybridScheme},
+    finalization::util::build_signer_bitmap_guarded,
+    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridScheme},
 };
 
 /// Lookup key for a bounded parent-proof fetch.
@@ -86,6 +82,9 @@ pub enum ProofFetchOutcome {
     /// Persistence to the certified-parent proof store failed; the underlying
     /// error is reported for caller diagnostics.
     StoreError(ParentProofStoreError),
+    /// The canonical committee snapshot could not be built (an encode-invariant
+    /// violation); no record is produced and none is written.
+    SnapshotBuildFailed(SnapshotBuildError),
 }
 
 /// Errors that a [`ParentProofTransport`] implementation may surface.
@@ -247,19 +246,22 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             // bytes), so the resolver assembles the same snapshot shape the
             // boundary writer (`apply_boundary_outcome`) and Phase 1 verifier
             // recompute.
-            let vrf_material_version = self.verifier_scheme.active_vrf_material_version();
-            let vrf_group_public_key_bytes: Vec<u8> = self
-                .verifier_scheme
-                .identity()
-                .map(|pk| pk.encode().as_ref().to_vec())
-                .unwrap_or_default();
-            let snapshot = build_committee_snapshot_from_scheme(
+            // Defence-in-depth recovery path: a build failure is an
+            // encode-invariant violation; surface it as a deterministic non-Hit
+            // outcome rather than writing a record whose committee_set_hash would
+            // diverge from the writer's. The shared prelude also populates
+            // `vrf_group_public_key_hash`, so a promoted witness record passes the
+            // Phase 1 verifier Rule 6 — this remote-fetch path previously left it
+            // `B256::ZERO` (via `..default()`), which `to_v2_metadata` then carried
+            // into Phase 1 metadata that Rule 6 rejected.
+            let prelude = match build_committee_prelude(
+                &self.verifier_scheme,
                 &self.validator_addresses,
-                self.verifier_scheme.participants(),
-                vrf_material_version,
-                vrf_group_public_key_bytes,
-            );
-            let committee_set_hash = committee_set_hash_v2(notarization.epoch().get(), &snapshot);
+                notarization.epoch().get(),
+            ) {
+                Ok(prelude) => prelude,
+                Err(error) => return ProofFetchOutcome::SnapshotBuildFailed(error),
+            };
             let encoded_proof: Bytes = notarization.encode().into();
             let view = notarization.view().get();
             // The notarization carries no block-number context. Store `0` so
@@ -267,24 +269,21 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             // Phase 1 selector will not promote it without a real block number.
             let record = CertifiedParentProofRecord {
                 format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-                proof_type: ParentParticipationProof::CertifiedNotarization,
+                kind: ProofKind::CertifiedNotarization,
                 finalized_epoch: notarization.epoch().get(),
                 finalized_view: view,
                 parent_view: notarization.proposal.parent.get(),
-                finalized_block_number: 0,
                 finalized_block_hash: notarization.proposal.payload.0,
-                committee_set_hash,
-                vrf_material_version,
+                committee_set_hash: prelude.committee_set_hash,
+                vrf_material_version: prelude.vrf_material_version,
+                vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
                 ordered_committee: self.validator_addresses.clone(),
-                signer_bitmap: build_signer_bitmap(
+                signer_bitmap: build_signer_bitmap_guarded(
                     &notarization.certificate,
                     self.validator_addresses.len(),
                 ),
-                certificate: encoded_proof.clone(),
                 encoded_proof,
-                local_certification_witness: true,
                 stored_at_height: view,
-                ..CertifiedParentProofRecord::default()
             };
 
             if let Err(error) = self.proof_store.put_certified_notarization(record.clone()) {
@@ -297,58 +296,224 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
     }
 }
 
-/// Mirror of `OutbeReporter::build_signer_bitmap` for resolver use. Held
-/// locally to avoid making the reporter helper part of the public crate
-/// surface; the input contract is identical (1 byte per participant, ones
-/// where the certificate signers set carries the participant index).
-fn build_signer_bitmap(
-    certificate: &crate::hybrid::HybridCertificate<MinSig>,
-    committee_size: usize,
-) -> Vec<u8> {
-    if certificate.signers.len() != committee_size {
-        return Vec::new();
-    }
-    let mut signed = vec![0u8; committee_size];
-    for signer in certificate.signers.iter() {
-        let idx = signer.get() as usize;
-        if idx < committee_size {
-            signed[idx] = 1;
-        }
-    }
-    signed
+/// Build the canonical V2 **Finalization** parent-proof record from a
+/// marshal-recovered finalization.
+///
+/// After a restart (or under brief finalization lag) the in-process
+/// `FinalizedParentCertStore` that the proposer selects from can be empty even
+/// though marshal's durable finalization archive still holds the direct parent's
+/// finalization. This rebuilds the SAME record the live
+/// [`FinalizationActor`](crate::finalization::actor) writes for that
+/// finalization — byte-identical, so the proposer's Phase 1 metadata stays
+/// canonical and every validator accepts it (the `record_builder_parity` test
+/// pins this equality). The inputs are all derived from the recovered
+/// finalization plus the finalized epoch's committee scheme + ordered addresses;
+/// `missed_proposers` and `finalize_votes` are empty under the V2 contract.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_finalization_record_from_recovered(
+    finalized_epoch: u64,
+    finalized_view: u64,
+    parent_view: u64,
+    finalized_block_number: u64,
+    finalized_block_hash: B256,
+    ordered_committee: &[Address],
+    certificate: &HybridCertificate<MinSig>,
+    encoded_certificate: Bytes,
+    scheme: &HybridScheme<MinSig>,
+) -> Result<CertifiedParentProofRecord, SnapshotBuildError> {
+    let prelude = build_committee_prelude(scheme, ordered_committee, finalized_epoch)?;
+    Ok(CertifiedParentProofRecord {
+        format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
+        kind: ProofKind::Finalization {
+            finalized_block_number,
+        },
+        finalized_block_hash,
+        finalized_epoch,
+        finalized_view,
+        parent_view,
+        ordered_committee: ordered_committee.to_vec(),
+        signer_bitmap: build_signer_bitmap_guarded(certificate, ordered_committee.len()),
+        encoded_proof: encoded_certificate,
+        committee_set_hash: prelude.committee_set_hash,
+        vrf_material_version: prelude.vrf_material_version,
+        vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
+        stored_at_height: finalized_block_number,
+    })
 }
 
-/// Same as `reporter::build_committee_snapshot`: zips an ordered address list
-/// with the scheme's Commonware-ordered participant pubkeys into a canonical
-/// snapshot for [`committee_set_hash_v2`].
-///
-/// Duplicated here (rather than re-exported from the reporter module) to keep
-/// `resolver.rs` self-contained inside `finalization/`; the implementation is
-/// trivial and the byte-layout contract lives in
-/// `outbe-consensus-proof::committee`.
-fn build_committee_snapshot_from_scheme(
-    addresses: &[Address],
-    participants: &OrderedSet<bls12381::PublicKey>,
-    vrf_material_version: u64,
-    vrf_group_public_key_bytes: Vec<u8>,
-) -> CommitteeSnapshot {
-    let committee = addresses
-        .iter()
-        .zip(participants.iter())
-        .map(|(address, pubkey)| {
-            let bytes = pubkey.encode();
-            let mut consensus_pubkey = [0u8; 48];
-            let len = bytes.as_ref().len().min(48);
-            consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-            CommitteeEntry {
-                address: *address,
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version,
-        vrf_group_public_key_bytes,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bls::bootstrap_dkg;
+    use crate::digest::Digest as OutbeDigest;
+    use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
+    use alloy_primitives::address;
+    use commonware_consensus::{
+        simplex::types::{Finalization, Proposal, Subject},
+        types::{Epoch, View},
+    };
+    use commonware_cryptography::bls12381;
+    use commonware_cryptography::certificate::Scheme as _;
+    use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
+    use commonware_utils::{
+        ordered::{Quorum as _, Set as OrderedSet},
+        N3f1, TryCollect as _,
+    };
+    use outbe_primitives::consensus_metadata::ParentParticipationProof;
+
+    fn participants(n: u8) -> (Vec<bls12381::PrivateKey>, OrderedSet<bls12381::PublicKey>) {
+        let keys: Vec<bls12381::PrivateKey> = (0..n)
+            .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
+            .collect();
+        let set = keys
+            .iter()
+            .map(|sk| bls12381::PublicKey::from(sk.clone()))
+            .try_collect()
+            .unwrap();
+        (keys, set)
+    }
+
+    /// A finalization signed by all 3 committee members for `payload`, plus the
+    /// matching verifier scheme — all from ONE DKG so the certificate verifies.
+    fn finalization_and_verifier(
+        round: Round,
+        parent_view: View,
+        payload: &[u8],
+    ) -> (
+        Finalization<HybridScheme<MinSig>, OutbeDigest>,
+        HybridScheme<MinSig>,
+    ) {
+        let (keys, set) = participants(3);
+        let dkg = bootstrap_dkg(3).unwrap();
+        let schemes: Vec<HybridScheme<MinSig>> = keys
+            .iter()
+            .map(|key| {
+                let pk = bls12381::PublicKey::from(key.clone());
+                let idx = set.index(&pk).unwrap();
+                HybridScheme::signer(
+                    b"resolver-test",
+                    set.clone(),
+                    key.clone(),
+                    dkg.polynomial.clone(),
+                    dkg.shares[idx.get() as usize].clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let verifier =
+            HybridScheme::<MinSig>::verifier(b"resolver-test", set, dkg.polynomial).unwrap();
+        let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(payload).as_ref()));
+        let proposal = Proposal::new(round, parent_view, digest);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestations: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
+            .collect();
+        let certificate = verifier
+            .assemble::<_, N3f1>(attestations, &Sequential)
+            .unwrap();
+        (
+            Finalization {
+                proposal,
+                certificate,
+            },
+            verifier,
+        )
+    }
+
+    /// the marshal-recovery record builder reproduces the SAME canonical
+    /// V2 fields the live `FinalizationActor` writes. The committee-set-hash
+    /// derivation is rebuilt inline exactly as `actor.rs` does so a future
+    /// divergence in the helper trips this assertion.
+    #[test]
+    fn record_builder_parity() {
+        let epoch = Epoch::new(4);
+        let view = View::new(9);
+        let parent_view = View::new(8);
+        let round = Round::new(epoch, view);
+        let (finalization, verifier) = finalization_and_verifier(round, parent_view, b"parent");
+
+        let addresses = vec![
+            address!("0x0000000000000000000000000000000000000011"),
+            address!("0x0000000000000000000000000000000000000022"),
+            address!("0x0000000000000000000000000000000000000033"),
+        ];
+        let block_number = 42u64;
+        let encoded: Bytes = finalization.encode().into();
+
+        let record = build_finalization_record_from_recovered(
+            finalization.proposal.round.epoch().get(),
+            finalization.proposal.round.view().get(),
+            finalization.proposal.parent.get(),
+            block_number,
+            finalization.proposal.payload.0,
+            &addresses,
+            &finalization.certificate,
+            encoded.clone(),
+            &verifier,
+        )
+        .expect("recovered record builds from valid 48-byte MinPk pubkeys");
+
+        // Field mapping mirrors the finalization + the V2 contract.
+        assert_eq!(record.proof_kind(), ParentParticipationProof::Finalization);
+        assert_eq!(record.finalized_block_number(), Some(block_number));
+        assert_eq!(record.finalized_block_hash, finalization.proposal.payload.0);
+        assert_eq!(record.finalized_epoch, epoch.get());
+        assert_eq!(record.finalized_view, view.get());
+        assert_eq!(record.parent_view, parent_view.get());
+        assert_eq!(record.ordered_committee, addresses);
+        assert_eq!(record.signer_bitmap, vec![1u8, 1, 1], "all 3 signed");
+        assert_eq!(record.stored_at_height, block_number);
+        assert_eq!(record.encoded_proof, encoded);
+
+        // Committee-set-hash parity: rebuild the snapshot exactly as
+        // `FinalizationActor::handle_finalized` (actor.rs:458-490) and assert the
+        // helper produced the identical canonical hash.
+        let parts = verifier.participants();
+        let committee: Vec<CommitteeEntry> = addresses
+            .iter()
+            .zip(parts.iter())
+            .map(|(a, pk)| {
+                let bytes = pk.encode();
+                let mut cpk = [0u8; 48];
+                let len = bytes.as_ref().len().min(48);
+                cpk[..len].copy_from_slice(&bytes.as_ref()[..len]);
+                CommitteeEntry {
+                    address: *a,
+                    consensus_pubkey: cpk,
+                }
+            })
+            .collect();
+        let vrf_bytes: Vec<u8> = verifier
+            .identity()
+            .map(|pk| pk.encode().as_ref().to_vec())
+            .unwrap_or_default();
+        let expected_snapshot = CommitteeSnapshot {
+            committee,
+            vrf_material_version: verifier.active_vrf_material_version(),
+            vrf_group_public_key_bytes: vrf_bytes,
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        let expected_hash = committee_set_hash_v2(epoch.get(), &expected_snapshot);
+        assert_eq!(
+            record.committee_set_hash, expected_hash,
+            "recovered record committee_set_hash must match the FinalizationActor derivation"
+        );
+        assert_ne!(record.committee_set_hash, B256::ZERO);
+        assert_eq!(
+            record.vrf_material_version,
+            verifier.active_vrf_material_version()
+        );
+
+        // The record projects to canonical V2 metadata Phase 1 consumes.
+        let metadata = record.to_v2_metadata(block_number);
+        assert_eq!(metadata.finalized_block_number, block_number);
+        assert_eq!(
+            metadata.finalized_block_hash,
+            finalization.proposal.payload.0
+        );
+        assert_eq!(metadata.committee_set_hash, expected_hash);
     }
 }

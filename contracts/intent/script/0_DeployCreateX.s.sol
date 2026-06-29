@@ -63,6 +63,15 @@ contract DeployCreateXDeterministic is Script {
 
     function deployCreateX(string memory salt) public returns (address) {
         bytes32 saltHash = keccak256(abi.encode(salt));
+
+        // Idempotent: the address is deterministic (CREATE2 via the default factory), so if a CreateX is already
+        // deployed at it, reuse that one instead of reverting on the collision.
+        address predicted = vm.computeCreate2Address(saltHash, keccak256(type(CreateX).creationCode));
+        if (predicted.code.length != 0) {
+            console2.log("CreateX already deployed, reusing:", predicted);
+            return predicted;
+        }
+
         CreateX createx = new CreateX{salt: saltHash}();
         return address(createx);
     }

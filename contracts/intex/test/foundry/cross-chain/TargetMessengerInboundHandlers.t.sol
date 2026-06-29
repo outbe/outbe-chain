@@ -4,14 +4,16 @@ pragma solidity 0.8.30;
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -32,10 +34,10 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
     uint32 internal constant SERIES_ID = 20250101;
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
-    uint128 internal constant INTEX_SIZE = 1000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
     uint64 internal constant STRIKE_PRICE = 100e6;
-    uint64 internal constant COEN_PRICE_FLOOR = 40e6;
-    uint16 internal constant SETTLEMENT_TOKEN_ALIAS = 840;
+    uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
+    uint16 internal constant REFERENCE_CURRENCY = 840;
 
     TargetMessenger internal bnbMessenger;
     OriginMessenger internal outbeMessenger;
@@ -57,22 +59,14 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        intex = new IntexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatch = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
-        escrow = new EscrowAdapter(admin, admin);
+        escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -131,7 +125,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(SERIES_ID).result;
         assertEq(result.issuedIntexCount, ISSUED_INTEX_COUNT, "issuedIntexCount persisted");
-        assertEq(result.auctionIntexClearingPrice, clearingPrice, "clearingPrice persisted");
+        assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
     // --- _handleIssuanceInstructions: createSeries + mintBatch on the local IntexNFT1155 ---
@@ -144,14 +138,16 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: SERIES_ID,
             issuedIntexCount: ISSUED_INTEX_COUNT,
-            intexSize: INTEX_SIZE,
-            intexStrikePrice: STRIKE_PRICE,
-            coenPriceFloor: COEN_PRICE_FLOOR,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            costAmountMinor: STRIKE_PRICE,
+            entryPriceMinor: STRIKE_PRICE,
+            floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
-            settlementTokenAlias: SETTLEMENT_TOKEN_ALIAS,
+            issuanceCurrency: 840,
+            referenceCurrency: REFERENCE_CURRENCY,
             callWindowDays: 30,
             callThresholdDays: 5,
-            coenPriceCallTrigger: 25e6,
+            callPriceMinor: 25e6,
             recipients: recipients,
             quantities: quantities
         });
@@ -159,7 +155,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         _deliver(packet);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
-        assertEq(intex.balanceOf(bidder, tokenId), 5, "bidder credited 5 Issued tokens");
+        assertEq(intex.balanceOf(bidder, tokenId), 5, "bidder crosschainMinted 5 Issued tokens");
         assertEq(intex.totalSupply(tokenId), 5, "totalSupply == minted amount");
     }
 
@@ -174,9 +170,9 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
         address[] memory bidders = new address[](1);
         bidders[0] = bidder;
-        uint64[] memory refundedAmounts = new uint64[](1);
+        uint128[] memory refundedAmounts = new uint128[](1);
         refundedAmounts[0] = lockedAmount;
-        uint64[] memory paidAmounts = new uint64[](1);
+        uint128[] memory paidAmounts = new uint128[](1);
         paidAmounts[0] = 0;
 
         bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);
@@ -209,10 +205,14 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             issuanceEnd: uint32(block.timestamp + 3 days)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            intexSize: INTEX_SIZE,
-            minIntexBidPrice: 60e6,
-            intexStrikePrice: STRIKE_PRICE,
-            coenPriceFloor: COEN_PRICE_FLOOR,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            minIntexBidRate: 60e6,
+            entryPriceMinor: STRIKE_PRICE,
+            floorPriceMinor: FLOOR_PRICE_MINOR,
+            callPriceMinor: STRIKE_PRICE,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
         vm.prank(address(bnbMessenger));
@@ -220,7 +220,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
     }
 
     function _deliver(bytes memory packet) internal {

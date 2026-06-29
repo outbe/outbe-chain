@@ -7,12 +7,12 @@
 //! reads in production.
 //!
 //! - `missing_direct_parent_proof_does_not_wait_for_future_finalization` —
-//! (the V1 polling waiter is gone; selector returns synchronously).
+//!   (the V1 polling waiter is gone; selector returns synchronously).
 
 use alloy_primitives::B256;
 use outbe_consensus::finalization::{
     parent_cert_store::{
-        CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore,
+        CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore, ProofKind,
     },
     selection::ParentProofSelector,
 };
@@ -24,9 +24,14 @@ fn record(
     hash: B256,
     proof_type: ParentParticipationProof,
 ) -> CertifiedParentProofRecord {
+    let kind = match proof_type {
+        ParentParticipationProof::Finalization => ProofKind::Finalization {
+            finalized_block_number: block_number,
+        },
+        ParentParticipationProof::CertifiedNotarization => ProofKind::CertifiedNotarization,
+    };
     CertifiedParentProofRecord {
-        proof_type,
-        finalized_block_number: block_number,
+        kind,
         finalized_block_hash: hash,
         stored_at_height: block_number,
         ..CertifiedParentProofRecord::default()
@@ -110,16 +115,29 @@ fn certified_notarized_parent_does_not_block_proposal() {
     let selector = ParentProofSelector::new(store);
 
     let start = Instant::now();
+    // The non-wait selector treats a certified-notarization record as
+    // witness-only: it returns `None` synchronously (no polling, no
+    // future-finalization wait), so a CN parent cannot deadlock the proposer.
     let result = selector.select_direct_parent_proof(0, 0, 42, hash);
     let elapsed = start.elapsed();
 
-    assert!(result.is_some(), "certified-notarization must be returned");
-    let record = result.unwrap();
+    assert!(
+        result.is_none(),
+        "certified-notarization is witness-only on the non-wait path"
+    );
+    // The CN witness remains in the store and, once promoted by the selector,
+    // projects to V2 metadata at the known parent block number.
+    let key =
+        outbe_consensus::finalization::parent_cert_store::CertifiedParentProofKey::new(0, 0, hash);
+    let witness = selector
+        .parent_cert_store()
+        .get_certified_notarization(key)
+        .expect("CN witness must remain in the store");
     assert_eq!(
-        record.proof_type,
+        witness.proof_kind(),
         ParentParticipationProof::CertifiedNotarization
     );
-    let metadata = record.to_v2_metadata();
+    let metadata = witness.to_v2_metadata(42);
     assert_eq!(metadata.finalized_block_number, 42);
     assert_eq!(metadata.finalized_block_hash, hash);
     // budget: synchronous lookup completes in microseconds, not the
@@ -149,7 +167,7 @@ fn finalized_parent_uses_finalization_proof_when_available() {
     let selector = ParentProofSelector::new(store);
 
     let result = selector.select_direct_parent_proof(0, 0, 7, hash).unwrap();
-    assert_eq!(result.proof_type, ParentParticipationProof::Finalization);
+    assert_eq!(result.proof_kind(), ParentParticipationProof::Finalization);
 }
 
 #[test]

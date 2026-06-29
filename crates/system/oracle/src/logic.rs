@@ -1,9 +1,13 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
+use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::HashSet;
 
 use crate::contract::{OracleContract, SCALE_1E18};
+use crate::precompile::IOracle;
 
 /// `(exists, pair_ids, rates, volumes)` — pending aggregate vote for a validator.
 type AggregateVote = (bool, Vec<u32>, Vec<U256>, Vec<U256>);
@@ -424,6 +428,14 @@ pub fn export_genesis(
 /// Maximum number of snapshots to retain (approximately 1 year at 2-block vote
 /// period with 12-second blocks: ~1.3M snapshots).
 const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
+
+/// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
+/// single block. Normal operation finalizes exactly one day per UTC-midnight
+/// rollover; this cap only bounds catch-up after a long gap (cold start or
+/// extended downtime). Days older than the cap stay unfinalized — their source
+/// aggregates are evicted past `MAX_SNAPSHOT_RETENTION_SECONDS` anyway, so they
+/// could not be recomputed regardless.
+pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
 fn import_aggregate_votes(
     oracle: &mut OracleContract,
@@ -1547,8 +1559,88 @@ impl OracleContract<'_> {
         Ok(None)
     }
 
+    /// Computes and persists the VWAP of every active vote-target pair for the
+    /// fully-closed UTC calendar day `utc_day` (yyyymmdd UTC — *not* a
+    /// WorldwideDay, which is UTC+14). The window is the canonical
+    /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
+    ///
+    /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`);
+    /// if no pair has data, nothing is written, so the day keeps
+    /// `pair_count == 0`. Emits one `VwapCalculated` event per written pair in
+    /// ascending `pair_id` order. The method overwrites unconditionally — the
+    /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
+    /// watermark.
+    pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
+        let day_start = date_key_to_utc_timestamp(utc_day);
+        let day_end = day_start.saturating_add(SECONDS_PER_DAY);
+
+        let (pair_ids, vwaps) = match self.calculate_vwaps(day_start, day_end) {
+            Ok((pair_ids, vwaps, _)) => (pair_ids, vwaps),
+            // No vote-target pair had data for the day — leave it unwritten so
+            // `pair_count == 0` reads as finalized-empty against the watermark.
+            Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => return Ok(()),
+            Err(e) => return Err(e),
+        };
+
+        // `pair_ids.len()` is bounded by the registry's u32 `pair_count`, so the
+        // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
+        let count = u32::try_from(pair_ids.len()).unwrap_or(u32::MAX);
+        self.utc_day_vwap_pair_count.write(&utc_day, count)?;
+        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
+        for i in 0..count {
+            let pair_id = pair_ids[i as usize];
+            let vwap = vwaps[i as usize];
+            pair_id_map.write(&i, pair_id)?;
+            value_map.write(&i, vwap)?;
+            let event = IOracle::VwapCalculated {
+                utcDay: utc_day,
+                pairId: pair_id,
+                vwap,
+            };
+            let _ = self
+                .storage
+                .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+        }
+
+        Ok(())
+    }
+
+    /// Returns the finalized per-UTC-day VWAP for `pair_id` on `utc_day`
+    /// (yyyymmdd UTC), or `None` if the day is not finalized or had no data for
+    /// that pair. To distinguish "not finalized yet" from "finalized, no data",
+    /// compare `utc_day` against `utc_day_vwap_last_finalized`.
+    pub fn get_utc_day_vwap_for_pair_id(&self, utc_day: u32, pair_id: u32) -> Result<Option<U256>> {
+        let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
+        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
+        for idx in 0..pair_count {
+            if pair_id_map.read(&idx)? == pair_id {
+                return Ok(Some(value_map.read(&idx)?));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Returns the full finalized VWAP set for `utc_day` as
+    /// `(pair_ids, vwaps)`. Both vectors are empty when the day is unfinalized
+    /// or had no data.
+    pub fn get_utc_day_vwap_snapshot(&self, utc_day: u32) -> Result<(Vec<u32>, Vec<U256>)> {
+        let pair_count = self.utc_day_vwap_pair_count.read(&utc_day)?;
+        let pair_id_map = self.utc_day_vwap_pair_id.get_nested(&utc_day);
+        let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
+        let mut pair_ids = Vec::with_capacity(pair_count as usize);
+        let mut vwaps = Vec::with_capacity(pair_count as usize);
+        for idx in 0..pair_count {
+            pair_ids.push(pair_id_map.read(&idx)?);
+            vwaps.push(value_map.read(&idx)?);
+        }
+        Ok((pair_ids, vwaps))
+    }
+
     /// Returns all registered pairs as parallel arrays of
     /// (pair_ids, bases, quotes, is_active).
+    #[allow(clippy::type_complexity)] // parallel-array view getter; the tuple IS the ABI shape
     pub fn get_pairs(&self) -> Result<(Vec<u32>, Vec<String>, Vec<String>, Vec<bool>)> {
         let count = self.pair_count.read()?;
         let mut pair_ids = Vec::with_capacity(count as usize);

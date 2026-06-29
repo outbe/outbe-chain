@@ -12,11 +12,11 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
-use crate::constants::{MATURITY_PERIOD_SECONDS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
-use crate::sol_ext::{IOriginMessenger, MessagingFee};
+use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee};
 
 pub struct IntexLifecycle;
 
@@ -44,6 +44,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let now = ctx.block.timestamp;
     let r_bin = IntexFactoryContract::price_to_bin(rate)?;
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
+    let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
 
     let mut promoted: u32 = 0;
     let mut cursor: u32 = 0;
@@ -64,7 +65,14 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
             );
         }
         for series_id in series {
-            if try_qualify(&ctx.storage, &mut factory, series_id, now, rate)? {
+            if try_qualify(
+                &ctx.storage,
+                &mut factory,
+                series_id,
+                maturity_secs,
+                now,
+                rate,
+            )? {
                 promoted = promoted.saturating_add(1);
             }
         }
@@ -82,24 +90,29 @@ pub(crate) fn try_qualify(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     series_id: u32,
+    maturity_secs: u64,
     now: u64,
     rate: U256,
 ) -> Result<bool> {
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
+        return Ok(false);
+    }
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(false);
     }
-    let mature_at = u64::from(series.issued_at).saturating_add(MATURITY_PERIOD_SECONDS);
+    let mature_at = u64::from(series.issued_at).saturating_add(maturity_secs);
     if now <= mature_at {
         return Ok(false);
     }
-    let floor = series.coen_price_floor;
+    let floor = series.floor_price_minor;
     if rate <= floor {
         return Ok(false);
     }
-    outbe_intexregistry::api::mark_qualified(storage, series_id)?;
+    outbe_intex::api::mark_qualified(storage, series_id)?;
+    mark_nft_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
-    factory.insert_qualified(series_id, series.coen_price_call_trigger)?;
+    factory.insert_qualified(series_id, series.call_price_minor)?;
 
     // Notify the target chain of the Qualified transition via LayerZero; best-effort.
     // OriginMessenger failure (e.g. exhausted relay float) does not revert the
@@ -126,10 +139,8 @@ fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()
         .abi_encode()
         .into(),
     )?;
-    let fee =
-        IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret).map_err(
-            |_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()),
-        )?;
+    let fee = IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret)
+        .map_err(|_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
@@ -141,6 +152,19 @@ fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()
                 lzTokenFee: fee.lzTokenFee,
             },
             refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    Ok(())
+}
+
+fn mark_nft_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::markQualifiedCall {
+            seriesId: series_id,
         }
         .abi_encode()
         .into(),

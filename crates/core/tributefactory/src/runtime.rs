@@ -32,7 +32,7 @@ impl TributeFactoryContract<'_> {
         // every validator).
         let metadosis = MetadosisContract::new(self.storage.clone());
         let offering_day = *metadosis
-            .get_active_wwds_by_status(status::OFFERING)?
+            .get_active_wwd_by_status(status::OFFERING)?
             .first()
             .ok_or_else(|| PrecompileError::Revert("no worldwide day is OFFERING".to_string()))?;
         let tribute_price =
@@ -176,29 +176,10 @@ fn resolve_tribute_price(
     let vwap = oracle
         .get_worldwide_day_vwap_for_pair_id(worldwide_day, pair_id)?
         .unwrap_or(U256::ZERO);
-    let scurve_timestamp = worldwide_day_to_utc_timestamp(worldwide_day);
+    let scurve_timestamp = worldwide_day.to_timestamp_utc();
     let max_scurve = scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)?;
 
     Ok(vwap.max(max_scurve))
-}
-
-fn worldwide_day_to_utc_timestamp(worldwide_day: WorldwideDay) -> u64 {
-    let worldwide_day: u32 = worldwide_day.into();
-    let year = (worldwide_day / 10_000) as i64;
-    let month = ((worldwide_day / 100) % 100) as i64;
-    let day = (worldwide_day % 100) as i64;
-    let days = days_from_civil(year, month, day);
-    (days as u64) * 24 * 3600
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - if month <= 2 { 1 } else { 0 };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let mp = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
 }
 
 pub(crate) fn validate_agent_reward_addresses(

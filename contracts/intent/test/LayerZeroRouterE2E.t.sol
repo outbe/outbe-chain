@@ -10,8 +10,6 @@ import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
 import {Auction} from "../src/Auction.sol";
 import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
-import {IAuction} from "../src/interfaces/IAuction.sol";
-import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
 import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {RouterMessage} from "../src/libs/RouterMessage.sol";
@@ -31,7 +29,7 @@ event Refunded(bytes32 orderId, address receiver);
  * @notice Test wrapper with fixed local domain
  */
 contract LayerZeroRouterWithDomain is LayerZeroRouter {
-    uint32 private immutable _fixedLocalDomain;
+    uint32 private immutable _FIXED_LOCAL_DOMAIN;
 
     constructor(
         address _lzEndpoint,
@@ -42,11 +40,11 @@ contract LayerZeroRouterWithDomain is LayerZeroRouter {
         address _escrow,
         address _auction
     ) LayerZeroRouter(_lzEndpoint, _owner, _compact, _lockTag, _escrow, _auction) {
-        _fixedLocalDomain = fixedDomain;
+        _FIXED_LOCAL_DOMAIN = fixedDomain;
     }
 
     function _localDomain() internal view override returns (uint32) {
-        return _fixedLocalDomain;
+        return _FIXED_LOCAL_DOMAIN;
     }
 }
 

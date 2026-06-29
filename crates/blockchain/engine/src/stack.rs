@@ -71,7 +71,8 @@ use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
     application::{
         actor::OutbeApplication,
-        handler::{ApplicationEpochFence, ApplicationHandler},
+        handler::{ApplicationDeps, ApplicationHandler},
+        ApplicationEpochFence,
     },
     bls,
     committee_provider::CommitteeProvider,
@@ -81,12 +82,13 @@ use outbe_consensus::{
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
     executor::actor::ExecutorActor,
     finalization::{
-        actor::{BlockCacheHandle, FinalizationActor, FinalizationActorDeps},
+        actor::{FinalizationActor, FinalizationActorDeps},
+        block_cache::BlockCache,
         state::new_finalization_view,
     },
     hybrid::{
-        HybridElectorConfigProvider, HybridRandom, HybridScheme, HybridSchemeProvider,
-        VrfMaterialProvider,
+        election::{HybridElectorConfigProvider, HybridRandom},
+        HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
     },
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
@@ -364,6 +366,49 @@ fn validate_recovered_vrf_material(
 fn vrf_group_public_key_hash(polynomial: &Sharing<MinSig>) -> B256 {
     let group_pk_bytes = commonware_codec::Encode::encode(polynomial.public());
     alloy_primitives::keccak256(&group_pk_bytes)
+}
+
+/// Resolve the consensus participant set for restart/live-join recovery.
+///
+/// When the node recovers a finalized DKG boundary, the threshold material it
+/// restores (`signing_share`, `polynomial`, `last_dkg_output`) belongs to the
+/// committee the recovered ceremony ran for — recorded as the DKG output's
+/// `players()`. The latest on-chain consensus set may have DRIFTED from that
+/// committee (a join/exit/jail/slash after the recovered boundary activated but
+/// before the next reshare), so the scheme must NOT be reconstructed against the
+/// latest set: committee-dependent data (votes, VRF threshold partials) must be
+/// decoded against the committee it was encoded for.
+///
+/// The recovered output's `players()` is already a sorted, deduplicated
+/// `commonware_utils::ordered::Set`, so participant indices derive from it
+/// canonically regardless of how the set was assembled — only the *membership*
+/// matters, and the members ARE the share holders. In the common no-churn restart
+/// this set is identical to the latest committed set, so recovery is unchanged;
+/// it diverges only across a churn window, which is exactly the bug this closes.
+///
+/// **Drift guard.** The recovered boundary records the committee the ceremony ran
+/// for in `reshare.new_active_set` (built 1:1 from the same `players()` list at
+/// proposal time). A size mismatch between the recovered output's players and
+/// that record means the restored consensus material does not correspond to the
+/// recovered chain boundary (e.g. a stale or partial consensus-archive restore),
+/// so recovery fails fast with an explicit drift error rather than reconstruct
+/// the scheme against the wrong committee.
+fn select_recovery_participants(
+    recovered_output_players: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
+    let recorded = boundary.reshare.new_active_set.len();
+    let recovered = recovered_output_players.len();
+    ensure!(
+        recovered > 0 && recovered == recorded,
+        "validator set has drifted from saved DKG: recovered DKG output has {recovered} \
+         player(s) but the recovered boundary (epoch {}, activation height {}) recorded an \
+         active set of {recorded} validator(s) — the restored consensus material does not \
+         match the chain's recovered DKG boundary",
+        boundary.epoch,
+        boundary.planned_activation_height,
+    );
+    Ok(recovered_output_players.clone())
 }
 
 fn recover_latest_boundary_artifact(
@@ -713,8 +758,6 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
     status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
     status.next_planned_activation_height = snapshot.next_planned_activation_height;
     status.vrf_expiry_height = snapshot.vrf_expiry_height;
-    status.is_active = snapshot.randomness_status.is_consensus_active();
-    status.has_threshold_shares = snapshot.randomness_status.has_threshold_shares();
     info!(
         randomness_status = ?snapshot.randomness_status,
         vrf_material_version = snapshot.vrf_material_version,
@@ -1233,6 +1276,82 @@ fn ordered_validator_addresses(
     Ok(ordered)
 }
 
+fn active_set_hash_from_addresses(addresses: &[EthAddress]) -> B256 {
+    let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
+    bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
+    for address in addresses {
+        bytes.extend_from_slice(address.as_slice());
+    }
+    alloy_primitives::keccak256(bytes)
+}
+
+/// Recover the participant-index-aligned EVM address vector from a finalized DKG
+/// boundary instead of provider-latest validator state.
+///
+/// This is the recovery/live-join counterpart of [`ordered_validator_addresses`].
+/// `build_boundary_artifact` constructs `reshare.new_active_set` by iterating
+/// `output.players()` in Commonware participant order, so the boundary itself is
+/// the canonical source of the old epoch's address mapping. That matters on
+/// restart when Reth head may have executed an unfinalized membership-changing
+/// `BoundaryOutcome` while marshal-finalized consensus still needs the old
+/// committee.
+fn ordered_addresses_from_recovered_boundary(
+    participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    boundary: &DkgBoundaryArtifact,
+) -> Result<Vec<EthAddress>> {
+    let boundary_output = decode_boundary_output(boundary)
+        .wrap_err("failed to decode recovered DKG boundary output for address mapping")?;
+    ensure!(
+        boundary_output.players() == participants,
+        "recovered DKG boundary output players do not match active participant set"
+    );
+
+    let ordered_addresses = boundary.reshare.new_active_set.clone();
+    ensure!(
+        ordered_addresses.len() == participants.len(),
+        "recovered DKG boundary active-set length {} does not match participant count {}",
+        ordered_addresses.len(),
+        participants.len(),
+    );
+    ensure!(
+        active_set_hash_from_addresses(&ordered_addresses) == boundary.reshare.active_set_hash,
+        "recovered DKG boundary active-set hash does not match active-set addresses"
+    );
+    ensure!(
+        alloy_primitives::keccak256(boundary.vrf_group_public_key_bytes.as_ref())
+            == boundary.vrf_group_public_key,
+        "recovered DKG boundary VRF group public key bytes do not match hash"
+    );
+
+    let mut committee = Vec::with_capacity(participants.len());
+    for (address, bls_pk) in ordered_addresses.iter().zip(participants.iter()) {
+        let encoded = commonware_codec::Encode::encode(bls_pk).to_vec();
+        let consensus_pubkey: [u8; 48] = encoded.as_slice().try_into().map_err(|_| {
+            eyre::eyre!(
+                "encoded MinPk consensus pubkey has unexpected length: expected 48, got {}",
+                encoded.len()
+            )
+        })?;
+        committee.push(outbe_consensus::proof::CommitteeEntry {
+            address: *address,
+            consensus_pubkey,
+        });
+    }
+    let snapshot = outbe_consensus::proof::CommitteeSnapshot {
+        committee,
+        vrf_material_version: boundary.vrf_material_version,
+        vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
+        vrf_public_polynomial_hash: dkg_manager::public_polynomial_hash(boundary_output.public()),
+    };
+    ensure!(
+        outbe_consensus::proof::committee_set_hash_v2(boundary.epoch, &snapshot)
+            == boundary.committee_set_hash,
+        "recovered DKG boundary committee_set_hash does not match boundary committee/address mapping"
+    );
+
+    Ok(ordered_addresses)
+}
+
 /// Load the validator EVM signer and the committee address set for the one-time
 /// TEE bootstrap coordination.
 fn tee_bootstrap_setup(
@@ -1259,10 +1378,11 @@ fn epoch_validation_inputs(
     epoch: Epoch,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
+    recovered_boundary: Option<&DkgBoundaryArtifact>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
 ) -> Result<(HybridScheme<MinSig>, Vec<alloy_primitives::Address>)> {
     let verifier_scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
-        config::NAMESPACE,
+        &config::outbe_app_namespace(),
         participants.clone(),
         vrf_materials.clone(),
     )
@@ -1271,7 +1391,13 @@ fn epoch_validation_inputs(
     })?;
     // Simplex participant indices follow ordered::Set pubkey ordering, not the
     // original validator_set order; certificate signer bitmaps use this order.
-    let ordered_addresses = ordered_validator_addresses(participants, validator_set)?;
+    // On restart/live-join with a recovered DKG boundary, provider-latest state
+    // may include an unfinalized membership-changing head. Use the boundary's
+    // own participant-index-aligned address vector for that recovered epoch.
+    let ordered_addresses = match recovered_boundary {
+        Some(boundary) => ordered_addresses_from_recovered_boundary(participants, boundary)?,
+        None => ordered_validator_addresses(participants, validator_set)?,
+    };
     Ok((verifier_scheme, ordered_addresses))
 }
 
@@ -1279,12 +1405,18 @@ fn register_epoch_validation_providers(
     epoch: Epoch,
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
+    recovered_boundary: Option<&DkgBoundaryArtifact>,
     vrf_materials: &VrfMaterialProvider<MinSig>,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
 ) -> Result<()> {
-    let (verifier_scheme, ordered_addresses) =
-        epoch_validation_inputs(epoch, participants, validator_set, vrf_materials)?;
+    let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
+        epoch,
+        participants,
+        validator_set,
+        recovered_boundary,
+        vrf_materials,
+    )?;
     let _ = certificate_scheme_provider.register(epoch, verifier_scheme);
     let _ = committee_provider.register(epoch, ordered_addresses);
     Ok(())
@@ -1295,6 +1427,10 @@ fn validate_validator_evm_signer(
     signing_key: &bls12381::PrivateKey,
     consensus_validator_set: &validators::ValidatorSet,
     active_validator_set: &validators::ValidatorSet,
+    recovered_committee: Option<(
+        &commonware_utils::ordered::Set<bls12381::PublicKey>,
+        &DkgBoundaryArtifact,
+    )>,
     verifier_join: bool,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
@@ -1308,6 +1444,49 @@ fn validate_validator_evm_signer(
             )
         })?;
     let signer_address = signer.address();
+
+    if let Some((participants, boundary)) = recovered_committee {
+        let ordered_addresses =
+            ordered_addresses_from_recovered_boundary(participants, boundary)
+                .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
+        let local_public_key = signing_key.public_key();
+        let Some(participant_index) = participants.position(&local_public_key) else {
+            if verifier_join {
+                info!(
+                    %signer_address,
+                    epoch = boundary.epoch,
+                    "verifier-join: local BLS key is not in the recovered DKG boundary committee; \
+                     the node syncs as a verifier"
+                );
+                return Ok(None);
+            }
+            eyre::bail!(
+                "local BLS key is not in recovered DKG boundary committee for epoch {}; \
+                 refusing latest-state EVM signer authorization",
+                boundary.epoch
+            );
+        };
+        let expected_address = ordered_addresses.get(participant_index).ok_or_else(|| {
+            eyre::eyre!(
+                "recovered DKG boundary address mapping missing participant index {}",
+                participant_index
+            )
+        })?;
+        ensure!(
+            *expected_address == signer_address,
+            "validator EVM key address {} does not match recovered DKG boundary address {} \
+             for local BLS consensus key",
+            signer_address,
+            expected_address
+        );
+        info!(
+            address = %signer_address,
+            epoch = boundary.epoch,
+            "validated validator EVM signer against recovered DKG boundary"
+        );
+        return Ok(Some(signer_address));
+    }
+
     let authorized = consensus_validator_set
         .addresses
         .iter()
@@ -1432,24 +1611,9 @@ where
         count = validator_set.public_keys.len(),
         "loaded validator set"
     );
-    let active_validator_set = validators::read_validators_at_latest(&node.provider)
-        .wrap_err("failed to load active validator set for EVM signer validation")?;
-    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
-    // --consensus.signing-share. The node may not yet be in the on-chain validator set
-    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
-    let verifier_join = args.signing_share.is_none()
-        && args.public_polynomial.is_some()
-        && args.dkg_output.is_some();
-    let proposer_evm_address = validate_validator_evm_signer(
-        &args,
-        &signing_key,
-        &validator_set,
-        &active_validator_set,
-        verifier_join,
-    )?;
 
     // ── 3. Set up P2P network ───────────────────────────────────────────
-    let p2p_namespace = commonware_utils::union_unique(config::NAMESPACE, b"_P2P");
+    let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
@@ -1944,12 +2108,45 @@ where
         };
 
     // ── 7. Build participant set (updated after each DKG reshare) ───────
-    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
-        .public_keys
-        .clone()
-        .into_iter()
-        .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
+    // when recovering a finalized DKG boundary, reconstruct the scheme
+    // against the committee the recovered threshold material belongs to (the DKG
+    // output's players), NOT the latest on-chain set, which may have drifted
+    // across a churn window. `select_recovery_participants` also fails fast if the
+    // restored material does not match the recovered boundary. On a fresh chain or
+    // when no boundary/output is recovered, fall back to the latest committed set
+    // (the genesis committee on first start).
+    let mut participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        match (recovered_boundary.as_ref(), last_dkg_output.as_ref()) {
+            (Some((_, boundary)), Some(output)) => {
+                select_recovery_participants(output.players(), boundary)?
+            }
+            _ => validator_set
+                .public_keys
+                .clone()
+                .into_iter()
+                .try_collect()
+                .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
+        };
+
+    let active_validator_set = validators::read_validators_at_latest(&node.provider)
+        .wrap_err("failed to load active validator set for EVM signer validation")?;
+    // Verifier-join: --consensus.public-polynomial + --consensus.dkg-output without a
+    // --consensus.signing-share. The node may not yet be in the on-chain validator set
+    // (it is syncing from genesis), so membership is not fatal — it runs as a verifier.
+    let verifier_join = args.signing_share.is_none()
+        && args.public_polynomial.is_some()
+        && args.dkg_output.is_some();
+    let recovered_committee_for_signer = recovered_boundary
+        .as_ref()
+        .map(|(_, boundary)| (&participants, boundary));
+    let proposer_evm_address = validate_validator_evm_signer(
+        &args,
+        &signing_key,
+        &validator_set,
+        &active_validator_set,
+        recovered_committee_for_signer,
+        verifier_join,
+    )?;
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
     // On a fresh chain (no executed blocks yet), if this validator runs a TEE
@@ -1993,27 +2190,33 @@ where
             // block-1 payload), under one deadline. Any error or timeout halts.
             // The deadline is measured on the consensus runtime `Clock` (the same
             // time source the deterministic test runtime can mock and advance), not
-            // tokio's wall-clock — keeping startup-timeout behavior reproducible and
-            // removing a direct `tokio::time` dependency from the consensus stack.
+            // wall-clock — keeping startup-timeout behavior reproducible and free of a
+            // direct async-runtime timer dependency in the consensus stack.
             // `Clock::timeout` requires a `Send + 'static` future; the `async move`
             // owns every capture, so the bound holds.
+            // Owned `Clock` clone moved into the `'static` startup future so the TEE
+            // DKG identity-exchange cadence runs on the consensus runtime clock, not
+            // tokio's wall-clock (mockable under the deterministic test runtime).
+            let dkg_clock = ctx.child("tee_dkg_clock");
             let payload = ctx
                 .timeout(deadline, async move {
                     // Host connect policy from the genesis teePolicy: strict
                     // under gramine-sgx, unattested-fallback on the dev box.
                     let connect_policy =
                         crate::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-                    let tribute_offer_public = crate::tee_bootstrap::run_tee_dkg_at_startup(
-                        &socket,
-                        n,
-                        dkg_chain_id,
-                        0,
-                        &connect_policy,
-                        dkg_sender,
-                        dkg_receiver,
-                    )
-                    .await
-                    .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
+                    let (tribute_offer_public, tribute_offer_group_public_key) =
+                        crate::tee_bootstrap::run_tee_dkg_at_startup(
+                            &socket,
+                            &dkg_clock,
+                            n,
+                            dkg_chain_id,
+                            0,
+                            &connect_policy,
+                            dkg_sender,
+                            dkg_receiver,
+                        )
+                        .await
+                        .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
                     info!(
                         tribute_offer_public = %B256::from(tribute_offer_public),
                         "TEE DKG complete — shared tribute offer key derived"
@@ -2023,6 +2226,7 @@ where
                         my_validator,
                         committee,
                         B256::from(tribute_offer_public),
+                        tribute_offer_group_public_key,
                         tee_policy,
                         &evm_signer,
                         tee_sender,
@@ -2083,9 +2287,11 @@ where
                     // hardcoded 0 (future-proofs the handoff for offer-key rotation).
                     let tribute_offer_epoch =
                         validators::read_tee_offer_epoch_at_latest(&node.provider).unwrap_or(0);
+                    let handoff_clock = ctx.child("tee_handoff_clock");
                     ctx.timeout(deadline, async move {
                         crate::tee_bootstrap::run_tee_handoff_join(
                             &socket_join,
+                            handoff_clock,
                             on_chain_offer,
                             chain_id,
                             tribute_offer_epoch,
@@ -2297,10 +2503,7 @@ where
         if let (Some(output), Some(boundary)) = (&last_dkg_output, recovered_boundary_artifact) {
             let canonical_output = decode_boundary_output(boundary)
                 .wrap_err("failed to decode recovered DKG boundary output")?;
-            ensure!(
-                output == &canonical_output,
-                "saved DKG output does not match recovered canonical DKG boundary output"
-            );
+            dkg_manager::assert_canonical_output(output, &canonical_output, "restart recovery")?;
         }
     } else if let Some(boundary) = recovered_boundary_artifact {
         // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
@@ -2559,6 +2762,7 @@ where
         marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
 
     let recovered_finalized_round = match recover_application_finalized_round(
+        ctx,
         &marshal_mailbox,
         last_execution_height,
     )
@@ -2598,7 +2802,7 @@ where
             // produces, so no new seeding semantics or reth unwind is involved.
             let finalized_tip = last_consensus_finalized.get();
             if unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip)
-                && recover_application_finalized_round(&marshal_mailbox, finalized_tip)
+                && recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip)
                     .await
                     .is_ok()
             {
@@ -2633,8 +2837,7 @@ where
         last_execution_height,
         recovered_finalized_round,
     );
-    let finalization_block_cache: BlockCacheHandle =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let finalization_block_cache = BlockCache::new();
 
     // Construct the consensus-owned exact-parent certificate handoff store
     // before either the application handler (consumer-side waiter) or the
@@ -2656,6 +2859,21 @@ where
             )
         })?;
 
+    // Defensive startup hygiene: a crash between persisting a finalization parent
+    // record and advancing the finalization view can leave an ahead-of-view
+    // record on disk. Drop any finalization record above the recovered finalized
+    // height so the store never retains a height the view has not reached.
+    let pruned_ahead = finalized_parent_cert_store
+        .prune_above_height(last_execution_height)
+        .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
+    if pruned_ahead > 0 {
+        tracing::info!(
+            pruned_ahead,
+            recovered_finalized_height = last_execution_height,
+            "dropped ahead-of-recovered-view finalization parent records at startup"
+        );
+    }
+
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;
@@ -2670,35 +2888,34 @@ where
     );
 
     // Create application handler with marshal mailbox and shared finalization state.
-    let application_handler = ApplicationHandler::new(
-        application_rx,
-        engine_handle,
+    let application_handler = ApplicationHandler::new(ApplicationDeps {
+        rx: application_rx,
+        engine: engine_handle,
         payload_builder,
         executor_mailbox,
         genesis_hash,
-        validator_set.clone(),
-        node.chain_spec().chain().id(),
-        broadcast_mailbox,
-        marshal_mailbox.clone(),
-        certificate_scheme_provider.clone(),
-        elector_config_provider.clone(),
-        committee_provider.clone(),
-        dkg_manager.clone(),
-        vrf_safety.clone(),
-        application_epoch_fence.clone(),
-        ancestry_readiness.clone(),
-        finalization_view.clone(),
-        finalization_block_cache.clone(),
-        outbe_consensus::finalization::selection::ParentProofSelector::new(
+        validators: validator_set.clone(),
+        chain_id: node.chain_spec().chain().id(),
+        marshal_mailbox: marshal_mailbox.clone(),
+        certificate_scheme_provider: certificate_scheme_provider.clone(),
+        elector_config_provider: elector_config_provider.clone(),
+        committee_provider: committee_provider.clone(),
+        dkg_manager: dkg_manager.clone(),
+        vrf_safety: vrf_safety.clone(),
+        epoch_fence: application_epoch_fence.clone(),
+        ancestry_readiness: ancestry_readiness.clone(),
+        finalization_view: finalization_view.clone(),
+        block_cache: finalization_block_cache.clone(),
+        finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
         ),
-        std::time::Duration::from_millis(args.payload_resolve_time_ms),
-        std::time::Duration::from_millis(args.payload_return_time_ms),
-        bt.min_block_time,
+        payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
+        payload_return_time: std::time::Duration::from_millis(args.payload_return_time_ms),
+        min_block_time: bt.min_block_time,
         proposer_evm_address,
-        args.trust_el_head,
-        late_sig_store.clone(),
-    );
+        trust_el_head: args.trust_el_head,
+        late_sig_store: late_sig_store.clone(),
+    });
 
     info!(
         last_execution_height,
@@ -2732,6 +2949,25 @@ where
     let mut finalization_handle = ctx
         .child("finalization")
         .spawn(move |ctx| finalization_actor.run(ctx));
+
+    // persistent off-thread finalize-vote verifier. Each per-epoch
+    // OutbeReporter enqueues raw finalize votes here instead of verifying
+    // O(committee) BLS pairings inline on the Simplex voter task; the actor
+    // resolves each vote's committee scheme by epoch through the shared
+    // `certificate_scheme_provider` and admits only verified votes to
+    // `late_sig_store`.
+    let (finalize_verify_actor, finalize_verify_mailbox) =
+        outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
+            certificate_scheme_provider.clone(),
+            late_sig_store.clone(),
+        );
+    // Best-effort actor: its exit is non-fatal (consensus continues; only late
+    // credits stop), so it is held for the engine's lifetime but not polled in
+    // the fatal-exit select below. The named `_`-binding keeps the task alive
+    // (a bare `_` would drop and abort it immediately).
+    let _finalize_verify_handle = ctx
+        .child("finalize_verify")
+        .spawn(move |_ctx| finalize_verify_actor.run());
 
     let mut executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
@@ -2816,7 +3052,7 @@ where
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
         let scheme = if signing_share.is_some() {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 signing_key.clone(),
                 vrf_materials.clone(),
@@ -2837,7 +3073,7 @@ where
                 "no threshold share for this epoch — running consensus engine in VERIFIER mode"
             );
             HybridScheme::<MinSig>::verifier_with_vrf_provider(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 vrf_materials.clone(),
             )
@@ -2852,8 +3088,15 @@ where
         };
 
         // ── c. Create reporter for this epoch ───────────────────────────
-        let (verifier_scheme, ordered_addresses) =
-            epoch_validation_inputs(current_epoch, &participants, &validator_set, &vrf_materials)?;
+        let recovered_boundary_for_epoch =
+            recovered_boundary_artifact.filter(|artifact| artifact.epoch == current_epoch.get());
+        let (verifier_scheme, ordered_addresses) = epoch_validation_inputs(
+            current_epoch,
+            &participants,
+            &validator_set,
+            recovered_boundary_for_epoch,
+            &vrf_materials,
+        )?;
 
         let elector_config =
             epoch_elector_config(current_epoch, &reporter_continuity, vrf_materials.clone())?;
@@ -2871,8 +3114,8 @@ where
             verifier_scheme,
             reporter_elector,
             current_epoch,
-            finalized_parent_cert_store.clone(),
-            late_sig_store.clone(),
+            std::sync::Arc::new(finalized_parent_cert_store.clone()),
+            finalize_verify_mailbox.clone(),
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter
@@ -2910,12 +3153,10 @@ where
         let floor_digest = if current_epoch.get() == 0 {
             Digest(genesis_hash)
         } else {
-            let deadline = std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+            let deadline = ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
             loop {
                 let (height, hash, round_ready) = {
-                    let view = finalization_view.read().map_err(|_| {
-                        eyre::eyre!("FinalizationView lock poisoned before epoch restart")
-                    })?;
+                    let view = finalization_view.read();
                     (
                         view.last_finalized_number,
                         view.forkchoice.finalized_block_hash,
@@ -2925,7 +3166,7 @@ where
                 if height > 0 && hash != alloy_primitives::B256::ZERO && round_ready {
                     break Digest(hash);
                 }
-                if std::time::Instant::now() >= deadline {
+                if ctx.current() >= deadline {
                     return Err(eyre::eyre!(
                         "epoch={} restart without finalized anchor after {:?}; \
                          handle_genesis would return ZERO, or Phase 1 would lack \
@@ -2934,7 +3175,7 @@ where
                         EPOCH_RESTART_ANCHOR_TIMEOUT,
                     ));
                 }
-                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
             }
         };
 
@@ -3547,14 +3788,10 @@ where
                             // path: the restarted engine's floor needs the activation block
                             // finalized before `'epoch_loop` rebuilds the scheme.
                             let deadline =
-                                std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
-                                    let view = finalization_view.read().map_err(|_| {
-                                        eyre::eyre!(
-                                            "FinalizationView lock poisoned during verifier DKG activation wait"
-                                        )
-                                    })?;
+                                    let view = finalization_view.read();
                                     (
                                         view.last_finalized_number,
                                         view.forkchoice.finalized_block_hash,
@@ -3567,7 +3804,7 @@ where
                                 {
                                     break;
                                 }
-                                if std::time::Instant::now() >= deadline {
+                                if ctx.current() >= deadline {
                                     return Err(eyre::eyre!(
                                         "verifier DKG activation race after {:?}: \
                                          finalized=(height={}, hash={}, round_ready={}) \
@@ -3579,7 +3816,7 @@ where
                                         activation_height
                                     ));
                                 }
-                                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                             }
                             // Queue adoption of the just-activated boundary's DKG
                             // material. It CANNOT be read here: the activated cycle's
@@ -3635,19 +3872,14 @@ where
                                 };
                             let target = pending.target;
                             let dkg_complete = pending.complete;
-                            if dkg_complete.output != canonical_output {
-                                let local_output_hash =
-                                    dkg_manager::dkg_output_hash(&dkg_complete.output);
-                                let canonical_output_hash =
-                                    dkg_manager::dkg_output_hash(&canonical_output);
+                            if let Err(error) = dkg_manager::assert_canonical_output(
+                                &dkg_complete.output,
+                                &canonical_output,
+                                &format!("cycle {}", target.dkg_cycle),
+                            ) {
                                 vrf_safety.mark_expired(activation_height);
                                 publish_randomness_status(&bridge, &vrf_safety);
-                                return Err(eyre::eyre!(
-                                    "local DKG output does not match canonical finalized-log output: cycle {}, local {}, canonical {}",
-                                    target.dkg_cycle,
-                                    local_output_hash,
-                                    canonical_output_hash
-                                ));
+                                return Err(error);
                             }
 
                             let activated_validator_set = validator_set_for_dkg_output_players(
@@ -3753,6 +3985,7 @@ where
                                 next_epoch,
                                 &activated_participants,
                                 &activated_validator_set,
+                                None,
                                 &vrf_materials,
                                 &certificate_scheme_provider,
                                 &committee_provider,
@@ -3783,14 +4016,10 @@ where
                             // guard while pointing Simplex at the wrong parent.
                             let activation_height = last_dkg_activation_height;
                             let deadline =
-                                std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                             loop {
                                 let (finalized, finalized_hash, round_ready) = {
-                                    let view = finalization_view.read().map_err(|_| {
-                                        eyre::eyre!(
-                                            "FinalizationView lock poisoned during DKG activation race wait"
-                                        )
-                                    })?;
+                                    let view = finalization_view.read();
                                     (
                                         view.last_finalized_number,
                                         view.forkchoice.finalized_block_hash,
@@ -3803,7 +4032,7 @@ where
                                 {
                                     break;
                                 }
-                                if std::time::Instant::now() >= deadline {
+                                if ctx.current() >= deadline {
                                     return Err(eyre::eyre!(
                                         "DKG activation race after {:?}: \
                                          finalized_anchor=(height={}, hash={}, round_ready={}) \
@@ -3816,7 +4045,7 @@ where
                                         activation_height
                                     ));
                                 }
-                                tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                             }
                             continue 'epoch_loop;
                             }
@@ -3929,14 +4158,10 @@ where
                                 // verifier engine's floor needs the activation block finalized
                                 // before `'epoch_loop` rebuilds the verifier scheme.
                                 let deadline =
-                                    std::time::Instant::now() + EPOCH_RESTART_ANCHOR_TIMEOUT;
+                                    ctx.current() + EPOCH_RESTART_ANCHOR_TIMEOUT;
                                 loop {
                                     let (finalized, finalized_hash, round_ready) = {
-                                        let view = finalization_view.read().map_err(|_| {
-                                            eyre::eyre!(
-                                                "FinalizationView lock poisoned during exited-validator demotion wait"
-                                            )
-                                        })?;
+                                        let view = finalization_view.read();
                                         (
                                             view.last_finalized_number,
                                             view.forkchoice.finalized_block_hash,
@@ -3949,7 +4174,7 @@ where
                                     {
                                         break;
                                     }
-                                    if std::time::Instant::now() >= deadline {
+                                    if ctx.current() >= deadline {
                                         return Err(eyre::eyre!(
                                             "exited-validator demotion activation race after {:?}: \
                                              finalized=(height={}, hash={}, round_ready={}) activation_height={}",
@@ -3960,7 +4185,7 @@ where
                                             activation_height
                                         ));
                                     }
-                                    tokio::time::sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
+                                    ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                                 }
                                 continue 'epoch_loop;
                             }
@@ -4269,7 +4494,7 @@ where
                                         &mut last_dkg_output,
                                     );
                                 }
-                                // A-12: Capture previous DKG state for reshare.
+                                // Capture previous DKG state for reshare.
                                 let prev_output = last_dkg_output.clone();
                                 let prev_share = signing_share.clone();
                                 let role = classify_local_reshare_role(
@@ -4427,6 +4652,7 @@ where
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn recover_application_finalized_round(
+    clock: &impl Clock,
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
 ) -> Result<Option<Round>> {
@@ -4436,11 +4662,16 @@ async fn recover_application_finalized_round(
 
     let height = Height::new(last_execution_height);
     for attempt in 1..=FINALIZED_ROUND_RECOVERY_ATTEMPTS {
-        match tokio::time::timeout(
-            FINALIZED_ROUND_RECOVERY_TIMEOUT,
-            marshal_mailbox.get_finalization(height),
-        )
-        .await
+        // Measure the per-attempt timeout on the consensus runtime `Clock`, not
+        // tokio's wall-clock, so recovery is reproducible under the deterministic
+        // test runtime. `Clock::timeout` requires a `Send + 'static` future, so the
+        // mailbox is cloned (a cheap sender clone) and moved into the request.
+        let mailbox = marshal_mailbox.clone();
+        match clock
+            .timeout(FINALIZED_ROUND_RECOVERY_TIMEOUT, async move {
+                mailbox.get_finalization(height).await
+            })
+            .await
         {
             Ok(Some(finalization)) => {
                 let round = finalization.proposal.round;
@@ -4452,7 +4683,7 @@ async fn recover_application_finalized_round(
                 return Ok(Some(round));
             }
             Ok(None) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
-                tokio::time::sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
+                clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Ok(None) => {
                 return Err(eyre::eyre!(
@@ -4461,7 +4692,7 @@ async fn recover_application_finalized_round(
                 ));
             }
             Err(_) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
-                tokio::time::sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
+                clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Err(_) => {
                 return Err(eyre::eyre!(
@@ -4796,10 +5027,11 @@ fn validate_pending_boundary_snapshot(
 ) -> Result<()> {
     let boundary_output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG boundary output")?;
-    ensure!(
-        &boundary_output == local_output,
-        "pending DKG boundary output does not match local persisted DKG output"
-    );
+    dkg_manager::assert_canonical_output(
+        local_output,
+        &boundary_output,
+        "pending boundary snapshot",
+    )?;
     let frozen = match refresh_validator_set_at_height(provider, snapshot.artifact.freeze_height)? {
         FrozenValidatorSetRefresh::Ready { validator_set, .. } => validator_set,
         FrozenValidatorSetRefresh::PendingBlockHash => {
@@ -5138,16 +5370,11 @@ where
 
     let canonical_output = decode_boundary_output(&activated_boundary)
         .wrap_err("failed to decode startup live-join activation boundary output")?;
-    if complete.output != canonical_output {
-        let local_output_hash = dkg_manager::dkg_output_hash(&complete.output);
-        let canonical_output_hash = dkg_manager::dkg_output_hash(&canonical_output);
-        return Err(eyre::eyre!(
-            "startup live-join local DKG output does not match canonical boundary output: cycle {}, local {}, canonical {}",
-            dkg_round,
-            local_output_hash,
-            canonical_output_hash
-        ));
-    }
+    dkg_manager::assert_canonical_output(
+        &complete.output,
+        &canonical_output,
+        &format!("startup live-join cycle {dkg_round}"),
+    )?;
     let canonical_polynomial = canonical_output.public().clone();
 
     if let Some(ref keys_dir) = args.keys_dir {

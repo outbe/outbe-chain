@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {
@@ -12,6 +13,8 @@ import {
     MultiRecipientSendParam
 } from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title ONFT1155AdapterBatchTest
 /// @notice direct coverage for the ONFT-Batch outbound entry points
@@ -42,10 +45,10 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        srcToken = new IntexNFT1155(admin, admin);
-        dstToken = new IntexNFT1155(admin, admin);
-        srcBatch = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
-        dstBatch = new ONFT1155AdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
+        srcToken = DeployProxy.intexNFT1155(admin, admin);
+        dstToken = DeployProxy.intexNFT1155(admin, admin);
+        srcBatch = DeployProxy.onftAdapterBatch(address(srcToken), address(endpoints[SRC_EID]), admin);
+        dstBatch = DeployProxy.onftAdapterBatch(address(dstToken), address(endpoints[DST_EID]), admin);
 
         address[] memory oapps = new address[](2);
         oapps[0] = address(srcBatch);
@@ -54,8 +57,8 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
 
         for (uint32 i = 0; i < 2; i++) {
             uint32 series = i == 0 ? SERIES_A : SERIES_B;
-            srcToken.createSeries(series, 1_000_000, 0);
-            dstToken.createSeries(series, 1_000_000, 0);
+            srcToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
+            dstToken.createSeries(CreateSeriesLib.params(series, 1_000_000, 0));
             srcToken.markQualified(series);
             dstToken.markQualified(series);
         }
@@ -69,7 +72,7 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         vm.deal(address(srcBatch), 100 ether);
         vm.deal(sender, 100 ether); // batchSend/multiSend are caller-funded
 
-        // Stock the sender with units on both series so the per-item `debit` succeeds.
+        // Stock the sender with units on both series so the per-item `crosschainBurn` succeeds.
         srcToken.mint(sender, 100, SERIES_A);
         srcToken.mint(sender, 100, SERIES_B);
     }
@@ -91,32 +94,33 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
     // constructor — zero-address guards on immutable wiring
     // ---------------------------------------------------------------
 
-    /// @notice `token` is immutable; a zero address permanently bricks every credit/debit path.
+    /// @notice `token` is immutable; a zero address permanently bricks every crosschainMint/crosschainBurn path.
+    /// @dev Property of the implementation constructor.
     function test_Constructor_RevertsZeroToken() public {
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.ZeroAddress.selector, "token"));
-        new ONFT1155AdapterBatch(address(0), address(endpoints[SRC_EID]), admin);
+        new ONFT1155AdapterBatch(address(0), address(endpoints[SRC_EID]));
     }
 
-    /// @notice The OApp base only reverts opaquely on a zero `_lzEndpoint` (the `setDelegate` call
-    ///         hits empty code). The guard surfaces the typed `ZeroAddress("lzEndpoint")` instead.
+    /// @notice A zero `_lzEndpoint` is caught by the constructor guard, surfacing the typed
+    ///         `ZeroAddress("lzEndpoint")` instead of the opaque OApp base revert.
     function test_Constructor_RevertsZeroLzEndpoint() public {
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.ZeroAddress.selector, "lzEndpoint"));
-        new ONFT1155AdapterBatch(address(srcToken), address(0), admin);
+        new ONFT1155AdapterBatch(address(srcToken), address(0));
     }
 
-    /// @notice `_delegate` (also the owner) is rejected by the OZ `Ownable` base constructor, which
-    ///         linearizes ahead of `OAppCore`. Documents that the framework — not an added guard —
-    ///         closes the zero-delegate brick path.
-    function test_Constructor_RevertsZeroDelegate_ViaFramework() public {
-        vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
-        new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]), address(0));
+    /// @notice The explicit `ZeroAddress("delegate")` guard in `initialize` rejects a zero
+    ///         delegate/owner during proxy initialization, before `__Ownable_init` would.
+    function test_Initialize_RevertsZeroDelegate() public {
+        ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(address(srcToken), address(endpoints[SRC_EID]));
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
+        new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155AdapterBatch.initialize, (address(0))));
     }
 
     // ---------------------------------------------------------------
     // batchSend / quoteBatchSend — single recipient, many tokenIds
     // ---------------------------------------------------------------
 
-    function test_BatchSend_HappyPath_DebitsSenderAndCreditsRecipient() public {
+    function test_BatchSend_HappyPath_CrosschainBurnsSenderAndCrosschainMintsRecipient() public {
         BatchSendParam memory p = BatchSendParam({
             dstEid: DST_EID,
             to: addressToBytes32(recipientA),
@@ -130,14 +134,14 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         vm.prank(sender);
         srcBatch.batchSend{value: fee.nativeFee}(p, fee, sender);
 
-        // Sender debited on the source for both items.
-        assertEq(srcToken.balanceOf(sender, TID_A), 95, "src A debited");
-        assertEq(srcToken.balanceOf(sender, TID_B), 93, "src B debited");
+        // Sender crosschainBurned on the source for both items.
+        assertEq(srcToken.balanceOf(sender, TID_A), 95, "src A crosschainBurned");
+        assertEq(srcToken.balanceOf(sender, TID_B), 93, "src B crosschainBurned");
 
-        // Deliver the queued packet; recipient credited on the destination.
+        // Deliver the queued packet; recipient crosschainMinted on the destination.
         verifyPackets(DST_EID, addressToBytes32(address(dstBatch)));
-        assertEq(dstToken.balanceOf(recipientA, TID_A), 5, "dst A credited");
-        assertEq(dstToken.balanceOf(recipientA, TID_B), 7, "dst B credited");
+        assertEq(dstToken.balanceOf(recipientA, TID_A), 5, "dst A crosschainMinted");
+        assertEq(dstToken.balanceOf(recipientA, TID_B), 7, "dst B crosschainMinted");
     }
 
     function test_BatchSend_RevertsEmptyBatch() public {
@@ -169,8 +173,8 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
     }
 
     function test_BatchSend_RevertsInvalidReceiver_ZeroTo() public {
-        // Sender holds balance, so the debit loop succeeds; the zero `to` then trips InvalidReceiver
-        // inside `_buildBatchMsgAndOptions`. The whole tx reverts, so the debit rolls back too.
+        // Sender holds balance, so the crosschainBurn loop succeeds; the zero `to` then trips InvalidReceiver
+        // inside `_buildBatchMsgAndOptions`. The whole tx reverts, so the crosschainBurn rolls back too.
         BatchSendParam memory p = BatchSendParam({
             dstEid: DST_EID, to: bytes32(0), tokenIds: _u256One(TID_A), amounts: _u256One(1), extraOptions: ""
         });
@@ -179,11 +183,11 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         vm.prank(sender);
         srcBatch.batchSend{value: fee.nativeFee}(p, fee, sender);
 
-        assertEq(srcToken.balanceOf(sender, TID_A), 100, "debit rolled back on revert");
+        assertEq(srcToken.balanceOf(sender, TID_A), 100, "crosschainBurn rolled back on revert");
     }
 
     function test_BatchSend_ZeroAmount_IsNoOpAndDelivers() public {
-        // No ZeroValue guard on amounts: a zero-amount item is a burn/credit of 0 (a no-op) and the
+        // No ZeroValue guard on amounts: a zero-amount item is a burn/crosschainMint of 0 (a no-op) and the
         // send still succeeds. Documents the intended permissive behaviour.
         BatchSendParam memory p = BatchSendParam({
             dstEid: DST_EID,
@@ -199,7 +203,7 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
 
         verifyPackets(DST_EID, addressToBytes32(address(dstBatch)));
         assertEq(srcToken.balanceOf(sender, TID_A), 100, "sender unchanged for zero-amount item");
-        assertEq(dstToken.balanceOf(recipientA, TID_A), 0, "recipient credited zero");
+        assertEq(dstToken.balanceOf(recipientA, TID_A), 0, "recipient crosschainMinted zero");
     }
 
     function test_QuoteBatchSend_ReturnsNonZeroNativeFee() public view {
@@ -259,7 +263,7 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
     // multiSend / quoteMultiSend — many recipients
     // ---------------------------------------------------------------
 
-    function test_MultiSend_HappyPath_CreditsEachRecipient() public {
+    function test_MultiSend_HappyPath_CrosschainMintsEachRecipient() public {
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = addressToBytes32(recipientA);
         recipients[1] = addressToBytes32(recipientB);
@@ -277,12 +281,12 @@ contract ONFT1155AdapterBatchTest is TestHelperOz5 {
         vm.prank(sender);
         srcBatch.multiSend{value: fee.nativeFee}(p, fee, sender);
 
-        assertEq(srcToken.balanceOf(sender, TID_A), 97, "src A debited");
-        assertEq(srcToken.balanceOf(sender, TID_B), 96, "src B debited");
+        assertEq(srcToken.balanceOf(sender, TID_A), 97, "src A crosschainBurned");
+        assertEq(srcToken.balanceOf(sender, TID_B), 96, "src B crosschainBurned");
 
         verifyPackets(DST_EID, addressToBytes32(address(dstBatch)));
-        assertEq(dstToken.balanceOf(recipientA, TID_A), 3, "recipientA credited A");
-        assertEq(dstToken.balanceOf(recipientB, TID_B), 4, "recipientB credited B");
+        assertEq(dstToken.balanceOf(recipientA, TID_A), 3, "recipientA crosschainMinted A");
+        assertEq(dstToken.balanceOf(recipientB, TID_B), 4, "recipientB crosschainMinted B");
     }
 
     function test_MultiSend_RevertsEmptyBatch() public {

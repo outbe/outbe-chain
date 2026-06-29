@@ -1,29 +1,17 @@
 //! Consensus configuration constants.
 
-use commonware_consensus::simplex::scheme::Namespace;
-use std::{sync::OnceLock, time::Duration};
+use std::time::Duration;
 
-/// P2P namespace for Outbe consensus messages.
-pub const NAMESPACE: &[u8] = b"outbe";
-
-/// Process-wide singleton of the derived Simplex namespace.
+/// Chain-bound consensus namespace source of truth lives in
+/// [`crate::proof::constants`] so the signer (this crate) and the deterministic
+/// V2 verifier read the identical chain-bound bytes. Re-exported here for the
+/// historical `config::*` call sites.
 ///
-/// `Namespace::new(NAMESPACE)` is a pure function that allocates four `Vec<u8>`
-/// sub-namespaces (`notarize`, `nullify`, `finalize`, `seed`). Rather than
-/// rebuilding it inside `HybridScheme::sign`, `verify`, `HybridRandomElector::elect`,
-/// and every per-epoch scheme constructor, all callers go through this
-/// `OnceLock` so there is one and only one `Namespace` instance in the process
-/// and the four sub-namespace byte buffers are heap-allocated exactly once.
-///
-/// The verifier crate `outbe-consensus-proof` byte-pins the same sub-namespace
-/// strings (`OUTBE_NOTARIZE_NAMESPACE_V2`, `OUTBE_FINALIZE_NAMESPACE_V2`,
-/// `OUTBE_HYBRID_SEED_NAMESPACE_V2`) so it can verify without a runtime
-/// dependency on the Simplex `Namespace` type; an `outbe-consensus` test asserts
-/// they match byte-for-byte against the singleton this function returns.
-pub fn simplex_namespace() -> &'static Namespace {
-    static NAMESPACE_CELL: OnceLock<Namespace> = OnceLock::new();
-    NAMESPACE_CELL.get_or_init(|| Namespace::new(NAMESPACE))
-}
+/// `outbe_app_namespace()` returns `b"outbe" || chain_id_be`; the chain id is
+/// installed once at startup via `init_consensus_chain_id`.
+pub use crate::proof::constants::{
+    init_consensus_chain_id, outbe_app_namespace, simplex_namespace,
+};
 
 /// Channel identifiers for Commonware P2P.
 pub const VOTES_CHANNEL: u64 = 0;
@@ -119,6 +107,31 @@ pub const WRITE_BUFFER: usize = 64 * 1024;
 pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
+// Marshal block-resolution timing
+//
+// Read cross-module by the application handler, finalization actor, and the
+// verify / epoch-boundary resolution paths — so they live here rather than
+// inside the handler implementation module.
+// ---------------------------------------------------------------------------
+
+/// Maximum retry attempts for marshal block resolution before structured application failure.
+pub const FINALIZE_MAX_RETRIES: u32 = 5;
+/// Delay between retry attempts for marshal block resolution.
+pub const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// Maximum time to wait for marshal block resolution during verify.
+pub const VERIFY_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
+/// Maximum time to wait for marshal parent resolution during proposal.
+pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
+/// Per-attempt time budget for marshal block resolution during finalization.
+///
+/// Without this bound, a `subscribe_by_digest` waiter that never completes can
+/// wedge the application handler's serial event loop, blocking propose/verify
+/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
+/// Exhaustion is surfaced as a structured application failure, not a direct
+/// process kill from inside the handler.
+pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+// ---------------------------------------------------------------------------
 // Marshal storage constants (matching Tempo's production defaults)
 // ---------------------------------------------------------------------------
 
@@ -148,3 +161,23 @@ pub const MAX_PENDING_ACKS: usize = 1;
 pub const BROADCAST_DEQUE_SIZE: usize = 64;
 /// Marshal view retention timeout multiplier.
 pub const VIEW_RETENTION_MULTIPLIER: u64 = 10;
+
+#[cfg(test)]
+mod size_cap_tests {
+    use super::MAX_P2P_MESSAGE_SIZE;
+    use outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE;
+
+    /// The block-size cap MUST stay below the P2P message cap, with margin for
+    /// the message envelope and the marshal's `(notarization, block)` co-send.
+    #[test]
+    fn max_block_size_fits_under_p2p_message_cap() {
+        assert!(
+            OUTBE_MAX_BLOCK_SIZE < MAX_P2P_MESSAGE_SIZE as usize,
+            "OUTBE_MAX_BLOCK_SIZE ({OUTBE_MAX_BLOCK_SIZE}) must be < MAX_P2P_MESSAGE_SIZE ({MAX_P2P_MESSAGE_SIZE})"
+        );
+        assert!(
+            MAX_P2P_MESSAGE_SIZE as usize - OUTBE_MAX_BLOCK_SIZE >= 64 * 1024,
+            "reserve >= 64 KiB for envelope + certificate"
+        );
+    }
+}

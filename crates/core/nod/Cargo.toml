@@ -22,3 +22,6 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+
+[lints]
+workspace = true

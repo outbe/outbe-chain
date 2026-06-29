@@ -42,6 +42,8 @@ contract DeployLayerZeroRouter is Script {
         console2.log("LayerZeroRouter deployed at:", router);
     }
 
+    /// @dev Router CREATE3 salt. Depends only on (salt, deployer), so the router lands at the SAME address on every
+    ///      chain — which the cross-chain wiring (remote == local) relies on.
     function getRouterSaltHash(string memory salt) public view returns (bytes32) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
         return keccak256(abi.encodePacked("LayerZeroRouter", salt, vm.addr(deployerPrivateKey)));
@@ -57,7 +59,7 @@ contract DeployLayerZeroRouter is Script {
         allocatorAddr = address(allocator);
         console2.log("  RouterAllocator:", allocatorAddr);
 
-        // Deploy router via CreateX
+        // Deploy router via CreateX (deterministic address across chains; see getRouterSaltHash)
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         address routerOwner = vm.envAddress("ROUTER_OWNER");
 

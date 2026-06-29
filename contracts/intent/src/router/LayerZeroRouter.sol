@@ -148,7 +148,7 @@ contract LayerZeroRouter is BaseRouter, OApp {
         bytes memory payload = RouterMessage.encodeSettle(_orderIds, _ordersFillerData);
         uint128 gasLimit = defaultGasLimit + perOrderGas * uint128(_orderIds.length);
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
-        _lzSend(dstEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
+        _lzSend(dstEid, payload, options, MessagingFee({nativeFee: msg.value, lzTokenFee: 0}), payable(msg.sender));
     }
 
     function _dispatchRefundCrossChain(uint32 _originDomain, bytes32[] memory _orderIds) internal override {
@@ -156,7 +156,7 @@ contract LayerZeroRouter is BaseRouter, OApp {
         bytes memory payload = RouterMessage.encodeRefund(_orderIds);
         uint128 gasLimit = defaultGasLimit + perOrderGas * uint128(_orderIds.length);
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
-        _lzSend(dstEid, payload, options, MessagingFee(msg.value, 0), payable(msg.sender));
+        _lzSend(dstEid, payload, options, MessagingFee({nativeFee: msg.value, lzTokenFee: 0}), payable(msg.sender));
     }
 
     // ========== MESSAGING — INBOUND ==========

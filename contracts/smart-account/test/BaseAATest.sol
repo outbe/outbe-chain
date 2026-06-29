@@ -141,6 +141,7 @@ abstract contract BaseAATest is Test {
 
     function _buildCcaUserOp(address smartAccount, address to, uint256 amount)
         internal
+        view
         returns (PackedUserOperation memory op)
     {
         ExecMode execMode = ExecLib.encode(
@@ -156,6 +157,7 @@ abstract contract BaseAATest is Test {
 
     function _buildCcaUserOpRaw(address smartAccount, bytes memory callData, address tok)
         internal
+        view
         returns (PackedUserOperation memory op)
     {
         PermissionId permId = _ccaPermId(tok);
@@ -205,6 +207,7 @@ abstract contract BaseAATest is Test {
 
     function _buildUserOp(address sender, bytes memory callData, uint256 signerKey)
         internal
+        view
         returns (PackedUserOperation memory op)
     {
         uint192 encodedAsNonceKey = ValidatorLib.encodeAsNonceKey(

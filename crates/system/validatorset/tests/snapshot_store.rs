@@ -126,6 +126,7 @@ fn committee_snapshot_storage_key_test_vector_matches_plan() {
         }],
         vrf_material_version: 0,
         vrf_group_public_key_bytes: vec![0x22u8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let hash = committee_set_hash_v2(0, &snapshot);
     let key = committee_snapshot_key(0, hash);
@@ -161,6 +162,7 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
         ],
         vrf_material_version: 7,
         vrf_group_public_key_bytes: vec![0x33u8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let base_hash = committee_set_hash_v2(5, &base);
 
@@ -259,6 +261,7 @@ fn committee_set_hash_v2_never_equals_legacy_active_set_hash_for_same_addresses(
             .collect(),
         vrf_material_version: 1,
         vrf_group_public_key_bytes: vec![0xAAu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
 
     let v2 = committee_set_hash_v2(42, &snapshot);
@@ -281,6 +284,7 @@ fn committee_set_hash_v2_never_equals_legacy_active_set_hash_for_same_addresses(
             .collect(),
         vrf_material_version: 0,
         vrf_group_public_key_bytes: Vec::new(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     assert_ne!(
         committee_set_hash_v2(0, &zeroed),
@@ -313,11 +317,13 @@ fn committee_snapshot_order_matches_commonware_public_key_order_not_address_orde
         committee: vec![entry_a.clone(), entry_b.clone()],
         vrf_material_version: 0,
         vrf_group_public_key_bytes: Vec::new(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let pubkey_order = CommitteeSnapshot {
         committee: vec![entry_b.clone(), entry_a.clone()],
         vrf_material_version: 0,
         vrf_group_public_key_bytes: Vec::new(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     assert_ne!(
         committee_set_hash_v2(0, &address_order),
@@ -350,6 +356,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         }],
         vrf_material_version: 4,
         vrf_group_public_key_bytes: vec![0xEEu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let incoming_snapshot = CommitteeSnapshot {
         committee: vec![CommitteeEntry {
@@ -358,6 +365,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         }],
         vrf_material_version: 5,
         vrf_group_public_key_bytes: vec![0xFFu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let outgoing_epoch = 9u64;
     let incoming_epoch = 10u64;
@@ -446,6 +454,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
         ],
         vrf_material_version: 1,
         vrf_group_public_key_bytes: vec![0xAAu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let incoming_snapshot = CommitteeSnapshot {
         committee: vec![
@@ -460,6 +469,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
         ],
         vrf_material_version: 2,
         vrf_group_public_key_bytes: vec![0xBBu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let outgoing_epoch = 17u64;
     let incoming_epoch = 18u64;
@@ -499,6 +509,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             }],
             vrf_material_version: 3,
             vrf_group_public_key_bytes: vec![0xCCu8; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let next = BoundaryActivationInputs {
             outgoing: Some((incoming_epoch, next_outgoing)),
@@ -635,6 +646,7 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
         committee,
         vrf_material_version: 0,
         vrf_group_public_key_bytes: encoded_group_pk.clone(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -682,6 +694,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         }],
         vrf_material_version: 1,
         vrf_group_public_key_bytes: vec![0xAAu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let incoming_snapshot = CommitteeSnapshot {
         committee: vec![CommitteeEntry {
@@ -690,6 +703,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         }],
         vrf_material_version: 2,
         vrf_group_public_key_bytes: vec![0xBBu8; 96],
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let outgoing_epoch = 11u64;
     let incoming_epoch = 12u64;
@@ -787,6 +801,7 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             }],
             vrf_material_version: 0,
             vrf_group_public_key_bytes: vec![0x22u8; 96],
+            vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let retain = outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
         let total = retain + 2;

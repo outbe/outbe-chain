@@ -141,7 +141,7 @@ For tests, prefer `HashMapStorageProvider::enter`:
 let mut provider = HashMapStorageProvider::new(chain_id);
 provider.enter(|storage| {
     let mut rewards = storage.contract::<Rewards>();
-    let _pending = rewards.pending_rewards_of(validator)?;
+    let _genesis_day = rewards.genesis_utc_day.read()?;
     Ok::<_, PrecompileError>(())
 })?;
 ```

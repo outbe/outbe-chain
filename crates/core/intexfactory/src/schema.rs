@@ -1,5 +1,5 @@
 //! Storage schema for IntexFactory: settlement bookkeeping and the
-//! unqualified-series bin index. Canonical series state lives in IntexRegistry.
+//! unqualified-series bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
@@ -10,14 +10,11 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 pub struct IssuanceParams {
     pub series_id: u32,
     pub issued_intex_count: u32,
-    pub intex_size: u128,
-    pub intex_strike_price: u64,
-    /// COEN clearing price (1e18, oracle scale). Floor and call trigger are
-    /// derived from it at issuance.
-    pub coen_price: U256,
-    pub intex_call_period: u32,
-    pub call_window_days: u16,
-    pub call_threshold_days: u16,
+    pub promis_load_minor: u128,
+    /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.
+    pub entry_price_minor: U256,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
     pub quantities: Vec<U256>,
@@ -40,7 +37,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 2)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Unqualified-series bin index (by coen_price_floor) for begin_block qualify.
+    // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
     #[attribute(order = 3)]
     pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 4)]
@@ -54,7 +51,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 7)]
     pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Qualified-series bin index (by coen_price_call_trigger) for the daily
+    // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
     #[attribute(order = 8)]
     pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -68,6 +65,10 @@ pub struct IntexFactoryContract {
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
     #[attribute(order = 12)]
     pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    #[attribute(order = 13)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl IntexFactoryContract<'_> {

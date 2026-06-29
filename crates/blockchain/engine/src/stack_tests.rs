@@ -182,7 +182,7 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -364,6 +364,7 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
             active_set_hash: B256::with_last_byte(0xA2),
@@ -971,7 +972,7 @@ fn recovery_finalization_fixture(
             let pk = key.public_key();
             let idx = participants.index(&pk).unwrap();
             HybridScheme::signer(
-                config::NAMESPACE,
+                &config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -980,9 +981,12 @@ fn recovery_finalization_fixture(
             .unwrap()
         })
         .collect();
-    let verifier =
-        HybridScheme::<MinSig>::verifier(config::NAMESPACE, participants, dkg.polynomial.clone())
-            .unwrap();
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial.clone(),
+    )
+    .unwrap();
 
     let proposal = Proposal::new(
         round,
@@ -1002,10 +1006,11 @@ fn recovery_finalization_fixture(
 #[test]
 fn recover_application_finalized_round_returns_none_at_genesis_height() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let recovered = recover_application_finalized_round(&marshal_mailbox, 0)
+        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 0)
             .await
             .unwrap();
 
@@ -1024,6 +1029,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         let round = Round::new(Epoch::new(0), View::new(1175));
         let block = recovery_block(5700);
         let (provider, finalization) = recovery_finalization_fixture(&block, round);
+        let clock = context.child("recover_clock");
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, provider).await;
 
@@ -1031,7 +1037,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 
-        let recovered = recover_application_finalized_round(&marshal_mailbox, 5700)
+        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
             .await
             .unwrap();
 
@@ -1047,10 +1053,11 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
 #[test]
 fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
     let error = commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let error = recover_application_finalized_round(&marshal_mailbox, 5700)
+        let error = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
             .await
             .unwrap_err()
             .to_string();
@@ -1343,6 +1350,185 @@ fn test_save_load_and_clear_pending_dkg_boundary_snapshot() {
 }
 
 #[test]
+fn test_pending_dkg_material_alone_does_not_restore_boundary() {
+    let (_keys, _participants, output, share, polynomial) = run_test_dkg_complete();
+    let dir = tempfile::tempdir().unwrap();
+    let backend = bls::KeyBackend::Plaintext;
+
+    // Crash cut point: pending DKG triplet reached disk, but the boundary
+    // snapshot did not. Restart must not infer/activate a boundary from material
+    // alone; the pending-boundary file remains absent and DkgManager has no
+    // pending artifact to verify/drain.
+    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    assert!(load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .is_some());
+    assert!(load_pending_dkg_boundary(dir.path()).unwrap().is_none());
+
+    let manager = DkgManagerMailbox::new();
+    assert!(commonware_runtime::tokio::Runner::default()
+        .start(|_| async move { manager.pending_boundary_artifact(Epoch::new(7)).await })
+        .is_none());
+}
+
+#[test]
+fn test_pending_boundary_snapshot_restores_manager_before_commit() {
+    let (keys, _participants, output, share, polynomial) = run_test_dkg_complete();
+    let dir = tempfile::tempdir().unwrap();
+    let backend = bls::KeyBackend::Plaintext;
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+    let snapshot = PendingDkgBoundarySnapshot {
+        artifact: artifact.clone(),
+        activated_at_height: 20,
+    };
+
+    // Crash cut point: pending material + pending boundary snapshot exist, but
+    // process memory was lost before/around note_ceremony_completed. Restart can
+    // load both durable pieces and restore the boundary into DkgManager without
+    // creating a committed marker.
+    save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
+    save_pending_dkg_boundary(dir.path(), &snapshot).unwrap();
+    let loaded_state = load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .expect("pending DKG state must survive restart");
+    assert_eq!(loaded_state.2, output);
+    let loaded_snapshot = load_pending_dkg_boundary(dir.path())
+        .unwrap()
+        .expect("pending boundary snapshot must survive restart");
+    assert_eq!(loaded_snapshot, snapshot);
+
+    let manager = DkgManagerMailbox::new();
+    manager.note_recovered_pending_boundary(loaded_snapshot.artifact.clone());
+    commonware_runtime::tokio::Runner::default().start(|_| async move {
+        assert_eq!(
+            manager.pending_boundary_artifact(Epoch::new(7)).await,
+            Some(artifact.clone())
+        );
+        manager
+            .verify_pending_boundary_artifact(Epoch::new(7), &artifact)
+            .await
+            .unwrap();
+        assert_eq!(manager.take_committed_boundary_artifact().await, None);
+    });
+}
+
+#[test]
+fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears() {
+    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+    let mut different = artifact.clone();
+    different.dkg_cycle = different.dkg_cycle.saturating_add(1);
+
+    let manager = DkgManagerMailbox::new();
+    manager.note_recovered_pending_boundary(artifact.clone());
+    commonware_runtime::tokio::Runner::default().start(|_| async move {
+        // Crash cut point: pending boundary exists before finalization. A different
+        // finalized BoundaryOutcome must not drain/activate the pending artifact.
+        manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::BoundaryOutcome(
+            different,
+        )));
+        assert_eq!(manager.take_committed_boundary_artifact().await, None);
+        assert_eq!(
+            manager.pending_boundary_artifact(Epoch::new(7)).await,
+            Some(artifact.clone())
+        );
+
+        // Once the matching boundary finalizes, activation drain returns it once
+        // and clears pending state.
+        manager.note_finalized_header_artifact(Some(&ConsensusHeaderArtifact::BoundaryOutcome(
+            artifact.clone(),
+        )));
+        assert_eq!(
+            manager.take_committed_boundary_artifact().await,
+            Some(artifact.clone())
+        );
+        assert_eq!(manager.take_committed_boundary_artifact().await, None);
+        assert!(manager
+            .pending_boundary_artifact(Epoch::new(7))
+            .await
+            .is_none());
+    });
+}
+
+#[test]
+fn test_stale_pending_boundary_snapshot_predicate_covers_restart_cleanup() {
+    let current = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
+    let snapshot = PendingDkgBoundarySnapshot {
+        artifact: current.clone(),
+        activated_at_height: 42,
+    };
+    assert!(!pending_boundary_is_finalized(&snapshot, None));
+    assert!(pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(41, current.clone()))
+    ));
+    assert!(pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(42, current.clone()))
+    ));
+
+    let mut newer_cycle = current.clone();
+    newer_cycle.dkg_cycle = current.dkg_cycle.saturating_add(1);
+    assert!(pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(42, newer_cycle.clone()))
+    ));
+    assert!(pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(142, newer_cycle))
+    ));
+
+    let mut older_cycle = current;
+    older_cycle.dkg_cycle = older_cycle.dkg_cycle.saturating_sub(1);
+    assert!(!pending_boundary_is_finalized(
+        &snapshot,
+        Some(&(42, older_cycle))
+    ));
+}
+
+#[test]
 fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
     assert_eq!(startup_live_join_scan_height(10, 7, false).unwrap(), 7);
     assert_eq!(startup_live_join_scan_height(5, 7, false).unwrap(), 5);
@@ -1509,6 +1695,155 @@ fn test_ordered_validator_addresses_rejects_missing_participant_key() {
 }
 
 #[test]
+fn test_recovered_boundary_addresses_survive_latest_state_removal() {
+    let (keys, participants, output, _polynomial) = run_test_dkg();
+    let boundary_addresses = vec![
+        Address::with_last_byte(0x11),
+        Address::with_last_byte(0x22),
+        Address::with_last_byte(0x33),
+    ];
+    let boundary_validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|k| k.public_key()).collect(),
+        addresses: boundary_addresses.clone(),
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let boundary = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &boundary_validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+
+    let latest_after_unfinalized_removal = validators::ValidatorSet {
+        public_keys: keys.iter().skip(1).map(|k| k.public_key()).collect(),
+        addresses: boundary_addresses.iter().skip(1).copied().collect(),
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 2],
+    };
+    assert!(
+        ordered_validator_addresses(&participants, &latest_after_unfinalized_removal).is_err(),
+        "provider-latest mapping should fail after an unfinalized removal of an old participant"
+    );
+
+    let recovered = ordered_addresses_from_recovered_boundary(&participants, &boundary).unwrap();
+    assert_eq!(recovered, boundary_addresses);
+}
+
+#[test]
+fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_removal() {
+    use crate::args::ConsensusArgs;
+    use commonware_cryptography::Signer as _;
+    use std::net::SocketAddr;
+
+    let temp = tempfile::tempdir().unwrap();
+    let evm_key_path = temp.path().join("evm-key.hex");
+    let evm_secret = [0x42u8; 32];
+    std::fs::write(&evm_key_path, hex::encode(evm_secret)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&evm_key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let evm_signer =
+        outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes(evm_secret).unwrap();
+
+    let (keys, participants, output, _polynomial) = run_test_dkg();
+    let local_key = &keys[0];
+    let boundary_addresses = vec![
+        evm_signer.address(),
+        Address::with_last_byte(0x22),
+        Address::with_last_byte(0x33),
+    ];
+    let boundary_validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|k| k.public_key()).collect(),
+        addresses: boundary_addresses.clone(),
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let boundary = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &boundary_validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+
+    let latest_after_unfinalized_removal = validators::ValidatorSet {
+        public_keys: keys.iter().skip(1).map(|k| k.public_key()).collect(),
+        addresses: boundary_addresses.iter().skip(1).copied().collect(),
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 2],
+    };
+    let args = ConsensusArgs {
+        is_validator: true,
+        signing_key: Some(temp.path().join("signing-key.hex")),
+        validator_evm_key: Some(evm_key_path.clone()),
+        signing_share: None,
+        public_polynomial: None,
+        dkg_output: None,
+        listen_address: "127.0.0.1:30400".parse::<SocketAddr>().unwrap(),
+        storage_dir: None,
+        keys_dir: None,
+        trust_el_head: false,
+        force_dkg: false,
+        consensus_peers: Vec::new(),
+        use_local_defaults: true,
+        payload_resolve_time_ms: 200,
+        payload_return_time_ms: 450,
+        worker_threads: 1,
+        bls_key_backend: "plaintext".to_string(),
+        bls_passphrase: None,
+        tee_enclave_socket: None,
+        tee_bootstrap_timeout_secs: 60,
+    };
+
+    let address = validate_validator_evm_signer(
+        &args,
+        local_key,
+        &latest_after_unfinalized_removal,
+        &latest_after_unfinalized_removal,
+        Some((&participants, &boundary)),
+        false,
+    )
+    .unwrap();
+    assert_eq!(address, Some(evm_signer.address()));
+
+    let wrong_key_path = temp.path().join("wrong-evm-key.hex");
+    let wrong_secret = [0x43u8; 32];
+    std::fs::write(&wrong_key_path, hex::encode(wrong_secret)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrong_key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let wrong_args = ConsensusArgs {
+        validator_evm_key: Some(wrong_key_path),
+        ..args
+    };
+    let err = validate_validator_evm_signer(
+        &wrong_args,
+        local_key,
+        &latest_after_unfinalized_removal,
+        &latest_after_unfinalized_removal,
+        Some((&participants, &boundary)),
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("does not match recovered DKG boundary address"));
+}
+
+#[test]
 fn test_register_epoch_validation_providers_is_available_and_first_wins() {
     let (keys, participants, _output, polynomial) = run_test_dkg();
     let vrf_materials = VrfMaterialProvider::new(0, polynomial, None);
@@ -1530,6 +1865,7 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
         epoch,
         &participants,
         &validator_set,
+        None,
         &vrf_materials,
         &scheme_provider,
         &committee_provider,
@@ -1558,6 +1894,7 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
         epoch,
         &participants,
         &replacement_set,
+        None,
         &vrf_materials,
         &scheme_provider,
         &committee_provider,
@@ -1762,7 +2099,8 @@ fn test_epoch_elector_config_allows_genesis_without_continuity() {
     let vrf_materials = VrfMaterialProvider::new(0, dkg.polynomial, None);
     let config =
         epoch_elector_config(Epoch::new(0), &ReporterContinuity::default(), vrf_materials).unwrap();
-    let elector: outbe_consensus::hybrid::HybridRandomElector<MinSig> = config.build(&participants);
+    let elector: outbe_consensus::hybrid::election::HybridRandomElector<MinSig> =
+        config.build(&participants);
     let leader = elector.elect(Round::new(Epoch::new(0), View::new(1)), None);
     assert!(leader.get() < participants.len() as u32);
 }
@@ -1787,7 +2125,8 @@ fn test_epoch_elector_config_uses_previous_certificate_for_view_one() {
     let dkg = bootstrap_dkg(3).unwrap();
     let vrf_materials = VrfMaterialProvider::new(0, dkg.polynomial, None);
     let config = epoch_elector_config(Epoch::new(1), &continuity, vrf_materials).unwrap();
-    let elector: outbe_consensus::hybrid::HybridRandomElector<MinSig> = config.build(&participants);
+    let elector: outbe_consensus::hybrid::election::HybridRandomElector<MinSig> =
+        config.build(&participants);
 
     let leader = elector.elect(Round::new(Epoch::new(1), View::new(1)), None);
     let expected = commonware_utils::Participant::new(commonware_utils::modulo(
@@ -1835,7 +2174,7 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 // shifts the indices of every original key by +1. Production code that builds
 // `participants` from a live 4-key set after a 3-key DKG would therefore observe
 // participant indices that no longer match the share.index baked into the
-// saved DKG output (hybrid.rs:472-481, A-13 invariant).
+// saved DKG output (hybrid.rs:472-481, invariant).
 //
 // This is a structural assertion about ordered::Set, not a probabilistic one.
 // =============================================================================
@@ -2421,9 +2760,15 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_bootstrap_timeout_secs: 60,
     };
 
-    let address =
-        super::validate_validator_evm_signer(&args, &bls_key, &consensus_set, &active_set, false)
-            .unwrap();
+    let address = super::validate_validator_evm_signer(
+        &args,
+        &bls_key,
+        &consensus_set,
+        &active_set,
+        None,
+        false,
+    )
+    .unwrap();
 
     assert_eq!(address, Some(evm_signer.address()));
 
@@ -2436,11 +2781,11 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         p2p_addresses: Vec::new(),
     };
     assert!(
-        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, false).is_err(),
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, None, false).is_err(),
         "non-member must bail when not verifier-join"
     );
     assert_eq!(
-        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, true).unwrap(),
+        super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, None, true).unwrap(),
         None,
         "non-member must run as verifier (None) when verifier-join"
     );
@@ -2478,29 +2823,62 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 — recovery picks historical participants at boundary freeze_height.
+// T4 — recovery picks participants from the recovered DKG output's committee
+//      (the share holders), NOT the latest on-chain set, and fails fast when
+// the restored material does not match the recovered boundary.
 //
-// IGNORED: this test asserts the *desired* recovery behaviour. As a passing
-// regression test it requires production changes in stack.rs:411-427 and
-// validate_recovered_vrf_material (stack.rs:144-158). The recovery-fix PR
-// will unignore this test as its acceptance criterion.
+// `select_recovery_participants` is the pure decision the recovery path now
+// uses at stack.rs §7. The output's `players()` is already a sorted/deduped
+// `commonware_utils::ordered::Set`, so participant indices derive from it
+// canonically — the test asserts membership and the explicit drift error.
 // =============================================================================
-#[ignore = "expected to pass once recovery uses freeze_height instead of latest()"]
+
+/// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
+/// distinct validator addresses — the committee the ceremony ran for.
+fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
+    let mut boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0xC1), 7);
+    boundary.reshare.new_active_set = (0..n).map(|i| Address::repeat_byte(i as u8 + 1)).collect();
+    boundary
+}
+
 #[test]
-fn recovery_uses_historical_freeze_height() {
-    // Subcase 1: latest() = 4 BLS keys, state at freeze_height = 3 keys.
-    //   Assert recovery succeeds and HybridScheme::signer_with_vrf_provider
-    //   constructs against the historical 3-key set.
-    //
-    // Subcase 2: state at freeze_height also has 4 keys (DKG ran for 3 but
-    //   chain state already had 4 by the time the boundary was committed).
-    //   Assert recovery fails fast with an explicit "validator set has
-    //   drifted from saved DKG" error message.
-    //
-    // Implementation will need a stub provider for state-at-height plus a
-    // fabricated DkgBoundaryArtifact carrying freeze_height and a 3-key
-    // polynomial. Pending recovery refactor.
-    panic!("T4 stub: implement once recovery is refactored to use freeze_height");
+fn recovery_uses_recovered_committee_not_latest() {
+    // Recovered DKG output for a 3-validator committee. `players()` is the
+    // sorted set of the three consensus pubkeys — the share holders.
+    let recovered_players: commonware_utils::ordered::Set<bls12381::PublicKey> = (1u64..=3)
+        .map(bls12381::PrivateKey::from_seed)
+        .map(|key| key.public_key())
+        .try_collect()
+        .expect("3-key recovered participant set");
+
+    // Subcase 1: the latest on-chain set has drifted to 4 keys, but the recovered
+    // boundary recorded the 3-validator committee the material belongs to.
+    // Recovery reconstructs against the recovered 3-key committee, ignoring latest.
+    let boundary_ok = test_boundary_with_active_set_len(3);
+    let resolved = super::select_recovery_participants(&recovered_players, &boundary_ok)
+        .expect("matching committee size must reconstruct against the recovered committee");
+    assert_eq!(
+        resolved.len(),
+        3,
+        "must reconstruct against the recovered 3-key committee, not the drifted latest set"
+    );
+    assert_eq!(
+        resolved, recovered_players,
+        "resolved participants must be exactly the recovered DKG output's player set"
+    );
+
+    // Subcase 2: the recovered boundary records a 4-validator active set while the
+    // restored DKG output has only 3 players — the consensus material does not
+    // match the recovered chain boundary. Recovery must fail fast with an explicit
+    // drift error rather than build the scheme against the wrong committee.
+    let boundary_drift = test_boundary_with_active_set_len(4);
+    let err = super::select_recovery_participants(&recovered_players, &boundary_drift)
+        .expect_err("size mismatch between recovered material and boundary must fail fast");
+    assert!(
+        err.to_string()
+            .contains("validator set has drifted from saved DKG"),
+        "operator-facing drift error must surface in the rejection: got {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2687,6 +3065,128 @@ mod restart_recovery {
             69 + MAX_UNFINALIZED_HEAD_LEAD + 1,
             69
         ));
+    }
+
+    #[test]
+    fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
+        use commonware_cryptography::Signer as _;
+        use std::net::SocketAddr;
+
+        let marshal_finalized_height = 100;
+        let reth_head = marshal_finalized_height + MAX_UNFINALIZED_HEAD_LEAD;
+        assert!(
+            unfinalized_head_lead_is_recoverable(reth_head, marshal_finalized_height),
+            "bounded Reth head lead should be treated as the benign restart window"
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let evm_key_path = temp.path().join("evm-key.hex");
+        let evm_secret = [0x52u8; 32];
+        std::fs::write(&evm_key_path, hex::encode(evm_secret)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&evm_key_path, std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let evm_signer =
+            outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes(evm_secret).unwrap();
+
+        let (keys, _participants, output, polynomial) = run_test_dkg();
+        let local_key = &keys[0];
+        let boundary_addresses = vec![
+            evm_signer.address(),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ];
+        let boundary_validator_set = validators::ValidatorSet {
+            public_keys: keys.iter().map(|key| key.public_key()).collect(),
+            addresses: boundary_addresses.clone(),
+            p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+        };
+        let recovered_boundary =
+            dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+                epoch: Epoch::new(7),
+                validator_set: &boundary_validator_set,
+                output: &output,
+                is_full_dkg: false,
+                dkg_cycle: 6,
+                freeze_height: 10,
+                planned_activation_height: 20,
+                vrf_material_version: 2,
+                is_validator_set_change: true,
+                tee_reshare_registrations: Vec::new(),
+            })
+            .unwrap();
+        let boundary_participants =
+            select_recovery_participants(output.players(), &recovered_boundary).unwrap();
+        assert_eq!(&boundary_participants, output.players());
+
+        // Simulate provider-latest state after an unfinalized membership-changing
+        // head: old participant A has been removed, and a new D is present.
+        let replacement_key = bls12381::PrivateKey::from_seed(99);
+        let latest_after_unfinalized_removal = validators::ValidatorSet {
+            public_keys: vec![
+                keys[1].public_key(),
+                keys[2].public_key(),
+                replacement_key.public_key(),
+            ],
+            addresses: vec![
+                Address::with_last_byte(0x22),
+                Address::with_last_byte(0x33),
+                Address::with_last_byte(0x44),
+            ],
+            p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+        };
+        assert!(
+            ordered_validator_addresses(&boundary_participants, &latest_after_unfinalized_removal)
+                .is_err(),
+            "pre-fix provider-latest address mapping should fail when old A is absent"
+        );
+
+        let vrf_materials = VrfMaterialProvider::new(2, polynomial, None);
+        let (_verifier_scheme, recovered_addresses) = epoch_validation_inputs(
+            Epoch::new(7),
+            &boundary_participants,
+            &latest_after_unfinalized_removal,
+            Some(&recovered_boundary),
+            &vrf_materials,
+        )
+        .expect("bounded-head-lead recovery must use recovered boundary committee");
+        assert_eq!(recovered_addresses, boundary_addresses);
+
+        let args = crate::args::ConsensusArgs {
+            is_validator: true,
+            signing_key: Some(temp.path().join("signing-key.hex")),
+            validator_evm_key: Some(evm_key_path),
+            signing_share: None,
+            public_polynomial: None,
+            dkg_output: None,
+            listen_address: "127.0.0.1:30400".parse::<SocketAddr>().unwrap(),
+            storage_dir: None,
+            keys_dir: None,
+            trust_el_head: false,
+            force_dkg: false,
+            consensus_peers: Vec::new(),
+            use_local_defaults: true,
+            payload_resolve_time_ms: 200,
+            payload_return_time_ms: 450,
+            worker_threads: 1,
+            bls_key_backend: "plaintext".to_string(),
+            bls_passphrase: None,
+            tee_enclave_socket: None,
+            tee_bootstrap_timeout_secs: 60,
+        };
+        let signer_address = validate_validator_evm_signer(
+            &args,
+            local_key,
+            &latest_after_unfinalized_removal,
+            &latest_after_unfinalized_removal,
+            Some((&boundary_participants, &recovered_boundary)),
+            false,
+        )
+        .expect("old-epoch signer A should be authorized by recovered boundary, not latest state");
+        assert_eq!(signer_address, Some(evm_signer.address()));
     }
 }
 

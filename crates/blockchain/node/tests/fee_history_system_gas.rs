@@ -55,14 +55,30 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
         format!(
             r#"{{
               "config": {{ "chainId": {DEVNET_CHAIN_ID}, "epochLengthBlocks": 120 }},
-              "timestamp": "0x0",
+              "timestamp": "0x65f1b057",
               "gasLimit": "0x1c9c380",
               "difficulty": "0x0",
               "alloc": {{}}
             }}"#
         ),
     )?;
-    std::fs::write(&seed_path, "{}")?;
+    // Seed the COEN/0xUSD oracle pair + a 1.0 rate (1e18) so the begin-block
+    // NOD/GEM/INTEX floor-price promotion reads a registered pair instead of
+    // reverting "pair not registered" (which would abort pre-execution and leave
+    // every payload empty). Production genesis always seeds oracle pairs; the
+    // oracle itself is left uninitialized so its own begin-block tally/s-curve
+    // stays inert — the same minimal state the executor tests use.
+    std::fs::write(
+        &seed_path,
+        r#"{
+          "oracle": {
+            "config": { "initialized": false },
+            "pairs": [
+              { "base": "COEN", "quote": "0xUSD", "initial_rate": "1000000000000000000" }
+            ]
+          }
+        }"#,
+    )?;
     std::fs::write(
         &validators_path,
         format!(
@@ -129,6 +145,7 @@ fn boundary_for_single_validator(proposer: Address) -> DkgBoundaryArtifact {
         }],
         vrf_material_version: 0,
         vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
+        vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     DkgBoundaryArtifact {
         epoch: 0,
@@ -145,6 +162,7 @@ fn boundary_for_single_validator(proposer: Address) -> DkgBoundaryArtifact {
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
         tee_reshare_registrations: Vec::new(),
+        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: ReshareResult {
             active_set_hash: boundary_active_set_hash(&new_active_set),
             new_active_set,

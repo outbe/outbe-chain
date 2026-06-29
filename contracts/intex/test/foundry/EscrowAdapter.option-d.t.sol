@@ -3,8 +3,9 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 
@@ -23,7 +24,7 @@ contract EscrowAdapterOptionDTest is Test {
     uint64 constant LOCK_AMOUNT = 1000 * 10 ** 6;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
 

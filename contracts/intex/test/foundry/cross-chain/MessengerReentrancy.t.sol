@@ -2,16 +2,17 @@
 pragma solidity 0.8.30;
 
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MessagingFee, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
-import {IDesis} from "@contracts/outbe/interfaces/IDesis.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 /// @dev Storage slot of OZ `ReentrancyGuard._status` (ERC-7201).
@@ -65,7 +66,7 @@ contract ReentrancyProbeDesis {
         uint32, /* relayGeneration */
         address[] calldata, /* bidders */
         uint16[] calldata, /* quantities */
-        uint64[] calldata, /* prices */
+        uint32[] calldata, /* rates */
         uint32[] calldata /* timestamps */
     ) external {
         observedGuardSlot = uint256(VM.load(bridge, REENTRANCY_GUARD_STORAGE));
@@ -109,16 +110,8 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);
@@ -152,7 +145,8 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         // but `wire` rejects address(0). Reuse the probe so all four wires are non-zero.
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 1e18, 5e6, 7e6, 11e6, 3);
+        bytes memory packet =
+            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3);
 
         _deliver(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger), packet);
 
@@ -165,7 +159,7 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         outbeMessenger.wire(address(probeDesis), makeAddr("factory"));
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
 
         _deliver(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger), packet);

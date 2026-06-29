@@ -10,14 +10,12 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_consensus::proof::canonical_signer_set_hash;
 use outbe_primitives::{
-    addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::{PrecompileError, Result},
     time::{day_number_between, timestamp_to_date_key, TimeError},
 };
 
-use crate::precompile::IRewards;
 use crate::schema::Rewards;
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
@@ -72,7 +70,7 @@ const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 /// Tamper-resistance: a node booting with a different `genesis.json`
 /// timestamp will lock in a different value here. Subsequent
 /// `day_emission_limit` calculations (in
-/// `outbe_emissionlimit::daily_emission`) diverge from quorum, the
+/// `outbe_emissionlimit::day_emission`) diverge from quorum, the
 /// post-exec state root mismatches at the first day-settle, and the
 /// node falls out of consensus.
 pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
@@ -252,43 +250,11 @@ fn write_addr_list(buf: &mut Vec<u8>, list: &[Address]) {
 /// `Finalization ↔ CertifiedNotarization` changes the fingerprint.
 pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofKind;
 
-// ── Reward claim use-case ───────────────────────────────────────────────
-//
-// Moved from the legacy `logic.rs` in step 22. The two methods live on
-// `Rewards<'_>` (defined in `crate::schema`) and back the
-// `claimRewards` / `pendingRewards` precompile entries.
-
 /// Validator emission percentage (kept for documentation/compat; the
 /// closed-form `day_emission_limit` in
-/// `outbe_emissionlimit::daily_emission` is the authoritative source
+/// `outbe_emissionlimit::day_emission` is the authoritative source
 /// for the validator daily reward, allocated through the Cycle handler).
 pub const VALIDATOR_REWARD_PERCENT: u64 = 4;
-
-impl Rewards<'_> {
-    /// Claims all pending emission rewards for `caller`.
-    ///
-    /// Returns the claimed amount, zeros out the pending balance, and
-    /// transfers native tokens from the rewards contract to the caller.
-    pub fn claim_rewards(&mut self, caller: Address) -> Result<U256> {
-        let amount = self.pending_rewards.read(&caller)?;
-        if !amount.is_zero() {
-            self.pending_rewards.write(&caller, U256::ZERO)?;
-            self.storage
-                .transfer_balance(REWARDS_ADDRESS, caller, amount)?;
-
-            self.emit(IRewards::RewardsClaimed {
-                validator: caller,
-                amount,
-            })?;
-        }
-        Ok(amount)
-    }
-
-    /// Returns the pending (unclaimed) emission reward balance for `addr`.
-    pub fn pending_rewards_of(&self, addr: Address) -> Result<U256> {
-        self.pending_rewards.read(&addr)
-    }
-}
 
 #[cfg(test)]
 mod tests {

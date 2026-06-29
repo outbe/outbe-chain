@@ -123,29 +123,6 @@ fn test_transfer_gratis_insufficient_fails() {
 }
 
 #[test]
-fn test_mine_coen() {
-    with_gratis_mut(|g| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
-
-        let minted = g.mine_coen(alice, U256::from(400)).unwrap();
-        assert_eq!(minted, U256::from(400));
-
-        assert_eq!(g.balance_of(alice).unwrap(), U256::from(600));
-        assert_eq!(g.total_supply().unwrap(), U256::from(600));
-    });
-}
-
-#[test]
-fn test_mine_coen_insufficient_fails() {
-    with_gratis_mut(|g| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(100)).unwrap();
-        assert!(g.mine_coen(alice, U256::from(200)).is_err());
-    });
-}
-
-#[test]
 fn test_multiple_users() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
@@ -179,12 +156,11 @@ fn test_events_emitted() {
         g.pledge(alice, U256::from(20)).unwrap();
         g.unpledge(alice, U256::from(10)).unwrap();
         g.burn(alice, U256::from(10)).unwrap();
-        g.mine_coen(alice, U256::from(5)).unwrap();
     });
 
-    // mine + pledge + unpledge + burn + mine_coen = 5 events
+    // mine + pledge + unpledge + burn = 4 events
     let events = storage.get_events(contract_addr);
-    assert_eq!(events.len(), 5);
+    assert_eq!(events.len(), 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -417,47 +393,6 @@ fn test_mine_rejects_total_supply_overflow_across_accounts() {
         // State invariants: balance for bob not credited, supply unchanged.
         assert_eq!(g.balance_of(bob).unwrap(), U256::ZERO);
         assert_eq!(g.total_supply().unwrap(), near_max);
-    });
-}
-
-/// A-32: mineCoen must burn synthetic gratis AND mint native tokens.
-/// Simulates the precompile dispatch path: mine_coen() + increase_balance().
-#[test]
-fn test_mine_coen_increases_native_balance() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        let mut g = Gratis::new(storage.clone());
-
-        g.mine(alice, U256::from(1000)).unwrap();
-
-        let amount = g.mine_coen(alice, U256::from(400)).unwrap();
-        assert_eq!(amount, U256::from(400));
-
-        g.storage.increase_balance(alice, amount).unwrap();
-
-        assert_eq!(g.balance_of(alice).unwrap(), U256::from(600));
-
-        let ctx = storage.clone();
-        assert_eq!(ctx.balance(alice).unwrap(), U256::from(400u64));
-    });
-}
-
-/// A-32: mine_coen with insufficient balance must fail without partial burn.
-#[test]
-fn test_mine_coen_failure_no_partial_burn() {
-    with_gratis_mut(|g| {
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(100)).unwrap();
-
-        let balance_before = g.balance_of(alice).unwrap();
-        let supply_before = g.total_supply().unwrap();
-
-        let result = g.mine_coen(alice, U256::from(200));
-        assert!(result.is_err());
-
-        assert_eq!(g.balance_of(alice).unwrap(), balance_before);
-        assert_eq!(g.total_supply().unwrap(), supply_before);
     });
 }
 

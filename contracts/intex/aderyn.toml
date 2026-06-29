@@ -1,7 +1,7 @@
 version = 1
 
 root = "./."
-src = "contracts/"
+src = "src/"
 
 exclude = [
     "/archive/",

@@ -22,7 +22,6 @@ outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
 outbe-tributefactory.workspace = true
-outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
@@ -50,3 +49,6 @@ tempfile.workspace = true
 [build-dependencies]
 vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }
 vergen-git2 = "9.1.0"
+
+[lints]
+workspace = true

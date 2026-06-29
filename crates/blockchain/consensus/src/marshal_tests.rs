@@ -151,82 +151,91 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // A-38: MarshalReporter must acknowledge, not drop
+    // MarshalReporter must acknowledge, not drop
     // -----------------------------------------------------------------------
 
-    /// A-38: Exact::acknowledge() resolves the waiter successfully.
+    /// Exact::acknowledge() resolves the waiter successfully.
     /// drop() without acknowledge triggers cancel. This test verifies
     /// the acknowledge path works as MarshalReporter now uses it.
-    #[tokio::test]
-    async fn test_exact_acknowledge_resolves_waiter() {
-        use commonware_utils::acknowledgement::{Acknowledgement, Exact};
-        use futures::FutureExt;
+    #[test]
+    fn test_exact_acknowledge_resolves_waiter() {
+        use commonware_runtime::Runner as _;
+        commonware_runtime::deterministic::Runner::default().start(|_context| async move {
+            use commonware_utils::acknowledgement::{Acknowledgement, Exact};
+            use futures::FutureExt;
 
-        let (ack, waiter) = Exact::handle();
+            let (ack, waiter) = Exact::handle();
 
-        // Waiter should not be resolved yet
-        assert!(
-            waiter.now_or_never().is_none(),
-            "waiter must not resolve before acknowledge"
-        );
+            // Waiter should not be resolved yet
+            assert!(
+                waiter.now_or_never().is_none(),
+                "waiter must not resolve before acknowledge"
+            );
 
-        let (ack2, waiter2) = Exact::handle();
-        ack.acknowledge();
-        // After acknowledge, waiter should resolve Ok
-        let result = waiter2.now_or_never();
-        // ack2 not yet acknowledged, so waiter2 still pending
-        assert!(result.is_none());
-        ack2.acknowledge();
+            let (ack2, waiter2) = Exact::handle();
+            ack.acknowledge();
+            // After acknowledge, waiter should resolve Ok
+            let result = waiter2.now_or_never();
+            // ack2 not yet acknowledged, so waiter2 still pending
+            assert!(result.is_none());
+            ack2.acknowledge();
+        });
     }
 
-    /// A-38: Verify drop(ack) triggers cancellation, not success.
+    /// Verify drop(ack) triggers cancellation, not success.
     /// This confirms the old behavior (drop) was wrong.
-    #[tokio::test]
-    async fn test_exact_drop_cancels_waiter() {
-        use commonware_utils::acknowledgement::{Acknowledgement, Exact};
+    #[test]
+    fn test_exact_drop_cancels_waiter() {
+        use commonware_runtime::Runner as _;
+        commonware_runtime::deterministic::Runner::default().start(|_context| async move {
+            use commonware_utils::acknowledgement::{Acknowledgement, Exact};
 
-        let (ack, waiter) = Exact::handle();
-        drop(ack); // Old behavior — should cancel
+            let (ack, waiter) = Exact::handle();
+            drop(ack); // Old behavior — should cancel
 
-        let result = waiter.await;
-        assert!(
-            result.is_err(),
-            "drop without acknowledge must cancel the waiter"
-        );
+            let result = waiter.await;
+            assert!(
+                result.is_err(),
+                "drop without acknowledge must cancel the waiter"
+            );
+        });
     }
 
     /// Executor Mailbox Reporter impl sends MarshalUpdate into the channel.
-    #[tokio::test]
-    async fn test_executor_reporter_sends_marshal_update() {
-        use commonware_consensus::Reporter;
-        use commonware_utils::acknowledgement::{Acknowledgement, Exact};
-        use futures::StreamExt;
+    #[test]
+    fn test_executor_reporter_sends_marshal_update() {
+        use commonware_runtime::Runner as _;
+        commonware_runtime::deterministic::Runner::default().start(|_context| async move {
+            use commonware_consensus::Reporter;
+            use commonware_utils::acknowledgement::{Acknowledgement, Exact};
+            use futures::StreamExt;
 
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
-        let mut mailbox = crate::executor::Mailbox::from_sender(tx);
-        let block = make_test_block(0xCC);
+            let (tx, mut rx) = futures::channel::mpsc::unbounded();
+            let mut mailbox = crate::executor::Mailbox::from_sender(tx);
+            let block = make_test_block(0xCC);
 
-        let (ack, _waiter) = Exact::handle();
-        let update = commonware_consensus::marshal::Update::Block(block, ack);
+            let (ack, _waiter) = Exact::handle();
+            let update = commonware_consensus::marshal::Update::Block(block, ack);
 
-        mailbox.report(update);
+            mailbox.report(update);
 
-        // Message must be in the channel.
-        let msg = rx.next().await.expect("channel must have message");
-        assert!(
-            matches!(msg, crate::executor::ingress::Message::MarshalUpdate(_)),
-            "expected MarshalUpdate message"
-        );
+            // Message must be in the channel.
+            let msg = rx.next().await.expect("channel must have message");
+            assert!(
+                matches!(msg, crate::executor::ingress::Message::MarshalUpdate(_)),
+                "expected MarshalUpdate message"
+            );
+        });
     }
 
     // -----------------------------------------------------------------------
-    // A-10: Finalization retry constants
+    // Finalization retry constants
     // -----------------------------------------------------------------------
 
-    /// A-10: Verify retry constants are reasonable and accessible.
+    /// Verify retry constants are reasonable and accessible.
     #[test]
     fn test_finalize_retry_constants() {
-        use crate::application::handler::{
+        use crate::config::{
             FINALIZE_MAX_RETRIES, FINALIZE_RESOLUTION_TIMEOUT, FINALIZE_RETRY_DELAY,
             PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
         };
@@ -276,13 +285,13 @@ mod tests {
         assert_eq!(resolved.view(), View::new(90));
     }
 
-    /// A-10: Simulated marshal failure — retry exhaustion returns error.
+    /// Simulated marshal failure — retry exhaustion returns error.
     #[test]
     fn test_retry_exhaustion_on_persistent_failure() {
         use crate::finalization::util::{retry_with_backoff, RetryFailureKind};
         use commonware_runtime::Runner as _;
 
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             // Resolver that always fails
             let result = retry_with_backoff::<(), _, _>(
                 &context,
@@ -303,14 +312,14 @@ mod tests {
         });
     }
 
-    /// A-10: Retry succeeds on second attempt — no stall.
+    /// Retry succeeds on second attempt — no stall.
     #[test]
     fn test_retry_succeeds_after_transient_failure() {
         use crate::finalization::util::retry_with_backoff;
         use commonware_runtime::Runner as _;
         use std::sync::atomic::{AtomicU32, Ordering};
 
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let attempt = std::sync::Arc::new(AtomicU32::new(0));
             let attempt_clone = attempt.clone();
 
@@ -347,13 +356,13 @@ mod tests {
         });
     }
 
-    /// A-10: Immediate success — no retries needed.
+    /// Immediate success — no retries needed.
     #[test]
     fn test_retry_immediate_success_no_stall() {
         use crate::finalization::util::retry_with_backoff;
         use commonware_runtime::Runner as _;
 
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let result = retry_with_backoff(
                 &context,
                 || async { Ok::<_, ()>(99u32) },
@@ -368,25 +377,27 @@ mod tests {
     }
 
     /// Regression: a never-completing marshal future must not wedge the helper.
-    /// Without per-attempt timeout, this hangs (caught by the outer
-    /// `tokio::time::timeout`). With the timeout, exhaustion fires deterministically.
+    /// Without the per-attempt timeout the inner helper would hang on the pending
+    /// future; the `Runner::timed` wedge guard aborts the test if that happens. With
+    /// the per-attempt timeout, exhaustion fires deterministically via the runtime
+    /// clock and `retry_with_backoff` returns promptly in virtual time.
     #[test]
     fn test_finalize_resolution_times_out_pending_marshal_future() {
         use crate::finalization::util::{retry_with_backoff, RetryFailureKind};
         use commonware_runtime::Runner as _;
         use std::sync::atomic::{AtomicU32, Ordering};
-        use std::time::Duration;
 
-        commonware_runtime::tokio::Runner::default().start(|context| async move {
-            let attempts = std::sync::Arc::new(AtomicU32::new(0));
-            let attempts_clone = attempts.clone();
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60)).start(
+            |context| async move {
+                let attempts = std::sync::Arc::new(AtomicU32::new(0));
+                let attempts_clone = attempts.clone();
 
-            // Outer wall-clock guard: if the fix is missing, the inner helper hangs
-            // and this `timeout` fires with Err — the test still terminates rather
-            // than wedging the test-runner — and the `expect` below catches it.
-            let result = tokio::time::timeout(
-                Duration::from_millis(200),
-                retry_with_backoff::<(), _, _>(
+                // The per-attempt `Clock::timeout` inside `retry_with_backoff` must make
+                // the helper terminate even on a never-completing future. Under the
+                // deterministic runtime the clock-driven per-attempt timeouts and backoff
+                // advance virtual time, so the helper returns promptly; the `Runner::timed`
+                // wedge guard aborts the test if the fix is missing and it hangs instead.
+                let result = retry_with_backoff::<(), _, _>(
                     &context,
                     move || {
                         let a = attempts_clone.clone();
@@ -396,27 +407,24 @@ mod tests {
                         }
                     },
                     3,
-                    Duration::from_millis(1),
-                    Duration::from_millis(5),
-                ),
-            )
-            .await
-            .expect(
-                "retry_with_backoff must terminate within 200 ms — pending future is wedging it",
-            );
+                    std::time::Duration::from_millis(1),
+                    std::time::Duration::from_millis(5),
+                )
+                .await;
 
-            let failure = result.expect_err("must exhaust on pending future");
-            assert_eq!(failure.attempts, 3, "must have attempted exactly 3 times");
-            assert_eq!(
-                failure.last_kind,
-                RetryFailureKind::Timeout,
-                "last failure must be Timeout, not Unavailable"
-            );
-            assert_eq!(
-                attempts.load(Ordering::SeqCst),
-                3,
-                "resolver must have been polled exactly 3 times"
-            );
-        });
+                let failure = result.expect_err("must exhaust on pending future");
+                assert_eq!(failure.attempts, 3, "must have attempted exactly 3 times");
+                assert_eq!(
+                    failure.last_kind,
+                    RetryFailureKind::Timeout,
+                    "last failure must be Timeout, not Unavailable"
+                );
+                assert_eq!(
+                    attempts.load(Ordering::SeqCst),
+                    3,
+                    "resolver must have been polled exactly 3 times"
+                );
+            },
+        );
     }
 }

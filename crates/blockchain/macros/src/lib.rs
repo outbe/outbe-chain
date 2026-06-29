@@ -185,6 +185,14 @@ fn is_dsl_binary_heap_type(ty: &Type) -> bool {
     is_ident_type(ty, &["BinaryHeap"])
 }
 
+fn is_dsl_deque_type(ty: &Type) -> bool {
+    is_ident_type(ty, &["Deque"])
+}
+
+fn is_dsl_circular_buffer_type(ty: &Type) -> bool {
+    is_ident_type(ty, &["CircularBuffer"])
+}
+
 fn is_optional_type(ty: &Type) -> bool {
     is_ident_type(ty, &["Optional", "Option"])
 }
@@ -269,6 +277,14 @@ fn storage_type_with_lifetime(ty: &Type) -> proc_macro2::TokenStream {
             let inner = unwrap_single_generic_type(ty).unwrap();
             quote! { ::outbe_primitives::storage::dsl::BinaryHeap<'storage, #inner> }
         }
+        "Deque" => {
+            let inner = unwrap_single_generic_type(ty).unwrap();
+            quote! { ::outbe_primitives::storage::dsl::Deque<'storage, #inner> }
+        }
+        "CircularBuffer" => {
+            let inner = unwrap_single_generic_type(ty).unwrap();
+            quote! { ::outbe_primitives::storage::dsl::CircularBuffer<'storage, #inner> }
+        }
         _ => quote! { #ty },
     }
 }
@@ -282,7 +298,7 @@ fn contract_slot_count_expr(ty: &Type) -> proc_macro2::TokenStream {
     {
         return quote! { 1u64 };
     }
-    if is_dsl_set_type(ty) {
+    if is_dsl_set_type(ty) || is_dsl_deque_type(ty) || is_dsl_circular_buffer_type(ty) {
         return quote! { 2u64 };
     }
     if let Some((_, count)) = is_storage_collection(ty) {
@@ -518,6 +534,10 @@ fn generate_contract(
                 quote! { #n: ::outbe_primitives::storage::types::StorageSet::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
             } else if is_dsl_binary_heap_type(ty) {
                 quote! { #n: ::outbe_primitives::storage::types::BinaryHeap::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
+            } else if is_dsl_deque_type(ty) {
+                quote! { #n: ::outbe_primitives::storage::types::StorageDeque::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
+            } else if is_dsl_circular_buffer_type(ty) {
+                quote! { #n: ::outbe_primitives::storage::types::StorageCircularBuffer::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
             } else if let Some((coll_name, _)) = is_storage_collection(ty) {
                 let coll_ident = syn::Ident::new(coll_name, proc_macro2::Span::call_site());
                 quote! { #n: ::outbe_primitives::storage::types::#coll_ident::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }

@@ -16,13 +16,13 @@ pub mod digest;
 pub mod dkg;
 pub mod dkg_actor;
 pub mod dkg_manager;
+pub mod epoch_registry;
 pub mod epoch_subchannels;
 pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
-pub mod participation;
+pub(crate) mod missed_proposers;
 pub mod proof;
-pub mod scheme_provider;
 pub mod timing;
 pub mod vrf_safety;
 
@@ -50,4 +50,6 @@ pub mod executor;
 pub mod finalization;
 pub mod reporter;
 pub(crate) mod test_faults;
+#[cfg(test)]
+mod test_fixtures;
 pub(crate) mod util;

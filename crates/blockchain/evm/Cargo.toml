@@ -12,18 +12,20 @@ outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-gratispool.workspace = true
 outbe-promis.workspace = true
+outbe-promisfactory.workspace = true
 outbe-tribute.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
-outbe-intexregistry.workspace = true
+outbe-intex.workspace = true
 outbe-intexfactory.workspace = true
 outbe-desis.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
 outbe-tributefactory.workspace = true
 outbe-teeregistry.workspace = true
+outbe-tee.workspace = true
 outbe-agentreward.workspace = true
 outbe-metadosis.workspace = true
 outbe-validatorset.workspace = true
@@ -76,8 +78,12 @@ tempfile.workspace = true
 commonware-cryptography.workspace = true
 commonware-consensus.workspace = true
 commonware-codec.workspace = true
+commonware-utils.workspace = true
 commonware-math.workspace = true
 rand_core.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]
+
+[lints]
+workspace = true

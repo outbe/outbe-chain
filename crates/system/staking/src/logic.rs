@@ -19,7 +19,7 @@ impl Staking<'_> {
             return Err(PrecompileError::Revert("amount must be non-zero".into()));
         }
 
-        // A-43: Enforce self-stake only — no third-party delegation.
+        // Enforce self-stake only — no third-party delegation.
         // Without full delegation accounting, a delegator's funds would be
         // locked with no protocol-level withdrawal mechanism.
         if caller != validator {
@@ -28,7 +28,7 @@ impl Staking<'_> {
             ));
         }
 
-        // A-01: Do NOT call transfer_balance here. For payable precompile calls,
+        // Do NOT call transfer_balance here. For payable precompile calls,
         // the EVM already transfers msg.value from caller to STAKING_ADDRESS
         // via CallValue::Transfer. A second transfer would double-charge the caller.
 
@@ -322,8 +322,8 @@ impl Staking<'_> {
     /// Slashes a validator by `percent` of their staked amount and unbonding entries.
     ///
     /// - Reduces stake_amount[validator] and total_staked by the slash amount.
-    /// - A-04: Also proportionally reduces pending unbonding entries.
-    /// - A-05: Burns slashed tokens from STAKING_ADDRESS native balance.
+    /// - Also proportionally reduces pending unbonding entries.
+    /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Updates val_stake in ValidatorSet.
     /// - Returns the total slashed amount (for evidence reward calculation).
     /// - Does NOT change validator status — severe faults are handled by
@@ -348,7 +348,7 @@ impl Staking<'_> {
             total_slashed += slash;
         }
 
-        // A-04: Slash unbonding entries proportionally.
+        // Slash unbonding entries proportionally.
         // Walk the per-validator linked list and reduce each pending entry.
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
         let slash_complete_time = self.checked_complete_time(
@@ -374,7 +374,7 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // A-05: Burn slashed tokens from STAKING_ADDRESS so native balance stays
+        // Burn slashed tokens from STAKING_ADDRESS so native balance stays
         // in sync with accounting. Without this, slashed amounts become orphaned.
         if !total_slashed.is_zero() {
             self.storage

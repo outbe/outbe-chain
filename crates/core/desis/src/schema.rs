@@ -3,6 +3,9 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
+use outbe_primitives::units::SCALE_1E18_U128;
+
+use crate::constants::PROMIS_LOAD;
 
 /// Auction lifecycle stage.
 ///
@@ -34,26 +37,70 @@ impl AuctionStage {
     }
 }
 
+/// Call-trigger parameters carried alongside the auction config; sourced from
+/// the genesis `IntexParams` at auction start and relayed to the target chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IntexCallTrigger {
+    /// Rolling VWAP window length (whole days) evaluated for the call condition.
+    pub window_days: u16,
+    /// Days within the window that must breach for a call to trigger.
+    pub threshold_days: u16,
+    /// Cooldown between successive calls (seconds).
+    pub intex_call_period: u32,
+}
+
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
+    /// Issuance-currency ISO-4217 code (e.g. 840 = USD).
+    pub issuance_currency: u16,
+    /// Reference-currency ISO-4217 code (e.g. 840 = USD).
+    pub reference_currency: u16,
     /// Promis tokens per Intex unit (18 decimals); bounded by uint128.
-    pub intex_size: u128,
-    /// Minimum acceptable bid price (payment-token decimals). 0 → no floor.
-    pub min_intex_bid_price: u64,
-    /// Strike price (payment-token decimals).
-    pub intex_strike_price: u64,
-    /// Live COEN/USD oracle price (1e18) captured at auction start; carried to
-    /// IntexFactory.issue to derive coen_price_floor and coen_price_call_trigger.
-    pub coen_price: U256,
+    pub promis_load_minor: u128,
+    /// Call-trigger parameters sourced from genesis `IntexParams`.
+    pub call_trigger: IntexCallTrigger,
+    /// Minimum acceptable bid rate (1e6 fixed-point, % of strike). 0 → no floor.
+    pub min_intex_bid_rate: u32,
+    /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
+    pub min_intex_bid_quantity: u16,
+    /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
+    /// Floor and call derive from it; the strike is `promis_load` (not entry-derived).
+    pub entry_price_minor: U256,
+}
+
+impl AuctionConfig {
+    /// Build the demand-side config from the per-unit entry price (1e18-scaled).
+    /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
+    /// `min_intex_bid_rate = 0` means no bid floor. Currencies come from the
+    /// genesis ISO constants. `call_trigger` and `min_intex_bid_quantity` are left
+    /// at their defaults here and populated at auction start (`start_auction`),
+    /// where the genesis `IntexParams` and the prior-clearing count are in reach.
+    pub fn from_entry_price(entry_price_minor: U256) -> Self {
+        Self {
+            issuance_currency: crate::constants::QUALIFIER_ISSUANCE_ISO,
+            reference_currency: crate::constants::QUALIFIER_REFERENCE_ISO,
+            promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
+            call_trigger: IntexCallTrigger::default(),
+            min_intex_bid_rate: 0,
+            min_intex_bid_quantity: 0,
+            entry_price_minor,
+        }
+    }
+
+    /// Per-Intex strike = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
+    /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
+    pub fn cost_amount_minor(&self) -> u128 {
+        self.promis_load_minor
+    }
 }
 
 /// One bid relayed from BNB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidData {
     pub bidder_address: Address,
-    /// Bid price (payment-token decimals).
-    pub intex_bid_price: u64,
+    /// Bid rate (1e6 fixed-point, % of strike).
+    pub intex_bid_rate: u32,
     /// Bid timestamp (ordering only).
     pub timestamp: u32,
     /// Requested quantity (Intex units).
@@ -64,12 +111,12 @@ pub struct BidData {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClearingResult {
     pub issued_intex_count: u32,
-    pub clearing_price: u64,
+    pub clearing_rate: u32,
     pub winners: Vec<Address>,
     pub winner_quantities: Vec<U256>,
     pub all_bidders: Vec<Address>,
-    pub refunded_amounts: Vec<u64>,
-    pub paid_amounts: Vec<u64>,
+    pub refunded_amounts: Vec<u128>,
+    pub paid_amounts: Vec<u128>,
 }
 
 /// EVM storage layout for the Desis module.
@@ -80,18 +127,17 @@ pub struct ClearingResult {
 #[contract(addr = DESIS_ADDRESS)]
 pub struct DesisContract {
     // --- Auction config (per series) ---
-    /// series_id -> intex_size.
+    /// series_id -> promis_load_minor.
     #[attribute(order = 0)]
-    pub config_intex_size: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
-    pub config_min_bid_price: outbe_primitives::storage::dsl::Map<u32, u64>,
-    #[attribute(order = 2)]
-    pub config_strike_price: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<u32, u32>,
+    // order = 2 retired: the strike is derived from entry_price, no longer stored.
     #[attribute(order = 3)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// COEN/USD oracle price (1e18) captured at auction start; carried to IntexFactory.
+    /// Entry price (1e18) captured at auction start; carried to IntexFactory.
     #[attribute(order = 4)]
-    pub config_coen_price: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub config_entry_price: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     // --- Auction stage ---
     /// series_id -> AuctionStage (u8).
@@ -111,7 +157,7 @@ pub struct DesisContract {
     /// keccak256(series_id_be32 ++ index_be32) -> bidder address.
     #[attribute(order = 9)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
-    /// Packed bid fields: limbs[0]=price(u64), limbs[1]=quantity(u16)<<32|timestamp(u32).
+    /// Packed bid fields: limbs[0]=rate(u32), limbs[1]=quantity(u16)<<32|timestamp(u32).
     #[attribute(order = 10)]
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -127,6 +173,28 @@ pub struct DesisContract {
     /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
     #[attribute(order = 13)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// series_id -> 1 once `begin_clearing` has run; lets `clear_auction` tell a
+    /// genuine zero supply from a clearing that was never initiated.
+    #[attribute(order = 14)]
+    pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,
+
+    // --- Extended auction config (per series) ---
+    /// series_id -> issuance-currency ISO-4217 code.
+    #[attribute(order = 15)]
+    pub config_issuance_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> reference-currency ISO-4217 code.
+    #[attribute(order = 16)]
+    pub config_reference_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call-trigger window (whole days).
+    #[attribute(order = 17)]
+    pub config_call_window_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call-trigger threshold (whole days).
+    #[attribute(order = 18)]
+    pub config_call_threshold_days: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> call cooldown (seconds).
+    #[attribute(order = 19)]
+    pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {

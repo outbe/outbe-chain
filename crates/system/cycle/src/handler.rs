@@ -13,12 +13,12 @@ use alloy_primitives::U256;
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
     block::dispatch_terminal_remainder_at,
-    daily_emission::day_emission_limit,
+    day_emission::day_emission_limit,
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    time::{date_key_to_timestamp, previous_date_key, timestamp_to_date_key},
+    time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key},
 };
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
@@ -37,6 +37,28 @@ pub fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
     let prev_day = previous_date_key(current_day);
+
+    // idempotency guard. This handler mints the CCA/Merchant agent pools
+    // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
+    // validator topup is independently idempotent via `daily_topup_settled`), so
+    // a second invocation for an already-settled `prev_day` would double-mint
+    // those pools. That re-fire is reachable whenever more than one CycleTick
+    // resolves the same `prev_day` (e.g. several blocks within one UTC day after
+    // a forward timestamp advance — bounded but not eliminated by the C-01 drift
+    // band). Gate the WHOLE settlement on `daily_settled[prev_day]` so each day
+    // settles exactly once regardless of how many times the handler fires.
+    if outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "is_day_settled", prev_day, error = ?e, "emission_limit_daily step failed");
+        e
+    })? {
+        tracing::debug!(
+            target: "outbe::cycle",
+            prev_day,
+            block_number = ctx.block.block_number,
+            "emission_limit_daily: prev_day already settled — skipping (idempotent)"
+        );
+        return Ok(());
+    }
 
     let genesis = outbe_rewards::runtime::genesis_utc_day(ctx).unwrap_or(0);
     tracing::info!(
@@ -140,7 +162,7 @@ pub fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
         .checked_add(validator_excess)
         .and_then(|v| v.checked_add(agent_excess))
         .ok_or_else(|| PrecompileError::Revert("metadosis terminal overflow".into()))?;
-    let prev_day_ts = date_key_to_timestamp(prev_day);
+    let prev_day_ts = date_key_to_utc_timestamp(prev_day);
     wrap(
         "dispatch_terminal_remainder_at",
         dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),

@@ -2,19 +2,11 @@
 pragma solidity ^0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
 
-import {
-    OnchainCrossChainOrder,
-    ResolvedCrossChainOrder,
-    Output,
-    FillInstruction
-} from "../src/interfaces/OrderTypes.sol";
-
-import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
 
 event Open(bytes32 indexed orderId, ResolvedCrossChainOrder resolvedOrder);
 

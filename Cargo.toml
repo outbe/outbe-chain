@@ -25,12 +25,13 @@ members = [
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
+    "crates/core/promisfactory",
     "crates/core/tribute",
     "crates/core/nod",
     "crates/core/nodfactory",
     "crates/core/gem",
     "crates/core/gemfactory",
-    "crates/core/intexregistry",
+    "crates/core/intex",
     "crates/core/intexfactory",
     "crates/core/desis",
     "crates/core/lysis",
@@ -60,6 +61,20 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+# Workspace-wide lint levels. Members opt in with `[lints]\nworkspace = true`.
+# `unsafe_code = "deny"` makes every `unsafe` a hard error unless the site
+# carries an explicit, documented `#[allow(unsafe_code)]` (the one audited
+# exception lives in crates/blockchain/evm/src/precompiles.rs). `warnings =
+# "deny"` promotes every remaining rustc warning to an error — the "deny + fix"
+# posture, matching CI's `clippy -D warnings`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+warnings = "deny"
+
+[workspace.lints.clippy]
+# Any retained `unsafe` block must justify itself with a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "deny"
+
 [workspace.dependencies]
 # Internal — blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
@@ -86,12 +101,13 @@ outbe-teeregistry = { path = "crates/system/teeregistry" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
+outbe-promisfactory = { path = "crates/core/promisfactory" }
 outbe-tribute = { path = "crates/core/tribute" }
 outbe-nod = { path = "crates/core/nod" }
 outbe-nodfactory = { path = "crates/core/nodfactory" }
 outbe-gem = { path = "crates/core/gem" }
 outbe-gemfactory = { path = "crates/core/gemfactory" }
-outbe-intexregistry = { path = "crates/core/intexregistry" }
+outbe-intex = { path = "crates/core/intex" }
 outbe-intexfactory = { path = "crates/core/intexfactory" }
 outbe-desis = { path = "crates/core/desis" }
 outbe-lysis = { path = "crates/core/lysis" }
@@ -191,14 +207,15 @@ ring = "0.17"
 zeroize = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+either = "1"
 
 # ZK / Poseidon
-outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.0.2" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-outbe-zk-circuit-noir = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-outbe-crypto-common = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.0.1" }
-ark-bn254 = "0.5"
-ark-ff = { version = "0.5", features = ["std"] }
+outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+ark-bn254 = "0.6"
+ark-ff = { version = "0.6", features = ["std"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -244,6 +261,7 @@ eyre = "0.6"
 hex = "0.4"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+parking_lot = "0.12"
 tracing = "0.1"
 futures = "0.3"
 time = "0.3"

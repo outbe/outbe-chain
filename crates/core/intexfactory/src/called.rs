@@ -15,11 +15,11 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_intexregistry::IntexState;
+use outbe_intex::IntexState;
 
-use crate::constants::{ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IOriginMessenger, MessagingFee};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee};
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
@@ -104,11 +104,14 @@ pub(crate) fn try_call(
     today: WorldwideDay,
     now_ts: u64,
 ) -> Result<bool> {
-    let series = outbe_intexregistry::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
+        return Ok(false);
+    }
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }
-    let trigger = series.coen_price_call_trigger;
+    let trigger = series.call_price_minor;
     let window = u32::from(series.call_window_days);
     let threshold = u32::from(series.call_threshold_days);
     if window == 0 || threshold == 0 {
@@ -137,7 +140,8 @@ pub(crate) fn try_call(
     // u32 timestamp; bounded until 2106 (matches issued_at).
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
-    outbe_intexregistry::api::mark_called(storage, series_id, called_at)?;
+    outbe_intex::api::mark_called(storage, series_id, called_at)?;
+    mark_nft_called(storage, series_id)?;
     factory.remove_qualified(series_id, trigger)?;
 
     // Notify the target chain of the Called transition via LayerZero; best-effort.
@@ -166,10 +170,8 @@ fn notify_lz_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
         .abi_encode()
         .into(),
     )?;
-    let fee =
-        IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret).map_err(
-            |_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()),
-        )?;
+    let fee = IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret)
+        .map_err(|_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
@@ -181,6 +183,19 @@ fn notify_lz_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
                 lzTokenFee: fee.lzTokenFee,
             },
             refundAddress: INTEX_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    Ok(())
+}
+
+fn mark_nft_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    storage.call(
+        INTEX_NFT1155_ADDRESS,
+        U256::ZERO,
+        IIntexNFT1155::markCalledCall {
+            seriesId: series_id,
         }
         .abi_encode()
         .into(),

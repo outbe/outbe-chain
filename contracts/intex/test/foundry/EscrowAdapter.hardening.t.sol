@@ -3,16 +3,17 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
-/// @dev ERC20 that skims a fee on every move: the sender is debited the full amount but the
-///      recipient is credited amount minus fee. Breaks the "exactly `amount` lands" assumption.
+/// @dev ERC20 that skims a fee on every move: the sender is crosschainBurned the full amount but the
+///      recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands" assumption.
 contract FeeOnTransferToken is IERC20 {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -101,7 +102,7 @@ contract EscrowAdapterHardeningTest is Test {
     uint32 internal constant SERIES = 1;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -121,20 +122,20 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_Boundary_LockFunds_AcceptsUint64Max() public {
-        uint64 max = type(uint64).max;
+        uint128 max = type(uint128).max;
         _fund(bidderA, max);
 
         vm.prank(auction);
         escrow.lockFunds(SERIES, bidderA, max);
 
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked");
         assertEq(escrow.getBidLock(SERIES, bidderA).lockedAmount, max, "lockedAmount");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance");
     }
 
     function test_Boundary_TotalLockedOverflow_Reverts() public {
-        uint64 max = type(uint64).max;
+        uint128 max = type(uint128).max;
         _fund(bidderA, max);
         _fund(bidderB, 1);
 
@@ -145,13 +146,13 @@ contract EscrowAdapterHardeningTest is Test {
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         escrow.lockFunds(SERIES, bidderB, 1);
 
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked unchanged after overflow revert");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance unchanged");
     }
 
     function test_FeeOnTransferToken_LockFunds_FailsClosed() public {
-        EscrowAdapter feeEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter feeEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact feeCompact = new MockTheCompact();
         FeeOnTransferToken feeToken = new FeeOnTransferToken(100);
         MockVaultProvider feeProvider = new MockVaultProvider();
@@ -168,12 +169,12 @@ contract EscrowAdapterHardeningTest is Test {
         vm.expectRevert();
         feeEscrow.lockFunds(SERIES, bidderA, 1_000e6);
 
-        (,, uint64 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, 0, "no state written on a fee-token lock");
     }
 
     function test_HostileReentrantVault_FinalizeBlocksReentry_ConservationHolds() public {
-        EscrowAdapter hEscrow = new EscrowAdapter(admin, bridger);
+        EscrowAdapter hEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact hCompact = new MockTheCompact();
         MockERC20 hToken = new MockERC20("USD Coin", "USDC", 6);
         HostileReentrantVaultProvider hostile = new HostileReentrantVaultProvider();
@@ -182,7 +183,7 @@ contract EscrowAdapterHardeningTest is Test {
         hEscrow.wire(auction, address(hCompact), address(hostile), address(hToken));
         hCompact.setResetPeriodSeconds(0);
 
-        uint64 amount = 500e6;
+        uint128 amount = 500e6;
         hToken.mint(bidderA, amount);
         vm.prank(bidderA);
         hToken.approve(address(hEscrow), type(uint256).max);
@@ -202,7 +203,7 @@ contract EscrowAdapterHardeningTest is Test {
             uint8(IEscrowAdapter.LockStatus.Locked),
             "lock must stay Locked after the re-entry was blocked"
         );
-        (,, uint64 totalLocked) = hEscrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = hEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, amount, "totalLocked unchanged");
         assertEq(hCompact.balanceOf(address(hEscrow), hEscrow.lockId()), amount, "pooled balance unchanged");
     }

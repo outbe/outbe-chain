@@ -92,6 +92,7 @@ mod tests {
     use super::*;
     use alloy_primitives::Bytes;
     use commonware_consensus::marshal::Update;
+    use commonware_runtime::{Clock as _, Runner as _};
     use commonware_utils::acknowledgement::{Acknowledgement, Exact};
     use futures::channel::mpsc;
     use futures::StreamExt;
@@ -167,31 +168,41 @@ mod tests {
     /// `Exact::drop` would `cancel()` the shared state and the waiter would
     /// instead resolve to `Err(Canceled)` — so this passing proves the
     /// per-clone `remaining` increment is satisfied only when all copies ack.
-    #[tokio::test(flavor = "current_thread")]
-    async fn all_acks_resolve_waiter_ok() {
-        let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
-        let (ack, waiter) = Exact::handle();
+    #[test]
+    fn all_acks_resolve_waiter_ok() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
+            let (ack, waiter) = Exact::handle();
 
-        let feedback = reporter.report(Update::Block(make_test_block(0x01), ack));
-        assert!(
-            matches!(feedback, commonware_actor::Feedback::Ok),
-            "report must succeed when both mailboxes are open"
-        );
+            let feedback = reporter.report(Update::Block(make_test_block(0x01), ack));
+            assert!(
+                matches!(feedback, commonware_actor::Feedback::Ok),
+                "report must succeed when both mailboxes are open"
+            );
 
-        // Both copies are now parked in their respective channels. Acknowledge
-        // each one.
-        let exec_ack = take_executor_ack(&mut exec_rx).await;
-        let block_ack = take_block_consumer_ack(&mut pm_rx).await;
-        exec_ack.acknowledge();
-        block_ack.acknowledge();
+            // Both copies are now parked in their respective channels. Acknowledge
+            // each one.
+            let exec_ack = take_executor_ack(&mut exec_rx).await;
+            let block_ack = take_block_consumer_ack(&mut pm_rx).await;
+            exec_ack.acknowledge();
+            block_ack.acknowledge();
 
-        let result = tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("waiter must resolve once every copy is acknowledged");
-        assert!(
-            result.is_ok(),
-            "waiter must resolve Ok when executor and block consumer both ack, got {result:?}"
-        );
+            // The waiter borrows nothing, but mirror the deterministic-runtime
+            // pattern in `dkg_actor::sim_tests`: race the resolved waiter against
+            // a runtime `Clock` sleep instead of a wall-clock async timeout. The
+            // safety bound never fires because the waiter resolves once every
+            // copy is acknowledged.
+            let mut waiter = std::pin::pin!(waiter);
+            let mut timeout = std::pin::pin!(context.sleep(Duration::from_secs(1)));
+            let result = commonware_macros::select! {
+                result = &mut waiter => result,
+                _ = &mut timeout => panic!("waiter must resolve once every copy is acknowledged"),
+            };
+            assert!(
+                result.is_ok(),
+                "waiter must resolve Ok when executor and block consumer both ack, got {result:?}"
+            );
+        });
     }
 
     /// SEC-2: if a single fan-out copy is dropped without being acknowledged,
@@ -201,30 +212,38 @@ mod tests {
     /// Guard sanity: if `Exact::drop` did NOT cancel on an unacknowledged drop,
     /// the executor's ack would leave `remaining == 0` and the waiter would
     /// wrongly resolve to `Ok(())`; this asserting `Err` proves the cancel path.
-    #[tokio::test(flavor = "current_thread")]
-    async fn dropped_block_consumer_copy_cancels_waiter() {
-        let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
-        let (ack, waiter) = Exact::handle();
+    #[test]
+    fn dropped_block_consumer_copy_cancels_waiter() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
+            let (ack, waiter) = Exact::handle();
 
-        let feedback = reporter.report(Update::Block(make_test_block(0x02), ack));
-        assert!(
-            matches!(feedback, commonware_actor::Feedback::Ok),
-            "report must succeed when both mailboxes are open"
-        );
+            let feedback = reporter.report(Update::Block(make_test_block(0x02), ack));
+            assert!(
+                matches!(feedback, commonware_actor::Feedback::Ok),
+                "report must succeed when both mailboxes are open"
+            );
 
-        // Acknowledge only the executor's copy; drop the block consumer's copy
-        // without acknowledging it (simulates a stalled/non-acking consumer).
-        let exec_ack = take_executor_ack(&mut exec_rx).await;
-        let block_ack = take_block_consumer_ack(&mut pm_rx).await;
-        exec_ack.acknowledge();
-        drop(block_ack);
+            // Acknowledge only the executor's copy; drop the block consumer's copy
+            // without acknowledging it (simulates a stalled/non-acking consumer).
+            let exec_ack = take_executor_ack(&mut exec_rx).await;
+            let block_ack = take_block_consumer_ack(&mut pm_rx).await;
+            exec_ack.acknowledge();
+            drop(block_ack);
 
-        let result = tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("waiter must resolve once the dropped copy cancels");
-        assert!(
-            result.is_err(),
-            "waiter must resolve Err(Canceled) when any fan-out copy is dropped unacknowledged"
-        );
+            // Race the cancelled waiter against a runtime `Clock` sleep (mirrors
+            // `dkg_actor::sim_tests`). `Exact::drop` cancels the aggregate so the
+            // waiter resolves immediately; the safety bound never fires.
+            let mut waiter = std::pin::pin!(waiter);
+            let mut timeout = std::pin::pin!(context.sleep(Duration::from_secs(1)));
+            let result = commonware_macros::select! {
+                result = &mut waiter => result,
+                _ = &mut timeout => panic!("waiter must resolve once the dropped copy cancels"),
+            };
+            assert!(
+                result.is_err(),
+                "waiter must resolve Err(Canceled) when any fan-out copy is dropped unacknowledged"
+            );
+        });
     }
 }

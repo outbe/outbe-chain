@@ -29,9 +29,44 @@ pub fn record_views_skipped(count: u64) {
     counter!("outbe_views_skipped_total").increment(count);
 }
 
+/// Record the highest Simplex view this node has observed activity for.
+///
+/// Unlike `outbe_finalized_view` (which freezes during a stall), this gauge
+/// advances on every view-bearing activity — notarize/certify/finalize votes and
+/// nullification certificates — so it keeps moving while a view-timeout storm
+/// nullifies views without finalizing any. The gap
+/// `outbe_current_view - outbe_finalized_view` is the primary consensus-stall
+/// signal: a sustained non-zero gap means views are advancing but nothing is
+/// finalizing. Cheap (one atomic gauge set); safe to call on the voter task.
+pub fn record_current_view(view: u64) {
+    gauge!("outbe_current_view").set(view as f64);
+}
+
+/// Record a nullified (view-timed-out / skipped) Simplex view.
+///
+/// Incremented when a `Nullification` certificate is observed. A rising rate
+/// means leaders are repeatedly failing to deliver proposals in time
+/// (network turbulence, an offline/byzantine leader run, or a liveness fault),
+/// which `outbe_finalized_view` alone cannot show.
+pub fn record_view_nullified() {
+    counter!("outbe_views_nullified_total").increment(1);
+}
+
 /// Record a finalized event dropped before block resolution.
-pub fn record_finalization_dropped(reason: &str) {
-    counter!("outbe_finalization_dropped_total", "reason" => reason.to_string()).increment(1);
+pub fn record_finalization_dropped(reason: FinalizationDropReason) {
+    counter!("outbe_finalization_dropped_total", "reason" => reason.label()).increment(1);
+}
+
+/// Record a full marshal-resolution retry cycle that exhausted without
+/// resolving a finalized block.
+///
+/// A finalized block is fetchable from any honest peer, so the actor keeps
+/// retrying rather than downing a healthy validator on a transient all-peers
+/// P2P stall. A SUSTAINED non-zero rate is the operator alarm: the block is
+/// unavailable network-wide or local state has diverged — investigate, because
+/// the actor (correctly) cannot advance finalization past an unresolved block.
+pub fn record_finalization_resolution_stalled() {
+    counter!("outbe_finalization_resolution_stalled_total").increment(1);
 }
 
 /// Record a pre-finalization canonical-head reorg at the same height.
@@ -74,9 +109,17 @@ pub fn record_epoch(epoch: u64) {
     gauge!("outbe_epoch_number").set(epoch as f64);
 }
 
-/// Record the Commonware P2P peer-manager target size.
+/// Record the Commonware P2P peer-manager *tracked peer-set* size.
+///
+/// This is the number of peers the peer-manager has registered/tracked for the
+/// current set (primary + secondary tiers), NOT the count of live TCP
+/// connections — the commonware network layer does not expose a live-connection
+/// count at this seam. Operators must read it as membership, not connectivity:
+/// it does not drop when peers disconnect, so it is not a stall/partition
+/// signal on its own. Pair it with `outbe_current_view` vs `outbe_finalized_view`
+/// for liveness diagnosis.
 pub fn record_commonware_p2p_active_peers(count: usize) {
-    gauge!("commonware_p2p_active_peers").set(count as f64);
+    gauge!("commonware_p2p_tracked_peer_set_size").set(count as f64);
 }
 
 /// Record consensus tip vs Reth provider canonical-state readiness.
@@ -142,14 +185,167 @@ pub fn record_reshare_completed() {
     counter!("outbe_reshares_completed_total").increment(1);
 }
 
+/// Record validators whose individual DKG/reshare share was publicly REVEALED
+/// during the ceremony.
+///
+/// A validator offline during its DKG/reshare has its share evaluation revealed
+/// in plaintext (the `feldman_desmedt` construction reveals a non-acking
+/// player's share so the ceremony can still complete), permanently committed
+/// on-chain in the `DealerLog` artifacts. A revealed share makes that
+/// validator's VRF threshold partial publicly forgeable. This is bounded — VRF
+/// drives leader election / fairness, not BFT safety (the BLS individual
+/// aggregate vote stays authoritative, and the group secret is safe up to `2f`
+/// reveals) — but a non-zero value is the operator's signal to rotate the
+/// affected validator's consensus key. The per-validator identities are logged
+/// at `WARN` on the `outbe::dkg` target.
+pub fn record_dkg_revealed_shares(count: usize) {
+    gauge!("outbe_dkg_revealed_shares").set(count as f64);
+    counter!("outbe_dkg_revealed_shares_total").increment(count as u64);
+}
+
 /// Record deterministic degraded leader election due to missing or invalid VRF.
 pub fn record_vrf_degraded_leader_selection() {
     counter!("outbe_vrf_degraded_leader_selection_total").increment(1);
 }
 
-/// Record a byzantine evidence detection event.
-pub fn record_byzantine_evidence(evidence_type: &str) {
-    counter!("outbe_byzantine_evidence_total", "type" => evidence_type.to_string()).increment(1);
+/// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
+/// label, so the `outbe_byzantine_evidence_total{type=...}` metric and the
+/// `outbe::slashing::equivocation` warn! field can only ever take one of these
+/// three values — closing the unbounded label-cardinality hole that a free `&str`
+/// parameter left open on a slashing-path counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquivocationKind {
+    ConflictingNotarize,
+    ConflictingFinalize,
+    NullifyFinalize,
+}
+
+impl EquivocationKind {
+    /// The stable telemetry label (metric `type` value and warn! field). These
+    /// strings are an external, operator-facing surface — do not change them.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ConflictingNotarize => "conflicting_notarize",
+            Self::ConflictingFinalize => "conflicting_finalize",
+            Self::NullifyFinalize => "nullify_finalize",
+        }
+    }
+}
+
+/// Record a byzantine evidence detection event under its typed, closed-set label.
+pub fn record_byzantine_evidence(kind: EquivocationKind) {
+    counter!("outbe_byzantine_evidence_total", "type" => kind.label()).increment(1);
+}
+
+/// Reason a finalized event was dropped before block resolution. Closed set so the
+/// `outbe_finalization_dropped_total{reason=...}` label cannot drift or typo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalizationDropReason {
+    MailboxClosed,
+    StaleRound,
+    SameRoundInconsistency,
+    DuplicateRound,
+}
+
+impl FinalizationDropReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::MailboxClosed => "mailbox_closed",
+            Self::StaleRound => "stale_round",
+            Self::SameRoundInconsistency => "same_round_inconsistency",
+            Self::DuplicateRound => "duplicate_round",
+        }
+    }
+}
+
+/// Reason an `Activity::Certification` was dropped by the reporter before
+/// persistence. Closed set behind `outbe_certification_dropped_total{reason=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificationDropReason {
+    VerifyFailed,
+    SnapshotBuildFailed,
+    MailboxClosed,
+    StoreError,
+}
+
+impl CertificationDropReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VerifyFailed => "verify_failed",
+            Self::SnapshotBuildFailed => "snapshot_build_failed",
+            Self::MailboxClosed => "mailbox_closed",
+            Self::StoreError => "store_error",
+        }
+    }
+}
+
+/// DKG boundary requirement decision, for proposer/verifier observability behind
+/// `outbe_dkg_boundary_requirement_total{decision=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DkgBoundaryDecision {
+    AlreadyCommitted,
+    MustEmit,
+    NoPending,
+}
+
+impl DkgBoundaryDecision {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AlreadyCommitted => "already_committed",
+            Self::MustEmit => "must_emit",
+            Self::NoPending => "no_pending",
+        }
+    }
+}
+
+/// Reason a DKG boundary requirement could not be derived from the parent
+/// snapshot and bounded ancestry. Closed set behind
+/// `outbe_dkg_boundary_unavailable_total{reason=...}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DkgBoundaryUnavailableReason {
+    GenesisBoundaryNotReady,
+    AncestryUnavailable,
+}
+
+impl DkgBoundaryUnavailableReason {
+    /// Stable telemetry label — operator-facing surface, do not change.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GenesisBoundaryNotReady => "genesis_boundary_not_ready",
+            Self::AncestryUnavailable => "ancestry_unavailable",
+        }
+    }
+}
+
+/// Record an invalid threshold-VRF seed partial that was excluded from
+/// recovery during attestation verification AND is identity-attributable to its
+/// author (the rider identity signature verified). A non-zero value means a
+/// committee member deliberately emitted a garbage `bls_seed_partial` on the
+/// active material version (byzantine); the verifier neutralized it so it cannot
+/// poison `recover_proof`, and buffered slashable evidence for an external
+/// watcher to submit.
+pub fn record_invalid_vrf_partial() {
+    counter!("outbe_invalid_vrf_partial_total").increment(1);
+}
+
+/// Record an invalid threshold-VRF seed partial whose rider identity signature
+/// did NOT verify, so it cannot be attributed to the claimed signer — a
+/// probable in-transit relay forgery. It is neutralized (excluded from
+/// recovery) but never slashed.
+pub fn record_forged_seed_partial() {
+    counter!("outbe_forged_seed_partial_total").increment(1);
+}
+
+/// Record a finalized certificate whose embedded threshold-VRF proof did not
+/// verify against the committee group key for its own round. Under the
+/// seed-partial sanitization in attestation verification this must be zero; a
+/// non-zero value is a hard alarm that an unverifiable proof reached the
+/// finalized certificate and will fail the next height's mandatory V2 verify.
+pub fn record_finalized_cert_invalid_vrf_proof() {
+    counter!("outbe_finalized_cert_invalid_vrf_proof_total").increment(1);
 }
 
 /// Builder included exact-parent metadata in the Phase 1 system transaction.
@@ -160,12 +356,6 @@ pub fn record_parent_cert_included() {
 /// Builder produced a valid block without an eligible exact-parent certificate.
 pub fn record_parent_cert_missing() {
     counter!("outbe_parent_cert_missing_total").increment(1);
-}
-
-/// Builder skipped a candidate because exact-parent validation did not accept it.
-pub fn record_parent_cert_invalid_omitted(verdict: &str) {
-    counter!("outbe_parent_cert_invalid_omitted_total", "verdict" => verdict.to_string())
-        .increment(1);
 }
 
 /// Current exact-parent certificate handoff store entry count.
@@ -192,12 +382,6 @@ pub fn record_parent_cert_retained_depth(depth: u64) {
     gauge!("outbe_parent_cert_retained_depth").set(depth as f64);
 }
 
-/// Verifier-side exact-parent certificate rejection.
-pub fn record_parent_cert_verify_rejected(verdict: &str) {
-    counter!("outbe_parent_cert_verify_rejected_total", "verdict" => verdict.to_string())
-        .increment(1);
-}
-
 /// `Activity::Certification` admitted by the reporter and persisted to the
 /// certified-parent proof store.
 pub fn record_certification_persisted() {
@@ -208,8 +392,8 @@ pub fn record_certification_persisted() {
 /// Reasons:
 /// - `"verify_failed"` — Notarization signature did not verify.
 /// - `"store_error"` — durable proof-store write returned an error.
-pub fn record_certification_dropped(reason: &str) {
-    counter!("outbe_certification_dropped_total", "reason" => reason.to_string()).increment(1);
+pub fn record_certification_dropped(reason: CertificationDropReason) {
+    counter!("outbe_certification_dropped_total", "reason" => reason.label()).increment(1);
 }
 
 /// deterministic proposer-forfeit metric. See
@@ -228,6 +412,13 @@ pub fn record_parent_proof_unavailable_forfeit() {
 /// Proposer could not find a usable Phase 1 parent proof for the exact parent.
 pub fn record_phase1_parent_proof_unavailable() {
     counter!("outbe_phase1_parent_proof_unavailable_total").increment(1);
+}
+
+/// the proposer's in-process selection store missed the direct-parent
+/// proof but it was recovered from marshal's durable finalization archive,
+/// avoiding a slot forfeit (post-restart / late-join / finalization lag).
+pub fn record_parent_proof_recovered_from_marshal() {
+    counter!("outbe_parent_proof_recovered_from_marshal_total").increment(1);
 }
 
 /// Proposer used a locally observed certified-notarization witness after the
@@ -254,15 +445,14 @@ pub fn record_phase1_finalization_record_arrived_after_cn(duration: Duration) {
 }
 
 /// DKG boundary requirement decision for proposer/verifier observability.
-pub fn record_dkg_boundary_requirement(decision: &str) {
-    counter!("outbe_dkg_boundary_requirement_total", "decision" => decision.to_string())
-        .increment(1);
+pub fn record_dkg_boundary_requirement(decision: DkgBoundaryDecision) {
+    counter!("outbe_dkg_boundary_requirement_total", "decision" => decision.label()).increment(1);
 }
 
 /// Boundary requirement could not be derived from the parent snapshot and
 /// bounded ancestry.
-pub fn record_dkg_boundary_unavailable(reason: &str) {
-    counter!("outbe_dkg_boundary_unavailable_total", "reason" => reason.to_string()).increment(1);
+pub fn record_dkg_boundary_unavailable(reason: DkgBoundaryUnavailableReason) {
+    counter!("outbe_dkg_boundary_unavailable_total", "reason" => reason.label()).increment(1);
 }
 
 /// A block carried a DKG boundary artifact after the same pending boundary had
@@ -299,7 +489,81 @@ pub fn record_block_wait_time(duration: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::consensus_reth_readiness_gap_blocks;
+    use super::{
+        consensus_reth_readiness_gap_blocks, CertificationDropReason, DkgBoundaryDecision,
+        DkgBoundaryUnavailableReason, EquivocationKind, FinalizationDropReason,
+    };
+
+    /// Pins the byzantine-evidence telemetry labels. These strings are an external,
+    /// operator-facing surface (the `outbe_byzantine_evidence_total{type=...}` metric
+    /// and the `outbe::slashing::equivocation` warn! field) shared with dashboards,
+    /// so a change must be deliberate, not an accidental rename.
+    #[test]
+    fn equivocation_kind_labels_are_stable() {
+        assert_eq!(
+            EquivocationKind::ConflictingNotarize.label(),
+            "conflicting_notarize"
+        );
+        assert_eq!(
+            EquivocationKind::ConflictingFinalize.label(),
+            "conflicting_finalize"
+        );
+        assert_eq!(
+            EquivocationKind::NullifyFinalize.label(),
+            "nullify_finalize"
+        );
+    }
+
+    /// Pins the drop/decision telemetry labels — external operator-facing surface
+    /// (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
+    /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
+    /// A change must be deliberate, not an accidental rename.
+    #[test]
+    fn telemetry_label_strings_are_stable() {
+        assert_eq!(
+            FinalizationDropReason::MailboxClosed.label(),
+            "mailbox_closed"
+        );
+        assert_eq!(FinalizationDropReason::StaleRound.label(), "stale_round");
+        assert_eq!(
+            FinalizationDropReason::SameRoundInconsistency.label(),
+            "same_round_inconsistency"
+        );
+        assert_eq!(
+            FinalizationDropReason::DuplicateRound.label(),
+            "duplicate_round"
+        );
+
+        assert_eq!(
+            CertificationDropReason::VerifyFailed.label(),
+            "verify_failed"
+        );
+        assert_eq!(
+            CertificationDropReason::SnapshotBuildFailed.label(),
+            "snapshot_build_failed"
+        );
+        assert_eq!(
+            CertificationDropReason::MailboxClosed.label(),
+            "mailbox_closed"
+        );
+        assert_eq!(CertificationDropReason::StoreError.label(), "store_error");
+
+        assert_eq!(
+            DkgBoundaryDecision::AlreadyCommitted.label(),
+            "already_committed"
+        );
+        assert_eq!(DkgBoundaryDecision::MustEmit.label(), "must_emit");
+        assert_eq!(DkgBoundaryDecision::NoPending.label(), "no_pending");
+
+        assert_eq!(
+            DkgBoundaryUnavailableReason::GenesisBoundaryNotReady.label(),
+            "genesis_boundary_not_ready"
+        );
+        assert_eq!(
+            DkgBoundaryUnavailableReason::AncestryUnavailable.label(),
+            "ancestry_unavailable"
+        );
+    }
 
     #[test]
     fn readiness_gap_is_zero_when_provider_has_consensus_tip_hash() {

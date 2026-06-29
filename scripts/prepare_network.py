@@ -560,7 +560,7 @@ def build_network_markdown(
     lines.append("  --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"net_peerCount\",\"params\":[]}' \\")
     lines.append("  http://<rpc-host>:<rpc-port>")
     lines.append("")
-    lines.append("curl -sS http://<metrics-host>:<metrics-port>/metrics | rg 'outbe_reshares_completed_total|commonware_p2p_active_peers|outbe_consensus_reth_tip_hash_match|outbe_parent_cert_store_size'")
+    lines.append("curl -sS http://<metrics-host>:<metrics-port>/metrics | rg 'outbe_reshares_completed_total|commonware_p2p_tracked_peer_set_size|outbe_consensus_reth_tip_hash_match|outbe_parent_cert_store_size'")
     lines.append("```")
     lines.append("")
     return "\n".join(lines)

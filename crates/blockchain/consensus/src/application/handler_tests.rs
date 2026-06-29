@@ -39,16 +39,19 @@ use std::{
 
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::dkg_manager::Mailbox as DkgManagerMailbox;
-use crate::finalization::util::{
-    build_signer_bitmap, validate_consensus_metadata_for_verify, AttestationValidationContext,
-    AttestationVerdict,
+use crate::finalization::attestation::{
+    validate_consensus_metadata_for_verify, AttestationValidationContext, AttestationVerdict,
 };
-use crate::hybrid::{HybridElectorConfigProvider, HybridRandom};
+use crate::finalization::util::build_signer_bitmap;
+use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
-use super::{ApplicationEpochFence, ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
+use crate::application::epoch_boundary::{
+    resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
+};
 
 static MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -452,8 +455,7 @@ fn finalizer_test_shared(
     let payload_builder: super::PayloadBuilder = super::PayloadBuilder::noop();
     let (executor_tx, _executor_rx) = futures::channel::mpsc::unbounded();
     let finalization_view = crate::finalization::state::new_finalization_view(B256::ZERO, 0, None);
-    let finalization_block_cache: crate::finalization::actor::BlockCacheHandle =
-        Arc::new(StdMutex::new(Default::default()));
+    let finalization_block_cache = crate::finalization::block_cache::BlockCache::new();
 
     let elector_config_provider = HybridElectorConfigProvider::new();
     let committee_provider = CommitteeProvider::new();
@@ -641,22 +643,21 @@ fn exact_parent_wait_drains_block_number_mismatch() {
                 start_marshal_without_available_block(context).await;
             use crate::finalization::parent_cert_store::{
                 CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-                FinalizedParentCertStore,
+                FinalizedParentCertStore, ProofKind,
             };
-            use outbe_primitives::consensus_metadata::ParentParticipationProof;
             let store = FinalizedParentCertStore::new();
             let parent_hash = B256::with_last_byte(0xAA);
             store
                 .put_finalization(CertifiedParentProofRecord {
-                    proof_type: ParentParticipationProof::Finalization,
-                    finalized_block_number: 41,
+                    kind: ProofKind::Finalization {
+                        finalized_block_number: 41,
+                    },
                     finalized_block_hash: parent_hash,
                     finalized_epoch: 1,
                     finalized_view: 7,
                     parent_view: 6,
                     ordered_committee: vec![Address::with_last_byte(1)],
                     signer_bitmap: vec![1],
-                    certificate: Bytes::from_static(b"cert"),
                     encoded_proof: Bytes::from_static(b"cert"),
                     stored_at_height: 41,
                     ..CertifiedParentProofRecord::default()
@@ -706,7 +707,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
                 .await;
 
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.forkchoice.safe_block_hash = parent_digest.0;
@@ -715,11 +716,17 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let anchor = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await
-                .unwrap()
-                .unwrap();
+            let anchor = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await
+            .unwrap()
+            .unwrap();
             let expected_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
                 finalized_round.epoch().get(),
                 finalized_round.view().get(),
@@ -772,16 +779,22 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             // `marshal.proposed(parent_block)` — the marshal store lags behind
             // FinalizationView (the epoch-boundary first-slot race).
             {
-                let mut view = shared.finalization_view.write().unwrap();
+                let mut view = shared.finalization_view.write();
                 view.last_finalized_number = parent_block.number();
                 view.forkchoice.finalized_block_hash = parent_digest.0;
                 view.last_finalized_round = Some(finalized_round);
             }
 
             let child_round = Round::new(Epoch::new(1), View::new(1));
-            let outcome = shared
-                .resolve_epoch_boundary_parent(&clock, child_round, View::new(0), parent_digest)
-                .await;
+            let outcome = resolve_epoch_boundary_parent(
+                &shared.finalization_view,
+                &shared.marshal_mailbox,
+                &clock,
+                child_round,
+                View::new(0),
+                parent_digest,
+            )
+            .await;
 
             drop(resolver_keepalive);
             actor_handle.abort();
@@ -795,7 +808,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
     assert!(
         matches!(
             outcome,
-            Err(super::EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
+            Err(EpochBoundaryParentError::MissingMarshalBlock { height }) if height == 120
         ),
         "epoch-boundary anchor miss must forfeit via MissingMarshalBlock; got {outcome:?}"
     );
@@ -869,7 +882,7 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
             let pk = bls12381::PublicKey::from(key.clone());
             let idx = participants.index(&pk).expect("participant should exist");
             HybridScheme::signer(
-                crate::config::NAMESPACE,
+                &crate::config::outbe_app_namespace(),
                 participants.clone(),
                 key.clone(),
                 dkg.polynomial.clone(),
@@ -880,7 +893,7 @@ fn finalization_metadata_context(epoch: Epoch) -> FinalizationMetadataContext {
         .collect();
 
     let verifier = HybridScheme::<MinSig>::verifier(
-        crate::config::NAMESPACE,
+        &crate::config::outbe_app_namespace(),
         participants,
         dkg.polynomial.clone(),
     )
@@ -954,8 +967,8 @@ async fn wait_for_marshal_info(
     digest: Digest,
 ) -> Option<(commonware_consensus::types::Height, Digest)> {
     // Runtime-clock bounded poll (deterministic-runtime friendly): poll the
-    // marshal mapping until it appears or the deadline elapses. `tokio::time`
-    // does not advance under the deterministic runtime, so use `Clock` here.
+    // marshal mapping until it appears or the deadline elapses. A wall-clock async
+    // timer does not advance under the deterministic runtime, so use `Clock` here.
     let deadline = clock.current() + Duration::from_secs(2);
     loop {
         if let Some(info) = mailbox.get_info(&digest).await {
@@ -1017,6 +1030,184 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
     assert!(
         accepted,
         "metadata whose hash maps to the same finalized height in marshal must pass"
+    );
+}
+
+// regression: the proposer's in-process selection store can miss the direct
+// parent's proof (post-restart, late-joining validator, brief finalization lag),
+// but marshal's DURABLE finalization archive may still hold it locally. Recovery
+// rebuilds the canonical parent-proof record so the slot is NOT forfeited. This
+// drives `recover_parent_proof_from_marshal` — the exact branch `build_block`
+// takes on a selection-store miss — and asserts: happy path recovers, the
+// hash-exact guard rejects a different parent, and a missing archive entry yields
+// None (deterministic forfeit, not a fabricated record).
+#[test]
+fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
+    use crate::finalization::parent_cert_store::CertifiedParentProofKey;
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let epoch = Epoch::new(0);
+            let round = Round::new(epoch, View::new(5));
+            let parent_height = 4u64;
+            let block = consensus_block_with_number(0x71, parent_height);
+            let digest = block.digest();
+            let (scheme_provider, committee_provider, _metadata, finalization) =
+                finalization_metadata_fixture(&block, round);
+            let committee = (*committee_provider
+                .ordered_committee(epoch)
+                .expect("fixture registers the committee"))
+            .clone();
+            let clock = context.child("recover");
+
+            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
+                context,
+                scheme_provider.clone(),
+                EmptyMarshalBuffer::default(),
+            )
+            .await;
+
+            // Seed marshal's durable archive: propose the parent block (servable)
+            // and report its finalization, so `get_finalization(height)` returns it
+            // — the post-restart state where the in-process selection store is
+            // empty but marshal still holds the parent.
+            let _ = marshal_mailbox.proposed(round, block.clone()).await;
+            let mut reporter = marshal_mailbox.clone();
+            let _ = reporter.report(Activity::Finalization(finalization));
+            let info = wait_for_marshal_info(&clock, &marshal_mailbox, digest).await;
+            assert!(
+                info.is_some(),
+                "marshal must hold the seeded parent finalization before recovery"
+            );
+
+            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            // Recovery resolves the committee for the finalization's epoch.
+            let _ = shared.committee_provider.register(epoch, committee);
+
+            // Happy path: key hash matches the seeded finalization → recovered.
+            let key_ok = CertifiedParentProofKey::new(epoch.get(), round.view().get(), digest.0);
+            let recovered = shared
+                .recover_parent_proof_from_marshal(key_ok, parent_height)
+                .await
+                .expect("matching parent finalization in marshal must be recovered, not forfeited");
+            assert_eq!(recovered.finalized_block_hash, digest.0);
+            assert_eq!(recovered.finalized_block_number(), Some(parent_height));
+
+            // Hash-exact guard: a finalization for a DIFFERENT parent hash must not
+            // be accepted (prevents recovering the wrong parent).
+            let key_wrong_hash = CertifiedParentProofKey::new(
+                epoch.get(),
+                round.view().get(),
+                B256::repeat_byte(0xEE),
+            );
+            assert!(
+                shared
+                    .recover_parent_proof_from_marshal(key_wrong_hash, parent_height)
+                    .await
+                    .is_none(),
+                "hash-exact guard must reject a finalization for a different parent"
+            );
+
+            // Missing height: nothing in the archive → None (deterministic forfeit).
+            assert!(
+                shared
+                    .recover_parent_proof_from_marshal(key_ok, parent_height + 99)
+                    .await
+                    .is_none(),
+                "absent finalization must yield None (forfeit), not a fabricated record"
+            );
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+        },
+    );
+}
+
+// P4-T4 unit-seam regression: after a crash where the executor/Reth finalized
+// parent N but FinalizationActor had not yet persisted the local
+// FinalizedParentCertStore record, restart sees an empty in-process selection
+// store while marshal's durable archive still contains N's finalization. The
+// proposal selector must take the same recovery branch that build_block uses and
+// return a canonical exact-parent proof instead of forfeiting the N+1 slot.
+#[test]
+fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
+    use crate::finalization::parent_cert_store::CertifiedParentProofKey;
+    commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let epoch = Epoch::new(0);
+            let finalized_round = Round::new(epoch, View::new(5));
+            let child_round = Round::new(epoch, View::new(6));
+            let parent_height = 4u64;
+            let parent_block = consensus_block_with_number(0x74, parent_height);
+            let parent_digest = parent_block.digest();
+            let (scheme_provider, committee_provider, _metadata, finalization) =
+                finalization_metadata_fixture(&parent_block, finalized_round);
+            let committee = (*committee_provider
+                .ordered_committee(epoch)
+                .expect("fixture registers the committee"))
+            .clone();
+            let clock = context.child("p4_t4_selector_recovery");
+
+            let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
+                context,
+                scheme_provider.clone(),
+                EmptyMarshalBuffer::default(),
+            )
+            .await;
+
+            // Crash-window seed: marshal archive is durable/retained, but the
+            // post-restart ApplicationShared below has a fresh empty
+            // FinalizedParentCertStore via finalizer_test_shared(...).
+            let _ = marshal_mailbox
+                .proposed(finalized_round, parent_block.clone())
+                .await;
+            let mut reporter = marshal_mailbox.clone();
+            let _ = reporter.report(Activity::Finalization(finalization));
+            assert!(
+                wait_for_marshal_info(&clock, &marshal_mailbox, parent_digest)
+                    .await
+                    .is_some(),
+                "marshal must retain the finalized parent archive entry"
+            );
+
+            let shared = finalizer_test_shared(marshal_mailbox.clone(), scheme_provider);
+            let _ = shared.committee_provider.register(epoch, committee);
+            let key = CertifiedParentProofKey::new(
+                epoch.get(),
+                finalized_round.view().get(),
+                parent_digest.0,
+            );
+
+            let lookup = shared
+                .select_parent_proof_for_proposal(
+                    &clock,
+                    child_round,
+                    parent_digest,
+                    commonware_consensus::types::Height::new(parent_height),
+                    Some(key),
+                )
+                .await;
+            let record = match lookup {
+                super::ParentProofLookup::Found(record) => record,
+                super::ParentProofLookup::NoProofNeeded => {
+                    panic!("non-genesis parent must require a proof")
+                }
+                super::ParentProofLookup::Unavailable => {
+                    panic!("marshal archive recovery must prevent parent-proof forfeit")
+                }
+            };
+            assert_eq!(record.finalized_block_hash, parent_digest.0);
+            assert_eq!(record.finalized_block_number(), Some(parent_height));
+            let metadata = record.to_v2_metadata(parent_height);
+            assert_eq!(metadata.finalized_block_hash, parent_digest.0);
+            assert_eq!(metadata.finalized_block_number, parent_height);
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+        },
     );
 }
 
@@ -1338,16 +1529,25 @@ fn resolve_for_verify_timeout_logs_full_context() {
 
         let round = Round::new(Epoch::new(0), View::new(1201));
         let digest = Digest(B256::repeat_byte(0xA7));
-        let result = shared
-            .resolve_for_verify(&clock, round, digest, super::VerifyResolveTarget::Block)
-            .await;
+        let result = crate::application::verify_resolution::resolve_for_verify(
+            &shared.block_cache,
+            &shared.marshal_mailbox,
+            &clock,
+            round,
+            digest,
+            crate::application::verify_resolution::VerifyResolveTarget::Block,
+        )
+        .await;
 
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
 
         (
-            matches!(result, Err(super::VerifyResolveError::Timeout)),
+            matches!(
+                result,
+                Err(crate::application::verify_resolution::VerifyResolveError::Timeout)
+            ),
             log_writer.contents(),
         )
     });

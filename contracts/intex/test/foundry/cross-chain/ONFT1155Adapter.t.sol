@@ -2,6 +2,8 @@
 pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {IONFT1155Adapter, SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
@@ -44,21 +46,11 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         // Deploy IntexNFT1155 tokens on both chains
-        tokenA = new IntexNFT1155(address(this), address(this));
-        tokenB = new IntexNFT1155(address(this), address(this));
+        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
+        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenA), address(endpoints[aEid]), address(this), bEid)
-            )
-        );
-        adapterB = ONFT1155Adapter(
-            _deployOApp(
-                type(ONFT1155Adapter).creationCode,
-                abi.encode(address(tokenB), address(endpoints[bEid]), address(this), aEid)
-            )
-        );
+        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[aEid]), address(this));
+        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[bEid]), address(this));
 
         // Grant RELAYER_ROLE to adapters
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
@@ -71,8 +63,8 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         this.wireOApps(oapps);
 
         // Create series on both chains
-        tokenA.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
-        tokenB.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
 
         // Bridge is only allowed in Qualified state for the user-driven adapter.
         tokenA.markQualified(SERIES_ID);
@@ -89,10 +81,11 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
     }
 
     /// @notice `token` is immutable, so a zero address would permanently brick the
-    ///         adapter (every `debit`/`credit` reverts on a non-contract). Reject at construction.
+    ///         adapter (every `crosschainBurn`/`crosschainMint` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
+        // Property of the implementation constructor — the token immutable is set there.
         vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "token"));
-        new ONFT1155Adapter(address(0), address(endpoints[aEid]), address(this), bEid);
+        new ONFT1155Adapter(address(0), address(endpoints[aEid]));
     }
 
     function test_send() public {
@@ -305,14 +298,14 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         adapterA.sweepNative(payable(address(0xBEEF)), 1 ether);
     }
 
-    // --- Inbound credit isolation ---
+    // --- Inbound crosschainMint isolation ---
 
-    function test_inboundCreditFailure_parksAndRetries() public {
-        // A series that exists on A only: the destination credit reverts NonexistentToken, which
+    function test_inboundCrosschainMintFailure_parksAndRetries() public {
+        // A series that exists on A only: the destination crosschainMint reverts NonexistentToken, which
         // must park the transfer (not unwind the packet and strand the burned tokens).
         uint32 failSeries = 20260402;
         uint256 failTokenId = uint256(failSeries);
-        tokenA.createSeries(failSeries, ISSUED_INTEX_COUNT, 0);
+        tokenA.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
         tokenA.mint(user, AMOUNT, failSeries);
 
@@ -329,40 +322,40 @@ contract ONFT1155AdapterTest is TestHelperOz5 {
         vm.prank(user);
         MessagingReceipt memory r = adapterA.send{value: fee.nativeFee}(sendParam, fee, user);
 
-        // Delivery must succeed (credit parked), not revert.
+        // Delivery must succeed (crosschainMint parked), not revert.
         verifyPackets(bEid, addressToBytes32(address(adapterB)));
 
-        // Source burned; destination not credited; transfer parked under the packet guid.
+        // Source burned; destination not minted; transfer parked under the packet guid.
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
-        assertEq(tokenB.balanceOf(user, failTokenId), 0, "not credited yet");
-        (address to,, uint256 amount,,, bool exists) = adapterB.failedCredits(r.guid);
-        assertTrue(exists, "credit parked");
+        assertEq(tokenB.balanceOf(user, failTokenId), 0, "not minted yet");
+        (address to,, uint256 amount,,, bool exists) = adapterB.failedCrosschainMints(r.guid);
+        assertTrue(exists, "crosschainMint parked");
         assertEq(to, user);
         assertEq(amount, AMOUNT);
 
-        // Fix the cause on B, then retry → credited and entry cleared.
-        tokenB.createSeries(failSeries, ISSUED_INTEX_COUNT, 0);
+        // Fix the cause on B, then retry → minted and entry cleared.
+        tokenB.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(failSeries);
-        adapterB.retryCredit(r.guid);
-        assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "credited on retry");
+        adapterB.retryCrosschainMint(r.guid);
+        assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
 
-        (,,,,, bool existsAfter) = adapterB.failedCredits(r.guid);
+        (,,,,, bool existsAfter) = adapterB.failedCrosschainMints(r.guid);
         assertFalse(existsAfter, "entry cleared");
 
         // A re-retry reverts.
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCredit.selector, r.guid));
-        adapterB.retryCredit(r.guid);
+        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, r.guid));
+        adapterB.retryCrosschainMint(r.guid);
     }
 
-    function test_retryCredit_revertsForUnknownGuid() public {
+    function test_retryCrosschainMint_revertsForUnknownGuid() public {
         bytes32 unknown = bytes32(uint256(0xABCD));
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCredit.selector, unknown));
-        adapterB.retryCredit(unknown);
+        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, unknown));
+        adapterB.retryCrosschainMint(unknown);
     }
 
-    function test_creditOne_externalCallerRevertsNotSelf() public {
+    function test_crosschainMintOne_externalCallerRevertsNotSelf() public {
         vm.expectRevert(ONFT1155Adapter.NotSelf.selector);
-        adapterB.creditOne(address(0xCAFE), TOKEN_ID, 1);
+        adapterB.crosschainMintOne(address(0xCAFE), TOKEN_ID, 1);
     }
 
     // Direct inbound packet: body shorter than MIN_LEN_TRANSFER (97) must revert before any field

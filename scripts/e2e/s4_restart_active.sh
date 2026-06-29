@@ -50,7 +50,7 @@ e2e_assert "restarted validator resumes signing (lockstep, share recovered)" "$(
 e2e_assert_eq "no byzantine/equivocation evidence around the restart" "0" "$(e2e_val_log_count 0 'byzantine evidence observed')"
 # enclave still works (offer executed by the reconnected node).
 V1=$(e2e_vkey 1)
-for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer 20241220 --amount 100 --currency 840 --private-key "$V1" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "2" ] && break; done
+for t in 1 2 3 4 5; do "$E2E_CLI" tribute offer "$E2E_WWD" --amount 100 --currency 840 --private-key "$V1" --rpc-url "$RPC0" >/dev/null 2>&1; sleep 6; [ "$(e2e_supply 8545)" = "2" ] && break; done
 sleep 6
 e2e_assert_eq "enclave still works post-restart (offer parity on v5)" "$(e2e_supply 8545)" "$(e2e_supply 8549)"
 

@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
+use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
 
 impl DesisContract<'_> {
     // --- AuctionStage ---
@@ -20,24 +20,42 @@ impl DesisContract<'_> {
     // --- AuctionConfig ---
 
     pub(crate) fn read_auction_config(&self, series_id: u32) -> Result<AuctionConfig> {
-        let intex_size = self.config_intex_size.read(&series_id)?;
+        let promis_load_minor = self.config_promis_load_minor.read(&series_id)?;
         Ok(AuctionConfig {
-            intex_size: u128::try_from(intex_size)
+            issuance_currency: self.config_issuance_currency.read(&series_id)? as u16,
+            reference_currency: self.config_reference_currency.read(&series_id)? as u16,
+            promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidSeriesId(series_id))?,
-            min_intex_bid_price: self.config_min_bid_price.read(&series_id)?,
-            intex_strike_price: self.config_strike_price.read(&series_id)?,
-            coen_price: self.config_coen_price.read(&series_id)?,
+            call_trigger: IntexCallTrigger {
+                window_days: self.config_call_window_days.read(&series_id)? as u16,
+                threshold_days: self.config_call_threshold_days.read(&series_id)? as u16,
+                intex_call_period: self.config_intex_call_period.read(&series_id)?,
+            },
+            min_intex_bid_rate: self.config_min_bid_rate.read(&series_id)?,
+            min_intex_bid_quantity: self.config_min_bid_quantity.read(&series_id)? as u16,
+            entry_price_minor: self.config_entry_price.read(&series_id)?,
         })
     }
 
     pub(crate) fn write_auction_config(&self, series_id: u32, cfg: &AuctionConfig) -> Result<()> {
-        self.config_intex_size
-            .write(&series_id, U256::from(cfg.intex_size))?;
-        self.config_min_bid_price
-            .write(&series_id, cfg.min_intex_bid_price)?;
-        self.config_strike_price
-            .write(&series_id, cfg.intex_strike_price)?;
-        self.config_coen_price.write(&series_id, cfg.coen_price)
+        self.config_issuance_currency
+            .write(&series_id, u32::from(cfg.issuance_currency))?;
+        self.config_reference_currency
+            .write(&series_id, u32::from(cfg.reference_currency))?;
+        self.config_promis_load_minor
+            .write(&series_id, U256::from(cfg.promis_load_minor))?;
+        self.config_call_window_days
+            .write(&series_id, u32::from(cfg.call_trigger.window_days))?;
+        self.config_call_threshold_days
+            .write(&series_id, u32::from(cfg.call_trigger.threshold_days))?;
+        self.config_intex_call_period
+            .write(&series_id, cfg.call_trigger.intex_call_period)?;
+        self.config_min_bid_rate
+            .write(&series_id, cfg.min_intex_bid_rate)?;
+        self.config_min_bid_quantity
+            .write(&series_id, u32::from(cfg.min_intex_bid_quantity))?;
+        self.config_entry_price
+            .write(&series_id, cfg.entry_price_minor)
     }
 
     // --- bid storage ---
@@ -67,7 +85,7 @@ impl DesisContract<'_> {
         let limbs = packed.as_limbs();
         Ok(BidData {
             bidder_address: self.bid_bidder.read(&key)?,
-            intex_bid_price: limbs[0],
+            intex_bid_rate: limbs[0] as u32,
             timestamp: limbs[1] as u32,
             intex_quantity: (limbs[1] >> 32) as u16,
         })
@@ -77,7 +95,7 @@ impl DesisContract<'_> {
         let key = Self::bid_key(series_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
         let packed = U256::from_limbs([
-            bid.intex_bid_price,
+            u64::from(bid.intex_bid_rate),
             (u64::from(bid.intex_quantity) << 32) | u64::from(bid.timestamp),
             0,
             0,

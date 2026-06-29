@@ -3,8 +3,9 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
@@ -41,17 +42,17 @@ contract EscrowConservationHandler is Test {
         return bidders[bound(seed, 0, bidders.length - 1)];
     }
 
-    function lock(uint256 seriesSeed, uint256 bidderSeed, uint64 amountSeed) external {
-        uint64 amount = uint64(bound(amountSeed, 1, 1_000_000e6));
+    function lock(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
+        uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
         vm.prank(auction);
         try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
     }
 
-    function finalize(uint256 seriesSeed, uint256 bidderSeed, uint64 refundSeed) external {
+    function finalize(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {
         uint32 s = _series(seriesSeed);
         address b = _bidder(bidderSeed);
         IEscrowAdapter.BidLock memory l = escrow.getBidLock(s, b);
-        uint64 refunded = l.lockedAmount == 0 ? 0 : uint64(bound(refundSeed, 0, l.lockedAmount));
+        uint128 refunded = l.lockedAmount == 0 ? 0 : uint128(bound(refundSeed, 0, l.lockedAmount));
         IEscrowAdapter.FinalizationInstruction[] memory ins = new IEscrowAdapter.FinalizationInstruction[](1);
         ins[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: b, refundedAmount: refunded, paidAmount: l.lockedAmount - refunded
@@ -60,11 +61,11 @@ contract EscrowConservationHandler is Test {
         try escrow.finalizeAuction(s, keccak256(abi.encode(s, b)), ins) {} catch {}
     }
 
-    function retry(uint256 seriesSeed, uint256 bidderSeed, uint64 refundSeed) external {
+    function retry(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {
         uint32 s = _series(seriesSeed);
         address b = _bidder(bidderSeed);
         IEscrowAdapter.BidLock memory l = escrow.getBidLock(s, b);
-        uint64 refunded = l.lockedAmount == 0 ? 0 : uint64(bound(refundSeed, 0, l.lockedAmount));
+        uint128 refunded = l.lockedAmount == 0 ? 0 : uint128(bound(refundSeed, 0, l.lockedAmount));
         IEscrowAdapter.FinalizationInstruction memory inst = IEscrowAdapter.FinalizationInstruction({
             bidder: b, refundedAmount: refunded, paidAmount: l.lockedAmount - refunded
         });
@@ -101,7 +102,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     uint32[] internal seriesIds;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -143,7 +144,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     function invariant_pooledBalanceEqualsSumOfTotalLocked() public view {
         uint256 sumTotalLocked;
         for (uint256 i = 0; i < seriesIds.length; i++) {
-            (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesIds[i]);
+            (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesIds[i]);
             sumTotalLocked += totalLocked;
         }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());

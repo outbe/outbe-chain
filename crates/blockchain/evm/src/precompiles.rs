@@ -15,11 +15,12 @@ use core::fmt::Debug;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
     DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS, GRATIS_POOL_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_REGISTRY_ADDRESS,
+    GRATIS_FACTORY_ADDRESS, GRATIS_POOL_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
     METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
-    PROMIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS,
-    STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-    VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
+    SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
+    ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
@@ -81,6 +82,11 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             outbe_promis::precompile::dispatch,
             default_base_gas,
         ),
+        a if a == PROMIS_FACTORY_ADDRESS => (
+            "promisfactory",
+            outbe_promisfactory::precompile::dispatch,
+            default_base_gas,
+        ),
         a if a == TRIBUTE_ADDRESS => (
             "tribute",
             outbe_tribute::precompile::dispatch,
@@ -98,11 +104,7 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             outbe_gemfactory::precompile::dispatch,
             default_base_gas,
         ),
-        a if a == INTEX_REGISTRY_ADDRESS => (
-            "intexregistry",
-            outbe_intexregistry::precompile::dispatch,
-            default_base_gas,
-        ),
+        a if a == INTEX_ADDRESS => ("intex", outbe_intex::precompile::dispatch, default_base_gas),
         a if a == INTEX_FACTORY_ADDRESS => (
             "intexfactory",
             outbe_intexfactory::precompile::dispatch,
@@ -132,7 +134,7 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
         a if a == SLASH_INDICATOR_ADDRESS => (
             "slashindicator",
             outbe_slashindicator::precompile::dispatch,
-            default_base_gas,
+            outbe_slashindicator::precompile::base_gas,
         ),
         a if a == STAKING_ADDRESS => (
             "staking",
@@ -266,12 +268,13 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
         PROMIS_ADDRESS,
+        PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
         GEM_ADDRESS,
         GEM_FACTORY_ADDRESS,
-        INTEX_REGISTRY_ADDRESS,
+        INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
         CREDIS_ADDRESS,
@@ -315,6 +318,7 @@ where
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
+            #[allow(unsafe_code)] // sole audited unsafe site; justified below.
             // SAFETY: alloy-evm fork's `PrecompileProvider::run` for
             // PrecompilesMap (specialised at impl site for our `Context<DB>`)
             // casts `&mut Context<...>` to `*mut c_void` and feeds it here.

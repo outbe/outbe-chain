@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
@@ -70,37 +72,19 @@ contract IntexCallFlowTest is TestHelperOz5 {
         vm.deal(intexFactory, 1000 ether);
 
         // ---- Deploy BSC contracts ----
-        intexBnb = new IntexNFT1155(admin, admin);
-        auction = new IntexAuction(admin, admin);
+        intexBnb = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
-        batchAdapterBnb = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(intexBnb), address(endpoints[bnbEid]), admin)
-                ))
-        );
+        batchAdapterBnb = DeployProxy.onftAdapterBatch(address(intexBnb), address(endpoints[bnbEid]), admin);
 
         // ---- Deploy Outbe contracts ----
-        intexOutbe = new IntexNFT1155(admin, admin);
+        intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
-        batchAdapterOutbe = ONFT1155AdapterBatch(
-            payable(_deployOApp(
-                    type(ONFT1155AdapterBatch).creationCode,
-                    abi.encode(address(intexOutbe), address(endpoints[outbeEid]), admin)
-                ))
-        );
+        batchAdapterOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[outbeEid]), admin);
 
         // ---- Wire LZ peers ----
         address[] memory bridgeOapps = new address[](2);
@@ -122,7 +106,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(bnbAdapter));
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(batchAdapterBnb));
         // The system bridge runs while the series is Called; both batch adapters need
-        // SYSTEM_RELAYER_ROLE on their local Intex to debit/credit during that window.
+        // SYSTEM_RELAYER_ROLE on their local Intex to crosschainBurn/crosschainMint during that window.
         intexBnb.grantRole(intexBnb.SYSTEM_RELAYER_ROLE(), address(batchAdapterBnb));
         batchAdapterBnb.grantRole(batchAdapterBnb.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
@@ -144,7 +128,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(SERIES_ID, ISSUED_INTEX_COUNT, 0);
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
     }
 
     // ============================================================
@@ -154,7 +138,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
     /// @notice Helper: triggers markCalled from Desis and delivers both LZ messages.
     function _triggerCallAndBridge(uint32 seriesId, bool hasHolders) internal {
         // Desis applies markCalled locally on Outbe before sending the LZ notice to BSC.
-        // Without it, the system bridge credit on Outbe would land in `Issued` and revert.
+        // Without it, the system bridge crosschainMint on Outbe would land in `Issued` and revert.
         if (hasHolders) {
             intexOutbe.markCalled(seriesId);
         }
@@ -209,7 +193,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         IIntexNFT1155.SeriesData memory dataBnb = intexBnb.readData(SERIES_ID);
         assertEq(uint8(dataBnb.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(dataBnb.calledAt, calledAt);
-        assertGt(dataBnb.intexCallPeriod, 0);
+        assertGt(dataBnb.callTrigger.intexCallPeriod, 0);
     }
 
     /// @notice Single holder migration.
@@ -253,7 +237,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         assertEq(balances[1], 40);
     }
 
-    /// @notice BSC holder tracking cleared after call bridge (all debited).
+    /// @notice BSC holder tracking cleared after call bridge (all crosschainBurned).
     function test_call_holderTrackingClearedOnBsc() public {
         _createSeries(intexBnb);
         intexBnb.mint(holder1, 70, SERIES_ID);

@@ -60,9 +60,9 @@ rand_core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-outbe-tributefactory.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }
+commonware-runtime.workspace = true
 criterion.workspace = true
 
 # Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).
@@ -72,3 +72,6 @@ criterion.workspace = true
 [[bench]]
 name = "tribute_offer_throughput"
 harness = false
+
+[lints]
+workspace = true

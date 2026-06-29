@@ -6,14 +6,15 @@ import {MessagingFee, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
 import {EnforcedOptionParam} from "@layerzerolabs/oapp-evm/oapp/interfaces/IOAppOptionsType3.sol";
 
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/bnb/interfaces/ITargetMessenger.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {IOriginMessenger} from "@contracts/outbe/interfaces/IOriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title PayNativeAccountingTest
@@ -48,19 +49,11 @@ contract PayNativeAccountingTest is TestHelperOz5 {
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
         desis = address(new MockDesis());
-        intex = new IntexNFT1155(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);
@@ -94,8 +87,8 @@ contract PayNativeAccountingTest is TestHelperOz5 {
         bidders[0] = address(0xCAFE);
         uint16[] memory qty = new uint16[](1);
         qty[0] = 1;
-        uint64[] memory price = new uint64[](1);
-        price[0] = 100e6;
+        uint32[] memory rate = new uint32[](1);
+        rate[0] = 100e6;
         uint32[] memory ts = new uint32[](1);
         ts[0] = uint32(block.timestamp);
 
@@ -103,7 +96,7 @@ contract PayNativeAccountingTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             bidderAddresses: bidders,
             intexQuantities: qty,
-            intexBidPrices: price,
+            intexBidRates: rate,
             timestamps: ts,
             extraOptions: "",
             refundAddress: address(0)

@@ -2,8 +2,9 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {EscrowAdapter} from "@contracts/bnb/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/bnb/interfaces/IEscrowAdapter.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
@@ -31,12 +32,12 @@ contract EscrowAdapterInvariantsTest is Test {
     uint32 s1 = 1;
     uint32 s2 = 2;
 
-    uint64 constant LOCK_A = 100 * 10 ** 6;
-    uint64 constant LOCK_B = 250 * 10 ** 6;
-    uint64 constant LOCK_C = 75 * 10 ** 6;
+    uint128 constant LOCK_A = 100 * 10 ** 6;
+    uint128 constant LOCK_B = 250 * 10 ** 6;
+    uint128 constant LOCK_C = 75 * 10 ** 6;
 
     function setUp() public {
-        escrow = new EscrowAdapter(admin, bridger);
+        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
@@ -57,7 +58,7 @@ contract EscrowAdapterInvariantsTest is Test {
     }
 
     function _assertSeriesInvariant(uint32 seriesId, address[3] memory bidders) internal view {
-        uint64 sum = 0;
+        uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
             IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId, bidders[i]);
             if (lock.status == IEscrowAdapter.LockStatus.Locked) {
@@ -67,7 +68,7 @@ contract EscrowAdapterInvariantsTest is Test {
                 sum += lock.lockedAmount - lock.failedRefund;
             }
         }
-        (,, uint64 totalLocked) = escrow.getAuctionStatus(seriesId);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
     }
 
@@ -131,7 +132,7 @@ contract EscrowAdapterInvariantsTest is Test {
         bytes32 baseSlot = bytes32(_auctionEscrowStateSlot());
         bytes32 entrySlot = keccak256(abi.encode(uint256(s1), uint256(baseSlot)));
         bytes32 packed = vm.load(address(escrow), entrySlot);
-        // Add 1 to the uint64 totalLocked field (low 64 bits).
+        // Add 1 to the uint128 totalLocked field (low 64 bits).
         bytes32 corrupted = bytes32(uint256(packed) + 1);
         vm.store(address(escrow), entrySlot, corrupted);
 
@@ -143,11 +144,13 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(seriesId, bidders);
     }
 
-    /// @dev Storage slot of `auctionEscrowState` mapping in `EscrowAdapter`. See
-    /// `forge inspect contracts/bnb/EscrowAdapter.sol:EscrowAdapter storage-layout`.
-    /// AccessControl `_roles` occupies slot 0; OZ 5 ReentrancyGuard uses ERC-7201 namespaced
-    /// storage and consumes no contract-relative slots.
+    /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201
+    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 7: five address/uint
+    /// slots, the packed allocatorId+lockTag slot, then the bidLocks mapping precede it.
     function _auctionEscrowStateSlot() internal pure returns (uint256) {
-        return 8;
+        uint256 base = uint256(
+            keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
+        );
+        return base + 7;
     }
 }

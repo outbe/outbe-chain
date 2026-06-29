@@ -13,7 +13,7 @@ use outbe_primitives::storage::types::StorageKey;
 pub struct NodIssueParams {
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
-    pub league_id: u32,
+    pub league_id: u16,
     pub floor_price_minor: U256,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
@@ -39,7 +39,7 @@ pub struct NodItemState {
     pub worldwide_day: WorldwideDay,
 
     #[attribute(order = 3)]
-    pub league_id: u32,
+    pub league_id: u16,
 
     #[attribute(order = 4)]
     pub floor_price_minor: U256,

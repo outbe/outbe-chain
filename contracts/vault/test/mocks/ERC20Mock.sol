@@ -5,14 +5,11 @@ pragma solidity 0.8.30;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ERC20Mock is ERC20 {
-    uint8 private immutable _decimals;
-
-    constructor(uint8 __decimals) ERC20("mock token", "MOCK") {
-        _decimals = __decimals;
+    constructor() ERC20("mock token", "MOCK") {
     }
 
-    function decimals() public view override returns (uint8) {
-        return _decimals;
+    function decimals() public pure override returns (uint8) {
+        return 6;
     }
 
     function mint(address to, uint256 amount) external {

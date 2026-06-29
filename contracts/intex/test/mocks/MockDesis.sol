@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {IDesis} from "@contracts/outbe/interfaces/IDesis.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
 /// @notice Minimal stand-in that advertises the `IDesis` interface via ERC-165.
 /// @dev Lets `OriginMessenger.wire` accept it during tests without pulling in the full
@@ -25,7 +25,7 @@ contract MockDesis {
         uint32, /* relayGeneration */
         address[] calldata, /* bidderAddresses */
         uint16[] calldata, /* intexQuantities */
-        uint64[] calldata, /* intexBidPrices */
+        uint32[] calldata, /* intexBidRates */
         uint32[] calldata /* timestamps */
     ) external {}
 

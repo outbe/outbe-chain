@@ -7,7 +7,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::called;
-use crate::constants::QUALIFIER_REFERENCE_ISO;
+use crate::constants::{
+    CALL_PRICE_NUM, FLOOR_PRICE_NUM, MATURITY_PERIOD_SECONDS, QUALIFIER_REFERENCE_ISO,
+};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -21,13 +23,13 @@ fn holder() -> Address {
 
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
-const INTEX_SIZE: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 const CALL_PERIOD: u32 = 21 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
-const COEN_PRICE: u64 = 1_000_000;
-const EXPECTED_FLOOR: u64 = 1_080_000; // COEN_PRICE * 108/100
-const EXPECTED_TRIGGER: u64 = 1_771_200; // EXPECTED_FLOOR * 164/100
+const ENTRY_PRICE: u64 = 1_000_000;
+const EXPECTED_FLOOR: u64 = 1_080_000; // ENTRY_PRICE * 108/100
+const EXPECTED_TRIGGER: u64 = 2_280_000; // ENTRY_PRICE * 228/100
 
 fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -49,12 +51,10 @@ fn sample(series_id: u32) -> IssuanceParams {
     IssuanceParams {
         series_id,
         issued_intex_count: 100,
-        intex_size: INTEX_SIZE,
-        intex_strike_price: 2_000,
-        coen_price: U256::from(COEN_PRICE),
-        intex_call_period: CALL_PERIOD,
-        call_window_days: 30,
-        call_threshold_days: 20,
+        promis_load_minor: PROMIS_LOAD_MINOR,
+        entry_price_minor: U256::from(ENTRY_PRICE),
+        issuance_currency: 840,
+        reference_currency: 840,
         recipients: vec![],
         quantities: vec![],
     }
@@ -65,27 +65,29 @@ fn issue_creates_series_in_registry() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
 
-        // The series is captured in IntexRegistry with the issuance identity.
-        let r = outbe_intexregistry::api::read_series(&s, 7).unwrap();
+        // The series is captured in Intex with the issuance identity.
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
         assert_eq!(r.series_id, 7);
-        assert_eq!(r.intex_size, U256::from(INTEX_SIZE));
-        assert_eq!(r.intex_strike_price, 2_000);
+        assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
+        assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
         // Floor and trigger are derived from the clearing price at issuance.
-        assert_eq!(r.coen_price_floor, U256::from(EXPECTED_FLOOR));
+        assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
         assert_eq!(r.intex_call_period, CALL_PERIOD);
+        // Window/threshold/call-period are IntexFactory protocol constants now.
+        assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
-            outbe_intexregistry::IntexCallTrigger {
+            outbe_intex::IntexCallTrigger {
                 window_days: 30,
                 threshold_days: 20,
-                coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
+                intex_call_period: CALL_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
         assert_eq!(
             r.lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Issued
+            outbe_intex::IntexState::Issued
         );
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
@@ -106,27 +108,27 @@ fn issue_enrolls_series_in_dense_enumeration() {
     with_factory(|s| {
         runtime::issue(&s, sample(11)).unwrap();
         runtime::issue(&s, sample(22)).unwrap();
-        assert_eq!(outbe_intexregistry::api::total_series(&s).unwrap(), 2);
-        assert_eq!(outbe_intexregistry::api::series_id_at(&s, 0).unwrap(), 11);
-        assert_eq!(outbe_intexregistry::api::series_id_at(&s, 1).unwrap(), 22);
+        assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
+        assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), 11);
+        assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), 22);
     });
 }
 
 #[test]
-fn floor_and_trigger_derivation() {
-    // floor = price * 108/100, trigger = floor * 164/100 (oracle scale, U256).
-    let floor = runtime::derived_floor(U256::from(COEN_PRICE)).unwrap();
-    let trigger = runtime::derived_call_trigger(floor).unwrap();
+fn floor_and_call_derivation() {
+    let floor = runtime::derived_floor(U256::from(ENTRY_PRICE), FLOOR_PRICE_NUM).unwrap();
+    let call = runtime::derived_call_price(U256::from(ENTRY_PRICE), CALL_PRICE_NUM).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
-    assert_eq!(trigger, U256::from(EXPECTED_TRIGGER));
+    assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
-    // Holds at 1e18 oracle scale: 1e18 -> 1.08e18 -> 1.7712e18.
     let one = U256::from(1_000_000_000_000_000_000u64);
-    let floor_1e18 = runtime::derived_floor(one).unwrap();
-    assert_eq!(floor_1e18, U256::from(1_080_000_000_000_000_000u64));
     assert_eq!(
-        runtime::derived_call_trigger(floor_1e18).unwrap(),
-        U256::from(1_771_200_000_000_000_000u64)
+        runtime::derived_floor(one, FLOOR_PRICE_NUM).unwrap(),
+        U256::from(1_080_000_000_000_000_000u64)
+    );
+    assert_eq!(
+        runtime::derived_call_price(one, CALL_PRICE_NUM).unwrap(),
+        U256::from(2_280_000_000_000_000_000u64)
     );
 }
 
@@ -175,7 +177,7 @@ fn settle_rejects_expired_deadline() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_PERIOD < now
-        outbe_intexregistry::api::mark_called(&s, 7, ISSUED_AT).unwrap();
+        outbe_intex::api::mark_called(&s, 7, ISSUED_AT).unwrap();
         let err = runtime::settle(&s, 7, holder(), holder(), U256::from(1)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
@@ -331,22 +333,48 @@ fn try_qualify_gates_maturity_floor_and_latches() {
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
         // Immature -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, immature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            immature,
+            floor + U256::from(1)
+        )
+        .unwrap());
         // Mature but rate == floor (strict >) -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, mature, floor).unwrap());
+        assert!(
+            !qualified::try_qualify(&s, &mut f, 7, MATURITY_PERIOD_SECONDS, mature, floor).unwrap()
+        );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert!(qualified::try_qualify(&s, &mut f, 7, mature, floor + U256::from(1)).unwrap());
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            mature,
+            floor + U256::from(1)
+        )
+        .unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
         assert_eq!(f.unqualified_bin_count.read(&bin).unwrap(), 0);
         // Already Qualified -> false.
-        assert!(!qualified::try_qualify(&s, &mut f, 7, mature, floor + U256::from(1)).unwrap());
+        assert!(!qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            mature,
+            floor + U256::from(1)
+        )
+        .unwrap());
     });
 }
 
@@ -410,7 +438,15 @@ fn qualify_series<'a>(
     let mut f = IntexFactoryContract::new(s.clone());
     let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(qualified::try_qualify(s, &mut f, id, mature, floor + U256::from(1)).unwrap());
+    assert!(qualified::try_qualify(
+        s,
+        &mut f,
+        id,
+        MATURITY_PERIOD_SECONDS,
+        mature,
+        floor + U256::from(1)
+    )
+    .unwrap());
     f
 }
 
@@ -491,11 +527,11 @@ fn try_call_marks_called_when_threshold_met() {
 
         assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::IntexState::Called
         );
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(f.qualified_bin_count.read(&bin).unwrap(), 0);
@@ -525,11 +561,11 @@ fn try_call_skips_when_below_threshold() {
 
         assert!(!called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -538,9 +574,31 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        let mut p = sample(8);
-        p.call_threshold_days = 27;
-        let mut f = qualify_series(&s, 8, p);
+        // Seed the series directly with threshold 27 (above the 21d maturity),
+        // since the protocol default (20) is below maturity and a qualified
+        // series would always have >= 21 completed post-issuance days.
+        outbe_intex::api::create_series(
+            &s,
+            outbe_intex::CreateSeriesParams {
+                series_id: 8,
+                issued_intex_count: 100,
+                promis_load_minor: PROMIS_LOAD_MINOR,
+                entry_price_minor: U256::from(ENTRY_PRICE),
+                floor_price_minor: U256::from(EXPECTED_FLOOR),
+                call_price_minor: U256::from(EXPECTED_TRIGGER),
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    window_days: 30,
+                    threshold_days: 27,
+                    intex_call_period: CALL_PERIOD,
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+        outbe_intex::api::mark_qualified(&s, 8).unwrap();
+        let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as
@@ -552,11 +610,11 @@ fn try_call_excludes_pre_issuance_days() {
 
         assert!(!called::try_call(&s, &mut f, &oracle, 8, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 8)
+            outbe_intex::api::read_series(&s, 8)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -568,21 +626,23 @@ fn try_call_excludes_pre_issuance_days() {
 /// Seed a series directly in the registry + bin index, bypassing issue()
 /// so tests can omit the OriginMessenger stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
-    outbe_intexregistry::api::create_series(
+    outbe_intex::api::create_series(
         s,
-        outbe_intexregistry::CreateSeriesParams {
+        outbe_intex::CreateSeriesParams {
             series_id: id,
             issued_intex_count: 100,
-            intex_size: INTEX_SIZE,
-            intex_strike_price: 2_000,
-            coen_price_floor: U256::from(EXPECTED_FLOOR),
-            intex_call_period: CALL_PERIOD,
-            call_trigger: outbe_intexregistry::IntexCallTrigger {
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            entry_price_minor: U256::from(ENTRY_PRICE),
+            floor_price_minor: U256::from(EXPECTED_FLOOR),
+            call_price_minor: U256::from(EXPECTED_TRIGGER),
+            call_trigger: outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 20,
-                coen_price_call_trigger: U256::from(EXPECTED_TRIGGER),
+                threshold_days: 21,
+                intex_call_period: CALL_PERIOD,
             },
             issued_at: ISSUED_AT,
+            issuance_currency: 840,
+            reference_currency: 840,
         },
     )
     .unwrap();
@@ -597,17 +657,29 @@ fn qualify_survives_lz_messenger_failure() {
     // The Issued -> Qualified transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
-        assert!(
-            qualified::try_qualify(&s, &mut f, 7, mature, U256::from(EXPECTED_FLOOR) + U256::from(1))
-                .unwrap()
-        );
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            MATURITY_PERIOD_SECONDS,
+            mature,
+            U256::from(EXPECTED_FLOOR) + U256::from(1)
+        )
+        .unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
         );
     });
 }
@@ -618,9 +690,13 @@ fn call_survives_lz_messenger_failure() {
     // The Qualified -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
-        outbe_intexregistry::api::mark_qualified(&s, 7).unwrap();
+        outbe_intex::api::mark_qualified(&s, 7).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         f.insert_qualified(7, U256::from(EXPECTED_TRIGGER)).unwrap();
 
@@ -628,12 +704,21 @@ fn call_survives_lz_messenger_failure() {
         let pair_id = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
-        fill_days(&oracle, today, pair_id, 30, U256::from(EXPECTED_TRIGGER) + U256::from(1));
+        fill_days(
+            &oracle,
+            today,
+            pair_id,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
 
         assert!(called::try_call(&s, &mut f, &oracle, 7, pair_id, today, scan_ts).unwrap());
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7).unwrap().lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Called
         );
     });
 }
@@ -665,10 +750,10 @@ fn scan_and_qualify_promotes_matured_series() {
         );
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
 
-        let r = outbe_intexregistry::api::read_series(&s, 7).unwrap();
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
         assert_eq!(
             r.lifecycle_state().unwrap(),
-            outbe_intexregistry::IntexState::Qualified
+            outbe_intex::IntexState::Qualified
         );
         let f = IntexFactoryContract::new(s.clone());
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
@@ -693,11 +778,102 @@ fn scan_and_call_force_calls_breached_series() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
-            outbe_intexregistry::api::read_series(&s, 7)
+            outbe_intex::api::read_series(&s, 7)
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intexregistry::IntexState::Called
+            outbe_intex::IntexState::Called
         );
+    });
+}
+
+// ---------------------------------------------------------------------
+// Genesis parameter profile: prod by default, dev when selected
+// ---------------------------------------------------------------------
+
+#[test]
+fn config_defaults_to_prod_when_unset() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        // No genesis profile selected -> selector reads 0 -> prod bundle.
+        assert_eq!(
+            crate::config::read(&f).unwrap(),
+            crate::config::IntexParams::PROD
+        );
+    });
+}
+
+#[test]
+fn config_dev_profile_drives_issuance_and_maturity() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        // Select the dev profile through the single selector byte.
+        f.config_profile.write(crate::config::PROFILE_DEV).unwrap();
+        assert_eq!(
+            crate::config::read(&f).unwrap(),
+            crate::config::IntexParams::DEV
+        );
+
+        runtime::issue(&s, sample(7)).unwrap();
+
+        // Issuance captures the dev call-trigger and dev-derived prices.
+        let dev = crate::config::IntexParams::DEV;
+        let r = outbe_intex::api::read_series(&s, 7).unwrap();
+        assert_eq!(r.intex_call_period, dev.intex_call_period_secs);
+        assert_eq!(
+            r.floor_price_minor,
+            U256::from(ENTRY_PRICE * dev.floor_price_num / 100)
+        );
+        assert_eq!(
+            r.call_price_minor,
+            U256::from(ENTRY_PRICE * dev.call_price_num / 100)
+        );
+        assert_eq!(
+            r.call_trigger(),
+            outbe_intex::IntexCallTrigger {
+                window_days: dev.call_window_days,
+                threshold_days: dev.call_threshold_days,
+                intex_call_period: dev.intex_call_period_secs,
+            }
+        );
+
+        // Dev maturity qualifies long before the 21-day prod maturity.
+        let rate = r.floor_price_minor + U256::from(1);
+        let after_maturity = ISSUED_AT as u64 + dev.maturity_period_secs + 1;
+        assert!(qualified::try_qualify(
+            &s,
+            &mut f,
+            7,
+            dev.maturity_period_secs,
+            after_maturity,
+            rate
+        )
+        .unwrap());
+        assert_eq!(
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn config_unknown_selector_errors() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        f.config_profile.write(99u8).unwrap();
+        assert!(crate::config::read(&f).is_err());
+    });
+}
+
+/// Pin the selector slot index: the seeder writes raw slot 13, so the schema
+/// must map `config_profile` there.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        assert_eq!(f.config_profile.slot(), U256::from(13));
     });
 }

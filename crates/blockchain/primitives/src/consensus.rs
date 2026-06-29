@@ -24,6 +24,86 @@ const EXECUTION_SUMMARY_CACHE_LIMIT: usize = 1024;
 /// explicit cap.
 pub const OUTBE_MAX_EXTRA_DATA_SIZE: usize = 64 * 1_024;
 
+/// Maximum allowed RLP-encoded size of a block, in bytes.
+///
+/// The full block rides a single consensus P2P message (`ConsensusBlock`, and
+/// the marshal's `(notarization, block)` resolver co-transport), which
+/// commonware caps at `MAX_P2P_MESSAGE_SIZE` (2 MiB) and **panics** on overflow.
+/// The execution-layer gas limit permits far larger blocks (~7.5 MB of
+/// zero-byte calldata at 30M gas), so without this cap an honest proposer could
+/// build a valid block that can never be disseminated — verifiers could never
+/// pull it and the view would stall. This bound keeps a margin below the 2 MiB
+/// transport cap for the message envelope and the attached certificate.
+///
+/// Enforced at block build (the payload builder skips txs / rejects a sealed
+/// block over this size) and re-checked deterministically at verify
+/// (`validate_block_pre_execution` measures `sealed_block.rlp_length()`), so a
+/// byzantine proposer that ignores the build cap is rejected rather than
+/// crashing the transport. Hard-fork-governed protocol constant; both the
+/// builder and the validator read it from here. A workspace test in
+/// `outbe-consensus` guards `OUTBE_MAX_BLOCK_SIZE < MAX_P2P_MESSAGE_SIZE`.
+pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
+
+/// Maximum allowed forward drift, in milliseconds, between a block's
+/// `timestamp_millis` and its parent's.
+///
+/// Block timestamps are proposer-supplied and only checked for parent
+/// monotonicity by the stock Ethereum rules. Without an upper bound a single
+/// byzantine leader can ratchet chain time arbitrarily far forward in one
+/// block, which (a) instantly matures every pending unbonding entry and the
+/// slashed-withdrawal delay, letting the proposer's own stake escape the
+/// unbonding lock and slashing window, and (b) skips the day-indexed emission
+/// schedule. This bound is the deterministic, chain-state-only drift band
+/// shared by the proposer (which caps its assigned timestamp at
+/// `parent + this`) and every validator (which rejects a block whose delta
+/// exceeds `this`); see `crates/blockchain/node/src/consensus.rs`
+/// (`validate_against_parent_timestamp_millis`) and the proposer build path in
+/// `crates/blockchain/consensus/src/application/handler.rs`.
+///
+/// 1 hour is >400× the certification timeout, so honest operation — including
+/// view-nullification bursts and DKG-reshare pauses — never trips it, while a
+/// genuinely long outage self-heals: the proposer caps at `parent + this` and
+/// chain time ratchets forward in bounded steps until it catches up to real
+/// time, so the band never turns a recoverable stall into a permanent halt. It
+/// is ~504× smaller than the 21-day default unbonding period, so the
+/// single-block unbonding-lock bypass is eliminated and any residual time
+/// ratchet by a sustained byzantine leader is slow and on-chain visible.
+/// Hard-fork-governed protocol constant; both paths read it from here.
+pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
+
+/// Minimum advance, in milliseconds, that a block's `timestamp_millis` must add
+/// over its parent's — the lower bound of the two-sided drift band.
+///
+/// Stock monotonicity only requires `+1 ms`, so a colluding leader majority can
+/// keep `timestamp = parent + 1 ms` while real time advances, freezing every
+/// time-driven settlement that keys off block timestamp: the day-indexed
+/// emission schedule never crosses a UTC boundary and unbonding maturity
+/// (`complete_time`) is never reached, so stake never unlocks and emission
+/// stalls. This bound forces each block to advance chain time by at least
+/// `this`, so the freeze is neutralized — the only way to slow chain time below
+/// `this`-per-block is to withhold blocks, which the view-timeout / leader
+/// rotation machinery already bounds.
+///
+/// Like the maximum bound, the rule is deterministic and chain-state-only
+/// (header + parent, no wall clock) so proposer and every validator agree. The
+/// proposer clamps its assigned timestamp *up* to `parent + this` when its clock
+/// has not advanced that far (see the consensus handler build path), so an
+/// honest block is never rejected; the clamp only bites under clock lag and any
+/// resulting forward inflation is bounded by
+/// [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`] and self-corrects once real time catches
+/// up. The genesis child (parent block number `0`) is exempt on both paths: the
+/// `finalization_view` is unseeded at genesis, so block 1 is only checked for
+/// monotonicity.
+///
+/// 1 s is half the 2 s default block-time floor
+/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing — which leaves real intervals
+/// `≥` the floor between consecutive block timestamps — never trips the clamp at
+/// the default cadence, while a sub-second freeze is impossible. Operators who
+/// configure a block-time floor below `this` accept proportionally more bounded
+/// forward inflation. Hard-fork-governed protocol constant; both paths read it
+/// from here.
+pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
+
 /// Inclusion-window depth `K` for the late-finalize-credits mechanism.
 ///
 /// Block `N`'s fees are escrowed and split at `N+K` across everyone whose
@@ -144,6 +224,13 @@ pub struct DkgBoundaryArtifact {
     /// begin-zone `BoundaryOutcome` handler writes these into `TeeRegistry`. The
     /// offer key is preserved across a reshare. OART wire `v0.08`.
     pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
+    /// Prior- (outgoing-) committee threshold GROUP signature over
+    /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
+    /// authorizing the incoming committee's TEE re-registrations. The begin-zone
+    /// handler verifies it against the stored prior group public key before applying
+    /// `tee_reshare_registrations` — so a malicious supermajority of the NEW committee
+    /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
+    pub endorsement_signature: Bytes,
 }
 
 /// A single validator entry for genesis initialization.
@@ -232,10 +319,6 @@ pub struct ConsensusStatus {
     pub current_view: u64,
     /// Number of connected consensus peers.
     pub connected_peers: u32,
-    /// Whether the node is synced and participating in consensus.
-    pub is_active: bool,
-    /// Whether DKG shares are present and valid.
-    pub has_threshold_shares: bool,
     /// Last finalized block number.
     pub last_finalized_block: u64,
     /// Last VRF seed (from the most recent finalized certificate).
@@ -250,6 +333,21 @@ pub struct ConsensusStatus {
     pub next_planned_activation_height: u64,
     /// Last block height at which old VRF material may still be used.
     pub vrf_expiry_height: u64,
+}
+
+impl ConsensusStatus {
+    /// Whether the node is synced and participating in consensus. Derived from
+    /// `randomness_status` (single source of truth) rather than stored, so it can
+    /// never drift from the VRF/DKG safety state it is computed from.
+    pub fn is_active(&self) -> bool {
+        self.randomness_status.is_consensus_active()
+    }
+
+    /// Whether usable DKG/threshold shares are present. Derived from
+    /// `randomness_status`; see [`ConsensusStatus::is_active`].
+    pub fn has_threshold_shares(&self) -> bool {
+        self.randomness_status.has_threshold_shares()
+    }
 }
 
 /// Thread-safe bridge for passive consensus/execution status and caches.

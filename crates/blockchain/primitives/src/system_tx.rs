@@ -132,6 +132,36 @@ impl SystemTxKind {
         BodyZone::BeginBlock
     }
 
+    /// Whether a non-success EVM result (`Revert` / `Halt`) executing this
+    /// begin-zone phase must fail the whole block instead of being recorded as a
+    /// soft `status = 0` receipt and skipped.
+    ///
+    /// Consensus- and economic-critical phases are one-shot: their work cannot
+    /// be retried by a later block, so a swallowed revert permanently loses it —
+    /// stranded validator-fee escrow (`LateFinalizeCredits`), a dropped day of
+    /// emission / terminal Metadosis (`CycleTick`), a skipped reshare / validator
+    /// set activation (`BoundaryOutcome`), or unrecorded finalized-parent
+    /// accounting (`CertifiedParentAccounting`). For these, a revert is a hard
+    /// `BlockExecutionError`: the block is rejected on every validator
+    /// deterministically (the revert is a function of committed chain state, the
+    /// same for all proposers), honoring the "never silent stall / terminal
+    /// failure is fatal" invariant rather than silently forfeiting real money or
+    /// a protocol-state transition.
+    ///
+    /// `OracleSlashWindow` and `TeeBootstrap` stay soft: a revert there skips an
+    /// oracle penalty or a one-time TEE registry bootstrap — an integrity/feature
+    /// gap, not a money loss or a finality break — and halting the chain over it
+    /// would be the worse failure mode.
+    pub const fn revert_fails_block(self) -> bool {
+        match self {
+            Self::CertifiedParentAccounting
+            | Self::LateFinalizeCredits
+            | Self::CycleTick
+            | Self::BoundaryOutcome => true,
+            Self::TeeBootstrap | Self::OracleSlashWindow => false,
+        }
+    }
+
     pub const fn begin_order(self) -> Option<u8> {
         match self {
             Self::CertifiedParentAccounting => Some(0),
@@ -985,6 +1015,7 @@ mod tests {
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
             tee_reshare_registrations: Vec::new(),
+            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
                 active_set_hash: B256::repeat_byte(0x55),
@@ -1005,6 +1036,7 @@ mod tests {
             tribute_offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0xB3),
             tribute_offer_public_key: B256::repeat_byte(0xB4),
+            tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xB5; 96]),
             registrations: vec![TeeRegistrationBundle {
                 validator,
                 recipient_x25519: B256::repeat_byte(0x21),
@@ -1598,6 +1630,30 @@ mod tests {
             validate_active_system_tx_set(&unexpected_boundary, 2, false, false),
             Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn revert_fails_block_classifies_critical_begin_zone_phases() {
+        // consensus- and economic-critical phases fail the block on
+        // a revert/halt; non-critical phases keep the soft-receipt skip. Pin the
+        // full classification so a new phase is forced to make this choice.
+        for kind in [
+            SystemTxKind::CertifiedParentAccounting,
+            SystemTxKind::LateFinalizeCredits,
+            SystemTxKind::CycleTick,
+            SystemTxKind::BoundaryOutcome,
+        ] {
+            assert!(
+                kind.revert_fails_block(),
+                "{kind:?} must fail the block on revert"
+            );
+        }
+        for kind in [SystemTxKind::TeeBootstrap, SystemTxKind::OracleSlashWindow] {
+            assert!(
+                !kind.revert_fails_block(),
+                "{kind:?} must keep the soft-receipt skip"
+            );
+        }
     }
 
     #[test]

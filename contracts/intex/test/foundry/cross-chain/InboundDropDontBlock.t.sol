@@ -4,14 +4,15 @@ pragma solidity 0.8.30;
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {ITargetMessenger} from "@contracts/bnb/interfaces/ITargetMessenger.sol";
-import {IOriginMessenger} from "@contracts/outbe/interfaces/IOriginMessenger.sol";
+import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundDropDontBlockTest
@@ -39,20 +40,12 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
 
         desis = address(new MockDesis());
         intexFactory = makeAddr("factory");
-        auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[BNB_EID]), admin, OUTBE_EID)
-                ))
-        );
-        outbeMessenger = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[OUTBE_EID]), admin, BNB_EID)
-                ))
-        );
-        onftBatchBnb = new ONFT1155AdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
+        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
 
         address[] memory bridge = new address[](2);
         bridge[0] = address(bnbMessenger);
@@ -96,7 +89,7 @@ contract InboundDropDontBlockTest is TestHelperOz5 {
 
         // nonce 2: a valid bids batch lands (BidsBatchReceived), proving the lane was not wedged.
         bytes memory bids = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint64[](0), new uint32[](0)
+            42, BNB_EID, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         vm.expectEmit(true, true, false, true, address(outbeMessenger));
         emit IOriginMessenger.BidsBatchReceived(GUID, BNB_EID, 42, 0);

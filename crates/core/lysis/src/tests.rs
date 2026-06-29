@@ -1,4 +1,5 @@
 use crate::algorithm::*;
+use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_nod::NodContract;
@@ -6,8 +7,6 @@ use outbe_oracle::contract::OracleContract;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData};
-
-const SCALE: u128 = 1_000_000_000_000_000_000;
 
 fn gas_audit_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
@@ -49,6 +48,13 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Register ISO 840 (USD) → COEN/0xUSD pair so the runtime's
+        // `outbe_oracle::api::get_pair_id(_, 840)` lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -120,6 +126,10 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
                 .expect("GAS-08 issued NOD must be readable");
             assert_eq!(item.owner, owners[idx]);
             assert_eq!(item.worldwide_day, wwd);
+            // league_id now comes from the Fidelity league. These owners have no
+            // gratis cohort history, so no account has qualified (the global
+            // synthetic-max ceiling is zero) → everyone lands in the minimum
+            // league (MIN_LEAGUE == 1).
             assert_eq!(item.league_id, 1);
             assert!(
                 !item.gratis_load_minor.is_zero(),
@@ -142,169 +152,161 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
 
 #[test]
 fn test_empty_population() {
-    let result =
-        calc_fraction_distribution_fp(&[], &[], 10, 0, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
-    assert_eq!(result, vec![0]);
+    let result = calc_fraction_distribution_fp(&[], &[], 10, 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    assert_eq!(result, vec![U256::ZERO]);
 }
 
 #[test]
 fn test_single_fi_returns_target_fraction() {
     let y_fp = vec![SCALE]; // 100%
     let p = vec![5];
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0], LYSIS_LIMIT_MIN, "single FI should return f");
+    assert_eq!(result[0], F_FP_DEFAULT, "single FI should return f");
 }
 
 #[test]
 fn test_two_fi_groups() {
-    let y_fp = vec![SCALE * 6 / 10, SCALE * 4 / 10]; // 60/40
+    let y_fp = vec![
+        SCALE * U256::from(6u64) / U256::from(10u64),
+        SCALE * U256::from(4u64) / U256::from(10u64),
+    ]; // 60/40
     let p = vec![1, 2];
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 2, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
 
     // All fractions non-negative
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac > 0, "fraction[{i}] should be positive, got {frac}");
+        assert!(
+            !frac.is_zero(),
+            "fraction[{i}] should be positive, got {frac}"
+        );
     }
 
     // Bounded by 2*fmax (reasonable bound for fixed-point)
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(
-            frac <= LYSIS_LIMIT_MAX * 2,
-            "fraction[{i}] too large: {frac}"
-        );
+        assert!(frac <= bound, "fraction[{i}] too large: {frac}");
     }
 }
 
 #[test]
 fn test_three_fi_groups() {
-    let y_fp = vec![SCALE * 50 / 100, SCALE * 30 / 100, SCALE * 20 / 100];
+    let y_fp = vec![
+        SCALE * U256::from(50u64) / U256::from(100u64),
+        SCALE * U256::from(30u64) / U256::from(100u64),
+        SCALE * U256::from(20u64) / U256::from(100u64),
+    ];
     let p = vec![50, 30, 20];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 3, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
 
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
 }
 
 #[test]
 fn test_many_fi_groups() {
     let n = 10;
-    let y_fp: Vec<u128> = vec![SCALE / n as u128; n];
+    let y_fp: Vec<U256> = vec![SCALE / U256::from(n as u64); n];
     let p: Vec<u64> = (1..=n as u64).collect();
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 100, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), n);
 
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] too large");
+        assert!(frac <= bound, "fraction[{i}] too large");
     }
 }
 
-/// A-25: deficit_fp must clamp to u128::MAX when gratis >> total_interest.
+/// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
-fn test_deficit_fp_clamp_at_u128_max() {
-    // If gratis_allocation * SCALE / total_interest > u128::MAX, the downcast
-    // must clamp, not silently truncate.
-    // We can't easily trigger this via lysis() (U256 arithmetic), but verify
-    // the clamp constant is correct.
-    let max_u128 = u128::MAX;
-    // After clamp, f_fp should still be at most LYSIS_LIMIT_MAX / 2
-    let clamped = max_u128.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
+fn test_deficit_derivation_scarce_and_abundant() {
+    // Scarce: deficit below the 8% floor → f = deficit (adapts down).
+    let scarce = F_FP_DEFAULT / U256::from(2u64); // 4%
+    let f_fp = scarce.min(F_FP_DEFAULT);
+    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
+    assert_eq!(f_fp, scarce, "scarce gratis must lower the floor below 8%");
     assert_eq!(
-        clamped,
-        LYSIS_LIMIT_MAX / 2,
-        "extreme deficit must clamp to MAX/2"
-    );
-}
-
-/// A-27: f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
-#[test]
-fn test_f_fp_clamp_boundaries() {
-    // Below minimum → floor
-    let small: u128 = 1_000;
-    let clamped = small.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    assert_eq!(clamped, LYSIS_LIMIT_MIN, "below-minimum must floor to MIN");
-
-    // Above MAX/2 → ceiling
-    let large: u128 = LYSIS_LIMIT_MAX;
-    let clamped = large.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    assert_eq!(
-        clamped,
-        LYSIS_LIMIT_MAX / 2,
-        "above-ceiling must cap to MAX/2"
+        fmax_fp,
+        scarce * U256::from(2u64),
+        "fmax tracks 2*f when below the cap"
     );
 
-    // At boundary: MIN == MAX/2 (both are 0.08 * SCALE), so clamp range is a single point.
-    let exact = LYSIS_LIMIT_MIN;
-    let clamped = exact.clamp(LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX / 2);
-    assert_eq!(clamped, LYSIS_LIMIT_MIN, "exact boundary must stay at MIN");
+    // Abundant: deficit at/above 8% → f capped at 8%, fmax at 16%.
+    let abundant = F_MAX_FP; // 16% deficit
+    let f_fp = abundant.min(F_FP_DEFAULT);
+    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
+    assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
+    assert_eq!(fmax_fp, F_MAX_FP, "fmax caps at 16%");
 }
 
 #[test]
 fn test_default_constants() {
     // Verify constants match expected values within integer precision
-    assert_eq!(LYSIS_LIMIT_MIN, 80_000_000_000_000_000); // 0.08 * 10^18
-    assert_eq!(LYSIS_LIMIT_MAX, 160_000_000_000_000_000); // 0.16 * 10^18
+    assert_eq!(F_FP_DEFAULT, U256::from(320_000_000_000_000_000u128)); // 0.32 * 10^18
+    assert_eq!(F_MAX_FP, U256::from(640_000_000_000_000_000u128)); // 0.64 * 10^18
 }
 
 #[test]
 fn test_with_zero_population_entries() {
-    let y_fp = vec![SCALE / 2, 0, SCALE / 2];
+    let half = SCALE / U256::from(2u64);
+    let y_fp = vec![half, U256::ZERO, half];
     let p = vec![10, 0, 5];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 15, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] > bound: {frac}");
+        assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
 }
 
 #[test]
 fn test_skewed_distribution() {
-    let y_fp = vec![SCALE * 9 / 10, SCALE / 10];
+    let y_fp = vec![
+        SCALE * U256::from(9u64) / U256::from(10u64),
+        SCALE / U256::from(10u64),
+    ];
     let p = vec![900, 100];
 
     let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
-    assert!(result[0] > 0);
-    assert!(result[1] > 0);
+    assert!(!result[0].is_zero());
+    assert!(!result[1].is_zero());
 }
 
 /// Regression: large nominal amounts (> 2^53) must not lose precision.
 #[test]
 fn test_large_nominal_distribution() {
     // Simplified: 60/40 split → use SCALE fractions directly.
-    let y_fp = vec![SCALE * 6 / 10, SCALE * 4 / 10];
+    let y_fp = vec![
+        SCALE * U256::from(6u64) / U256::from(10u64),
+        SCALE * U256::from(4u64) / U256::from(10u64),
+    ];
     let p = vec![600, 400];
 
     let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX)
-            .unwrap();
+        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
+    let bound = F_MAX_FP * U256::from(2u64);
     for (i, &frac) in result.iter().enumerate() {
         assert!(
-            frac > 0,
+            !frac.is_zero(),
             "fraction[{i}] must be positive for large nominals"
         );
-        assert!(frac <= LYSIS_LIMIT_MAX * 2, "fraction[{i}] must be bounded");
+        assert!(frac <= bound, "fraction[{i}] must be bounded");
     }
 }
 
@@ -315,17 +317,14 @@ fn test_large_nominal_distribution() {
 /// Assert the post-condition `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` for the
 /// output of `calc_fraction_distribution_fp`. Small round-down error is
 /// acceptable; overshoot is not.
-fn assert_weighted_within_target(result: &[u128], y_fp: &[u128], f_fp: u128) {
-    use alloy_primitives::U256;
-    let scale_u = U256::from(SCALE);
+fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
     let weighted: U256 = result
         .iter()
         .zip(y_fp.iter())
-        .map(|(f, y)| U256::from(*f) * U256::from(*y) / scale_u)
+        .map(|(f, y)| *f * *y / SCALE)
         .sum();
-    let target = U256::from(f_fp);
     assert!(
-        weighted <= target,
+        weighted <= f_fp,
         "weighted expenditure {weighted} exceeds target {f_fp}"
     );
 }
@@ -334,10 +333,11 @@ fn assert_weighted_within_target(result: &[u128], y_fp: &[u128], f_fp: u128) {
 fn test_normalized_f1_respects_budget_skewed_population() {
     // Skewed population + imbalanced interest tends to push raw f1 over the
     // target. After normalization the post-condition must hold.
-    let y_fp = vec![SCALE / 4, SCALE / 4, SCALE / 4, SCALE / 4];
+    let q = SCALE / U256::from(4u64);
+    let y_fp = vec![q, q, q, q];
     let p = vec![100u64, 1, 1, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 103, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 4);
     assert_weighted_within_target(&result, &y_fp, f_fp);
@@ -346,10 +346,10 @@ fn test_normalized_f1_respects_budget_skewed_population() {
 #[test]
 fn test_normalized_f1_respects_budget_many_groups() {
     let n = 10usize;
-    let y_fp: Vec<u128> = (0..n).map(|_| SCALE / n as u128).collect();
+    let y_fp: Vec<U256> = (0..n).map(|_| SCALE / U256::from(n as u64)).collect();
     let p: Vec<u64> = (1..=n as u64).collect();
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), n);
     assert_weighted_within_target(&result, &y_fp, f_fp);
@@ -361,8 +361,8 @@ fn test_single_group_returns_f_without_normalization() {
     // returned as-is. Weighted total = f_fp * SCALE / SCALE = f_fp == target.
     let y_fp = vec![SCALE];
     let p = vec![10];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, LYSIS_LIMIT_MAX).unwrap();
+    let f_fp = F_FP_DEFAULT;
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, F_MAX_FP).unwrap();
     assert_eq!(result, vec![f_fp]);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -371,17 +371,18 @@ fn test_single_group_returns_f_without_normalization() {
 fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     // When raw output overshoots and is scaled down, pairwise ratios between
     // groups should remain ~constant.
-    let y_fp = vec![SCALE / 2, SCALE / 2];
+    let half = SCALE / U256::from(2u64);
+    let y_fp = vec![half, half];
     let p = vec![50u64, 5];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 55, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert_weighted_within_target(&result, &y_fp, f_fp);
     // Both fractions should still be positive (not obliterated by scale-down).
     for &frac in &result {
         assert!(
-            frac > 0,
+            !frac.is_zero(),
             "fraction must remain positive after normalization"
         );
     }
@@ -397,17 +398,18 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
 /// term). After I256 refactor the distribution must preserve the signal.
 #[test]
 fn test_small_fi_group_survives_i256_precision() {
+    let tiny = U256::from(1_000_000u64);
     let y_fp = vec![
-        SCALE - 1_000_000, // dominant group ≈ 99.9999%
-        1_000_000,         // tiny group ≈ 0.0001% — used to collapse to 0
+        SCALE - tiny, // dominant group ≈ 99.9999%
+        tiny,         // tiny group ≈ 0.0001% — used to collapse to 0
     ];
     let p = vec![1000u64, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1001, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert!(
-        result[1] > 0,
+        !result[1].is_zero(),
         "tiny FI group must receive a non-zero fraction, got {}",
         result[1]
     );
@@ -419,17 +421,18 @@ fn test_small_fi_group_survives_i256_precision() {
 /// signed contribution for the lower-Y group.
 #[test]
 fn test_negative_beta_branch_produces_bounded_distribution() {
-    let y_fp = vec![SCALE / 100, SCALE * 99 / 100]; // 1% / 99% split
+    let y_fp = vec![
+        SCALE / U256::from(100u64),
+        SCALE * U256::from(99u64) / U256::from(100u64),
+    ]; // 1% / 99% split
     let p = vec![1u64, 1];
-    let f_fp = LYSIS_LIMIT_MIN;
-    let fmax_fp = LYSIS_LIMIT_MAX;
+    let f_fp = F_FP_DEFAULT;
+    let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
+    let bound = F_MAX_FP * U256::from(2u64);
     for &f in &result {
-        assert!(
-            f <= LYSIS_LIMIT_MAX * 2,
-            "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound"
-        );
+        assert!(f <= bound, "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound");
     }
 }
 
@@ -477,6 +480,12 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
         oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
         oracle
             .worldwide_day_vwap_pair_count
@@ -493,8 +502,9 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             .write(&0u32, cost_of_gratis)
             .unwrap();
 
-        // 2. Open the day and issue a single tribute. Fidelity defaults to 1
-        //    when unset (see `FidelityContract::get_fidelity_index`).
+        // 2. Open the day and issue a single tribute. With no cohort history the
+        //    owner's Fidelity league is MIN_LEAGUE (see `FidelityContract::league`);
+        //    the single-FI fast path is independent of the index value.
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
         tribute
@@ -541,6 +551,282 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             "cost_amount_minor {} looks like a 10^36-scaled value; \
              likely a scale-mismatch regression",
             item.cost_amount_minor
+        );
+    });
+}
+
+/// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
+/// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
+/// integer truncation in the deficit derivation — the assertions can use
+/// strict equality rather than tolerance bands.
+fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
+    let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| U256::in_units(10u64 * i)).collect();
+    let tribute_fis = vec![1u16; 15];
+    let total_interest: U256 = nominal_amounts
+        .iter()
+        .copied()
+        .fold(U256::ZERO, |acc, v| acc + v);
+    // Sanity: 10 * (1+2+...+15) = 1200 COEN.
+    debug_assert_eq!(total_interest, U256::in_units(1200u64));
+    (nominal_amounts, tribute_fis, total_interest)
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 5% deficit — well below the historical 8% floor.
+    let gratis_allocation = total_interest * U256::from(5u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1, "all FI=1 must collapse to one map entry");
+    let expected = SCALE * U256::from(5u64) / U256::from(100u64); // 0.05 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "scarce-gratis fraction must equal the 5% deficit coefficient"
+    );
+    println!("deficit fraction map: {:?}", map);
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 30% deficit — well above the historical 8%/16% range; the new logic
+    // must not silently cap the fraction at 16%.
+    let gratis_allocation = total_interest * U256::from(30u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1);
+    let expected = SCALE * U256::from(30u64) / U256::from(100u64); // 0.30 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "abundant-gratis fraction must track the 30% deficit, not pin at 16%"
+    );
+}
+
+#[test]
+fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
+    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    // 32% — matches the canonical metadosis symbolic rate (D1 in
+    // metadosis-lysis-discrepancies.md). The fraction must reach 0.32, exactly.
+    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    assert_eq!(map.len(), 1);
+    let expected = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
+    assert_eq!(
+        map.get(&1).copied(),
+        Some(expected),
+        "32% gratis allocation must produce a 32% fraction"
+    );
+}
+
+/// Multi-FI scenario: 100 distinct-nominal tributes spread across 15 fidelity
+/// indices, 32% gratis allocation.
+#[test]
+fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation() {
+    use std::collections::BTreeMap;
+
+    // Distinct nominals 1..=100 COEN. Sum = 5050 COEN; 32% = 1616 COEN exactly.
+    let nominal_amounts: Vec<U256> = (1u64..=100).map(U256::in_units).collect();
+    // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
+    // FIs 11..=15 each get 6 — covers every bucket with uneven population.
+    let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
+    let total_interest: U256 = nominal_amounts
+        .iter()
+        .copied()
+        .fold(U256::ZERO, |acc, v| acc + v);
+    debug_assert_eq!(total_interest, U256::in_units(5050u64));
+
+    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
+    debug_assert_eq!(gratis_allocation, U256::in_units(1616u64));
+
+    let map = crate::runtime::compute_fi_fraction_map(
+        &nominal_amounts,
+        &tribute_fis,
+        total_interest,
+        gratis_allocation,
+    )
+    .unwrap();
+
+    // 1. Every distinct FI must appear in the map.
+    assert_eq!(
+        map.len(),
+        15,
+        "every FI bucket present in input must receive a fraction"
+    );
+    for fi in 1u16..=15 {
+        assert!(map.contains_key(&fi), "FI {fi} missing from fraction map");
+    }
+
+    // 2. Every fraction must be positive — the I256 pipeline must not collapse
+    //    any group to zero, and the moment solver must not produce a negative
+    //    that clamps to 0 (would starve a whole FI bucket).
+    for (fi, frac) in &map {
+        assert!(
+            !frac.is_zero(),
+            "FI {fi} got zero fraction: algorithm collapsed a group (got {frac})"
+        );
+    }
+
+    // 3. Algorithm-level budget invariant. Reconstruct the y_fp vector exactly
+    //    as the runtime does (BTreeMap-ordered group share with the truncation
+    //    delta absorbed into the last entry) and assert the normalized
+    //    `Σ(f_g · y_fp_g)/SCALE ≤ f_fp` post-condition. This is the
+    //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
+    let mut group_interest: BTreeMap<u16, U256> = BTreeMap::new();
+    for (i, &fi) in tribute_fis.iter().enumerate() {
+        *group_interest.entry(fi).or_insert(U256::ZERO) += nominal_amounts[i];
+    }
+    let mut y_fp: Vec<U256> = group_interest
+        .values()
+        .map(|gi| *gi * SCALE_1E18 / total_interest)
+        .collect();
+    let y_sum: U256 = y_fp.iter().copied().sum();
+    if let Some(last) = y_fp.last_mut() {
+        if y_sum < SCALE {
+            *last += SCALE - y_sum;
+        }
+    }
+    let weighted: U256 = group_interest
+        .keys()
+        .zip(y_fp.iter())
+        .map(|(fi, y)| {
+            let f = map.get(fi).copied().unwrap_or(U256::ZERO);
+            f * *y / SCALE
+        })
+        .sum();
+    let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
+    assert!(
+        weighted <= f_fp,
+        "weighted Σ(f·y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
+    );
+
+    println!("100-tribute / 15-FI fraction map: {:?}", map);
+    println!("weighted Σ(f·y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
+}
+
+/// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
+/// floor must adapt DOWN so the whole — small — allocation is loaded onto the
+/// tribute. Under the previous degenerate `clamp(MIN, MAX/2)` the floor was pinned
+/// to 8%, computing a gratis_load of 8% of nominal (> the 4% allocation), which
+/// exceeds `remaining` and causes the NOD issuance to be SKIPPED entirely.
+///
+/// Reference behavior: outbe-cosmos `x/lysis/keeper/keeper.go` `x = min(8%, deficit)`.
+#[test]
+fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
+    use alloy_primitives::{address, U256};
+    use outbe_common::WorldwideDay;
+    use outbe_nod::NodContract;
+    use outbe_oracle::contract::OracleContract;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+    use outbe_tribute::{TributeContract, TributeData};
+
+    use crate::runtime::lysis;
+
+    let wwd = WorldwideDay::new(20241221);
+    const T_NOW: u64 = 1_700_000_000;
+    let owner = address!("0x2222222222222222222222222222222222222222");
+    let nominal = U256::in_units(100u64);
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+
+    // Scarce: allocation is only 4% of nominal → deficit (4%) is BELOW the 8% floor.
+    let gratis_allocation = nominal * U256::from(4u64) / U256::from(100u64);
+    let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
+
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut storage, |s| {
+        let mut oracle = OracleContract::new(s.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        let mut tribute = TributeContract::new(s.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&TributeData {
+                token_id: U256::from(1u64),
+                owner,
+                worldwide_day: wwd,
+                issuance_amount_minor: U256::in_units(50u64),
+                issuance_currency: 1,
+                nominal_amount_minor: nominal,
+                reference_currency: 840,
+                tribute_price_minor: U256::ZERO,
+            })
+            .unwrap();
+
+        let result = lysis(s.clone(), wwd, gratis_allocation).unwrap();
+
+        // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
+        // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
+        assert_eq!(
+            result.nod_ids.len(),
+            1,
+            "scarce-gratis day must still issue the NOD (floor adapts to the 4% deficit)"
+        );
+
+        let nod = NodContract::new(s.clone());
+        let item = nod.get_item(result.nod_ids[0]).unwrap().expect("NOD");
+
+        // Single-FI fast path returns f_fp == deficit (4%), so load == 4% of nominal,
+        // which is the full scarce allocation — strictly below an 8% load.
+        assert_eq!(
+            item.gratis_load_minor, gratis_allocation,
+            "scarce day must load the full 4% allocation, not a pinned 8%"
+        );
+        assert!(
+            item.gratis_load_minor < eight_percent_load,
+            "gratis load {} must be below the 8% pin {} (floor adapted down)",
+            item.gratis_load_minor,
+            eight_percent_load
+        );
+        assert!(
+            result.remaining_gratis.is_zero(),
+            "the full scarce allocation must be consumed"
         );
     });
 }

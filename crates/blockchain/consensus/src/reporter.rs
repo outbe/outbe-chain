@@ -15,43 +15,36 @@
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
-use crate::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use crate::metrics::EquivocationKind;
+use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::Encode;
 use commonware_consensus::{
-    simplex::{
-        elector::Elector as _,
-        types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
-    },
-    types::{Epoch, Round, View},
+    simplex::types::{Activity, Attributable as _, Finalize, Notarization, Proposal},
+    types::{Epoch, View},
     Epochable as _, Reporter, Viewable,
 };
 use commonware_cryptography::{
-    bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
-    Hasher, Sha256,
+    bls12381::primitives::variant::MinSig, certificate::Scheme as _, Hasher, Sha256,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::ordered::Set as OrderedSet;
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
-use tracing::{debug, info, warn};
+use commonware_utils::ordered::Quorum as _;
+use std::sync::{Arc, Mutex};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     digest::Digest,
+    finalization::finalize_verify::FinalizeVerifyMailbox,
     finalization::ingress::{Finalized as FinalizationFinalized, Mailbox as FinalizationMailbox},
-    finalization::late_sig_store::SharedLateFinalizeStore,
     finalization::parent_cert_store::{
-        CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-        FinalizedParentCertStore, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
+        CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord, ProofKind,
+        CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridRandomElector, HybridScheme},
+    hybrid::{
+        bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
+    },
 };
-use outbe_primitives::{
-    consensus::{ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData},
-    consensus_metadata::ParentParticipationProof,
+use outbe_primitives::consensus::{
+    ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData,
 };
 
 const MAX_MISSED_PROPOSERS: usize = u8::MAX as usize;
@@ -85,38 +78,62 @@ pub struct OutbeReporter {
     elector: HybridRandomElector<MinSig>,
     /// Current consensus epoch.
     epoch: Epoch,
-    /// Last finalized view — used for view-gap detection.
-    last_finalized_view: u64,
-    /// Certificate from the last finalization — used as input for leader election
-    /// when computing missed proposers for skipped views.
-    last_certificate: Option<HybridCertificate<MinSig>>,
-    /// Finalize votes observed per view.
-    observed_finalizes: BTreeMap<u64, Vec<Finalize<HybridScheme<MinSig>, Digest>>>,
-    /// Canonical finalized proposals that may still receive late finalize votes.
-    pending_finalizations: BTreeMap<u64, PendingFinalization>,
-    /// Byzantine validators detected since last finalization.
-    /// Drained into ConsensusData on next finalization for on-chain slashing.
-    pending_byzantine: Vec<Address>,
-    /// Durable certified-parent proof store. wires
-    /// `Activity::Certification(notarization)` directly into this store with
-    /// the `local_certification_witness` flag set, so the proposer
-    /// path can later read a V2 fallback proof via
-    /// [`CertifiedParentProofStore::get_best_parent_proof`] when finalization
-    /// is pending.
-    proof_store: FinalizedParentCertStore,
-    /// process-local buffer of observed individual finalize votes,
-    /// shared with the `FinalizationActor` (number resolution) and the
-    /// application handler (proposer packing). Best-effort, never consensus
-    /// state — see [`crate::finalization::late_sig_store`].
-    late_sig_store: SharedLateFinalizeStore,
+    /// Mutable per-view tracking (finalization cursor + byzantine-evidence
+    /// buffer), separated from the immutable epoch wiring.
+    view_state: ReporterViewState,
+    /// Off-thread finalize-vote verifier. `handle_finalize_vote`
+    /// enqueues raw votes here instead of verifying `O(committee)` BLS pairings
+    /// inline on the Simplex voter task; the actor verifies and admits the
+    /// verified votes to `late_sig_store`.
+    finalize_verify_mailbox: FinalizeVerifyMailbox,
+    /// Narrow, write-only capability onto the certified-parent proof store: the
+    /// reporter records the `local_certification_witness` mark for each observed
+    /// `Activity::Certification`, but structurally cannot durably write — durable
+    /// persistence goes off-thread through the FinalizationActor mailbox (see
+    /// `handle_certification`), which stays the single durable writer.
+    witness_sink: Arc<dyn CertificationWitnessSink>,
 }
 
-#[derive(Clone, Debug)]
-struct PendingFinalization {
-    proposal: Proposal<Digest>,
-    #[allow(dead_code)] // Kept for metrics + future verifier checks.
-    block_hash: B256,
-    certificate: HybridCertificate<MinSig>,
+/// Mutable per-view state owned by a single `OutbeReporter` instance, separated
+/// from the immutable epoch wiring. Holds the finalization cursor (the lower
+/// bound for view-gap missed-proposer attribution) and the byzantine-evidence
+/// buffer drained on each finalization. Its operations are unit-tested in
+/// isolation, so byzantine buffering and the finalization cursor are no longer
+/// loose fields threaded through the handlers.
+#[derive(Clone, Default)]
+struct ReporterViewState {
+    last_finalized_view: u64,
+    last_certificate: Option<HybridCertificate<MinSig>>,
+    pending_byzantine: Vec<Address>,
+}
+
+impl ReporterViewState {
+    fn last_finalized_view(&self) -> u64 {
+        self.last_finalized_view
+    }
+
+    fn last_certificate(&self) -> Option<&HybridCertificate<MinSig>> {
+        self.last_certificate.as_ref()
+    }
+
+    /// Buffer a byzantine validator address until the next finalization drains it.
+    fn buffer_byzantine(&mut self, addr: Address) {
+        self.pending_byzantine.push(addr);
+    }
+
+    /// Drain the buffered byzantine addresses, sorted and deduplicated.
+    fn drain_byzantine_sorted(&mut self) -> Vec<Address> {
+        let mut drained = std::mem::take(&mut self.pending_byzantine);
+        drained.sort_unstable();
+        drained.dedup();
+        drained
+    }
+
+    /// Advance the finalization cursor used by view-gap missed-proposer detection.
+    fn record_finalization(&mut self, view: u64, certificate: HybridCertificate<MinSig>) {
+        self.last_finalized_view = view;
+        self.last_certificate = Some(certificate);
+    }
 }
 
 #[derive(Clone, Default)]
@@ -169,8 +186,8 @@ impl OutbeReporter {
         verifier_scheme: HybridScheme<MinSig>,
         elector: HybridRandomElector<MinSig>,
         epoch: Epoch,
-        proof_store: FinalizedParentCertStore,
-        late_sig_store: SharedLateFinalizeStore,
+        witness_sink: Arc<dyn CertificationWitnessSink>,
+        finalize_verify_mailbox: FinalizeVerifyMailbox,
     ) -> Self {
         let persisted = continuity.snapshot();
         Self {
@@ -181,13 +198,13 @@ impl OutbeReporter {
             verifier_scheme,
             elector,
             epoch,
-            last_finalized_view: persisted.last_finalized_view,
-            last_certificate: persisted.last_certificate,
-            observed_finalizes: BTreeMap::new(),
-            pending_finalizations: BTreeMap::new(),
-            pending_byzantine: Vec::new(),
-            proof_store,
-            late_sig_store,
+            finalize_verify_mailbox,
+            view_state: ReporterViewState {
+                last_finalized_view: persisted.last_finalized_view,
+                last_certificate: persisted.last_certificate,
+                pending_byzantine: Vec::new(),
+            },
+            witness_sink,
         }
     }
 }
@@ -217,8 +234,18 @@ impl Reporter for OutbeReporter {
                 commonware_actor::Feedback::Ok
             }
             Activity::Finalization(finalization) => self.handle_finalization(finalization),
-            Activity::Notarization(_) => {
-                tracing::trace!("notarization reported");
+            Activity::Notarization(notarization) => {
+                // track the current view so the stall gap
+                // (current - finalized) is observable even before finalization.
+                crate::metrics::record_current_view(notarization.view().get());
+                commonware_actor::Feedback::Ok
+            }
+            Activity::Nullification(nullification) => {
+                // a view was nullified (leader timed out / view skipped).
+                // The current-view gauge advances on nullifications so it keeps
+                // moving during a stall where nothing finalizes.
+                crate::metrics::record_view_nullified();
+                crate::metrics::record_current_view(nullification.view().get());
                 commonware_actor::Feedback::Ok
             }
             Activity::Certification(notarization) => {
@@ -231,7 +258,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingNotarize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_notarize",
+                    EquivocationKind::ConflictingNotarize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -240,7 +267,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::ConflictingFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "conflicting_finalize",
+                    EquivocationKind::ConflictingFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -249,7 +276,7 @@ impl Reporter for OutbeReporter {
             }
             Activity::NullifyFinalize(evidence) => {
                 self.handle_byzantine_evidence(
-                    "nullify_finalize",
+                    EquivocationKind::NullifyFinalize,
                     evidence.signer(),
                     evidence.epoch(),
                     evidence.view(),
@@ -266,65 +293,22 @@ impl Reporter for OutbeReporter {
 
 impl OutbeReporter {
     fn handle_finalize_vote(&mut self, finalize: Finalize<HybridScheme<MinSig>, Digest>) {
-        let view = finalize.proposal.view().get();
-
-        // VERIFY the individual finalize vote's signature BEFORE
-        // buffering it anywhere, so a bad/conflicting signature can never poison
-        // the late-credit aggregate (which would make the proposer's own block
-        // fail pre-exec) nor enter the equivocation-evidence cache. Verification
-        // is standalone (binds the vote to its own proposal); we reuse the result
-        // for the cert-augmentation path below.
-        let mut rng = bls_batch_verification_rng();
-        let verified = finalize.verify(&mut rng, &self.verifier_scheme, &Sequential);
-
-        // Buffer keyed by `fb_hash` (the proposal payload), not `view`, so
-        // equivocations / forks at the same view stay in separate buffers and are
-        // never aggregated together. Best-effort, process-local: a poisoned lock
-        // just skips this vote (degrades to crediting nobody).
-        if verified {
-            // Equivocation-evidence cache, keyed by `view` (not on the wire;
-            // future byzantine-equivocation detection). Verified-only: a forged
-            // vote is not evidence against the claimed signer.
-            self.observed_finalizes
-                .entry(view)
-                .or_default()
-                .push(finalize.clone());
-
-            if let Some(hybrid_sig) = finalize.attestation.signature.get() {
-                if let Ok(mut store) = self.late_sig_store.lock() {
-                    // Carry the exact binding this vote signed (epoch, view,
-                    // parent_view) so a cross-view vote for the same fb_hash is
-                    // dropped at resolution instead of poisoning the aggregate.
-                    store.record_individual_vote(
-                        finalize.proposal.round.epoch().get(),
-                        finalize.proposal.round.view().get(),
-                        finalize.proposal.parent.get(),
-                        finalize.proposal.payload.0,
-                        finalize.signer().get(),
-                        &hybrid_sig.bls_individual_vote,
-                    );
-                }
-            }
-        }
-
-        let Some(pending) = self.pending_finalizations.get(&view).cloned() else {
-            return;
-        };
-        if pending.proposal != finalize.proposal {
-            return;
-        }
-        if !verified {
-            return;
-        }
-
-        // Half C-parlia step 11: the bridge no longer holds the
-        // pending-finalized queue, so there is nothing to refresh
-        // here. Late-arriving finalize votes are already woven into
-        // the canonical signer bitmap by `build_finalized_certificate`
-        // when we eventually process the matching `Finalization`
-        // activity in `handle_finalization` — the supplemental-bit
-        // augmentation against `observed_finalizes` happens there too.
-        let _ = self.build_finalized_certificate(&pending.proposal, &pending.certificate);
+        // do NOT verify the vote inline on the Simplex voter task. The
+        // batcher reports `Activity::Finalize` BEFORE batch-verifying it
+        // (monorepo batcher `round.rs::add_network`), so the vote here is
+        // unverified and MUST be verified before it can feed the proposer's
+        // late-credit aggregate — but verifying `O(committee)` BLS pairings per
+        // view on the voter critical path inflated block time. Enqueue the raw
+        // vote to the off-thread `FinalizeVerifyActor`, which verifies it and
+        // admits only the verified votes to `late_sig_store`. The former
+        // synchronous `build_finalized_certificate` re-augmentation here was a
+        // V2 no-op (it discarded its result; the canonical bitmap comes from the
+        // certificate in `handle_finalization`), so it is dropped with the
+        // vestigial `observed_finalizes` / `pending_finalizations` state.
+        // finalize votes are the most frequent per-view signal; track the
+        // current view so the stall gap stays fresh during normal progress.
+        crate::metrics::record_current_view(finalize.view().get());
+        self.finalize_verify_mailbox.verify(self.epoch, finalize);
     }
 
     fn build_finalized_certificate(
@@ -357,33 +341,46 @@ impl OutbeReporter {
         }
     }
 
-    fn prune_observed_finalizes(&mut self, current_view: u64) {
-        let min_view = current_view.saturating_sub(32);
-        self.observed_finalizes.retain(|view, _| *view >= min_view);
-        self.pending_finalizations
-            .retain(|view, _| *view >= min_view);
-    }
-
-    /// Handle byzantine evidence: log, record metrics, buffer for slashing.
+    /// Handle byzantine consensus equivocation evidence
+    /// (`ConflictingNotarize` / `ConflictingFinalize` / `NullifyFinalize`).
+    ///
+    /// Emits a structured signal for an external slashing watcher and records a
+    /// metric. The conflicting signed votes themselves are NOT accessible from
+    /// the commonware evidence type (its inner votes are private), so the node
+    /// signals the attributable facts (signer pubkey + epoch + view + class) and
+    /// the watcher — which observes the gossiped votes — packs the two
+    /// `EvidenceBlock`s and submits to the SlashIndicator
+    /// `submitConflicting{Notarize,Finalize}Evidence` / `submitNullifyFinalizeEvidence`
+    /// precompiles. The node does NOT auto-slash (no in-node tx injection), so
+    /// the log must not claim it does.
     fn handle_byzantine_evidence(
         &mut self,
-        evidence_type: &str,
+        kind: EquivocationKind,
         signer: commonware_utils::Participant,
         epoch: Epoch,
         view: View,
     ) {
+        let evidence_type = kind.label();
         let signer_idx = signer.get() as usize;
         if let Some(&addr) = self.validator_addresses.get(signer_idx) {
+            let signer_pubkey = self
+                .verifier_scheme
+                .participants()
+                .key(signer)
+                .map(|pk| hex::encode(pk.encode()))
+                .unwrap_or_default();
             warn!(
+                target: "outbe::slashing::equivocation",
                 evidence_type,
                 signer_idx,
                 %addr,
+                signer_pubkey,
                 epoch = epoch.get(),
                 view = view.get(),
-                "BYZANTINE: equivocation detected — validator will be slashed"
+                "BYZANTINE: consensus equivocation detected — slashable; external watcher should submit the two conflicting votes"
             );
-            self.pending_byzantine.push(addr);
-            crate::metrics::record_byzantine_evidence(evidence_type);
+            self.view_state.buffer_byzantine(addr);
+            crate::metrics::record_byzantine_evidence(kind);
         } else {
             warn!(
                 evidence_type,
@@ -431,6 +428,28 @@ impl OutbeReporter {
             B256::from_slice(hash.as_ref())
         });
 
+        // Defense-in-depth alarm: a finalized certificate must never carry a
+        // VRF proof that fails to verify against the committee group key for
+        // its own round. Seed-partial sanitization during attestation
+        // verification (see `HybridScheme::sanitize_seed_partial`) guarantees
+        // recovery only ever runs over honest partials, so this is unreachable
+        // in correct operation. If it ever fires, an unverifiable proof has
+        // reached the finalized certificate and will fail the next height's
+        // mandatory V2 verify — surface it loudly rather than silently halting.
+        if certificate.vrf_proof.is_some() && vrf_seed.is_none() {
+            crate::metrics::record_finalized_cert_invalid_vrf_proof();
+            error!(
+                view,
+                %digest,
+                vrf_material_version = certificate
+                    .vrf_proof
+                    .as_ref()
+                    .map(|proof| proof.material_version),
+                "INVARIANT: finalized certificate carries an unverifiable VRF proof; \
+                 next-height CertifiedParentAccounting will reject this parent"
+            );
+        }
+
         info!(
             view,
             %digest,
@@ -457,15 +476,21 @@ impl OutbeReporter {
         // 3. Detect missed proposers from view gaps.
         let missed_proposers = self.detect_missed_proposers(view);
 
-        // 4. Drain pending byzantine evidence (dedup by address).
-        let mut deferred_byzantine = std::mem::take(&mut self.pending_byzantine);
-        deferred_byzantine.sort_unstable();
-        deferred_byzantine.dedup();
+        // 4. Drain the per-finalization buffer of locally-attributed byzantine
+        // signers — operator observability ONLY, not a transport stage. On-chain
+        // slashing is carried by the external watcher (which observes the raw
+        // gossiped votes the node cannot reach — commonware hides the inner votes)
+        // submitting the two conflicting `EvidenceBlock`s to the SlashIndicator
+        // `submitConflicting{Notarize,Finalize}` / `submitNullifyFinalize`
+        // precompile, where both signatures are re-verified on-chain (reproducible
+        // from chain state). This drain does NOT put evidence on-chain.
+        let attributed_byzantine = self.view_state.drain_byzantine_sorted();
 
-        if !deferred_byzantine.is_empty() {
+        if !attributed_byzantine.is_empty() {
             warn!(
-                count = deferred_byzantine.len(),
-                "byzantine evidence observed but not yet transported by finalized-parent certificate tx"
+                target: "outbe::slashing::equivocation",
+                count = attributed_byzantine.len(),
+                "byzantine equivocation attributed this finalization; on-chain slashing requires the external watcher to submit the two conflicting votes to the SlashIndicator precompile"
             );
         }
 
@@ -479,18 +504,6 @@ impl OutbeReporter {
             vrf_seed,
             missed_proposers,
         };
-
-        // 6. Track finalized proposal so late finalize votes can refresh the
-        // queued participation artifact before metadata inclusion.
-        self.pending_finalizations.insert(
-            view,
-            PendingFinalization {
-                proposal: finalization.proposal.clone(),
-                block_hash: digest.0,
-                certificate: certificate.clone(),
-            },
-        );
-        self.prune_observed_finalizes(view);
 
         // 7. Send full finalization payload to the FinalizationActor.
         // `unbounded_send` cannot back-pressure the voter task. A closed
@@ -508,7 +521,9 @@ impl OutbeReporter {
                 }) {
                 Ok(()) => commonware_actor::Feedback::Ok,
                 Err(_closed) => {
-                    crate::metrics::record_finalization_dropped("mailbox_closed");
+                    crate::metrics::record_finalization_dropped(
+                        crate::metrics::FinalizationDropReason::MailboxClosed,
+                    );
                     tracing::error!(
                         round = %finalization.proposal.round,
                         view,
@@ -520,11 +535,10 @@ impl OutbeReporter {
             };
 
         // Update tracking state.
-        self.last_finalized_view = view;
-        self.last_certificate = Some(certificate);
+        self.view_state.record_finalization(view, certificate);
         self.continuity.update(
-            self.last_finalized_view,
-            self.last_certificate.clone(),
+            self.view_state.last_finalized_view(),
+            self.view_state.last_certificate().cloned(),
             seed_bytes,
         );
 
@@ -546,7 +560,9 @@ impl OutbeReporter {
         // requires explicit re-verification before write.
         let mut rng = bls_batch_verification_rng();
         if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
-            crate::metrics::record_certification_dropped("verify_failed");
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::VerifyFailed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
@@ -568,25 +584,29 @@ impl OutbeReporter {
         // the snapshot from the verifier scheme so the proposer-side hash
         // matches what `apply_boundary_outcome` writes to `CommitteeSnapshotStore`
         // and what the executor Phase 1 verifier recomputes.
-        let vrf_material_version = self.verifier_scheme.active_vrf_material_version();
-        let vrf_group_public_key_bytes: Vec<u8> = self
-            .verifier_scheme
-            .identity()
-            .map(|pk| pk.encode().as_ref().to_vec())
-            .unwrap_or_default();
-        let vrf_group_pk_hash = if vrf_group_public_key_bytes.is_empty() {
-            B256::ZERO
-        } else {
-            keccak256(&vrf_group_public_key_bytes)
-        };
-        let snapshot = build_committee_snapshot(
+        // Defence-in-depth path: a snapshot build failure is an encode-invariant
+        // violation; drop the certification deterministically (metered, never
+        // panic) rather than write a record whose committee_set_hash would
+        // diverge from the writer's.
+        let prelude = match crate::finalization::committee_prelude::build_committee_prelude(
+            &self.verifier_scheme,
             &self.validator_addresses,
-            self.verifier_scheme.participants(),
-            vrf_material_version,
-            vrf_group_public_key_bytes,
-        );
-        let committee_set_hash =
-            committee_set_hash_v2(notarization.proposal.round.epoch().get(), &snapshot);
+            notarization.proposal.round.epoch().get(),
+        ) {
+            Ok(prelude) => prelude,
+            Err(error) => {
+                crate::metrics::record_certification_dropped(
+                    crate::metrics::CertificationDropReason::SnapshotBuildFailed,
+                );
+                warn!(
+                    target: "outbe::reporter",
+                    epoch = notarization.proposal.round.epoch().get(),
+                    %error,
+                    "Activity::Certification dropped: committee snapshot build failed"
+                );
+                return;
+            }
+        };
         let signer_bitmap = self.build_signer_bitmap(&notarization.certificate);
         let encoded_proof: Bytes = notarization.encode().into();
         // The notarization carries no block-number context. Store `0` so this
@@ -600,57 +620,68 @@ impl OutbeReporter {
             view,
             notarization.proposal.payload.0,
         );
-        self.proof_store.mark_local_certification_witness(proof_key);
+        self.witness_sink
+            .mark_local_certification_witness(proof_key);
         let record = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
-            proof_type: ParentParticipationProof::CertifiedNotarization,
+            kind: ProofKind::CertifiedNotarization,
             finalized_epoch: notarization.proposal.round.epoch().get(),
             finalized_view: view,
             parent_view: notarization.proposal.parent.get(),
-            finalized_block_number: 0,
             finalized_block_hash: notarization.proposal.payload.0,
-            committee_set_hash,
-            vrf_material_version,
-            // Batch A: populate the V2 hash field on every
-            // certified-notarization write so the proof store is
-            // self-contained for the V2 metadata adapter
-            // ([`CertifiedParentProofRecord::to_v2_metadata`]).
-            vrf_group_public_key_hash: vrf_group_pk_hash,
+            committee_set_hash: prelude.committee_set_hash,
+            vrf_material_version: prelude.vrf_material_version,
+            vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
             ordered_committee: self.validator_addresses.clone(),
             signer_bitmap,
-            certificate: encoded_proof.clone(),
             encoded_proof,
-            local_certification_witness: true,
             stored_at_height: view,
-            ..CertifiedParentProofRecord::default()
         };
 
-        // Step 3 — persist. Any error is metered and logged but never panics
-        // the Simplex reporter task.
-        if let Err(error) = self.proof_store.put_certified_notarization(record) {
-            crate::metrics::record_certification_dropped("store_error");
+        // Step 3 — enqueue the durable write to the FinalizationActor.
+        // The synchronous MDBX commit moves off the Simplex voter task; the
+        // record (including the parity-critical `committee_set_hash`) was built
+        // and verified above and is byte-identical to the inline-written one —
+        // only the write moves, and the actor remains the single durable writer
+        // to `FinalizedParentCertStore`. The in-memory
+        // `mark_local_certification_witness` above stays on-thread (a cheap
+        // locked insert). The `record_certification_persisted` metric now fires
+        // in the actor on a successful commit. A closed mailbox is metered +
+        // logged but never panics the reporter task.
+        if let Err(error) = self
+            .finalization_mailbox
+            .persist_certified_notarization(record)
+        {
+            crate::metrics::record_certification_dropped(
+                crate::metrics::CertificationDropReason::MailboxClosed,
+            );
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
                 view,
                 payload = %notarization.proposal.payload,
                 %error,
-                "Activity::Certification dropped: certified-parent proof store write failed"
+                "Activity::Certification dropped: FinalizationActor mailbox closed"
             );
             return;
         }
 
-        crate::metrics::record_certification_persisted();
         debug!(
             target: "outbe::reporter",
             epoch = notarization.proposal.round.epoch().get(),
             view,
             payload = %notarization.proposal.payload,
-            "Activity::Certification persisted to certified-parent proof store"
+            "Activity::Certification enqueued for off-thread persistence"
         );
     }
 
     /// Build a stable one-byte-per-participant signer bitmap from the certificate.
+    ///
+    /// Producer-side guard with diagnostics; the fill delegates to the canonical
+    /// core in [`crate::finalization::util::build_signer_bitmap`]. On a
+    /// committee/cert size skew this emits the empty sentinel, matching
+    /// [`crate::finalization::util::build_signer_bitmap_guarded`] (the resolver
+    /// path); the verify-side structural check rejects that sentinel by length.
     fn build_signer_bitmap(&self, certificate: &HybridCertificate<MinSig>) -> Vec<u8> {
         let n = certificate.signers.len();
         if n != self.validator_addresses.len() {
@@ -662,13 +693,7 @@ impl OutbeReporter {
             return Vec::new();
         }
 
-        let mut signed = vec![0u8; n];
-        for signer in certificate.signers.iter() {
-            let idx = signer.get() as usize;
-            if idx < n {
-                signed[idx] = 1;
-            }
-        }
+        let signed = crate::finalization::util::build_signer_bitmap(certificate, n);
 
         debug!(
             signers = certificate.signers.count(),
@@ -690,23 +715,29 @@ impl OutbeReporter {
     /// multiple distinct views in a row, and post-execution slashing should
     /// account for each missed view separately.
     fn detect_missed_proposers(&self, current_view: u64) -> Vec<Address> {
-        if self.last_finalized_view == 0 || current_view <= self.last_finalized_view + 1 {
+        let last_finalized_view = self.view_state.last_finalized_view();
+        if last_finalized_view == 0 || current_view <= last_finalized_view + 1 {
             return Vec::new();
         }
 
-        let gap = current_view - self.last_finalized_view - 1;
-        let cap = gap.min(MAX_MISSED_PROPOSERS as u64) as usize;
-        let mut missed = Vec::with_capacity(cap);
-        let mut dropped = 0u64;
+        let gap = current_view - last_finalized_view - 1;
 
-        for v in (self.last_finalized_view + 1)..current_view {
-            if missed.len() >= MAX_MISSED_PROPOSERS {
-                dropped = current_view - v;
-                break;
-            }
+        // Single source of truth for the view-gap election sequence, shared with
+        // the verify-side recompute in `finalization::util` so proposer and
+        // validator never disagree on who was the expected leader.
+        let leaders = crate::missed_proposers::elected_leaders_for_gap(
+            self.epoch,
+            &self.elector,
+            self.view_state.last_certificate(),
+            last_finalized_view,
+            current_view,
+            MAX_MISSED_PROPOSERS,
+        );
+        let dropped = gap.saturating_sub(leaders.len() as u64);
 
-            let round = Round::new(self.epoch, View::new(v));
-            let leader = self.elector.elect(round, self.last_certificate.as_ref());
+        let mut missed = Vec::with_capacity(leaders.len());
+        for (offset, leader) in leaders.iter().enumerate() {
+            let v = last_finalized_view + 1 + offset as u64;
             let leader_idx = leader.get() as usize;
 
             if leader_idx < self.validator_addresses.len() {
@@ -733,7 +764,7 @@ impl OutbeReporter {
                 gap,
                 missed_count = missed.len(),
                 dropped_count = dropped,
-                from = self.last_finalized_view + 1,
+                from = self.view_state.last_finalized_view() + 1,
                 to = current_view - 1,
                 "view gap — missed proposers detected"
             );
@@ -752,47 +783,6 @@ impl OutbeReporter {
         }
 
         missed
-    }
-}
-
-/// Zips an ordered address list with the verifier scheme's ordered participant
-/// public keys (both in Commonware `ordered::Set` order — see
-/// `stack::ordered_validator_addresses`) into a canonical [`CommitteeSnapshot`]
-/// for V2 [`committee_set_hash_v2`].
-///
-/// Both vectors MUST have equal length and matching Commonware order; the
-/// caller (`stack.rs::epoch_validation_inputs`) constructs them together.
-/// Length mismatch falls back to truncating to the shorter of the two —
-/// this can only happen on a programmer error in the surrounding wiring and
-/// is logged at debug level; the resulting hash will not match the writer's,
-/// which fails verification deterministically rather than producing a wrong
-/// proof.
-fn build_committee_snapshot(
-    addresses: &[Address],
-    participants: &OrderedSet<bls12381::PublicKey>,
-    vrf_material_version: u64,
-    vrf_group_public_key_bytes: Vec<u8>,
-) -> CommitteeSnapshot {
-    let committee = addresses
-        .iter()
-        .zip(participants.iter())
-        .map(|(address, pubkey)| {
-            let bytes = pubkey.encode();
-            let mut consensus_pubkey = [0u8; 48];
-            // BLS MinPk pubkey is exactly 48 bytes; copy up to that to be
-            // defensive against any future encode-size drift in Commonware.
-            let len = bytes.as_ref().len().min(48);
-            consensus_pubkey[..len].copy_from_slice(&bytes.as_ref()[..len]);
-            CommitteeEntry {
-                address: *address,
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version,
-        vrf_group_public_key_bytes,
     }
 }
 
@@ -819,14 +809,14 @@ mod tests {
     };
     use futures::channel::mpsc;
 
-    use super::{OutbeReporter, ReporterContinuity};
+    use super::{FinalizeVerifyMailbox, OutbeReporter, ReporterContinuity};
     use crate::{
         bls::bootstrap_dkg,
         finalization::{
             ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
             parent_cert_store::FinalizedParentCertStore,
         },
-        hybrid::{HybridRandom, HybridScheme},
+        hybrid::{election::HybridRandom, HybridScheme},
     };
 
     fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
@@ -917,14 +907,24 @@ mod tests {
     /// proving the reporter extracts the signer's individual MinPk vote.
     #[test]
     fn reporter_records_observed_finalize_vote_into_shared_store() {
+        use crate::finalization::finalize_verify::FinalizeVerifyActor;
         use crate::finalization::late_sig_store;
+        use crate::hybrid::HybridSchemeProvider;
         use commonware_consensus::simplex::types::{Activity, Finalize, Proposal};
         use commonware_consensus::Reporter as _;
 
         let store = late_sig_store::shared(outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K);
         // Signers + verifier from ONE DKG so the observed vote actually verifies
-        // (the reporter now verifies before recording).
+        // (the off-thread verify actor verifies before recording).
         let (schemes, verifier) = signer_schemes_and_verifier();
+
+        // register the epoch-0 verifier in the scheme provider and build
+        // the off-thread verify actor + mailbox. The reporter enqueues votes to
+        // the mailbox; admission happens in the actor.
+        let provider: HybridSchemeProvider<MinSig> = HybridSchemeProvider::new();
+        assert!(provider.register(Epoch::new(0), verifier.clone()));
+        let (mut verify_actor, verify_mailbox) = FinalizeVerifyActor::new(provider, store.clone());
+
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
         let participants = test_participants(3).1;
         let mut reporter = OutbeReporter::new(
@@ -939,8 +939,8 @@ mod tests {
             verifier,
             HybridRandom::default().build(&participants),
             Epoch::new(0),
-            FinalizedParentCertStore::new(),
-            store.clone(),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
+            verify_mailbox,
         );
 
         let view = 7u64;
@@ -952,13 +952,25 @@ mod tests {
         );
         let finalize = Finalize::sign(&schemes[0], proposal).expect("finalize vote");
 
+        // Reporter enqueues (no inline verify on the voter task) …
         let _ = reporter.report(Activity::Finalize(finalize));
+        assert_eq!(
+            store.lock().unwrap().pending_vote_count(fb_hash),
+            0,
+            "reporter must NOT admit on the voter task — admission is off-thread"
+        );
 
+        // … the verify actor verifies it off-thread and admits the verified vote.
+        assert!(
+            verify_actor.try_process_one(),
+            "actor processes the queued vote"
+        );
         assert_eq!(
             store.lock().unwrap().pending_vote_count(fb_hash),
             1,
-            "reporter must verify then buffer the observed individual finalize vote by fb_hash"
+            "verify actor must verify then buffer the individual finalize vote by fb_hash"
         );
+        assert_eq!(verify_actor.observed_len(view), 1);
     }
 
     #[test]
@@ -984,14 +996,41 @@ mod tests {
             sample_verifier_scheme(),
             HybridRandom::default().build(&test_participants(3).1),
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
-            crate::finalization::late_sig_store::shared(
-                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
-            ),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
+            FinalizeVerifyMailbox::disconnected(),
         );
 
-        assert_eq!(reporter.last_finalized_view, 17);
-        assert_eq!(reporter.last_certificate, Some(certificate));
+        assert_eq!(reporter.view_state.last_finalized_view, 17);
+        assert_eq!(reporter.view_state.last_certificate, Some(certificate));
+    }
+
+    #[test]
+    fn view_state_buffers_drains_dedup_and_records_cursor() {
+        let mut state = super::ReporterViewState::default();
+        assert_eq!(state.last_finalized_view(), 0);
+        assert!(state.last_certificate().is_none());
+
+        let a = address!("0x0000000000000000000000000000000000000011");
+        let b = address!("0x0000000000000000000000000000000000000022");
+        state.buffer_byzantine(b);
+        state.buffer_byzantine(a);
+        state.buffer_byzantine(a); // duplicate
+
+        let drained = state.drain_byzantine_sorted();
+        assert_eq!(
+            drained,
+            vec![a, b],
+            "drained evidence is sorted and deduplicated"
+        );
+        assert!(
+            state.drain_byzantine_sorted().is_empty(),
+            "the buffer is emptied by drain"
+        );
+
+        let cert = sample_certificate();
+        state.record_finalization(17, cert.clone());
+        assert_eq!(state.last_finalized_view(), 17);
+        assert_eq!(state.last_certificate(), Some(&cert));
     }
 
     #[test]
@@ -1030,10 +1069,8 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
-            crate::finalization::late_sig_store::shared(
-                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
-            ),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
+            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(8), expected);
@@ -1075,10 +1112,8 @@ mod tests {
             sample_verifier_scheme(),
             elector,
             Epoch::new(1),
-            FinalizedParentCertStore::new(),
-            crate::finalization::late_sig_store::shared(
-                outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
-            ),
+            std::sync::Arc::new(FinalizedParentCertStore::new()),
+            FinalizeVerifyMailbox::disconnected(),
         );
 
         assert_eq!(reporter.detect_missed_proposers(400), expected);

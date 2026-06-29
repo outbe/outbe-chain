@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {OriginMessenger} from "@contracts/outbe/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/bnb/TargetMessenger.sol";
+import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {IOriginMessenger} from "@contracts/outbe/interfaces/IOriginMessenger.sol";
+import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 import {MessagingFee, MessagingReceipt, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
@@ -59,25 +60,17 @@ contract OriginMessengerTest is TestHelperOz5 {
         vm.deal(intexFactory, 1000 ether);
 
         // Deploy mock BNB contracts
-        auction = new IntexAuction(admin, admin);
-        intex = new IntexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = OriginMessenger(
-            payable(_deployOApp(
-                    type(OriginMessenger).creationCode, abi.encode(address(endpoints[outbeEid]), admin, bnbEid)
-                ))
-        );
+        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         // Deploy BNB adapter (for cross-chain testing)
-        bnbAdapter = TargetMessenger(
-            payable(_deployOApp(
-                    type(TargetMessenger).creationCode, abi.encode(address(endpoints[bnbEid]), admin, outbeEid)
-                ))
-        );
+        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
 
         // Deploy batch adapter on BNB
-        batchAdapter = new ONFT1155AdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
+        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
 
         // Wire adapters (set peers)
         address[] memory oapps = new address[](2);
@@ -100,10 +93,16 @@ contract OriginMessengerTest is TestHelperOz5 {
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
-            intexSize: 1000,
-            minIntexBidPrice: 50e6,
-            intexStrikePrice: 100e6,
-            coenPriceFloor: 50e6,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            promisLoadMinor: 1000,
+            minIntexBidRate: 50e6,
+            entryPrice: 100e6,
+            floorPriceMinor: 50e6,
+            callPriceMinor: 25e6,
+            intexCallPeriod: 0,
+            callWindowDays: 0,
+            callThresholdDays: 0,
             minIntexBidQuantity: 1
         });
     }
@@ -116,14 +115,16 @@ contract OriginMessengerTest is TestHelperOz5 {
         return IOriginMessenger.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             issuedIntexCount: 10_000,
-            intexSize: 1000,
-            intexStrikePrice: 100e6,
-            coenPriceFloor: 50e6,
+            promisLoadMinor: 1000,
+            costAmountMinor: 100e6,
+            entryPriceMinor: 100e6,
+            floorPriceMinor: 50e6,
             intexCallPeriod: 0,
-            settlementTokenAlias: 840,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
             callWindowDays: 30,
             callThresholdDays: 5,
-            coenPriceCallTrigger: 25e6,
+            callPriceMinor: 25e6,
             recipients: recipients,
             quantities: quantities
         });
@@ -141,7 +142,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginMessenger newAdapter = new OriginMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        OriginMessenger newAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);
@@ -212,9 +213,9 @@ contract OriginMessengerTest is TestHelperOz5 {
     function test_sendRefundInstructions_revert_unauthorized() public {
         address[] memory bidders = new address[](1);
         bidders[0] = address(0x1);
-        uint64[] memory refundedAmounts = new uint64[](1);
+        uint128[] memory refundedAmounts = new uint128[](1);
         refundedAmounts[0] = 100e6;
-        uint64[] memory paidAmounts = new uint64[](1);
+        uint128[] memory paidAmounts = new uint128[](1);
         paidAmounts[0] = 50e6;
 
         MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
@@ -271,8 +272,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_sendRefundInstructions_revert_empty_array() public {
         address[] memory bidders = new address[](0);
-        uint64[] memory refundedAmounts = new uint64[](0);
-        uint64[] memory paidAmounts = new uint64[](0);
+        uint128[] memory refundedAmounts = new uint128[](0);
+        uint128[] memory paidAmounts = new uint128[](0);
 
         MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
@@ -286,8 +287,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
         address[] memory bidders = new address[](2);
-        uint64[] memory refundedAmounts = new uint64[](2);
-        uint64[] memory paidAmounts = new uint64[](1); // Mismatch
+        uint128[] memory refundedAmounts = new uint128[](2);
+        uint128[] memory paidAmounts = new uint128[](1); // Mismatch
 
         bidders[0] = address(0x1);
         bidders[1] = address(0x2);
@@ -338,7 +339,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     function test_quoteSendAuctionResult() public view {
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
 
-        // (seriesId, issuedIntexCount, auctionIntexClearingPrice, wonBidsCount, ...)
+        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount, ...)
         MessagingFee memory fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42, options, false);
 
         assertTrue(fee.nativeFee > 0);
@@ -363,8 +364,8 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     function test_quoteSendRefundInstructions() public view {
         address[] memory bidders = new address[](2);
-        uint64[] memory refundedAmounts = new uint64[](2);
-        uint64[] memory paidAmounts = new uint64[](2);
+        uint128[] memory refundedAmounts = new uint128[](2);
+        uint128[] memory paidAmounts = new uint128[](2);
 
         bidders[0] = address(0x1);
         bidders[1] = address(0x2);

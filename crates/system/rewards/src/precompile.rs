@@ -1,29 +1,25 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate, reject_value, view};
-use outbe_primitives::error::Result;
-
-use crate::schema::Rewards;
-
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IRewards.sol"
-);
+use outbe_primitives::dispatch::reject_value;
+use outbe_primitives::error::{PrecompileError, Result};
 
 /// Dispatches an ABI-encoded call to the Rewards precompile.
+///
+/// The Rewards precompile exposes **no** callable external methods. Validator
+/// daily emission is delivered as gems by [`crate::api::add_topup_for_voters`]
+/// (validator emission is paid in gems, not a claimable native balance), and
+/// per-block fees settle internally via the `LateFinalizeCredits` begin-zone
+/// phase. The contract's state is accessed only in-process through the
+/// [`crate::schema::Rewards`] facade (api / lifecycle / hooks), never through
+/// this inbound ABI. `REWARDS_ADDRESS` stays a preserved system account holding
+/// the fee escrow, so any external call deterministically reverts.
 pub fn dispatch(
-    storage: outbe_primitives::storage::StorageHandle,
-    data: &[u8],
-    caller: Address,
+    _storage: outbe_primitives::storage::StorageHandle,
+    _data: &[u8],
+    _caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     reject_value(&value)?;
-    dispatch_call(data, IRewards::IRewardsCalls::abi_decode, |call| {
-        let mut rewards = Rewards::new(storage);
-        use IRewards::IRewardsCalls::*;
-        match call {
-            claimRewards(c) => mutate(c, caller, |sender, _c| rewards.claim_rewards(sender)),
-            pendingRewards(c) => view(c, |c| rewards.pending_rewards_of(c.validator)),
-        }
-    })
+    Err(PrecompileError::Revert(
+        "Rewards precompile exposes no callable methods".into(),
+    ))
 }

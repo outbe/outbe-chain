@@ -2,8 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {IntexAuction} from "@contracts/bnb/IntexAuction.sol";
-import {IIntexAuction} from "@contracts/bnb/interfaces/IIntexAuction.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 /// @dev Schedule snap on bridge signal: early reveal/clearing signal pulls the matching
@@ -21,7 +22,7 @@ contract IntexAuctionScheduleSnapTest is Test {
     uint32 constant ISSUANCE_OFFSET = 300;
 
     function setUp() public {
-        auction = new IntexAuction(admin, bridger);
+        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
@@ -36,7 +37,15 @@ contract IntexAuctionScheduleSnapTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory p = IIntexAuction.AuctionParams({
-            intexSize: 1000, minIntexBidPrice: 10, intexStrikePrice: 100, coenPriceFloor: 100, minIntexBidQuantity: 1
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            promisLoadMinor: 1000,
+            minIntexBidRate: 10,
+            entryPriceMinor: 100,
+            floorPriceMinor: 100,
+            callPriceMinor: 100,
+            callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
+            minIntexBidQuantity: 1
         });
         vm.prank(bridger);
         auction.auctionStart(seriesId, s, p);

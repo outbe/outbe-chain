@@ -22,10 +22,10 @@
 //!
 //! Bucket qualification is oracle-driven: after lysis issues a NOD the bucket
 //! starts UNQUALIFIED, and `NodLifecycle::begin_block` promotes it once the
-//! COEN/0xUSD exchange rate reaches `bucket.floor_price_minor`. The test seeds
+//! COEN/0xUSD exchange rate rises strictly above `bucket.floor_price_minor`
+//! (a rate exactly equal to the floor leaves it unqualified). The test seeds
 //! the rate via `seed_exchange_rate(...)` between lysis and mining and asserts
-//! the bit flips after the next tick — matching the Cosmos reference
-//! (`x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`).
+//! the bit flips after the next tick.
 //!
 //! What is still bypassed in this test:
 //!   - NOD `cost_amount_minor` payment goes through the precompile's new
@@ -47,8 +47,8 @@ use outbe_common::WorldwideDay;
 use outbe_gratis::Gratis;
 use outbe_metadosis::{
     constants::{
-        DEFAULT_LOOKBACK_DELAY_HOURS, DEFAULT_OFFERING_PERIOD_HOURS, FORMING_PERIOD_HOURS,
-        SECONDS_PER_HOUR, WAITING_PERIOD_HOURS,
+        FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
+        WAITING_PERIOD_HOURS,
     },
     emission_sink,
     runtime::date_key_to_timestamp,
@@ -94,8 +94,8 @@ struct WwdPhases {
 fn phases_for(wwd: WorldwideDay) -> WwdPhases {
     let forming_start = wwd.start_timestamp();
     let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
-    let offering_entry = forming_end + DEFAULT_LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
-    let offering_end = offering_entry + DEFAULT_OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+    let offering_entry = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+    let offering_end = offering_entry + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
     let scheduled = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
     WwdPhases {
         forming_end,
@@ -207,7 +207,7 @@ fn seed_current_wwd_vwap(storage: StorageHandle, pair_id: u32, wwd: WorldwideDay
 }
 
 /// System write of the COEN/0xUSD exchange rate used by `NodLifecycle` to
-/// qualify buckets whose `floor_price_minor <= rate`. In production this rate
+/// qualify buckets whose `floor_price_minor < rate` (strict). In production this rate
 /// comes from validator vote tally at vote-period boundaries; the test writes
 /// it directly as a deterministic substitute.
 fn seed_exchange_rate(storage: StorageHandle, rate: U256) {
@@ -227,8 +227,8 @@ fn pre_create_wwd(storage: StorageHandle, wwd: WorldwideDay) {
         .create_worldwide_day(
             wwd,
             forming_start,
-            DEFAULT_LOOKBACK_DELAY_HOURS,
-            DEFAULT_OFFERING_PERIOD_HOURS,
+            LOOKBACK_DELAY_HOURS,
+            OFFERING_PERIOD_HOURS,
         )
         .unwrap();
     metadosis.add_active_wwd(wwd).unwrap();
@@ -351,16 +351,16 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         tick(storage.clone(), 3, green.forming_end, None);
         {
             let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_status(green_wwd).unwrap(), status::LOOKBACK_DELAY);
-            assert_eq!(m.get_day_type(green_wwd).unwrap(), day_type::GREEN);
+            assert_eq!(m.get_wwd_status(green_wwd).unwrap(), status::LOOKBACK_DELAY);
+            assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
         }
 
         // RED FORMING -> LOOKBACK.
         tick(storage.clone(), 4, red.forming_end, None);
         {
             let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_status(red_wwd).unwrap(), status::LOOKBACK_DELAY);
-            assert_eq!(m.get_day_type(red_wwd).unwrap(), day_type::RED);
+            assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::LOOKBACK_DELAY);
+            assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
         }
 
         // GREEN -> OFFERING: tribute unsealed by status machine; issue alice's tribute.
@@ -429,12 +429,11 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         {
             let m = MetadosisContract::new(storage.clone());
             assert_eq!(
-                m.get_status(green_wwd).unwrap(),
+                m.get_wwd_status(green_wwd).unwrap(),
                 status::COMPLETED,
                 "GREEN should be COMPLETED after process_metadosis"
             );
-            assert_eq!(m.get_day_type(green_wwd).unwrap(), day_type::GREEN);
-            assert!(m.is_day_limit_used(green_wwd).unwrap());
+            assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
         }
 
         // Alice got one NOD and her tribute is cleared, but the bucket is NOT
@@ -479,9 +478,9 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     .unwrap()
                     .map(|b| b.is_qualified)
                     .unwrap_or(false),
-                "NodLifecycle must qualify the bucket once oracle rate >= floor_price"
+                "NodLifecycle must qualify the bucket once oracle rate > floor_price"
             );
-            assert!(alice_floor_price <= U256::from(500u64));
+            assert!(alice_floor_price < U256::from(500u64));
         }
 
         // GREEN unused demand + day_metadosis_limit_remainder landed in PromisLimit.
@@ -501,21 +500,23 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
 
         {
             let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_status(red_wwd).unwrap(), status::COMPLETED);
-            assert_eq!(m.get_day_type(red_wwd).unwrap(), day_type::RED);
-            assert!(m.is_day_limit_used(red_wwd).unwrap());
+            assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::COMPLETED);
+            assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
         }
 
-        // RED allocation (/16) only funds the small tribute; carol's large one survives.
+        // RED allocation is distributed proportionally across all tributes of
+        // the day (lysis mints a NOD for each owner against a partial
+        // gratis_load and consumes the tribute). Both bob's small and carol's
+        // large tribute receive a NOD and are cleared — the allocation funds a
+        // fraction of each, not whole tributes in size order.
         {
             let nod = NodContract::new(storage.clone());
             assert_eq!(nod.get_nods_by_owner(bob).unwrap().len(), 1);
-            assert!(nod.get_nods_by_owner(carol).unwrap().is_empty());
+            assert_eq!(nod.get_nods_by_owner(carol).unwrap().len(), 1);
 
             let tribute = TributeContract::new(storage.clone());
-            let carol_tributes = tribute.get_tributes_by_owner(carol).unwrap();
-            assert_eq!(carol_tributes.len(), 1);
-            assert_eq!(carol_tributes[0].token_id, red_large_token);
+            assert!(tribute.get_tributes_by_owner(bob).unwrap().is_empty());
+            assert!(tribute.get_tributes_by_owner(carol).unwrap().is_empty());
         }
 
         // RED remainder added on top of GREEN's.

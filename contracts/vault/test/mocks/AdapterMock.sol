@@ -10,7 +10,7 @@ import {MathLib} from "../../src/libraries/MathLib.sol";
 contract AdapterMock is IAdapter {
     using MathLib for uint256;
 
-    address public immutable vault;
+    address public immutable VAULT;
 
     bytes32[] public _ids;
     uint256 public interest;
@@ -25,7 +25,7 @@ contract AdapterMock is IAdapter {
     address public recordedSender;
 
     constructor(address _vault) {
-        vault = _vault;
+        VAULT = _vault;
         if (_vault != address(0)) {
             IERC20(IVaultV2(_vault).asset()).approve(_vault, type(uint256).max);
         }
@@ -51,6 +51,7 @@ contract AdapterMock is IAdapter {
         recordedSelector = selector;
         recordedSender = sender;
         deposit += assets;
+        // forge-lint: disable-next-line(unsafe-typecast)
         return (_ids, int256(assets) + int256(interest) - int256(loss));
     }
 
@@ -63,6 +64,7 @@ contract AdapterMock is IAdapter {
         recordedSelector = selector;
         recordedSender = sender;
         deposit -= assets;
+        // forge-lint: disable-next-line(unsafe-typecast)
         return (_ids, -int256(assets) + int256(interest) - int256(loss));
     }
 

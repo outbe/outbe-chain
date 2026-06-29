@@ -52,13 +52,23 @@ fn register_and_activate_with_stake(
         .write(&validator, stake_amount)
         .unwrap();
 
-    // A-05: Fund STAKING_ADDRESS so decrease_balance (burn) can succeed during slash.
+    // Fund STAKING_ADDRESS so decrease_balance (burn) can succeed during slash.
     staking
         .storage
         .increase_balance(STAKING_ADDRESS, stake_amount)
         .unwrap();
     staking.total_staked.write(stake_amount).unwrap();
     vs.val_stake.write(&validator, stake_amount).unwrap();
+
+    // the evidence precompiles now require an ACTIVE-validator submitter.
+    // Register SUBMITTER as ACTIVE so the evidence tests reach the verifier (a
+    // distinct test asserts a non-ACTIVE caller is rejected).
+    if vs.val_status.read(&SUBMITTER).unwrap() != status::ACTIVE {
+        let mut sub_pk = [0u8; 48];
+        sub_pk[0] = 0xEE;
+        vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+        vs.activate_validator(SUBMITTER).unwrap();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +299,12 @@ fn test_evidence_reward() {
         vs.config_max_validators.write(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
         vs.activate_validator(validator).unwrap();
+        {
+            let mut sub_pk = [0u8; 48];
+            sub_pk[0] = 0xEE;
+            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+            vs.activate_validator(SUBMITTER).unwrap();
+        }
 
         // Set stake
         let stake = U256::from(1_000_000u64);
@@ -304,6 +320,9 @@ fn test_evidence_reward() {
         // Sign both with BLS
         let ev1_data = sign_notarize_evidence(&sk, &pk, &proposal1);
         let ev2_data = sign_notarize_evidence(&sk, &pk, &proposal2);
+
+        // seed the committee snapshot the evidence verifier resolves.
+        write_test_committee(&storage);
 
         // Submit evidence
         let mut si = SlashIndicator::new(storage.clone());
@@ -345,6 +364,12 @@ fn test_conflicting_vote_evidence() {
         vs.config_max_validators.write(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
         vs.activate_validator(validator).unwrap();
+        {
+            let mut sub_pk = [0u8; 48];
+            sub_pk[0] = 0xEE;
+            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+            vs.activate_validator(SUBMITTER).unwrap();
+        }
         vs.val_has_bls_share.write(&validator, true).unwrap();
 
         let stake = U256::from(2_000_000u64);
@@ -360,6 +385,8 @@ fn test_conflicting_vote_evidence() {
         // Create a nullify vote for the same round (epoch=3, view=7)
         let nullify_payload = build_test_nullify_payload(3, 7);
         let nullify_data = sign_nullify_evidence(&sk, &pk, &nullify_payload);
+
+        write_test_committee(&storage);
 
         // Submit conflicting vote evidence
         let mut si = SlashIndicator::new(storage.clone());
@@ -400,6 +427,12 @@ fn test_conflicting_vote_evidence_reversed_order() {
         vs.config_max_validators.write(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
         vs.activate_validator(validator).unwrap();
+        {
+            let mut sub_pk = [0u8; 48];
+            sub_pk[0] = 0xEE;
+            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+            vs.activate_validator(SUBMITTER).unwrap();
+        }
 
         let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
@@ -412,6 +445,8 @@ fn test_conflicting_vote_evidence_reversed_order() {
 
         let nullify_payload = build_test_nullify_payload(2, 4);
         let nullify_data = sign_nullify_evidence(&sk, &pk, &nullify_payload);
+
+        write_test_committee(&storage);
 
         // Submit in reversed order: nullify first, notarize second
         let mut si = SlashIndicator::new(storage.clone());
@@ -441,12 +476,20 @@ fn test_conflicting_vote_same_type_fails() {
         vs.config_max_validators.write(100).unwrap();
         vs.register_validator(OWNER, validator, &pk_bytes).unwrap();
         vs.activate_validator(validator).unwrap();
+        {
+            let mut sub_pk = [0u8; 48];
+            sub_pk[0] = 0xEE;
+            vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+            vs.activate_validator(SUBMITTER).unwrap();
+        }
 
         // Two notarize proposals for the same round
         let proposal1 = build_test_proposal(1, 1, 0, [0x11; 32]);
         let proposal2 = build_test_proposal(1, 1, 0, [0x22; 32]);
         let ev1 = sign_notarize_evidence(&sk, &pk, &proposal1);
         let ev2 = sign_notarize_evidence(&sk, &pk, &proposal2);
+
+        write_test_committee(&storage);
 
         // This should fail — both are notarize, need one notarize + one nullify
         let mut si = SlashIndicator::new(storage.clone());
@@ -493,8 +536,8 @@ fn test_full_lifecycle_integration() {
         staking
             .stake(validator, validator, U256::from(10_000u64))
             .unwrap();
-        // A-01: stake() no longer transfers funds (EVM call value does it).
-        // A-05: slash_stake burns from STAKING_ADDRESS — fund it for the test.
+        // stake() no longer transfers funds (EVM call value does it).
+        // slash_stake burns from STAKING_ADDRESS — fund it for the test.
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
@@ -551,8 +594,8 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         register_and_activate(storage.clone(), VAL_A, 0xA1);
 
         let mut si = SlashIndicator::new(storage.clone());
-        // Pin the felony threshold (prod default is larger); the 500 misdemeanor is
-        // warn-only and is not reached before the first felony. Below: counted only.
+        // Pin the felony threshold (prod default is 500); the felony branch fires
+        // first at this pinned 150, so the misdemeanor warning is not reached.
         si.config_voter_felony_threshold.write(150).unwrap();
         for _ in 0..149 {
             si.slash_voter(VAL_A).unwrap();
@@ -571,6 +614,65 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         // 1_000_000 stake slashed by 5% → 950_000.
         let staking = Staking::new(storage.clone());
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
+    });
+}
+
+/// graduated escalation invariant — the misdemeanor (warning) threshold
+/// must be strictly below the felony (slash) threshold for both proposer and
+/// voter, so the warning can fire before the punishment.
+#[test]
+fn default_thresholds_warn_before_they_punish() {
+    with_storage(|storage| {
+        let si = SlashIndicator::new(storage);
+        assert!(
+            si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
+        );
+        assert!(
+            si.voter_misdemeanor_threshold().unwrap() < si.voter_felony_threshold().unwrap(),
+            "voter misdemeanor must be below voter felony"
+        );
+    });
+}
+
+/// a validator already JAILED for a continuous liveness fault is NOT
+/// re-felonied (re-slashed 5%) when it crosses the next miss threshold; only the
+/// miss counter keeps moving until the next reshare removes it from the set.
+#[test]
+fn already_jailed_voter_is_not_re_slashed() {
+    with_storage(|storage| {
+        register_and_activate(storage.clone(), VAL_A, 0xA1);
+        let mut si = SlashIndicator::new(storage.clone());
+        si.config_voter_felony_threshold.write(2).unwrap();
+
+        // First felony at count==2: JAIL + 5% slash (1_000_000 → 950_000).
+        si.slash_voter(VAL_A).unwrap();
+        si.slash_voter(VAL_A).unwrap();
+        let vs = ValidatorSet::new(storage.clone());
+        let staking = Staking::new(storage.clone());
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
+        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
+
+        // Two more misses reach count==4 (another threshold multiple), but the
+        // validator is already JAILED → no second felony, no second slash.
+        si.slash_voter(VAL_A).unwrap();
+        si.slash_voter(VAL_A).unwrap();
+        assert_eq!(
+            si.get_voter_miss_count(VAL_A).unwrap(),
+            4,
+            "the miss is still recorded while JAILED"
+        );
+        assert_eq!(
+            si.get_felony_count(VAL_A).unwrap(),
+            1,
+            "no second felony while already JAILED"
+        );
+        assert_eq!(vs.val_status.read(&VAL_A).unwrap(), status::JAILED);
+        assert_eq!(
+            staking.get_stake(VAL_A).unwrap(),
+            U256::from(950_000u64),
+            "stake must not be slashed a second time while JAILED"
+        );
     });
 }
 
@@ -651,11 +753,58 @@ fn sign_nullify_evidence(
     data
 }
 
+/// The fixed test committee. The vote namespaces bind it; evidence tests
+/// seed its snapshot into the ring via [`write_test_committee`] so the verifier
+/// rebuilds the same committee.
+fn test_committee_set(
+) -> commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey> {
+    use commonware_cryptography::Signer as _;
+    commonware_utils::ordered::Set::from_iter_dedup(
+        (1u64..=4)
+            .map(|s| commonware_cryptography::bls12381::PrivateKey::from_seed(s).public_key()),
+    )
+}
+
+/// Seed the committee snapshot into the ring for every retained epoch, so any
+/// evidence epoch resolves to the test committee.
+fn write_test_committee(storage: &StorageHandle) {
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::Signer as _;
+    let committee = (1u64..=4)
+        .map(commonware_cryptography::bls12381::PrivateKey::from_seed)
+        .enumerate()
+        .map(|(i, k)| {
+            let encoded = k.public_key().encode();
+            let mut consensus_pubkey = [0u8; 48];
+            consensus_pubkey.copy_from_slice(encoded.as_ref());
+            outbe_validatorset::state::CommitteeEntry {
+                address: Address::with_last_byte(i as u8 + 1),
+                consensus_pubkey,
+            }
+        })
+        .collect();
+    let snapshot = outbe_validatorset::state::CommitteeSnapshot {
+        committee,
+        vrf_material_version: 1,
+        vrf_group_public_key_bytes: vec![0x11; 96],
+        vrf_public_polynomial_hash: B256::ZERO,
+    };
+    for epoch in 0..outbe_validatorset::state::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
+        outbe_validatorset::state::write_committee_snapshot(storage.clone(), epoch, &snapshot)
+            .unwrap();
+    }
+}
+
 fn build_test_namespace(suffix: &[u8]) -> Vec<u8> {
-    let mut ns = Vec::new();
-    ns.extend_from_slice(b"outbe");
-    ns.extend_from_slice(suffix);
-    ns
+    // Committee-bound: the evidence verifier derives the same bytes from
+    // the epoch's committee snapshot.
+    let c = test_committee_set();
+    match suffix {
+        b"_NOTARIZE" => outbe_consensus::proof::notarize_namespace(&c),
+        b"_NULLIFY" => outbe_consensus::proof::nullify_namespace(&c),
+        b"_FINALIZE" => outbe_consensus::proof::finalize_namespace(&c),
+        other => panic!("unexpected sub-namespace suffix {other:?}"),
+    }
 }
 
 fn build_test_signed_payload(namespace: &[u8], payload: &[u8]) -> Vec<u8> {
@@ -679,10 +828,10 @@ fn write_test_leb128(buf: &mut Vec<u8>, mut value: u64) {
 }
 
 // ===========================================================================
-// A-03: Evidence dedup regression tests
+// Evidence dedup regression tests
 // ===========================================================================
 
-/// A-03: Same evidence submitted twice — second must be rejected.
+/// Same evidence submitted twice — second must be rejected.
 #[test]
 fn test_evidence_dedup_rejects_duplicate() {
     use blst::min_pk::SecretKey;
@@ -713,6 +862,8 @@ fn test_evidence_dedup_rejects_duplicate() {
         let ev1 = sign_notarize_evidence(&sk, &pk, &prop1);
         let ev2 = sign_notarize_evidence(&sk, &pk, &prop2);
 
+        write_test_committee(&storage);
+
         let submitter = address!("0xdddddddddddddddddddddddddddddddddddddddd");
         let mut si = SlashIndicator::new(storage.clone());
 
@@ -734,7 +885,7 @@ fn test_evidence_dedup_rejects_duplicate() {
 }
 
 // ===========================================================================
-// A-02: Evidence with wrong DST must be rejected
+// Evidence with wrong DST must be rejected
 // ===========================================================================
 
 // ---- Step 7: idempotent slashing wrapper tests --------------------------
@@ -743,104 +894,136 @@ const FB_HASH_A: B256 = b256!("0x11111111111111111111111111111111111111111111111
 const FB_HASH_B: B256 = b256!("0x2222222222222222222222222222222222222222222222222222222222222222");
 
 #[test]
-fn slash_voter_hook_idempotent_on_repeat_for_same_fb_hash() {
+fn slash_window_voters_idempotent_on_repeat_for_same_fb_hash() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
 
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         let after_first = SlashIndicator::new(storage.clone())
             .voter_miss_count
             .read(&VAL_A)
             .unwrap();
-        assert_eq!(after_first, 1, "first slash bumps the counter");
+        assert_eq!(after_first, 1, "first window pass bumps the counter");
 
-        // Replay: same (fb_hash, validator) — must be a no-op.
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
-        let after_replay = SlashIndicator::new(storage.clone())
-            .voter_miss_count
-            .read(&VAL_A)
-            .unwrap();
-        assert_eq!(after_replay, 1, "replay must not double-count");
-
-        // Triple replay also no-op.
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
+        // Replay: same fb_hash window — must be a no-op (per-fb_hash guard).
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         assert_eq!(
             SlashIndicator::new(storage.clone())
                 .voter_miss_count
                 .read(&VAL_A)
                 .unwrap(),
-            1
+            1,
+            "replaying the same finalized block's window must not double-count"
         );
     });
 }
 
 #[test]
-fn slash_voter_hook_increments_for_different_fb_hash() {
+fn slash_window_voters_increments_for_different_fb_hash() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
 
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_B, VAL_A).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
+        hooks::slash_window_voters(storage.clone(), FB_HASH_B, &[VAL_A]).unwrap();
 
         let count = SlashIndicator::new(storage.clone())
             .voter_miss_count
             .read(&VAL_A)
             .unwrap();
-        assert_eq!(
-            count, 2,
-            "different fb_hash must allow re-counting the miss"
-        );
+        assert_eq!(count, 2, "a distinct finalized block re-counts the miss");
     });
 }
 
 #[test]
-fn slash_voter_hook_per_validator_guard_isolation() {
+fn slash_window_voters_slashes_all_absentees_once() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
         register_and_activate(storage.clone(), VAL_B, 2);
 
-        // Same fb_hash, two different absent validators — each gets bumped.
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_B).unwrap();
-
+        // One window pass slashes every absentee in the list.
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A, VAL_B]).unwrap();
         let si = SlashIndicator::new(storage.clone());
         assert_eq!(si.voter_miss_count.read(&VAL_A).unwrap(), 1);
         assert_eq!(si.voter_miss_count.read(&VAL_B).unwrap(), 1);
 
-        // Replay either: no further bumps.
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_A).unwrap();
-        hooks::slash_voter(storage.clone(), FB_HASH_A, VAL_B).unwrap();
+        // Replay the same fb_hash window: no further bumps.
+        hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A, VAL_B]).unwrap();
         assert_eq!(si.voter_miss_count.read(&VAL_A).unwrap(), 1);
         assert_eq!(si.voter_miss_count.read(&VAL_B).unwrap(), 1);
     });
 }
 
 #[test]
-fn slash_proposer_event_counts_duplicate_validator_events_by_index() {
+fn slash_window_proposers_processes_list_once() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
 
-        hooks::slash_proposer_event(storage.clone(), FB_HASH_A, 0, VAL_A).unwrap();
-        hooks::slash_proposer_event(storage.clone(), FB_HASH_A, 1, VAL_A).unwrap();
-        let after_two_events = SlashIndicator::new(storage.clone())
-            .proposer_miss_count
-            .read(&VAL_A)
-            .unwrap();
+        // The same proposer can appear twice (two skipped views) in one window —
+        // each occurrence is slashed within the single atomic pass.
+        hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A, VAL_A]).unwrap();
         assert_eq!(
-            after_two_events, 2,
-            "duplicate missed-proposer entries at different indices are distinct events"
+            SlashIndicator::new(storage.clone())
+                .proposer_miss_count
+                .read(&VAL_A)
+                .unwrap(),
+            2,
+            "duplicate missed-proposer events in one window are each counted"
         );
 
-        hooks::slash_proposer_event(storage.clone(), FB_HASH_A, 1, VAL_A).unwrap();
-        let after_replay = SlashIndicator::new(storage.clone())
-            .proposer_miss_count
-            .read(&VAL_A)
-            .unwrap();
-        assert_eq!(after_replay, 2, "same event index replay is idempotent");
+        // Replaying the same finalized block's window is a no-op.
+        hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A, VAL_A]).unwrap();
+        assert_eq!(
+            SlashIndicator::new(storage.clone())
+                .proposer_miss_count
+                .read(&VAL_A)
+                .unwrap(),
+            2,
+            "same finalized block window replay is idempotent"
+        );
     });
 }
 
-/// A-02: Evidence signed with the old NUL_ DST must fail verification.
+#[test]
+fn prune_slash_guards_evicts_old_window_guards() {
+    fn fb(i: u64) -> B256 {
+        let mut b = [0u8; 32];
+        b[24..].copy_from_slice(&i.to_be_bytes());
+        B256::from(b)
+    }
+    with_storage(|storage| {
+        let victim = fb(1);
+        let survivor = fb(2);
+        {
+            let si = SlashIndicator::new(storage.clone());
+            for h in [victim, survivor] {
+                si.voter_window_slashed.write(&h, true).unwrap();
+                si.proposer_window_slashed.write(&h, true).unwrap();
+            }
+        }
+
+        // Record victim then survivor, then fill the ring with RETAIN-1 more
+        // fresh finalized blocks so victim (and only victim) hits the eviction
+        // slot.
+        hooks::prune_slash_guards(storage.clone(), victim).unwrap();
+        hooks::prune_slash_guards(storage.clone(), survivor).unwrap();
+        for i in 0..(hooks::SLASH_GUARD_RETAIN - 1) {
+            hooks::prune_slash_guards(storage.clone(), fb(1000 + i)).unwrap();
+        }
+
+        let si = SlashIndicator::new(storage.clone());
+        assert!(
+            !si.voter_window_slashed.read(&victim).unwrap(),
+            "evicted block's voter window guard is cleared"
+        );
+        assert!(!si.proposer_window_slashed.read(&victim).unwrap());
+        // Survivor is still inside the retention window.
+        assert!(si.voter_window_slashed.read(&survivor).unwrap());
+        assert!(si.proposer_window_slashed.read(&survivor).unwrap());
+    });
+}
+
+/// Evidence signed with the old NUL_ DST must fail verification.
 #[test]
 fn test_evidence_wrong_dst_rejected() {
     use crate::evidence::EvidenceBlock;
@@ -867,7 +1050,9 @@ fn test_evidence_wrong_dst_rejected() {
 
     // Verification with POP_ DST must fail for NUL_-signed evidence
     assert!(
-        block.verify_notarize_signature().is_err(),
+        block
+            .verify_notarize_signature(&test_committee_set())
+            .is_err(),
         "evidence signed with wrong DST (NUL_) must be rejected"
     );
 }

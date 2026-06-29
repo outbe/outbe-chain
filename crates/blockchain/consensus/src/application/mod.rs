@@ -4,8 +4,13 @@
 //! by communicating with Reth via `beacon_engine_handle`.
 
 pub mod actor;
+pub(crate) mod ancestry;
+pub(crate) mod epoch_boundary;
 pub mod handler;
 pub mod ingress;
+pub(crate) mod validation;
+pub(crate) mod verify_resolution;
 
-pub use handler::ApplicationHandler;
+pub use epoch_boundary::ApplicationEpochFence;
+pub use handler::{ApplicationDeps, ApplicationHandler};
 pub use ingress::Mailbox;

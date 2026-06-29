@@ -81,6 +81,12 @@ fail=0
 echo "$PROBE" | grep -q "_sgx_mrsigner" || { echo "FAIL: no /dev/attestation/keys/_sgx_mrsigner (EGETKEY unavailable)"; fail=1; }
 echo "$PROBE" | grep -qE "sealing_key\(mrsigner\): [0-9]+ bytes" || { echo "FAIL: MRSIGNER sealing key not derived"; fail=1; }
 echo "$PROBE" | grep -qE "sealing_key\(mrenclave\): [0-9]+ bytes" || { echo "FAIL: MRENCLAVE sealing key not derived"; fail=1; }
+# Regression guard: on real SGX the probe must NOT mislabel itself as gramine-direct/no-SGX.
+# EGETKEY derived above, so attestation_type must resolve to the SgxNoAttest (gramine-sgx) label.
+if echo "$PROBE" | grep -q "attestation_type:"; then
+    echo "$PROBE" | grep "attestation_type:" | grep -q "gramine-direct / no SGX" \
+        && { echo "FAIL: real-SGX run mislabeled as 'gramine-direct / no SGX'"; fail=1; }
+fi
 
 echo "================================================================"
 if [ "$fail" -ne 0 ]; then

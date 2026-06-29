@@ -161,6 +161,7 @@ CCA_ADDRESS = "0000000000000000000000000000000000001011"
 MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
+INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
 VALIDATOR_SET_ADDRESS = "000000000000000000000000000000000000ee00"
 SLASH_INDICATOR_ADDRESS = "000000000000000000000000000000000000ee01"
 STAKING_ADDRESS = "000000000000000000000000000000000000ee02"
@@ -195,6 +196,10 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 # it bounds the felony window: a felony threshold (default 150) must stay below it.
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
+
+# IntexFactory profile selector (config slot 13). Numbers live in Rust
+# (crates/core/intexfactory/src/config.rs); genesis only picks one.
+INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
@@ -764,23 +769,35 @@ def seed_nods(storage: StorageBuilder, nods: list):
 
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
-    Metadosis storage layout:
-      slot 0: bootstrap_end_time (u64)
-      slot 1: mapping(u32 => u8) wwd_status
-      slot 2: mapping(u32 => u8) wwd_day_type
-      slot 3: mapping(u32 => u64) wwd_forming_start
-      slot 4: mapping(u32 => u64) wwd_forming_end
-      slot 5: mapping(u32 => u64) wwd_lookback_end
-      slot 6: mapping(u32 => u64) wwd_offering_end
-      slot 7: mapping(u32 => u64) wwd_scheduled_process_time
-      slot 8: mapping(u32 => U256) wwd_previous_vwap
-      slot 9: mapping(u32 => U256) wwd_current_vwap
-      slot 10: mapping(u32 => U256) day_limit_amount
-      slot 11: mapping(u32 => bool) day_limit_used
-      slot 12: active_wwd_count (u32)
-      slot 13: mapping(u32 => u32) active_wwds (index => wwd)
+    Metadosis storage layout — MUST track `crates/core/metadosis/src/schema.rs`
+    (`#[storage_schema] MetadosisContract`). Attributes occupy slots in declared
+    order; a `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per record
+    field, a `Value` one slot, and a `Set` two (length + positions base):
+
+      slot 0:      bootstrap_end_time (Value<u64>)
+      slots 1-10:  worldwide_days (Map<u32, WorldwideDay>) — one mapping per field:
+                     1 status(u8)            2 day_type(u8)
+                     3 forming_start(u64)     4 forming_end(u64)
+                     5 lookback_end(u64)      6 offering_end(u64)
+                     7 scheduled_process_time(u64)
+                     8 metadosis_limit_amount(U256)
+                     9 previous_vwap(U256)   10 current_vwap(U256)
+      slot 11:     active_wwd_count (Value<u16>)
+      slots 12-13: active_wwd (Set<WorldwideDayKey>) — OZ enumerable set:
+                     12 = length + value array at keccak256(be32(12))+i
+                     13 = positions base; position(wwd) = index + 1 (0 = absent)
+      slot 14+:    closed_wwd (Deque<WorldwideDayKey>)
+
+    The active_wwd Set is what `get_active_wwd_by_status` (and therefore the tribute
+    OFFERING lookup) reads. It MUST be populated in the enumerable-set layout above:
+    seeding only the day record (slots 1-10) leaves the day invisible to the active
+    scan and every offer reverts "no worldwide day is OFFERING".
     """
     wwds = config.get("worldwide_days", [])
+
+    # active_wwd is a Set at base slot 12 (schema order 3, right after the
+    # active_wwd_count Value at slot 11). Its positions mapping lives at base + 1.
+    ACTIVE_WWD_BASE = 12
 
     for idx, entry in enumerate(wwds):
         wwd = entry["wwd"]
@@ -794,21 +811,21 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_mapping(6, wwd_key, entry.get("offering_end", 0))
         storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
 
-        prev_vwap = parse_int(entry.get("previous_vwap", "0"))
-        curr_vwap = parse_int(entry.get("current_vwap", "0"))
-        storage.set_mapping(8, wwd_key, prev_vwap)
-        storage.set_mapping(9, wwd_key, curr_vwap)
-
-        # Day limit
+        # slot 8 = metadosis_limit_amount (per-day mint cap), 9 = previous_vwap,
+        # 10 = current_vwap — schema field order.
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:
-            storage.set_mapping(10, wwd_key, day_limit)
+            storage.set_mapping(8, wwd_key, day_limit)
+        storage.set_mapping(9, wwd_key, parse_int(entry.get("previous_vwap", "0")))
+        storage.set_mapping(10, wwd_key, parse_int(entry.get("current_vwap", "0")))
 
-        # Active WWD list
-        storage.set_mapping(13, u32_bytes(idx), wwd)
+        # Insert into the active_wwd Set: value-array entry + 1-indexed position.
+        storage.set_slot(data_slot(ACTIVE_WWD_BASE) + idx, wwd)
+        storage.set_mapping(ACTIVE_WWD_BASE + 1, u32_bytes(wwd), idx + 1)
 
-    # Active WWD count
-    storage.set_slot(12, len(wwds))
+    # Set length (slot 12) and the separate active_wwd_count Value (slot 11).
+    storage.set_slot(ACTIVE_WWD_BASE, len(wwds))
+    storage.set_slot(11, len(wwds))
 
     # Bootstrap end time
     bootstrap_end = config.get("bootstrap_end_time", 0)
@@ -915,9 +932,15 @@ def seed_staking(
 def seed_rewards(storage: StorageBuilder, genesis_timestamp: int):
     """
     Rewards storage layout:
-      slot 1: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
+      slot 0: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
+
+    NOTE: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
+    `pending_rewards` field was removed (PR #12 / 941c4eb). The runtime also
+    lazily anchors this value at block 0 via `rewards::ensure_genesis_anchor`
+    (= timestamp_to_date_key(block0.timestamp)); seeding it here keeps genesis
+    state explicit and matches that block-0 value.
     """
-    storage.set_slot(1, timestamp_to_utc_date_key(genesis_timestamp))
+    storage.set_slot(0, timestamp_to_utc_date_key(genesis_timestamp))
 
 
 def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
@@ -1137,6 +1160,21 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
 # --- External contracts ---
 
+def seed_intex_factory(storage: StorageBuilder, config: dict):
+    """Write the profile selector (slot 13) from `profile: "prod"|"dev"`;
+    prod is the default and seeds nothing."""
+    profile = str(config.get("profile", "prod")).lower()
+    if profile not in INTEX_PROFILE_SELECTORS:
+        raise ValueError(
+            f"intex_factory: unknown profile {profile!r}; "
+            f"expected one of {sorted(INTEX_PROFILE_SELECTORS)}"
+        )
+    selector = INTEX_PROFILE_SELECTORS[profile]
+    if selector == 0:
+        return
+    storage.set_slot(13, selector)
+
+
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
     """
     Embed externally-fetched contracts (bytecode + storage) into the genesis
@@ -1193,6 +1231,29 @@ def seed_external_contracts(alloc, contracts_list, contracts_dir):
 
 # --- Main ---
 
+def override_worldwide_day(seed: dict, day: int) -> None:
+    """Retarget every worldwide-day reference in a seed to `day` (YYYYMMDD), in
+    place: metadosis worldwide_days[].wwd, oracle scurve_seeds[].peak_day, and
+    nods[].worldwide_day.
+
+    A localnet must boot on its genesis (current) date: the metadosis runtime
+    derives the active day each block from
+    `WorldwideDay::from_timestamp(block.timestamp)`, so a seeded day that differs
+    from the genesis wall-clock day leaves two active worldwide days fighting
+    (the seeded one + the runtime-created "today") and consensus wedges. Other
+    day fields (status, offering window, limits) are left as authored — only the
+    calendar key is retargeted, and the OFFERING window the seed declares (forming
+    in the past, offering_end far future) keeps the day OFFERING at the new date.
+    """
+    for w in seed.get("metadosis", {}).get("worldwide_days", []):
+        w["wwd"] = day
+    for s in seed.get("oracle", {}).get("scurve_seeds", []):
+        s["peak_day"] = day
+    for n in seed.get("nods", []):
+        if "worldwide_day" in n:
+            n["worldwide_day"] = day
+
+
 def main():
     parser = argparse.ArgumentParser(description="Seed genesis.json with precompile storage")
     parser.add_argument("--genesis", required=True, help="Path to genesis.json")
@@ -1204,6 +1265,15 @@ def main():
         help="Directory containing contract code/state files referenced from "
              "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
     )
+    parser.add_argument(
+        "--worldwide-day",
+        type=int,
+        help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
+             "and NOD references too. Localnet bootstrap passes the genesis date so "
+             "the seeded OFFERING day tracks the chain's wall-clock; a stale "
+             "hardcoded day desyncs from the per-block "
+             "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
+    )
     args = parser.parse_args()
 
     with open(args.genesis) as f:
@@ -1211,6 +1281,12 @@ def main():
 
     with open(args.seed) as f:
         seed = json.load(f)
+
+    # Retarget the seeded worldwide-day to the genesis (current) date when asked,
+    # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
+    # tribute day_totals init, and the NODs all agree on the same active day.
+    if args.worldwide_day is not None:
+        override_worldwide_day(seed, args.worldwide_day)
 
     validators = []
     if args.validators:
@@ -1399,12 +1475,30 @@ def main():
         print(f"  Oracle: {len(pairs)} pairs, {len(settlements)} settlements, "
               f"{len(oracle_storage.entries)} storage entries")
 
+    # Seed IntexFactory profile selector (prod seeds nothing).
+    if "intex_factory" in seed:
+        intex_factory_storage = StorageBuilder()
+        seed_intex_factory(intex_factory_storage, seed["intex_factory"])
+        if intex_factory_storage.entries:
+            entry = alloc.setdefault(INTEX_FACTORY_ADDRESS, {})
+            entry.setdefault("storage", {}).update(intex_factory_storage.entries)
+            entry.setdefault("code", MARKER_CODE)
+            print(f"  IntexFactory: {len(intex_factory_storage.entries)} storage entries")
+
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:
         contracts_dir = args.contracts_dir or os.path.join(
             os.path.dirname(os.path.abspath(args.seed)), "contracts"
         )
         seed_external_contracts(alloc, seed["contracts"], contracts_dir)
+
+    # reth v2.2 `GenesisAccount` requires an explicit `balance` on every alloc
+    # entry, including code/storage-only marker accounts (the `0xef` markers and
+    # system storage accounts) that the seeders above leave balance-less. Default
+    # any such account to zero so the chain spec parses; accounts that already
+    # carry a real balance keep it (setdefault is a no-op for them).
+    for account in alloc.values():
+        account.setdefault("balance", "0x0")
 
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)

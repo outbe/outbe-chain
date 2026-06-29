@@ -10,6 +10,9 @@
 pub mod actor;
 pub mod wire;
 
+#[cfg(test)]
+mod sim_tests;
+
 pub use actor::{
     run_initial_dkg, run_reshare_dealer_only, DkgComplete, DkgDealerOnlyComplete, DkgProgress,
 };

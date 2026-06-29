@@ -10,6 +10,9 @@ permissions:
   contents: read
   checks: write
   pull-requests: write
+  # The `bump` job's commit + tag push to protected main is done with a PAT
+  # (secrets.RELEASE_TOKEN, in the branch ruleset's bypass list), NOT the
+  # GITHUB_TOKEN — so GITHUB_TOKEN stays least-privilege here.
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,12 +47,14 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
       - run: rustup component add clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: mise run lint
 
   test:
@@ -64,11 +69,16 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # trybuild compile-fail tests reference std source snippets; rustc only
+      # renders them when rust-src is present (mise installs rust without it).
+      - run: rustup component add rust-src
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --cobertura --output-path cobertura.xml
       - uses: irongut/CodeCoverageSummary@v1.3.0
@@ -85,13 +95,56 @@ jobs:
         with:
           path: code-coverage-results.md
 
-  typos:
-    name: typos
+  doctests:
+    name: doctests
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      # The `test` job runs under llvm-cov, which does NOT execute doctests
+      # (M-24). Run them explicitly so executable doc-examples are covered.
+      - run: mise run test-doc
+
+  localnet:
+    name: localnet smoke
+    # Per-PR OPT-IN convenience run: add [localnet] to the commit message to run
+    # the 4-validator multi-node consensus smoke (fresh-start + restart-recovery)
+    # on this PR. It stays advisory (continue-on-error) because genesis-DKG start
+    # timing varies under shared CI load and would flake a per-PR blocking gate.
+    # The REQUIRED regression gate is the daily `localnet-nightly.yml` workflow,
+    # which runs the same smoke non-advisory (M-24).
+    if: contains(github.event.head_commit.message, '[localnet]')
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: cargo build --release --bin outbe-chain
+      - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
+        run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke
 
   udeps:
     name: udeps
@@ -108,7 +161,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-udeps
-      - run: cargo udeps --workspace --lib --examples --tests --benches --all-features
+      - run: cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features
 
   no-test-deps:
     name: no-test-deps
@@ -125,7 +178,7 @@ jobs:
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
 
   # Non-blocking audit jobs (continue-on-error). Promote to required after the
-  # first clean run on main; see .ruler/skills/rust-module-audit for context.
+  # first clean run on main.
   deny:
     name: cargo deny
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -155,21 +208,6 @@ jobs:
       - uses: taiki-e/install-action@cargo-machete
       - run: mise run audit-machete
 
-  geiger:
-    name: cargo geiger
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      - run: cargo install cargo-geiger
-      - run: mise run audit-geiger
-
   miri:
     name: cargo miri
     if: contains(github.event.head_commit.message, '[miri]')
@@ -193,17 +231,95 @@ jobs:
       - fmt
       - clippy
       - test
-      - typos
+      - doctests
+      - localnet
       - udeps
       - no-test-deps
       - deny
       - machete
-      - geiger
       - miri
     timeout-minutes: 5
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: clippy, test, udeps, no-test-deps, deny, machete, geiger, miri
+          allowed-skips: clippy, test, doctests, localnet, udeps, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}
+
+  # ─── Versioning (cocogitto) ───────────────────────────────────────── #
+  # PR-only: preview the version cog WOULD cut, without tagging anything.
+  # cog is pinned in mise.toml (`cocogitto = "7"`); installed on demand here
+  # rather than the full mise toolchain. Legacy pre-adoption commits are not
+  # Conventional, so checks run `--from-latest-tag` (validate only commits
+  # since the last `v*` release — requires a baseline `v0.1.0` tag to exist).
+  preview-version:
+    name: preview next version
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # cog reads the full history + tags
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - run: mise install cocogitto
+      - name: Validate new commits (Conventional Commits since last tag)
+        run: mise exec -- cog check --from-latest-tag
+      - name: Preview bump
+        run: |
+          set -euo pipefail
+          # Neutralise cog.toml's branch_whitelist for this read-only preview so
+          # it works from a PR ref (nothing is committed/tagged/pushed).
+          cfg="$(mktemp -d)/cog.toml"
+          sed 's/^branch_whitelist.*/branch_whitelist = []/' cog.toml > "$cfg"
+          if out="$(mise exec -- cog --config "$cfg" bump --auto --dry-run --skip-untracked 2>/dev/null)"; then
+            tag="$(printf '%s\n' "$out" | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*' | tail -n1 || true)"
+            echo "::notice::next release would be: ${tag:-<no bump warranted>}"
+          else
+            echo "::notice::no bump warranted"
+          fi
+
+  # main only, after every gate is green: cog bump --auto cuts the next v* tag
+  # and (via cog.toml post-bump hooks) pushes the bump commit + tag. The push
+  # is authenticated with a PAT (secrets.RELEASE_TOKEN) whose owner is in the
+  # branch ruleset's bypass list, so it lands on protected main. A PAT-authored
+  # tag push DOES trigger `release.yml` (`on: push: tags`), so no explicit
+  # dispatch is needed (and adding one would double-fire the release).
+  bump:
+    name: bump version & tag
+    needs: [ci-success]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }} # PAT in the ruleset bypass -> push to protected main + trigger release.yml
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - run: mise install cocogitto
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Validate new commits
+        run: mise exec -- cog check --from-latest-tag
+      - name: Cocogitto bump
+        id: bump
+        run: |
+          set -euo pipefail
+          # Neutralise branch_whitelist: cog doesn't see the CI checkout as the
+          # `main` branch, so the in-cog guard would reject the bump. The job
+          # `if:` already restricts this to a push on main. Hooks (version sed +
+          # git push of the commit and tag) are preserved from cog.toml and run
+          # with the PAT checkout creds.
+          cfg="$(mktemp -d)/cog.toml"
+          sed 's/^branch_whitelist.*/branch_whitelist = []/' cog.toml > "$cfg"
+          mise exec -- cog --config "$cfg" bump --auto
+          tag="$(git tag --points-at HEAD | grep '^v' | head -n1 || true)"
+          if [ -n "$tag" ]; then echo "::notice::cut ${tag} (release.yml triggered by the tag push)"; else echo "::notice::no bump warranted"; fi

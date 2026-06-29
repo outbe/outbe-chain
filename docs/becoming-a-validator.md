@@ -19,8 +19,10 @@ There are two node roles:
   - **Has a share** — it is an ACTIVE signer: it proposes and votes.
 
 On-chain PoS status tracks the same lifecycle: REGISTERED → PENDING → **ACTIVE** →
-EXITING → UNBONDING → INACTIVE. Only ACTIVE (and EXITING until the next reshare)
-hold a share and vote.
+EXITING → UNBONDING → INACTIVE, with JAILED as the punishment/recovery branch.
+Validators that still hold a BLS share vote and remain accountable in the current
+committee: ACTIVE, EXITING, and temporarily JAILED until the next reshare clears
+that share.
 
 > **The TEE enclave is required to process tribute offers.** Offers are encrypted
 > to the chain's offer key and decrypt **only inside the TEE enclave** — there is no
@@ -73,9 +75,17 @@ outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
 outbe-chain node \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
   --bootnodes "<enode URLs>" \
-  --http --http.addr 0.0.0.0 --http.port 8545 --http.api eth,net,web3,outbe \
+  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --tee-enclave-socket 127.0.0.1:7000
 ```
+
+> **RPC exposure.** Examples bind RPC to `127.0.0.1` and enable only the
+> `eth,net,web3,outbe` modules. Never add `admin` or `debug` to `--http.api` on a
+> public (`0.0.0.0`) binding: that exposes unauthenticated node control. To serve
+> RPC off-host, put it behind authentication or a firewall that restricts access
+> to trusted operators, or keep `admin`/`debug` on a local IPC socket. The
+> `--consensus.listen-addr 0.0.0.0:30400` P2P port below is the consensus gossip
+> listener and is meant to be reachable by peers.
 
 Check it with `outbe-cli monitor health` / `cast block finalized`. A full node’s
 `outbe_consensusStatus` reports zeros — those fields are validator-only.
@@ -123,7 +133,9 @@ outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
 ```
 
 Registration admits your node to the consensus mesh as a non-voting peer; it does
-not by itself make you a validator (no stake, no share yet).
+not by itself make you a voting validator (no stake, no share yet). The non-voting
+admission tier also includes PENDING and JAILED validators so they can sync,
+recover, and rejoin.
 
 ### 2.3 Run the node (`--validator`)
 
@@ -135,7 +147,7 @@ share yet). The node runs the consensus engine as a share-less follower:
 outbe-chain node --validator \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
   --bootnodes "<enode URLs>" \
-  --http --http.addr 0.0.0.0 --http.port 8545 --http.api eth,net,web3,outbe \
+  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
   --consensus.signing-key       /var/lib/outbe/keys/signing-key.hex \
   --validator.evm-key           /var/lib/outbe/keys/evm-key.hex \
   --consensus.public-polynomial /path/to/polynomial.hex \
@@ -280,6 +292,21 @@ The DKG share is persisted to `--consensus.keys-dir` (default `<datadir>/keys`);
 restart recovers it and resumes signing without a new reshare (the "returning
 validator" case in section 3). Restart with the same `--datadir`/`--consensus.keys-dir`.
 
+Consensus recovery is fail-closed. A restarted validator uses durable consensus
+finalization and DKG boundary evidence, not just the latest local execution head,
+to decide which epoch committee it may sign for. If the local Reth head is only in
+the normal bounded in-flight window ahead of the marshal-finalized tip, and that
+head includes an unfinalized membership change, an old-epoch signer can still
+recover from the finalized DKG boundary and continue signing until the activation
+is actually finalized.
+
+Stop and investigate rather than deleting files if startup reports missing marshal
+finalization, inconsistent saved/pending DKG material, a pending boundary snapshot
+without matching DKG material, an EVM key that does not match the recovered boundary
+address for the local BLS key, or execution history with no durable consensus
+finalization evidence. For details and operator actions, see
+[`consensus-restart-recovery.md`](consensus-restart-recovery.md).
+
 For the enclave: with sealing (`--tee-dir <path>` + `--chain-id`) the sidecar restores
 the **same** offer key across restarts — no fresh `tee join`. Without sealing (no
 `--tee-dir`, e.g. the gramine-direct mock localnet) a sidecar restart re-derives a
@@ -309,6 +336,7 @@ restart in that case.
 | `--consensus.keys-dir` | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`) |
 | `--consensus.listen-addr` / `--consensus.peers` | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>` |
 | `--tee-enclave-socket` | enclave sidecar socket (needed to execute tribute offers); the node fail-fasts without a healthy attested enclave |
+| `--testnet.trust-el-head` | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
 | `--testnet.force-dkg` | disaster-recovery only: force a fresh DKG when all validators lost key material (testnet/devnet, rejected on mainnet) |
 
 ### Operator commands

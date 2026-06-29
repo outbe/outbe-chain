@@ -52,6 +52,9 @@
     "staking_reward_percent": 30,
     "treasury_percent": 20
   },
+  "intex_factory": {
+    "profile": "dev"
+  },
   "oracle": {
     "config": {
       "vote_period": 8,

@@ -736,3 +736,41 @@ fn mandatory_late_phase_cannot_be_skipped() {
         "rejection must reference the missing mandatory phase; got: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// a block whose RLP size exceeds the P2P transport cap is rejected at
+// verify (deterministically), instead of panicking commonware's bounded sender
+// on dissemination.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn block_exceeding_p2p_transport_cap_is_rejected() {
+    use outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE;
+    let signer = signer();
+    // One tx carrying ~1.9 MiB of calldata pushes the block RLP over the cap.
+    let transactions = vec![signed_with_raw_input(
+        &signer,
+        0,
+        vec![0u8; OUTBE_MAX_BLOCK_SIZE],
+    )];
+    let header = header_for_transactions(2, B256::ZERO, &transactions);
+    let block = AlloyBlock::new(header, body(transactions)).seal_slow();
+    assert!(
+        block.rlp_length() > OUTBE_MAX_BLOCK_SIZE,
+        "fixture must exceed the cap"
+    );
+    let chain_spec = Arc::new(
+        ChainSpecBuilder::mainnet()
+            .with_osaka_at(0)
+            .build()
+            .map_header(OutbeHeader::new),
+    );
+    let consensus = OutbeBeaconConsensus::new(chain_spec);
+    let err = consensus
+        .validate_block_pre_execution(&block)
+        .expect_err("a block over the P2P transport cap must be rejected at verify");
+    assert!(
+        format!("{err:?}").contains("transport cap"),
+        "rejection must reference the transport cap; got: {err:?}"
+    );
+}

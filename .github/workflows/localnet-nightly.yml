@@ -1,0 +1,72 @@
+name: localnet nightly
+
+# M-24: a REQUIRED (non-advisory) nightly run of the 4-validator multi-node
+# consensus smoke, including the restart-recovery phase. The per-PR `localnet`
+# job in ci.yml stays opt-in + advisory because genesis-DKG start timing varies
+# under shared CI load and would flake a per-PR blocking gate; this nightly run
+# is the real regression gate (failures are visible and not swallowed), with
+# a day's blast radius rather than per-commit. Also runnable on demand via the
+# Actions "Run workflow" button.
+
+on:
+  schedule:
+    # 04:17 UTC daily (off-peak; odd minute to avoid the top-of-hour rush).
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: localnet-nightly
+  cancel-in-progress: true
+
+jobs:
+  localnet-smoke:
+    name: localnet smoke (fresh-start + restart recovery)
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 40
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: rui314/setup-mold@v1
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: cargo build --release --bin outbe-chain
+      - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
+        run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke
+
+  # M-24: the TEE paths require a self-hosted runner with SGX hardware + gramine +
+  # docker + passwordless sudo (label `sgx`). Both jobs are proven green on such a
+  # host (sgx-smoke: real SGX EGETKEY sealing; e2e: all S1-S7 scenarios). They are
+  # no-ops until the SGX runner is registered. `sgx-smoke.sh` self-skips on a box
+  # without `/dev/sgx_enclave`.
+  sgx-smoke:
+    name: hardware SGX smoke
+    runs-on: [self-hosted, sgx]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+      - run: mise run sgx-smoke
+
+  e2e-tee:
+    name: S1-S7 gramine TEE e2e suite
+    runs-on: [self-hosted, sgx]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+      # The scenario scripts use sudo (run-testnet.sh / docker) and build the
+      # `outbe-tee-enclave-gramine` image on demand via run-testnet.sh.
+      - run: mise run e2e

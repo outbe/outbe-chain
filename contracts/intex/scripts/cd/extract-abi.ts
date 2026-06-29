@@ -1,21 +1,21 @@
-// Extract ABIs from Hardhat artifacts to the abi-export directory
-// Used during package publishing to create clean ABI exports
+// Extract ABIs from the Forge build output (out/) to the abi-export directory.
+// Used during package publishing to create clean ABI exports. Run after `forge build`.
 
 import * as fs from "fs";
 import * as path from "path";
 
-const ARTIFACTS_DIR = "artifacts/contracts";
+const OUT_DIR = "out";
 const DIST_DIR = "dist";
 const OUTPUT_DIR = "abi-export";
 
 // Contracts to extract ABIs for
 const CONTRACTS = [
   // BNB-side
-  "bnb/IntexAuction",
-  "bnb/EscrowAdapter",
-  "bnb/TargetMessenger",
+  "target/IntexAuction",
+  "target/EscrowAdapter",
+  "target/TargetMessenger",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "outbe/OriginMessenger",
+  "origin/OriginMessenger",
   // Both chains
   "shared/IntexNFT1155",
   "shared/ONFT1155Adapter",
@@ -24,11 +24,11 @@ const CONTRACTS = [
 
 const INTERFACES = [
   // BNB-side
-  "bnb/interfaces/IIntexAuction",
-  "bnb/interfaces/IEscrowAdapter",
-  "bnb/interfaces/ITargetMessenger",
+  "target/interfaces/IIntexAuction",
+  "target/interfaces/IEscrowAdapter",
+  "target/interfaces/ITargetMessenger",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "outbe/interfaces/IOriginMessenger",
+  "origin/interfaces/IOriginMessenger",
   // Both chains
   "shared/interfaces/IIntexNFT1155",
   "shared/interfaces/IONFT1155Adapter",
@@ -37,18 +37,12 @@ const INTERFACES = [
 
 interface ArtifactJson {
   abi: unknown[];
-  contractName: string;
-  sourceName: string;
 }
 
 function extractAbi(contractPath: string): void {
-  const parts = contractPath.split("/");
-  const contractName = parts[parts.length - 1];
-  const artifactPath = path.join(
-    ARTIFACTS_DIR,
-    `${contractPath}.sol`,
-    `${contractName}.json`
-  );
+  // Forge keys its build output by source-file basename: out/<Name>.sol/<Name>.json.
+  const contractName = contractPath.split("/").pop() as string;
+  const artifactPath = path.join(OUT_DIR, `${contractName}.sol`, `${contractName}.json`);
 
   if (!fs.existsSync(artifactPath)) {
     console.warn(`Warning: Artifact not found for ${contractPath} at ${artifactPath}`);
@@ -63,10 +57,10 @@ function extractAbi(contractPath: string): void {
   }
 
   const outputPath = path.join(OUTPUT_DIR, `${contractName}.json`);
-  
-  // Create output with just ABI and contract name for cleaner exports
+
+  // Clean export: just the contract name + ABI.
   const output = {
-    contractName: artifact.contractName,
+    contractName,
     abi: artifact.abi,
   };
 
