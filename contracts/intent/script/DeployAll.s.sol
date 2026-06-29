@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {console2} from "forge-std/console2.sol";
 
-import {DeployCreateXDeterministic} from "./0_DeployCreateX.s.sol";
+import {DeployCreateXDeterministic, CreateX} from "./0_DeployCreateX.s.sol";
 import {DeploySolverEscrow} from "./1_DeploySolverEscrow.s.sol";
 import {DeployAuction} from "./2_DeployAuction.s.sol";
 import {DeployRouter} from "./3_DeployRouter.s.sol";
@@ -47,6 +47,16 @@ contract DeployAll is DeployCreateXDeterministic, DeployRouter, DeploySolverEscr
         address createXAddr = vm.envOr("CREATEX_ADDRESS", address(0));
         if (createXAddr == address(0)) createXAddr = deployCreateX(salt);
         console2.log("  CreateX:", createXAddr);
+
+        // Everything below is deterministic from (CreateX, salt, deployer). If the router already exists, the whole
+        // stack is already deployed — skip it: re-deploying escrow/auction/allocator would waste gas and the router's
+        // CREATE3 would revert on collision anyway.
+        address routerAddr = CreateX(createXAddr).computeCreate3Address(getRouterSaltHash(salt));
+        if (routerAddr.code.length != 0) {
+            console2.log("Already deployed - skipping. Router:", routerAddr);
+            vm.stopBroadcast();
+            return;
+        }
 
         // 2. Deploy SolverEscrow
         console2.log("[2/5] Deploy SolverEscrow...");
