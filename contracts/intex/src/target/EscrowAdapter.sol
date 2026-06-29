@@ -49,6 +49,10 @@ contract EscrowAdapter is
     ///         split before the bidder can rescue their full principal via `claimRefund`.
     uint32 public constant POST_FINALIZE_REFUND_DELAY = 7 days;
 
+    /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series can
+    ///         `claimRefund` the full principal. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
+    uint32 public constant ABANDON_DELAY = 30 days;
+
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
@@ -387,7 +391,20 @@ contract EscrowAdapter is
             // split the amount is unknowable on-chain; the relayer must retryFinalize instead.
             uint32 claimableAt = state.finalizedAt + POST_FINALIZE_REFUND_DELAY;
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-            if (!lock.splitRecorded) revert SplitNotRecorded(seriesId, bidder);
+
+            if (!lock.splitRecorded) {
+                // Omitted/mismatched bidder: relayer gets the retryFinalize window; after ABANDON_DELAY
+                // the lock becomes permissionlessly terminal with a full-principal refund.
+                uint32 abandonAt = state.finalizedAt + ABANDON_DELAY;
+                if (block.timestamp < abandonAt) revert SplitNotRecorded(seriesId, bidder);
+
+                lock.status = LockStatus.Finalized;
+                state.totalLocked -= lockedAmount;
+                _withdrawFromCompact(lockedAmount);
+                $.paymentToken.safeTransfer(bidder, lockedAmount);
+                emit FundsRefunded(bytes32(0), seriesId, bidder, lockedAmount);
+                return;
+            }
 
             uint128 refundAmount = lock.failedRefund;
             uint128 vaultOwed = lockedAmount - refundAmount;

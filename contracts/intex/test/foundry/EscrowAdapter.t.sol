@@ -280,6 +280,61 @@ contract EscrowAdapterTest is Test {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized));
     }
 
+    // --- post-finalize abandon refund for omitted/mismatched bidders ---
+
+    // Finalize the series settling bidder2 only; bidder1 is omitted, left Locked with no split.
+    function _finalizeOmittingBidder1() internal {
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder2, LOCK_AMOUNT);
+
+        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
+        instructions[0] =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        vm.prank(bridger);
+        escrow.finalizeAuction(seriesId1, GUID, instructions);
+    }
+
+    function test_OmittedBidder_RevertsBeforeAbandon() public {
+        _finalizeOmittingBidder1();
+        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, seriesId1, bidder1));
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
+    function test_OmittedBidder_RecoversAfterAbandon() public {
+        _finalizeOmittingBidder1();
+        uint256 balBefore = paymentToken.balanceOf(bidder1);
+
+        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        escrow.claimRefund(seriesId1, bidder1); // permissionless
+
+        assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
+        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId1, bidder1);
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized), "lock finalized");
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        assertEq(totalLocked, 0, "totalLocked cleared (bidder2 refunded at finalize, bidder1 at abandon)");
+
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
+    function test_RetryFinalizePreemptsAbandon() public {
+        _finalizeOmittingBidder1();
+
+        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
+        IEscrowAdapter.FinalizationInstruction memory inst =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        vm.prank(bridger);
+        escrow.retryFinalize(seriesId1, GUID, inst);
+
+        // bidder1 settled -> abandon path can never fire.
+        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
     function test_FinalizeAuction_FullClaim() public {
         // Lock funds
         vm.prank(auction);
