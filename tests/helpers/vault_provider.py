@@ -49,7 +49,7 @@ def setup_vault_provider(provider, vault, owner):
 
 
 def deploy_local_stack(owner):
-    asset = owner.deploy(vault_contract("ERC20Mock"), 18, **tx_kwargs())
+    asset = owner.deploy(vault_contract("ERC20Mock"), **tx_kwargs())
     vault = owner.deploy(vault_contract("ERC4626Mock"), asset.address, **tx_kwargs())
     provider = deploy_vault_provider(owner)
     setup_vault_provider(provider, vault, owner)
