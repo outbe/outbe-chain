@@ -1,5 +1,3 @@
-use alloy_primitives::Address;
-
 pub const NATIVE_TOKEN: &str = "COEN";
 pub const STABLECOIN: &str = "0xUSD";
 

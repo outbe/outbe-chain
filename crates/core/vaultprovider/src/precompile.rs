@@ -41,7 +41,6 @@ pub fn dispatch(
                 assetAt(c) => view(c, |c| {
                     let contract = VaultProviderContract::new(storage.clone());
                     set_at(&contract.assets, c.index)
-
                 }),
                 assetVaultsCount(c) => view(c, |c| {
                     let contract = VaultProviderContract::new(storage.clone());

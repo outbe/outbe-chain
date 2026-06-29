@@ -185,24 +185,28 @@ pub fn remove_liquidity_target(
 // liquidity flow
 // ---------------------------------------------------------------------------
 
-/// Resolves the `LiquiditySource` registered for `caller`, returning `Unknown` 
+/// Resolves the `LiquiditySource` registered for `caller`, returning `Unknown`
 /// when `caller` is not a registered source.
 pub fn registered_liquidity_source(
     storage: &StorageHandle<'_>,
     caller: Address,
 ) -> Result<IVaultProvider::LiquiditySource> {
     let contract = VaultProviderContract::new(storage.clone());
-    Ok(liquidity_source(contract.liquidity_source_types.read(&caller)?))
+    Ok(liquidity_source(
+        contract.liquidity_source_types.read(&caller)?,
+    ))
 }
 
-/// Resolves the `LiquidityTarget` registered for `caller`, returning `Unknown` 
+/// Resolves the `LiquidityTarget` registered for `caller`, returning `Unknown`
 /// when `caller` is not a registered target.
 pub fn registered_liquidity_target(
     storage: &StorageHandle<'_>,
     caller: Address,
 ) -> Result<IVaultProvider::LiquidityTarget> {
     let contract = VaultProviderContract::new(storage.clone());
-    Ok(liquidity_target(contract.liquidity_target_types.read(&caller)?))
+    Ok(liquidity_target(
+        contract.liquidity_target_types.read(&caller)?,
+    ))
 }
 
 /// `depositLiquidity`: pulls `amount` of `asset` from the caller and deposits it
