@@ -285,7 +285,7 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        uint256 vaultBalanceBefore = paymentToken.balanceOf(address(mockVault));
+        uint256 relayerBalanceBefore = paymentToken.balanceOf(bridger);
 
         // Finalize with full claim (winning bid)
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -296,10 +296,11 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(GUID, seriesId1, 0, LOCK_AMOUNT, 1);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        uint128 routed = escrow.finalizeAuction(seriesId1, GUID, instructions);
 
-        // Check vault received funds
-        assertEq(paymentToken.balanceOf(address(mockVault)), vaultBalanceBefore + LOCK_AMOUNT);
+        // Proceeds handed to the caller (messenger) for cross-chain routing, not the vault.
+        assertEq(routed, LOCK_AMOUNT);
+        assertEq(paymentToken.balanceOf(bridger), relayerBalanceBefore + LOCK_AMOUNT);
 
         // Check accounting cleared
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
@@ -313,7 +314,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
-        uint256 vaultBalanceBefore = paymentToken.balanceOf(address(mockVault));
+        uint256 relayerBalanceBefore = paymentToken.balanceOf(bridger);
         uint128 refundedAmount = LOCK_AMOUNT * 30 / 100; // 30% refund
         uint128 paidAmount = LOCK_AMOUNT - refundedAmount; // 70% claim
 
@@ -329,9 +330,9 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, GUID, instructions);
 
-        // Check balances
+        // Bidder refunded their portion; proceeds handed to the caller, not the vault.
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
-        assertEq(paymentToken.balanceOf(address(mockVault)), vaultBalanceBefore + paidAmount);
+        assertEq(paymentToken.balanceOf(bridger), relayerBalanceBefore + paidAmount);
     }
 
     function test_FinalizeAuction_MultipleBidders() public {
@@ -616,15 +617,22 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
+        IEscrowAdapter.FinalizationInstruction memory inst =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
 
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsClaimed(GUID, seriesId1, bidder1, LOCK_AMOUNT);
-
+        // Strand the winner at finalize (Compact withdrawal fails), leaving a valid split.
+        compact.setForcedWithdrawalShouldFail(true);
+        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
+        instructions[0] = inst;
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, GUID, instructions);
+
+        // Recover; retryFinalize settles the stranded proceeds to the vault and emits FundsClaimed.
+        compact.setForcedWithdrawalShouldFail(false);
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.FundsClaimed(GUID, seriesId1, bidder1, LOCK_AMOUNT);
+        vm.prank(bridger);
+        escrow.retryFinalize(seriesId1, GUID, inst);
     }
 
     function test_Events_AuctionEscrowFinalized() public {
@@ -783,7 +791,8 @@ contract EscrowAdapterTest is Test {
         uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
         uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
-        provider.setRevertOnDeposit(true); // payout deposit fails, but the split is valid
+        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
+        compact.setForcedWithdrawalShouldFail(true);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
@@ -793,10 +802,12 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(seriesId1, GUID, instructions);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
 
+        // Withdrawal recovers, but the vault is still down at claim time → remainder parked.
+        compact.setForcedWithdrawalShouldFail(false);
+        provider.setRevertOnDeposit(true);
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
 
-        // Vault is still down, so the in-claim settle fails and the remainder is parked.
         vm.expectEmit(true, true, false, true, address(escrow));
         emit IEscrowAdapter.VaultOwedUnsettled(seriesId1, bidder1, paidPortion);
         escrow.claimRefund(seriesId1, bidder1);
@@ -819,7 +830,8 @@ contract EscrowAdapterTest is Test {
         uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
         uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
-        provider.setRevertOnDeposit(true); // payout deposit fails during finalize
+        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
+        compact.setForcedWithdrawalShouldFail(true);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
@@ -828,8 +840,8 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, GUID, instructions);
 
-        // Vault recovers before the bidder claims.
-        provider.setRevertOnDeposit(false);
+        // Withdrawal recovers; the vault is healthy when the bidder claims.
+        compact.setForcedWithdrawalShouldFail(false);
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
         uint256 vaultBefore = paymentToken.balanceOf(address(mockVault));
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
@@ -856,7 +868,8 @@ contract EscrowAdapterTest is Test {
         uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
         uint128 paidPortion = LOCK_AMOUNT - refundPortion;
 
-        provider.setRevertOnDeposit(true);
+        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
+        compact.setForcedWithdrawalShouldFail(true);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
@@ -865,8 +878,11 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, GUID, instructions);
 
+        // Withdrawal recovers, but the vault is still down → claimRefund parks the remainder.
+        compact.setForcedWithdrawalShouldFail(false);
+        provider.setRevertOnDeposit(true);
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
-        escrow.claimRefund(seriesId1, bidder1); // parks the remainder (vault still down)
+        escrow.claimRefund(seriesId1, bidder1);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.RefundClaimed));
 
         // Vault recovers; a random caller (not the bidder, not the relayer) settles the remainder.
@@ -1047,11 +1063,9 @@ contract EscrowAdapterTest is Test {
         instructions[1] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
 
-        // All three events must carry `packet` as the indexed guid (topic1).
+        // Both finalize events must carry `packet` as the indexed guid (topic1).
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.FundsRefunded(packet, seriesId1, bidder1, LOCK_AMOUNT);
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsClaimed(packet, seriesId1, bidder2, LOCK_AMOUNT);
         vm.expectEmit(true, true, false, true);
         emit IEscrowAdapter.AuctionEscrowFinalized(packet, seriesId1, LOCK_AMOUNT, LOCK_AMOUNT, 2);
 

@@ -125,7 +125,7 @@ contract EscrowAdapter is
 
     /// @notice Active payment token used for bid escrow.
     /// @return The wired payment token.
-    function paymentToken() external view returns (IERC20) {
+    function paymentToken() external view override returns (IERC20) {
         return _s().paymentToken;
     }
 
@@ -295,6 +295,7 @@ contract EscrowAdapter is
         override
         onlyRole(RELAYER_ROLE)
         nonReentrant
+        returns (uint128 totalPaid)
     {
         EscrowAdapterStorage storage $ = _s();
         if ($.auctionEscrowState[seriesId].finalized) {
@@ -308,7 +309,6 @@ contract EscrowAdapter is
         $.auctionEscrowState[seriesId].finalizedAt = uint32(block.timestamp);
 
         uint128 totalRefunded = 0;
-        uint128 totalPaid = 0;
         uint32 bidsProcessed = 0;
         uint32 bidsSettled = 0;
 
@@ -342,6 +342,11 @@ contract EscrowAdapter is
         emit AuctionEscrowFinalized(guid, seriesId, totalRefunded, totalPaid, bidsProcessed);
         // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
         if (bidsSettled == 0) emit FinalizationNoOp(seriesId, bidsProcessed);
+
+        // Hand proceeds to the caller (TargetMessenger) for cross-chain routing to the creators.
+        if (totalPaid > 0) {
+            $.paymentToken.safeTransfer(msg.sender, totalPaid);
+        }
     }
 
     /// @notice Self-call helper for `finalizeAuction`'s per-bidder try/catch. Reverts on any
@@ -366,6 +371,15 @@ contract EscrowAdapter is
             revert NotFinalizedYet(seriesId);
         }
         _processFinalizationInstruction(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
+
+        // Stranded recovery: series already routed on Outbe, settle residual to the vault.
+        if (inst.paidAmount > 0) {
+            EscrowAdapterStorage storage $ = _s();
+            $.paymentToken.forceApprove(address($.vaultProvider), inst.paidAmount);
+            $.vaultProvider.depositLiquidity(address($.paymentToken), inst.paidAmount);
+            emit FundsClaimed(guid, seriesId, inst.bidder, inst.paidAmount);
+        }
+
         emit BidderRetried(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
     }
 
@@ -548,13 +562,13 @@ contract EscrowAdapter is
     }
 
     /// @notice Process a single finalization instruction: validate the split, mark the lock
-    ///         `Finalized`, refund the bidder, and route the paid portion to the vault.
+    ///         `Finalized`, refund the bidder, and collect the paid portion for the caller to route.
     /// @dev Reverts `AmountMismatch` when `refundedAmount + paidAmount != lockedAmount`.
     /// @param guid Inbound LZ packet GUID threaded into the emitted refund/payout events.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address.
     /// @param refundedAmount Amount to refund to the bidder.
-    /// @param paidAmount Amount paid out to the vault.
+    /// @param paidAmount Auction proceeds left in this contract for the caller to route.
     function _processFinalizationInstruction(
         bytes32 guid,
         uint32 seriesId,
@@ -588,12 +602,7 @@ contract EscrowAdapter is
             emit FundsRefunded(guid, seriesId, bidder, refundedAmount);
         }
 
-        if (paidAmount > 0) {
-            // Route through outbe-vault provider; shares accrue on the provider, not here.
-            $.paymentToken.forceApprove(address($.vaultProvider), paidAmount);
-            $.vaultProvider.depositLiquidity(address($.paymentToken), paidAmount);
-            emit FundsClaimed(guid, seriesId, bidder, paidAmount);
-        }
+        // Paid portion stays in this contract; the caller routes it.
     }
 
     /// @notice Withdraw tokens from The Compact via forced withdrawal.
