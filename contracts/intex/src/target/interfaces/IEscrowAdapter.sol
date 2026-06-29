@@ -135,7 +135,11 @@ interface IEscrowAdapter {
     /// @param refundedAmount Amount refunded to the bidder on retry.
     /// @param paidAmount Amount paid out to the vault on retry.
     event BidderRetried(
-        bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 refundedAmount, uint128 paidAmount
+        bytes32 indexed guid,
+        uint32 indexed seriesId,
+        address indexed bidder,
+        uint128 refundedAmount,
+        uint128 paidAmount
     );
 
     /// @notice Emitted when a post-finalize `claimRefund` refunds the failed bidder their refund
@@ -211,12 +215,6 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose lock was targeted.
     error NoPendingVaultOwed(uint32 seriesId, address bidder);
-
-    // --- Class descriptor ---
-
-    /// @notice ISO 4217 numeric alias of the payment-token class (43 = COEN). Descriptor only.
-    /// @return The ISO 4217 numeric class alias of the payment token.
-    function PAYMENT_TOKEN_ALIAS() external view returns (uint16);
 
     // --- Admin ---
 

@@ -71,7 +71,7 @@ contract UpgradeDrillTest is TestHelperOz5 {
         _assertUpgraded(address(nft), address(newImpl));
         assertEq(nft.balanceOf(holder, 7), 3, "balance lost");
         assertEq(nft.totalSupply(7), 3, "supply lost");
-        (,,,,,,,, uint32 issuedAt,,, , IIntexNFT1155.IntexState state) = nft.seriesData(7);
+        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) = nft.seriesData(7);
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");

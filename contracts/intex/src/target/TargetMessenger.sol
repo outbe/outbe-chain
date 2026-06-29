@@ -523,23 +523,24 @@ contract TargetMessenger is
         TargetMessengerStorage storage $ = _s();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        $.intex.createSeries(
-            IIntexNFT1155.CreateSeriesParams({
-                seriesId: payload.seriesId,
-                issuanceCurrency: payload.issuanceCurrency,
-                referenceCurrency: payload.referenceCurrency,
-                issuedIntexCount: payload.issuedIntexCount,
-                promisLoadMinor: payload.promisLoadMinor,
-                entryPriceMinor: payload.entryPriceMinor,
-                floorPriceMinor: payload.floorPriceMinor,
-                callPriceMinor: payload.callPriceMinor,
-                callTrigger: IIntexNFT1155.IntexCallTrigger({
-                    windowDays: payload.callWindowDays,
-                    thresholdDays: payload.callThresholdDays,
-                    intexCallPeriod: payload.intexCallPeriod
+        $.intex
+            .createSeries(
+                IIntexNFT1155.CreateSeriesParams({
+                    seriesId: payload.seriesId,
+                    issuanceCurrency: payload.issuanceCurrency,
+                    referenceCurrency: payload.referenceCurrency,
+                    issuedIntexCount: payload.issuedIntexCount,
+                    promisLoadMinor: payload.promisLoadMinor,
+                    entryPriceMinor: payload.entryPriceMinor,
+                    floorPriceMinor: payload.floorPriceMinor,
+                    callPriceMinor: payload.callPriceMinor,
+                    callTrigger: IIntexNFT1155.IntexCallTrigger({
+                        windowDays: payload.callWindowDays,
+                        thresholdDays: payload.callThresholdDays,
+                        intexCallPeriod: payload.intexCallPeriod
+                    })
                 })
-            })
-        );
+            );
         $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
 
         emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
