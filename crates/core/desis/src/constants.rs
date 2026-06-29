@@ -17,7 +17,7 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 /// Promis load: 100k Promis per 1 Intex (scaled to 18-dec minor on the wire as `promis_load_minor`).
 pub const PROMIS_LOAD: u128 = 100_000;
 
-/// Fixed-point scale for bid rates: 1_000_000 = 100% of strike. Must match the
+/// Fixed-point scale for bid rates: 1_000_000 = 100% of the escrow basis. Must match the
 /// target chain (`BridgeMsgCodec` / `IntexAuction`).
 pub const RATE_SCALE: u32 = 1_000_000;
 

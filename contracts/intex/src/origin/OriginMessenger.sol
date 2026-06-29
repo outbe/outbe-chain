@@ -264,7 +264,6 @@ contract OriginMessenger is
         payload.seriesId = p.seriesId;
         payload.issuedIntexCount = p.issuedIntexCount;
         payload.promisLoadMinor = p.promisLoadMinor;
-        payload.costAmountMinor = p.costAmountMinor;
         payload.entryPriceMinor = p.entryPriceMinor;
         payload.floorPriceMinor = p.floorPriceMinor;
         payload.intexCallPeriod = p.intexCallPeriod;
