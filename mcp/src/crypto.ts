@@ -11,11 +11,19 @@ import { bytesToBigInt } from "viem";
  * in scripts/tribute_offer.py:
  *
  *   ephemeral X25519 ECDHE
- *   -> HKDF-SHA256(salt = [0x03; 32], info = "tribute-factory-encryption")
+ *   -> HKDF-SHA256(salt = OFFER_HKDF_SALT, info = "tribute-factory-encryption")
  *   -> ChaCha20Poly1305 (empty AAD), 12-byte nonce.
+ *
+ * OFFER_HKDF_SALT is the fixed protocol constant outbe_tee::OFFER_HKDF_SALT:
+ * ASCII "outbe/tribute/offer-salt/v1", zero-padded to 32 bytes (see
+ * crates/system/tee/src/lib.rs and bin/outbe-tee-enclave/src/keys.rs).
  */
 
-const OFFER_SALT = new Uint8Array(32).fill(0x03);
+const OFFER_SALT = (() => {
+  const s = new Uint8Array(32);
+  s.set(new TextEncoder().encode("outbe/tribute/offer-salt/v1"));
+  return s;
+})();
 const HKDF_INFO = new TextEncoder().encode("tribute-factory-encryption");
 
 export interface EncryptedOffer {

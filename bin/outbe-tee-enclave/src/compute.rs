@@ -115,23 +115,28 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// `tribute_id = Poseidon(owner, worldwide_day, draft_id)` — BN254/circom,
-/// computed inside the enclave from the decrypted draft id. This is OUR tribute
-/// id, distinct from the wallet's tribute-DRAFT id (`draft_id` itself).
+/// `tribute_id = Poseidon(owner, worldwide_day)` — BN254/circom, computed inside
+/// the enclave. The id is deterministic in `(owner, worldwide_day)` ALONE: this
+/// is what enforces the one-tribute-per-owner-per-day invariant. A second offer
+/// for the same owner and day recomputes the same id, so the host's
+/// `get_tribute(id).is_some()` check rejects it (`TributeAlreadyExists`). The
+/// `tribute_draft_id` is still validated (must be 32-byte hex) but intentionally
+/// NOT mixed into the id — mixing it in made the id per-offer-unique and silently
+/// allowed duplicate tributes per owner per day.
 ///
 /// Field-element encoding (each reduced mod the BN254 order by `poseidon_hash`):
 /// - `owner`: address left-padded to 32 bytes;
-/// - `worldwide_day`: `u32` as 32-byte big-endian;
-/// - `draft_id`: the 32-byte `tribute_draft_id` value.
+/// - `worldwide_day`: `u32` as 32-byte big-endian.
 pub fn compute_token_id(
     owner: Address,
     worldwide_day: u32,
     draft_id: &str,
 ) -> Result<B256, String> {
-    let mut buf = Vec::with_capacity(96);
+    // Validate the draft id (reject malformed input) but keep it out of the hash.
+    parse_draft_id(draft_id)?;
+    let mut buf = Vec::with_capacity(64);
     buf.extend_from_slice(owner.into_word().as_slice());
     buf.extend_from_slice(&U256::from(worldwide_day).to_be_bytes::<32>());
-    buf.extend_from_slice(&parse_draft_id(draft_id)?);
     Ok(B256::from(poseidon_hash(&buf)?))
 }
 
@@ -294,7 +299,9 @@ mod tests {
         assert_eq!(base, compute_token_id(a, 20250115, DRAFT_A).unwrap());
         assert_ne!(base, compute_token_id(b, 20250115, DRAFT_A).unwrap()); // owner
         assert_ne!(base, compute_token_id(a, 20250116, DRAFT_A).unwrap()); // day
-        assert_ne!(base, compute_token_id(a, 20250115, DRAFT_B).unwrap()); // draft_id
+                                                                           // draft_id is deliberately NOT bound into the id — same owner+day yields the
+                                                                           // same id regardless of draft, which is what enforces one-per-owner-per-day.
+        assert_eq!(base, compute_token_id(a, 20250115, DRAFT_B).unwrap()); // draft_id ignored
     }
 
     #[test]
