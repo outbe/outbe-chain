@@ -27,6 +27,9 @@ impl BlockLifecycle for IntexLifecycle {
     }
 }
 
+/// Max series visited per begin-block qualify scan; the cursor resumes the rest next block.
+pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
+
 /// Returns the number of series promoted Issued -> Qualified this block.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
@@ -54,11 +57,24 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
 
     let mut promoted: u32 = 0;
-    let mut cursor: u32 = 0;
+    // Cap per-block work and resume next block from a persisted bin cursor (OIP-00151): the scan
+    // no longer scales with the active-series population. A series qualifies within one full sweep
+    // (bounded lag); the resulting state is unchanged. Whole bins are processed atomically, so the
+    // cursor is bin-granular (no within-bin index that removal-shifts could desync).
+    let mut processed: u32 = 0;
+    let mut cursor: u32 = factory.qualify_scan_cursor.read()?;
     loop {
+        if processed >= MAX_SERIES_PER_BLOCK {
+            factory.qualify_scan_cursor.write(cursor)?;
+            break;
+        }
         let next = match tree_math::find_first_left_inclusive(&factory, cursor)? {
             Some(b) if b <= r_bin => b,
-            _ => break,
+            _ => {
+                // End of the eligible range: next block starts a fresh sweep from the bottom.
+                factory.qualify_scan_cursor.write(0)?;
+                break;
+            }
         };
 
         // Snapshot the bin before mutating: qualify() removes on success.
@@ -93,10 +109,15 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
                 }
             }
         }
+        processed = processed.saturating_add(count);
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
-            _ => break,
+            _ => {
+                // Reached the top bin: wrap to a fresh sweep next block.
+                factory.qualify_scan_cursor.write(0)?;
+                break;
+            }
         };
     }
     Ok(promoted)

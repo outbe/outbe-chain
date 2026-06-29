@@ -886,6 +886,67 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
     });
 }
 
+#[test]
+fn scan_caps_work_per_block_and_resumes_via_cursor() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair_hash = B256::repeat_byte(0x11);
+        oracle
+            .settlement_iso_to_pair
+            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
+            .unwrap();
+        // Rate well above both floors so both bins are eligible.
+        oracle
+            .exchange_rate
+            .write(&pair_hash, U256::from(EXPECTED_FLOOR) * U256::from(1000))
+            .unwrap();
+
+        // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
+        // Bogus ids (no series record) are per-series skipped but still count toward the cap.
+        let cap = qualified::MAX_SERIES_PER_BLOCK;
+        let f1 = U256::from(EXPECTED_FLOOR);
+        let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
+        {
+            let mut factory = IntexFactoryContract::new(s.clone());
+            for id in 1..=cap {
+                factory.insert_unqualified(id, f1).unwrap();
+            }
+            for id in 1001..=1005u32 {
+                factory.insert_unqualified(id, f2).unwrap();
+            }
+        }
+        let bin2 = IntexFactoryContract::price_to_bin(f2).unwrap();
+
+        let ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, ts, CHAIN_ID), s.clone());
+
+        // Block 1 caps after the first (cap-sized) bin; the second bin is deferred.
+        qualified::scan_and_qualify(&ctx).unwrap();
+        let cursor1 = IntexFactoryContract::new(s.clone())
+            .qualify_scan_cursor
+            .read()
+            .unwrap();
+        assert!(cursor1 > 0, "cursor advanced past the capped bin");
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .unqualified_bin_count
+                .read(&bin2)
+                .unwrap(),
+            5,
+            "second bin untouched in block 1"
+        );
+
+        // Block 2 resumes at the second bin and wraps the cursor to 0.
+        qualified::scan_and_qualify(&ctx).unwrap();
+        let cursor2 = IntexFactoryContract::new(s.clone())
+            .qualify_scan_cursor
+            .read()
+            .unwrap();
+        assert_eq!(cursor2, 0, "cursor wrapped after a full sweep");
+    });
+}
+
 // ---------------------------------------------------------------------
 // Genesis parameter profile: prod by default, dev when selected
 // ---------------------------------------------------------------------
