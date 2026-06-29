@@ -1,6 +1,6 @@
 import { ethers, Provider, JsonRpcProvider } from 'ethers';
-import { ERC20__factory, LayerZeroRouter__factory } from '../typechain';
-import type { LayerZeroRouter } from '../typechain';
+import { ERC20__factory, Router__factory } from '../typechain';
+import type { Router } from '../typechain';
 import { chains, ROUTER } from '../config';
 import * as OrderEncoder from './OrderEncoder';
 
@@ -101,12 +101,12 @@ export function sleep(ms: number): Promise<void> {
  * No event scanning needed — works regardless of block depth.
  *
  * @param orderId The order ID to look up
- * @param router LayerZeroRouter contract instance (connected to origin chain)
+ * @param router Router contract instance (connected to origin chain)
  * @returns { originData, orderData } — raw bytes and decoded OrderData
  */
 export async function getOrderData(
   orderId: string,
-  router: LayerZeroRouter
+  router: Router
 ): Promise<{ originData: string; orderData: OrderEncoder.OrderData }> {
   const raw = await router.openOrders(orderId);
   if (!raw || raw === '0x') {

@@ -1,6 +1,6 @@
 import { ethers, JsonRpcProvider, formatUnits } from 'ethers';
 import { chains, ROUTER, privateKey } from '../config';
-import { LayerZeroRouter__factory, Auction__factory } from '../typechain';
+import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 import Table from 'cli-table3';
 
@@ -24,7 +24,7 @@ async function main() {
 
   const chain = chains[chainName];
   const provider = new JsonRpcProvider(chain.rpc);
-  const router = LayerZeroRouter__factory.connect(ROUTER, provider);
+  const router = Router__factory.connect(ROUTER, provider);
 
   // Read order data from on-chain storage
   const { orderData } = await getOrderData(orderIdHex, router);
@@ -32,7 +32,7 @@ async function main() {
   // Destination chain
   const destProvider = getProviderByDomain(orderData.destinationDomain);
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   const inputTokenAddress = ethers.toBeHex(orderData.inputToken);
   const outputTokenAddress = ethers.toBeHex(orderData.outputToken);

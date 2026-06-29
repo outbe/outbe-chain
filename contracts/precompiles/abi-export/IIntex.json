@@ -45,9 +45,9 @@
             "internalType": "uint256"
           },
           {
-            "name": "costAmountMinor",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "floorPriceMinor",

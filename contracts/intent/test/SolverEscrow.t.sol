@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 import {Scope} from "the-compact/src/types/Scope.sol";
 
@@ -32,7 +33,7 @@ contract SolverEscrowTest is Test {
     function setUp() public {
         solver = makeAddr("solver");
         authorizedCaller = makeAddr("authorizedCaller");
-        token = new ERC20("Test Token", "TT");
+        token = new MockERC20("Test Token", "TT");
 
         // Deploy stack: Compact → Allocator → Escrow → wire arbiter
         compact = new MockTheCompact();
