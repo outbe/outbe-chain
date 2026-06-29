@@ -16,6 +16,7 @@ outbe-lysis.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+smlang.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

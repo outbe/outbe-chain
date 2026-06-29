@@ -243,6 +243,12 @@ snow = "0.9"
 # Config
 toml = "0.8"
 
+# State machine (WorldwideDay lifecycle + Metadosis settlement): no_std, fallible
+# guards/actions returning the domain `PrecompileError`, lifetime-bound context
+# (the `StorageHandle<'storage>` lives directly in the machine context — no unsafe,
+# no thread-local), and `new_with_state` resume from a stored u8 status.
+smlang = "0.8"
+
 # Testing
 tempfile = "3"
 proptest = "1"

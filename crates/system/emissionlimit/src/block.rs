@@ -47,7 +47,7 @@ pub fn dispatch_terminal_remainder_at(
     let mut terminal_block = ctx.block.clone();
     terminal_block.timestamp = timestamp;
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused = outbe_metadosis::emission_sink::apply(&terminal_ctx, amount)?;
+    let unused = outbe_metadosis::daily_accumulation::apply(&terminal_ctx, amount)?;
     if !unused.is_zero() {
         return Err(PrecompileError::Revert(
             "terminal emission sink returned unused amount".into(),

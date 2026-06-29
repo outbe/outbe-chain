@@ -1,10 +1,18 @@
+//! Daily accumulation — the Metadosis side of the daily emission-limit handoff.
+//!
+//! `outbe_emissionlimit` (`crates/system/emissionlimit/src/block.rs`) computes the
+//! terminal daily metadosis-limit allocation and hands the amount here via
+//! [`apply`]; this module ensures the day exists and records the amount into
+//! Metadosis-owned state. It does not compute the allocation — only persists it
+//! (via `set_metadosis_limit`) and emits `MetadosisAccumulation`.
+
 use crate::runtime::create_worldwide_day_for_date;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::precompile::IMetadosis;
-use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
+use crate::schema::MetadosisContract;
 
 /// Writes the terminal emission allocation into Metadosis-owned state.
 pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
@@ -12,11 +20,7 @@ pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
 
     let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
     create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
-    metadosis
-        .worldwide_days
-        .entry(wwd)
-        .metadosis_limit_amount()
-        .write(amount)?;
+    metadosis.set_metadosis_limit(wwd, amount)?;
 
     metadosis.emit(IMetadosis::MetadosisAccumulation {
         date: wwd.value(),

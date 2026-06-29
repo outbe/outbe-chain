@@ -8,7 +8,7 @@ This crate exists so broad integration scenarios do not force feature/test-only 
 
 ### `tests/wwd_lysis_nod_gratis.rs`
 
-One lifecycle-driven scenario covers two WWDs in sequence. Each tick runs the full Outbe pre-execution hook chain (`outbe_evm::executor::run_outbe_pre_execution_hooks`) in the same order as `OutbeBlockExecutor::apply_pre_execution_changes`: genesis validation (skipped), `EmissionLimitLifecycle`, validator-set epoch boundary, `MetadosisLifecycle`, staking unbonding, and `OracleLifecycle` tally/S-curve processing. Oracle slash-window penalties run after begin-zone system phases and before user transactions. Day-metadosis-limit is additionally pumped via an explicit `outbe_metadosis::emission_sink::apply` call per day so the tributes are funded deterministically. User mining goes through `outbe_nod::precompile::dispatch`.
+One lifecycle-driven scenario covers two WWDs in sequence. Each tick runs the full Outbe pre-execution hook chain (`outbe_evm::executor::run_outbe_pre_execution_hooks`) in the same order as `OutbeBlockExecutor::apply_pre_execution_changes`: genesis validation (skipped), `EmissionLimitLifecycle`, validator-set epoch boundary, `MetadosisLifecycle`, staking unbonding, and `OracleLifecycle` tally/S-curve processing. Oracle slash-window penalties run after begin-zone system phases and before user transactions. Day-metadosis-limit is additionally pumped via an explicit `outbe_metadosis::daily_accumulation::apply` call per day so the tributes are funded deterministically. User mining goes through `outbe_nod::precompile::dispatch`.
 
 1. **GREEN WWD**
    - pre-seed previous-day and current-day VWAP snapshots (so `day_type` is inferred, not set by hand);
@@ -36,7 +36,7 @@ through the production block-lifecycle entry point and the production NOD precom
 ## What this test does NOT cover
 
 - NOD payment settlement uses the noop hook (`settle_mine_payment_noop(...)`); no cost-of-gratis balance movement is asserted.
-- An explicit `metadosis::emission_sink::apply(...)` call per day on top of `EmissionLimitLifecycle`'s per-block emission — day limits are large enough to fund the test's tributes deterministically; the full emission schedule path is not exercised end-to-end.
+- An explicit `metadosis::daily_accumulation::apply(...)` call per day on top of `EmissionLimitLifecycle`'s per-block emission — day limits are large enough to fund the test's tributes deterministically; the full emission schedule path is not exercised end-to-end.
 - No validator set / staking / oracle vote population is seeded, so the epoch-boundary branch, `process_unbonding`, and oracle tally/slash paths all no-op on empty state rather than asserting positive behavior.
 - Reth payload building, state-root computation, and txpool admission (only the pre-execution hook phase runs, not the full `OutbeBlockExecutor`).
 

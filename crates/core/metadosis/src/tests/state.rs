@@ -48,41 +48,24 @@ fn test_create_worldwide_day() {
 }
 
 #[test]
-fn test_wwd_status_transitions() {
+fn test_wwd_settlement_transitions() {
     with_contract(|m| {
         let wwd = WwdKey::new(20241220);
-        let start = 1000u64;
-        m.create_worldwide_day(wwd, start, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+        m.create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+            .unwrap();
+        m.worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::READY)
             .unwrap();
 
-        let forming_end = start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
-        let offering_end = lookback_end + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let scheduled = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
-
-        assert_eq!(
-            m.update_wwd_status(wwd, start + 100).unwrap(),
-            status::FORMING
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, forming_end).unwrap(),
-            status::LOOKBACK_DELAY
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, lookback_end).unwrap(),
-            status::OFFERING
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, offering_end).unwrap(),
-            status::WAITING
-        );
-        assert_eq!(m.update_wwd_status(wwd, scheduled).unwrap(), status::READY);
-
+        // The clock time-phase ladder is covered by
+        // `worldwideday::tests::time_phase_ladder`; here we exercise the settlement
+        // transitions, which now route their writes through `write_status`.
+        m.mark_wwd_in_progress(wwd).unwrap();
+        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::IN_PROGRESS);
         m.mark_wwd_completed(wwd).unwrap();
-        assert_eq!(
-            m.update_wwd_status(wwd, scheduled + 999999).unwrap(),
-            status::COMPLETED
-        );
+        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
     });
 }
 
@@ -152,94 +135,6 @@ fn test_active_wwd_add_remove() {
         m.remove_active_wwd(WwdKey::new(20241218)).unwrap();
         m.remove_active_wwd(WwdKey::new(20241220)).unwrap();
         assert!(m.active_wwd.read_all().unwrap().is_empty());
-    });
-}
-
-#[test]
-fn test_calculate_metadosis_green_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type::GREEN)
-            .unwrap();
-
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
-
-        let calc = m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .unwrap();
-
-        // SYMBOLIC_RATE = 32, GREEN day:
-        //   demand     = 10_000 * 32 / 100 = 3_200
-        //   limit      = day_limit         = 5_000
-        //   allocation = min(demand, limit) = 3_200
-        //   remainder  = day_limit - allocation = 1_800
-        assert_eq!(calc.gratis_allocation, U256::from(3_200u64));
-        assert_eq!(calc.metadosis_limit_remainder, U256::from(1_800u64));
-    });
-}
-
-#[test]
-fn test_calculate_metadosis_red_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type::RED)
-            .unwrap();
-
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
-
-        let calc = m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .unwrap();
-        let (allocation, remainder) = (calc.gratis_allocation, calc.metadosis_limit_remainder);
-
-        // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
-        //   demand     = 10_000 * 32 / 100 / 8 = 400
-        //   limit      = day_limit / 8         = 625
-        //   allocation = min(demand, limit)     = 400
-        //   remainder  = day_limit - allocation = 4_600
-        assert_eq!(allocation, U256::from(400u64));
-        assert_eq!(remainder, U256::from(4_600u64));
-    });
-}
-
-#[test]
-fn test_calculate_metadosis_unknown_day_type_errors() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        assert_eq!(
-            m.worldwide_days.entry(wwd).day_type().read().unwrap(),
-            day_type::UNKNOWN
-        );
-
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
-
-        assert!(m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .is_err());
     });
 }
 
@@ -333,7 +228,7 @@ fn test_mark_completed_rejects_already_failed_day() {
 fn test_mark_completed_allows_ready() {
     with_contract(|m| {
         let wwd = WwdKey::new(20260103);
-        setup_wwd_at_status(m, wwd, status::READY);
+        setup_wwd_at_status(m, wwd, status::IN_PROGRESS);
         m.mark_wwd_completed(wwd).unwrap();
         assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
     });
@@ -398,7 +293,7 @@ fn test_mark_terminal_retires_and_is_idempotent() {
         m.worldwide_days
             .entry(wwd)
             .status()
-            .write(status::READY)
+            .write(status::IN_PROGRESS)
             .unwrap();
         m.mark_wwd_completed(wwd).unwrap();
 
@@ -443,7 +338,7 @@ fn test_terminal_records_capped_oldest_evicted() {
             m.worldwide_days
                 .entry(wwd)
                 .status()
-                .write(status::READY)
+                .write(status::IN_PROGRESS)
                 .unwrap();
             m.mark_wwd_completed(wwd).unwrap();
         }

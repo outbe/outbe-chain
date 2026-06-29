@@ -34,7 +34,7 @@
 //!     stubs all sub-calls via `enable_sub_call_stub()`. The miner's balance
 //!     is not debited and no real vault deposit occurs — vault-side wiring
 //!     is covered separately.
-//!   - An explicit `metadosis::emission_sink::apply(...)` call per day on top
+//!   - An explicit `metadosis::daily_accumulation::apply(...)` call per day on top
 //!     of `EmissionLimitLifecycle`'s per-block emission, so day limits are
 //!     large enough to fund the test tributes deterministically. Exercising
 //!     the full emission schedule end-to-end is out of scope here.
@@ -50,7 +50,7 @@ use outbe_metadosis::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
         WAITING_PERIOD_HOURS,
     },
-    emission_sink,
+    daily_accumulation,
     runtime::date_key_to_timestamp,
     schema::{day_type, status, MetadosisContract},
 };
@@ -106,7 +106,7 @@ fn phases_for(wwd: WorldwideDay) -> WwdPhases {
 }
 
 /// Timestamp inside the WWD's FORMING window whose UTC date equals the WWD key.
-/// `emission_sink::apply(ctx, amount)` keys by `timestamp_to_date_key(ctx.timestamp)` (UTC),
+/// `daily_accumulation::apply(ctx, amount)` keys by `timestamp_to_date_key(ctx.timestamp)` (UTC),
 /// while `process_metadosis(wwd)` reads by UTC+14 WWD; using this timestamp keeps both aligned.
 fn emission_timestamp(wwd: WorldwideDay) -> u64 {
     date_key_to_timestamp(u32::from(wwd)) + SECONDS_PER_HOUR
@@ -144,7 +144,7 @@ fn tick(storage: StorageHandle, block_number: u64, timestamp: u64, emission: Opt
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
     let ctx = build_ctx(storage, block_number, timestamp);
     if let Some(amount) = emission {
-        emission_sink::apply(&ctx, amount).unwrap();
+        daily_accumulation::apply(&ctx, amount).unwrap();
     }
     // drive Metadosis directly before the pre-execution hook
     // chain so subsequent NOD/Oracle hooks observe the same WWD state

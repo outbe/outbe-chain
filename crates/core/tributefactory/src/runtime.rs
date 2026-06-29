@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
-use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
+use outbe_metadosis::schema::{status, MetadosisContract};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus};
@@ -68,7 +68,7 @@ impl TributeFactoryContract<'_> {
 
         // The offer's (decrypted) day must be OFFERING.
         let result_day = WorldwideDay::from(result.worldwide_day);
-        let wwd_status = metadosis.worldwide_days.entry(result_day).status().read()?;
+        let wwd_status = metadosis.get_wwd_status(result_day)?;
         if wwd_status != status::OFFERING {
             return Err(TributeFactoryError::WorldwideDayNotOffering {
                 worldwide_day: result_day,

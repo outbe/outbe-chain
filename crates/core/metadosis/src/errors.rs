@@ -8,10 +8,10 @@ pub enum MetadosisError {
     #[error("worldwide day type is UNKNOWN")]
     UnknownWorldwideDayType,
 
-    #[error("VWAP must be non-zero")]
-    VwapMustBeNonZero,
+    #[error("cannot mark WWD {wwd} as IN_PROGRESS from status {current} (requires READY)")]
+    InvalidTransitionToInProgress { wwd: WorldwideDay, current: u8 },
 
-    #[error("cannot mark WWD {wwd} as COMPLETED from status {current} (requires READY)")]
+    #[error("cannot mark WWD {wwd} as COMPLETED from status {current} (requires IN_PROGRESS)")]
     InvalidTransitionToCompleted { wwd: WorldwideDay, current: u8 },
 
     #[error("cannot mark WWD {wwd} as FAILED: day is already COMPLETED")]
@@ -23,5 +23,3 @@ impl From<MetadosisError> for PrecompileError {
         PrecompileError::Revert(value.to_string())
     }
 }
-
-pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;

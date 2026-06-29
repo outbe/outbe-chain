@@ -680,7 +680,7 @@ pub(crate) fn authenticate_late_credit(
 /// `k`, then close the window that just matured (`settle_matured` for block
 /// `N − K`). The escrow residue is burned for mint/burn parity inside
 /// `settle_window`; here we additionally route that same residue to terminal
-/// Metadosis emission headroom (`emission_sink::apply`), recycling unpaid fees
+/// Metadosis emission headroom (`daily_accumulation::apply`), recycling unpaid fees
 /// instead of permanently destroying them.
 ///
 /// Determinism: every batch's BLS aggregate was already FATAL-verified in the
