@@ -71,7 +71,7 @@ pub struct IntexFactoryContract {
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     // Begin-block qualify-scan cursor: unqualified bin to resume from next block so per-block
-    // work is capped (OIP-00151). 0 = start a fresh sweep.
+    // work is capped. 0 = start a fresh sweep.
     #[attribute(order = 14)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }

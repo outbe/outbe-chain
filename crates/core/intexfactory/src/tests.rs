@@ -788,7 +788,7 @@ fn scan_and_call_force_calls_breached_series() {
 }
 
 // ---------------------------------------------------------------------
-// OIP-00151: begin-block / daily scan error isolation (no chain halt)
+// begin-block / daily scan error isolation (no chain halt)
 // ---------------------------------------------------------------------
 
 #[test]

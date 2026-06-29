@@ -57,7 +57,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let maturity_secs = crate::config::read(&factory)?.maturity_period_secs;
 
     let mut promoted: u32 = 0;
-    // Cap per-block work and resume next block from a persisted bin cursor (OIP-00151): the scan
+    // Cap per-block work and resume next block from a persisted bin cursor: the scan
     // no longer scales with the active-series population. A series qualifies within one full sweep
     // (bounded lag); the resulting state is unchanged. Whole bins are processed atomically, so the
     // cursor is bin-granular (no within-bin index that removal-shifts could desync).
