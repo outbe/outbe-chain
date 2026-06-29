@@ -2,11 +2,12 @@ import { task } from "hardhat/config";
 import {
   createPublicClient,
   createWalletClient,
+  encodePacked,
   getContract,
   http,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
+import { addressToBytes32, getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
 import { getNetworkName } from "../../scripts/shared/taskUtils.js";
 import { loadAbi } from "../../scripts/shared/abi.js";
 
@@ -780,6 +781,102 @@ const intexFactoryAssertRelayerRole = task(
   .setAction(lazy(intexFactoryAssertRelayerRoleAction));
 
 // ============================================================================
+// TargetMessenger Proceeds Route (BNB) — OFT-send auction proceeds to the
+// outbe OriginMessenger, with the lzCompose gas allotment.
+// ============================================================================
+
+/** Destination gas for the lzCompose distribute on outbe; tune from gas reports. */
+const COMPOSE_GAS = 500_000;
+
+interface ProceedsRouteWireArgs {
+  bridgeContract: string;
+  originMessenger: string;
+}
+
+const bnbProceedsRouteWireAction = async (args: ProceedsRouteWireArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+  const receiver = addressToBytes32(args.originMessenger as `0x${string}`);
+  // LZ type-3 options: executor (worker 1) lzCompose (type 3), index 0, gas COMPOSE_GAS, value 0.
+  const options = encodePacked(
+    ["uint16", "uint8", "uint16", "uint8", "uint16", "uint128"],
+    [3, 1, 19, 3, 0, BigInt(COMPOSE_GAS)],
+  );
+
+  console.log(`Wiring TargetMessenger proceeds route...`);
+  console.log(`  TargetMessenger: ${args.bridgeContract}`);
+  console.log(`  OriginMessenger: ${args.originMessenger}`);
+
+  const bridge = (await viem.getContractAt(
+    "TargetMessenger",
+    args.bridgeContract as `0x${string}`
+  )) as {
+    read: { proceedsRoute: () => Promise<[`0x${string}`, `0x${string}`]> };
+    write: { setProceedsRoute: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`> };
+  };
+
+  const [currentReceiver] = await bridge.read.proceedsRoute();
+  if (currentReceiver.toLowerCase() === receiver.toLowerCase()) {
+    console.log(`✅ TargetMessenger proceeds route already set`);
+    return;
+  }
+
+  const txHash = await sendAndWait(viem, () => bridge.write.setProceedsRoute([receiver, options]));
+  console.log(`✅ TargetMessenger proceeds route set. Tx: ${txHash}`);
+};
+
+const bnbProceedsRouteWire = task("bnb-proceeds-route-wire", "Set TargetMessenger's auction-proceeds OFT route to the outbe OriginMessenger")
+  .addOption({ name: "bridgeContract", description: "TargetMessenger contract address", defaultValue: "" })
+  .addOption({ name: "originMessenger", description: "outbe OriginMessenger address (proceeds receiver)", defaultValue: "" })
+  .setAction(lazy(bnbProceedsRouteWireAction));
+
+// ============================================================================
+// OriginMessenger Compose Route (outbe) — OFT adapter + WCOEN it unwraps.
+// ============================================================================
+
+interface ComposeRouteWireArgs {
+  bridgeContract: string;
+  oftAdapter: string;
+  wcoen: string;
+}
+
+const outbeComposeRouteWireAction = async (args: ComposeRouteWireArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+
+  console.log(`Wiring OriginMessenger compose route...`);
+  console.log(`  OriginMessenger: ${args.bridgeContract}`);
+  console.log(`  OFTAdapter: ${args.oftAdapter}`);
+  console.log(`  WCOEN: ${args.wcoen}`);
+
+  const bridge = (await viem.getContractAt(
+    "OriginMessenger",
+    args.bridgeContract as `0x${string}`
+  )) as {
+    read: { composeRoute: () => Promise<[`0x${string}`, `0x${string}`]> };
+    write: { setComposeRoute: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`> };
+  };
+
+  const [currentOft, currentWcoen] = await bridge.read.composeRoute();
+  if (
+    currentOft.toLowerCase() === args.oftAdapter.toLowerCase() &&
+    currentWcoen.toLowerCase() === args.wcoen.toLowerCase()
+  ) {
+    console.log(`✅ OriginMessenger compose route already set`);
+    return;
+  }
+
+  const txHash = await sendAndWait(viem, () =>
+    bridge.write.setComposeRoute([args.oftAdapter as `0x${string}`, args.wcoen as `0x${string}`]),
+  );
+  console.log(`✅ OriginMessenger compose route set. Tx: ${txHash}`);
+};
+
+const outbeComposeRouteWire = task("outbe-compose-route-wire", "Set OriginMessenger's compose route (OFT adapter + WCOEN)")
+  .addOption({ name: "bridgeContract", description: "OriginMessenger contract address", defaultValue: "" })
+  .addOption({ name: "oftAdapter", description: "outbe OFT adapter authorized to deliver proceeds via lzCompose", defaultValue: "" })
+  .addOption({ name: "wcoen", description: "WCOEN token unwrapped to native COEN", defaultValue: "" })
+  .setAction(lazy(outbeComposeRouteWireAction));
+
+// ============================================================================
 // Export
 // ============================================================================
 
@@ -787,8 +884,10 @@ export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
   bnbBridgeWire.build(),
+  bnbProceedsRouteWire.build(),
   onftBatchAdapterWire.build(),
   outbeBridgeWire.build(),
+  outbeComposeRouteWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
