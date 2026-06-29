@@ -43,7 +43,14 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         _ => return Ok(0),
     };
 
-    let v_bin = IntexFactoryContract::price_to_bin(vwap_today)?;
+    // Deterministic out-of-range VWAP: skip this daily scan instead of halting the block.
+    let v_bin = match IntexFactoryContract::price_to_bin(vwap_today) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(target: "outbe::intexfactory", error = ?e, "call scan: vwap out of range, skipping run");
+            return Ok(0);
+        }
+    };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
     let mut called: u32 = 0;
@@ -66,16 +73,25 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             );
         }
         for series_id in series {
-            if try_call(
-                &ctx.storage,
-                &mut factory,
-                &oracle,
-                series_id,
-                pair_id,
-                today,
-                ctx.block.timestamp,
-            )? {
-                called = called.saturating_add(1);
+            // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
+            // skipped (logged); structural reads above keep `?` so infra errors still propagate.
+            let res = ctx.storage.with_checkpoint(|| {
+                try_call(
+                    &ctx.storage,
+                    &mut factory,
+                    &oracle,
+                    series_id,
+                    pair_id,
+                    today,
+                    ctx.block.timestamp,
+                )
+            });
+            match res {
+                Ok(true) => called = called.saturating_add(1),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "call scan: skipping series");
+                }
             }
         }
 
