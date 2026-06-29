@@ -9,7 +9,7 @@ use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
 
-use crate::constants::{FLOOR_MARKUP_PERCENT, RESERVE_VAULT, SRA_COEFFICIENT_PERCENT};
+use crate::constants::{FLOOR_MARKUP_PERCENT, SRA_COEFFICIENT_PERCENT};
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemTypes};
@@ -123,7 +123,7 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     storage.call(asset, U256::ZERO, transfer.into())?;
 
     let approve = IERC20::approveCall {
-        spender: RESERVE_VAULT,
+        spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
         amount,
     }
     .abi_encode();
@@ -142,11 +142,12 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     Ok(())
 }
 
+// TODO the stablecoin address should be somehow resolved here or at user level
 /// Reads `assetAt(0)` from the vaultprovider via its in-process api and returns
 /// the resolved stablecoin asset. Reverts with `InvalidAsset` if the vault
 /// returns the zero address (mis-configured registry).
 fn read_reserve_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), U256::ZERO)?;
+    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
     if asset.is_zero() {
         return Err(GemFactoryError::InvalidAsset.into());
     }

@@ -3,9 +3,6 @@
 //! These are the external contract interfaces the credisfactory runtime
 //! invokes via `StorageHandle::call`. They are NOT the precompile's own
 //! inbound ABI (which lives in `precompile.rs::ICredisFactory`).
-//!
-//! The vaultprovider is called in-process via `outbe_vaultprovider::api`, so it
-//! needs no ABI interface here.
 
 use alloy_sol_types::sol;
 

@@ -42,6 +42,6 @@ pub fn withdraw_liquidity(
 }
 
 /// `assetAt`: the registered reserve asset at `index`. See [`runtime::asset_at`].
-pub fn asset_at(storage: StorageHandle<'_>, index: U256) -> Result<Address> {
+pub fn asset_at(storage: StorageHandle<'_>, index: u32) -> Result<Address> {
     runtime::asset_at(storage, index)
 }

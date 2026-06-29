@@ -12,8 +12,7 @@ use outbe_intex::IntexState;
 use crate::config;
 use crate::constants::{
     CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
-    POW_DIFFICULTY, RESERVE_VAULT,
-};
+    POW_DIFFICULTY, };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
@@ -273,7 +272,7 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: RESERVE_VAULT,
+            spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
             amount: received,
         }
         .abi_encode()
@@ -333,7 +332,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), U256::ZERO)?;
+    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }

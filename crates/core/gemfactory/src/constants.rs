@@ -9,9 +9,3 @@ pub const FLOOR_MARKUP_PERCENT: u64 = 108;
 
 /// SRA cost-amount discount, expressed as a percent. Cost = entry × load × 64 / 100.
 pub const SRA_COEFFICIENT_PERCENT: u64 = 64;
-
-/// Vault provider that custodies the deposited stablecoin on settle. The
-/// stablecoin asset itself is resolved at runtime by calling
-/// `IVaultProvider.assetAt(0)` on this address. Native Rust precompile at
-/// [`outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`].
-pub const RESERVE_VAULT: Address = outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;

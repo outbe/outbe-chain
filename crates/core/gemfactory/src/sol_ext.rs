@@ -3,9 +3,6 @@
 //! Interfaces invoked by the gemfactory runtime via `StorageHandle::call`.
 //! Not the precompile's own inbound ABI (which lives in
 //! `precompile.rs::IGemFactory`).
-//!
-//! The vaultprovider is called in-process via `outbe_vaultprovider::api`, so it
-//! needs no ABI interface here.
 
 use alloy_sol_types::sol;
 

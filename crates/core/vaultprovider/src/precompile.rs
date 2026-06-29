@@ -38,7 +38,11 @@ pub fn dispatch(
                     let contract = VaultProviderContract::new(storage.clone());
                     Ok(U256::from(contract.assets.len()?))
                 }),
-                assetAt(c) => view(c, |c| runtime::asset_at(storage.clone(), c.index)),
+                assetAt(c) => view(c, |c| {
+                    let contract = VaultProviderContract::new(storage.clone());
+                    set_at(&contract.assets, c.index)
+
+                }),
                 assetVaultsCount(c) => view(c, |c| {
                     let contract = VaultProviderContract::new(storage.clone());
                     Ok(U256::from(contract.asset_vault_set(c.asset).len()?))
@@ -113,7 +117,13 @@ pub fn dispatch(
                 // --- liquidity flow (source/target-gated against the registry) ---
                 depositLiquidity(c) => mutate(c, caller, |sender, c| {
                     let source = runtime::registered_liquidity_source(&storage, sender)?;
-                    runtime::deposit_liquidity(storage.clone(), sender, c.asset, c.assetsAmount, source)
+                    runtime::deposit_liquidity(
+                        storage.clone(),
+                        sender,
+                        c.asset,
+                        c.assetsAmount,
+                        source,
+                    )
                 }),
                 withdrawLiquidity(c) => mutate(c, caller, |sender, c| {
                     let target = runtime::registered_liquidity_target(&storage, sender)?;

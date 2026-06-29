@@ -3,9 +3,6 @@
 //! External contract interfaces the nodfactory runtime invokes via
 //! `StorageHandle::call`. NOT the precompile's own inbound ABI (which lives
 //! in `precompile.rs::INodFactory`).
-//!
-//! The vaultprovider is called in-process via `outbe_vaultprovider::api`, so it
-//! needs no ABI interface here.
 
 use alloy_sol_types::sol;
 

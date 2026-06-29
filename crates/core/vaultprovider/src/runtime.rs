@@ -294,13 +294,11 @@ pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U25
 /// `assetAt`: bounds-checked read of the registered reserve-asset set, reverting
 /// (like OZ `EnumerableSet.at`) when `index` is out of range. Shared by the
 /// precompile dispatch and the in-process [`crate::api`] surface.
-pub fn asset_at(storage: StorageHandle<'_>, index: U256) -> Result<Address> {
+pub fn asset_at(storage: StorageHandle<'_>, index: u32) -> Result<Address> {
     let contract = VaultProviderContract::new(storage);
-    let idx =
-        u32::try_from(index).map_err(|_| PrecompileError::Revert("index out of bounds".into()))?;
     contract
         .assets
-        .at(idx)?
+        .at(index)?
         .ok_or_else(|| PrecompileError::Revert("index out of bounds".into()))
 }
 
