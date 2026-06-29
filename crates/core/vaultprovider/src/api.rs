@@ -1,15 +1,4 @@
 //! In-process API for the vaultprovider precompile.
-//!
-//! These wrappers let other precompiles drive reserve liquidity **without an
-//! ABI sub-call** — same-runtime-context calls that forward directly to
-//! [`crate::runtime`]. The Solidity ABI dispatch in [`crate::precompile`] and
-//! this module are two thin front doors over the single source of truth in
-//! `runtime`; this module adds no logic (mirrors `outbe_gratispool::api`).
-//!
-//! Callers MUST pass their own precompile address as `caller`: the liquidity
-//! source/target authorization gates key off it exactly as they would off the
-//! sub-call `msg.sender` on the Solidity path. See `outbe_primitives::addresses`
-//! for the factory address constants (e.g. `CREDIS_FACTORY_ADDRESS`).
 
 use alloy_primitives::{Address, U256};
 
@@ -18,32 +7,38 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
 
-/// `depositLiquidity` (source-gated). See [`runtime::deposit_liquidity`].
+/// Re-exported liquidity classifiers so cross-module callers can name the
+/// deposit/withdraw discriminant without reaching into [`crate::precompile`].
+pub use crate::precompile::IVaultProvider::{LiquiditySource, LiquidityTarget};
+
+/// `depositLiquidity`. See [`runtime::deposit_liquidity`].
 ///
-/// `caller` must be a registered liquidity source. Pulls `amount` of `asset`
-/// from `caller` and deposits it into the asset's vault, returning the minted
-/// shares.
+/// Pulls `amount` of `asset` from `caller` and deposits it into the asset's
+/// vault, returning the minted shares.
 pub fn deposit_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
+    source: LiquiditySource,
 ) -> Result<U256> {
-    runtime::deposit_liquidity(storage, caller, asset, amount)
+    runtime::deposit_liquidity(storage, caller, asset, amount, source)
 }
 
-/// `withdrawLiquidity` (target-gated). See [`runtime::withdraw_liquidity`].
+/// `withdrawLiquidity`. See [`runtime::withdraw_liquidity`].
 ///
-/// `caller` must be a registered liquidity target. Redeems `amount` of `asset`
-/// from the vault and tops it up into `receiver`, returning the burned shares.
+/// Redeems `amount` of `asset` from the vault and tops it up into `receiver`,
+/// returning the burned shares. `target` classifies `caller` for event tracking
+/// and must not be [`LiquidityTarget::Unknown`].
 pub fn withdraw_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
     receiver: Address,
+    target: LiquidityTarget,
 ) -> Result<U256> {
-    runtime::withdraw_liquidity(storage, caller, asset, amount, receiver)
+    runtime::withdraw_liquidity(storage, caller, asset, amount, receiver, target)
 }
 
 /// `assetAt`: the registered reserve asset at `index`. See [`runtime::asset_at`].

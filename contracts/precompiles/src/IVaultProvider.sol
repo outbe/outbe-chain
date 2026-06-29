@@ -46,7 +46,8 @@ interface IVaultProvider {
         address indexed receiver,
         address indexed vault,
         uint256 assetsAmount,
-        uint256 burnedShares
+        uint256 burnedShares,
+        LiquidityTarget targetType
     );
 
     /// @notice Returns the number of assets.
@@ -67,10 +68,10 @@ interface IVaultProvider {
     /// @notice Returns the liquidity source at `index`. Reverts if out of bounds.
     function liquiditySourceAt(uint256 index) external view returns (address sourceAddress, LiquiditySource sourceType);
 
-    /// @notice Returns the number of liquidity sources.
+    /// @notice Returns the number of liquidity targets.
     function liquidityTargetsCount() external view returns (uint256);
 
-    /// @notice Returns the liquidity source at `index`. Reverts if out of bounds.
+    /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, LiquidityTarget targetType);
 
     /// @notice Registers a vault. Reverts if already registered.
@@ -79,19 +80,27 @@ interface IVaultProvider {
     /// @notice Removes a previously registered vault for `asset`. Reverts if not found.
     function removeVault(address vault) external;
 
+    /// @notice Registers `sourceAddress` as an authorized liquidity source of `sourceType`.
     function addLiquiditySource(address sourceAddress, LiquiditySource sourceType) external;
 
+    /// @notice Deregisters a previously registered liquidity source. Reverts if not found.
     function removeLiquiditySource(address sourceAddress) external;
 
+    /// @notice Registers `targetAddress` as an authorized liquidity target of `targetType`.
     function addLiquidityTarget(address targetAddress, LiquidityTarget targetType) external;
 
+    /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
     function removeLiquidityTarget(address targetAddress) external;
 
+    /// @notice Deposits `assetsAmount` of `asset` into the asset's vault on behalf of the
+    ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
     function depositLiquidity(address asset, uint256 assetsAmount) external returns (uint256 sharesAmount);
 
+    /// @notice Redeems `amount` of `asset` from the vault and tops it up into `receiver`.
+    ///         The caller (`msg.sender`) must be a registered liquidity target.
     function withdrawLiquidity(address asset, uint256 amount, address receiver) external returns (uint256 burnedShares);
 
-    // TODO remove these methods after implementation governance
+    // TODO remove after implementation governance
     /// @notice Returns the current owner (admin) of the vault provider.
     function owner() external view returns (address);
 

@@ -543,6 +543,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "targetType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVaultProvider.LiquidityTarget"
       }
     ],
     "anonymous": false

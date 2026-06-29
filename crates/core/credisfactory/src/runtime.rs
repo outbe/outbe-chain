@@ -152,15 +152,14 @@ pub fn request_credis(
     }
 
     // Withdraw the matching stablecoin from the vault to the borrower's smart
-    // account via the vaultprovider's in-process api. An error propagates out
-    // and unwinds bookkeeping via the surrounding precompile frame. The
-    // credisfactory address is the registered liquidity target the gate keys on.
+    // account via the vaultprovider's.
     outbe_vaultprovider::api::withdraw_liquidity(
         storage.clone(),
         CREDIS_FACTORY_ADDRESS,
         asset,
         amount_stables,
         bundle_account,
+        outbe_vaultprovider::api::LiquidityTarget::Credis,
     )?;
 
     storage.emit_event(
@@ -237,14 +236,13 @@ pub fn pay_anadosis(
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // 3) Vault pulls and deposits into the reserve via the vaultprovider's
-    //    in-process api. The credisfactory address is the registered liquidity
-    //    source the gate keys on.
+    // 3) Vault pulls and deposits into the reserve vault.
     outbe_vaultprovider::api::deposit_liquidity(
         storage.clone(),
         CREDIS_FACTORY_ADDRESS,
         asset,
         amount,
+        outbe_vaultprovider::api::LiquiditySource::CredisAnadosis,
     )?;
 
     // 4) If this completed the position, append the per-position reclaim

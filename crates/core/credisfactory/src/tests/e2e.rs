@@ -26,7 +26,6 @@ use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding}
 use outbe_gratispool::verifier::with_verifier_outcome;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -77,22 +76,15 @@ fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Seeds the vaultprovider gate + a vault for `asset()` so the in-process vault
-/// legs of `request_credis` (withdraw, target-gated) and `pay_anadosis`
-/// (deposit, source-gated) pass. These ran through the sub-call stub before the
-/// vaultprovider was called directly; in production genesis seeds the same
-/// registrations against `CREDIS_FACTORY_ADDRESS`. The exact source/target
-/// discriminant is irrelevant — the gate only rejects `UNKNOWN`.
+/// Seeds a vault for `asset()` so the in-process vault legs of `request_credis`
+/// (withdraw) and `pay_anadosis` (deposit) resolve a configured vault. These ran
+/// through the sub-call stub before the vaultprovider was called directly; in
+/// production genesis seeds the same vault registration. The source/target
+/// discriminant is no longer stored — credisfactory declares it at call time.
 fn seed_reserve_vault(storage: StorageHandle<'_>) {
     let vp = outbe_vaultprovider::VaultProviderContract::new(storage);
     vp.assets.insert(asset()).unwrap();
     vp.asset_vault_set(asset()).insert(RESERVE_VAULT).unwrap();
-    vp.liquidity_source_types
-        .write(&CREDIS_FACTORY_ADDRESS, 1u8)
-        .unwrap();
-    vp.liquidity_target_types
-        .write(&CREDIS_FACTORY_ADDRESS, 1u8)
-        .unwrap();
 }
 
 fn build_spend_args(

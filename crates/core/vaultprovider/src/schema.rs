@@ -1,23 +1,3 @@
-//! Storage schema for the vaultprovider precompile.
-//!
-//! Slot layout (cumulative — `Set` occupies 2 slots: values-array head + the
-//! 1-indexed positions mapping; `Map`/`Value` occupy 1):
-//!
-//! | slot | field                    | replaces (Solidity)                       |
-//! |------|--------------------------|-------------------------------------------|
-//! | 0    | `owner`                  | `OwnableUpgradeable` owner (genesis-seeded)|
-//! | 1,2  | `assets`                 | `EnumerableSet _assets`                    |
-//! | 3    | `asset_vaults`           | `mapping(asset => EnumerableSet vaults)`   |
-//! | 4,5  | `liquidity_sources`      | `EnumerableSet _liquiditySources`          |
-//! | 6    | `liquidity_source_types` | `mapping(account => LiquiditySource)`      |
-//! | 7,8  | `liquidity_targets`      | `EnumerableSet _liquidityTargets`          |
-//! | 9    | `liquidity_target_types` | `mapping(account => LiquidityTarget)`      |
-//!
-//! `asset_vaults` reserves slot 3 as the base of a Solidity-style
-//! `mapping(address => EnumerableSet.AddressSet)`: the per-asset vault set lives
-//! at the derived slot `keccak256(pad32(asset) ++ pad32(3))`, materialized on
-//! demand by [`VaultProviderContract::asset_vault_set`].
-
 use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;

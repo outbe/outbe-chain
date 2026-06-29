@@ -185,19 +185,36 @@ pub fn remove_liquidity_target(
 // liquidity flow
 // ---------------------------------------------------------------------------
 
-/// `depositLiquidity`: source-gated. Pulls `amount` of `asset` from the caller
-/// and deposits it into the asset's vault, returning the minted shares.
+/// Resolves the `LiquiditySource` registered for `caller`, returning `Unknown` 
+/// when `caller` is not a registered source.
+pub fn registered_liquidity_source(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+) -> Result<IVaultProvider::LiquiditySource> {
+    let contract = VaultProviderContract::new(storage.clone());
+    Ok(liquidity_source(contract.liquidity_source_types.read(&caller)?))
+}
+
+/// Resolves the `LiquidityTarget` registered for `caller`, returning `Unknown` 
+/// when `caller` is not a registered target.
+pub fn registered_liquidity_target(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+) -> Result<IVaultProvider::LiquidityTarget> {
+    let contract = VaultProviderContract::new(storage.clone());
+    Ok(liquidity_target(contract.liquidity_target_types.read(&caller)?))
+}
+
+/// `depositLiquidity`: pulls `amount` of `asset` from the caller and deposits it
+/// into the asset's vault, returning the minted shares.
 pub fn deposit_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
+    source: IVaultProvider::LiquiditySource,
 ) -> Result<U256> {
-    let source_type = {
-        let contract = VaultProviderContract::new(storage.clone());
-        contract.liquidity_source_types.read(&caller)?
-    };
-    if source_type == UNKNOWN {
+    if matches!(source, IVaultProvider::LiquiditySource::Unknown) {
         return Err(VaultProviderError::InvalidLiquiditySource.into());
     }
 
@@ -212,31 +229,27 @@ pub fn deposit_liquidity(
         vault,
         assetsAmount: amount,
         sharesAmount: shares,
-        sourceType: liquidity_source(source_type),
+        sourceType: source,
     })?;
 
     Ok(shares)
 }
 
-/// `withdrawLiquidity`: target-gated. Redeems `amount` of `asset` from the
-/// vault and tops it up into `receiver` (a token bundle), returning the burned
-/// shares.
+/// `withdrawLiquidity`: redeems `amount` of `asset` from the vault and tops it
+/// up into `receiver` (a token bundle), returning the burned shares.
 pub fn withdraw_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
     receiver: Address,
+    target: IVaultProvider::LiquidityTarget,
 ) -> Result<U256> {
     if receiver.is_zero() {
         return Err(VaultProviderError::ZeroAddress.into());
     }
-    let target_type = {
-        let contract = VaultProviderContract::new(storage.clone());
-        contract.liquidity_target_types.read(&caller)?
-    };
-    if target_type == UNKNOWN {
-        return Err(VaultProviderError::Unauthorized.into());
+    if matches!(target, IVaultProvider::LiquidityTarget::Unknown) {
+        return Err(VaultProviderError::InvalidLiquidityTarget.into());
     }
 
     let vault = first_vault(&storage, asset)?;
@@ -263,6 +276,7 @@ pub fn withdraw_liquidity(
         vault,
         assetsAmount: amount,
         burnedShares: burned_shares,
+        targetType: target,
     })?;
 
     Ok(burned_shares)

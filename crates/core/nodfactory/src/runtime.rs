@@ -84,12 +84,10 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 /// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
 /// that amount of `asset` from the caller into the precompile address via
 /// `IERC20.transferFrom`, approves the reserve `VAULT_PROVIDER_ADDRESS` for the
-/// same amount, and calls `IVaultProvider.depositLiquidity`. The caller MUST
-/// grant the NodFactory precompile an ERC20 allowance of at least
-/// `cost_amount_minor` before invoking `mineGratis`. The vault provider is
-/// responsible for classifying `NOD_FACTORY_ADDRESS` as a registered liquidity
-/// source (operator runbook: `addLiquiditySource(NOD_FACTORY_ADDRESS,
-/// LiquiditySource.NodCostPrice)`).
+/// same amount, and calls `IVaultProvider.depositLiquidity` declaring the
+/// `LiquiditySource::NodCostPrice` classifier. The caller MUST grant the
+/// NodFactory precompile an ERC20 allowance of at least `cost_amount_minor`
+/// before invoking `mineGratis`.
 ///
 /// When `cost_amount_minor == 0` the payment sequence is skipped entirely
 /// and `asset` is not validated, so callers mining zero-cost Nods can pass
@@ -146,13 +144,13 @@ pub fn mine_gratis(
         storage.call(asset, U256::ZERO, approve.into())?;
 
         // 3) Vault pulls and deposits into the reserve via the vaultprovider's
-        //    in-process api. The vault classifies NOD_FACTORY_ADDRESS via its
-        //    `liquiditySources` registry.
+        //    in-process api, declaring the NodCostPrice liquidity source.
         outbe_vaultprovider::api::deposit_liquidity(
             storage.clone(),
             NOD_FACTORY_ADDRESS,
             asset,
             cost,
+            outbe_vaultprovider::api::LiquiditySource::NodCostPrice,
         )?;
     }
 

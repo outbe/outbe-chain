@@ -279,13 +279,14 @@ pub fn settle(
         .abi_encode()
         .into(),
     )?;
-    // Deposit into the reserve via the vaultprovider's in-process api. The
-    // intexfactory address is the registered liquidity source.
+    // Deposit into the reserve via the vaultprovider's in-process api,
+    // declaring the IntexStrikePrice liquidity source.
     let shares = outbe_vaultprovider::api::deposit_liquidity(
         storage.clone(),
         INTEX_FACTORY_ADDRESS,
         payment_token,
         received,
+        outbe_vaultprovider::api::LiquiditySource::IntexStrikePrice,
     )?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());

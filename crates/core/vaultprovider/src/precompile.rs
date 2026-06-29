@@ -1,10 +1,4 @@
 //! ABI dispatch for the vaultprovider precompile at `VAULT_PROVIDER_ADDRESS`.
-//!
-//! View methods read the enumerable sets / type maps directly; management
-//! methods (`add*`/`remove*`) are owner-gated inside [`crate::runtime`];
-//! `depositLiquidity` / `withdrawLiquidity` are source/target-gated and drive
-//! the ERC-20 + vault sub-call sequence. The four `can*` gate hooks answer the
-//! VaultV2 share/asset gate checks (only the provider itself is authorized).
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
@@ -116,17 +110,20 @@ pub fn dispatch(
                     runtime::remove_liquidity_target(storage.clone(), sender, c.targetAddress)
                 }),
 
-                // --- liquidity flow ---
+                // --- liquidity flow (source/target-gated against the registry) ---
                 depositLiquidity(c) => mutate(c, caller, |sender, c| {
-                    runtime::deposit_liquidity(storage.clone(), sender, c.asset, c.assetsAmount)
+                    let source = runtime::registered_liquidity_source(&storage, sender)?;
+                    runtime::deposit_liquidity(storage.clone(), sender, c.asset, c.assetsAmount, source)
                 }),
                 withdrawLiquidity(c) => mutate(c, caller, |sender, c| {
+                    let target = runtime::registered_liquidity_target(&storage, sender)?;
                     runtime::withdraw_liquidity(
                         storage.clone(),
                         sender,
                         c.asset,
                         c.amount,
                         c.receiver,
+                        target,
                     )
                 }),
 

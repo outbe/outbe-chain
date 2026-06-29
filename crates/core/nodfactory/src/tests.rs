@@ -48,18 +48,15 @@ const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C"
 /// decode succeeds.
 const PAY_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
 
-/// Seeds the vaultprovider gate + a vault for `PAY_ASSET` so nodfactory's
-/// in-process `deposit_liquidity` (source-gated) passes its gate and vault
-/// lookup. `NOD_FACTORY_ADDRESS` is the registered source; in production
-/// genesis seeds the same registration. The exact `LiquiditySource`
-/// discriminant is irrelevant — the gate only rejects `UNKNOWN`.
+/// Seeds a vault for `PAY_ASSET` so nodfactory's in-process `deposit_liquidity`
+/// resolves a configured vault. This ran through the sub-call stub before the
+/// vaultprovider was called directly; in production genesis seeds the same vault
+/// registration. The `LiquiditySource` discriminant is no longer stored —
+/// nodfactory declares `NodCostPrice` at call time.
 fn seed_reserve_vault(storage: &StorageHandle<'_>) {
     let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
     vp.assets.insert(PAY_ASSET).unwrap();
     vp.asset_vault_set(PAY_ASSET).insert(PAY_VAULT).unwrap();
-    vp.liquidity_source_types
-        .write(&outbe_primitives::addresses::NOD_FACTORY_ADDRESS, 1u8)
-        .unwrap();
 }
 
 fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {

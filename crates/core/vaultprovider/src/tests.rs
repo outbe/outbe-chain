@@ -222,7 +222,7 @@ fn add_vault_registers_asset_and_vault_then_remove() {
 // --- liquidity flow ----------------------------------------------------------
 
 #[test]
-fn deposit_liquidity_happy_path_and_source_gating() {
+fn deposit_liquidity_happy_path_and_rejects_unknown_source() {
     let shares = U256::from(123u64);
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     // vault.deposit(...) returns `shares`; transferFrom on `asset` succeeds generically.
@@ -231,25 +231,35 @@ fn deposit_liquidity_happy_path_and_source_gating() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
 
-        // Caller that is not a registered source is rejected before any sub-call.
-        let err =
-            runtime::deposit_liquidity(storage.clone(), source_account(), asset(), U256::from(10))
-                .unwrap_err();
+        // An Unknown source discriminant is rejected before any sub-call.
+        let err = runtime::deposit_liquidity(
+            storage.clone(),
+            source_account(),
+            asset(),
+            U256::from(10),
+            IVaultProvider::LiquiditySource::Unknown,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("invalid liquidity source"),
             "{err}"
         );
 
-        // Register the source + a vault for the asset (seed the set directly to
-        // avoid the vault.asset() stub colliding with vault.deposit()).
-        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
+        // Register a vault for the asset (seed the set directly to avoid the
+        // vault.asset() stub colliding with vault.deposit()), then deposit
+        // declaring a valid source.
         let contract = VaultProviderContract::new(storage.clone());
         contract.asset_vault_set(asset()).insert(vault()).unwrap();
         contract.assets.insert(asset()).unwrap();
 
-        let got =
-            runtime::deposit_liquidity(storage.clone(), source_account(), asset(), U256::from(10))
-                .unwrap();
+        let got = runtime::deposit_liquidity(
+            storage.clone(),
+            source_account(),
+            asset(),
+            U256::from(10),
+            IVaultProvider::LiquiditySource::NodCostPrice,
+        )
+        .unwrap();
         assert_eq!(got, shares);
     });
 }
@@ -260,10 +270,14 @@ fn deposit_liquidity_reverts_when_no_vault_configured() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
-        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
-        let err =
-            runtime::deposit_liquidity(storage.clone(), source_account(), asset(), U256::from(10))
-                .unwrap_err();
+        let err = runtime::deposit_liquidity(
+            storage.clone(),
+            source_account(),
+            asset(),
+            U256::from(10),
+            IVaultProvider::LiquiditySource::NodCostPrice,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("reserve vault not configured"),
             "{err}"
@@ -272,7 +286,7 @@ fn deposit_liquidity_reverts_when_no_vault_configured() {
 }
 
 #[test]
-fn withdraw_liquidity_happy_path_and_target_gating() {
+fn withdraw_liquidity_happy_path_and_rejects_unknown_target() {
     let x = U256::from(50u64);
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     // previewWithdraw / balanceOf / withdraw all target `vault` and return `x`:
@@ -282,30 +296,34 @@ fn withdraw_liquidity_happy_path_and_target_gating() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
 
-        // Unauthorized target rejected before sub-calls.
-        let err = runtime::withdraw_liquidity(
-            storage.clone(),
-            target_account(),
-            asset(),
-            U256::from(10),
-            receiver(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
-
-        // Zero receiver rejected.
+        // Zero receiver rejected first.
         let err = runtime::withdraw_liquidity(
             storage.clone(),
             target_account(),
             asset(),
             U256::from(10),
             Address::ZERO,
+            IVaultProvider::LiquidityTarget::Credis,
         )
         .unwrap_err();
         assert!(err.to_string().contains("zero address"), "{err}");
 
-        // Register the target + vault, then withdraw.
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        // An Unknown target discriminant is rejected before sub-calls.
+        let err = runtime::withdraw_liquidity(
+            storage.clone(),
+            target_account(),
+            asset(),
+            U256::from(10),
+            receiver(),
+            IVaultProvider::LiquidityTarget::Unknown,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity target"),
+            "{err}"
+        );
+
+        // Register a vault, then withdraw declaring a valid target.
         VaultProviderContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -317,9 +335,86 @@ fn withdraw_liquidity_happy_path_and_target_gating() {
             asset(),
             U256::from(10),
             receiver(),
+            IVaultProvider::LiquidityTarget::Credis,
         )
         .unwrap();
         assert_eq!(burned, x);
+    });
+}
+
+// --- ABI-path registry gating ------------------------------------------------
+
+#[test]
+fn abi_deposit_liquidity_gates_msg_sender_against_registry() {
+    let shares = U256::from(123u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(shares));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        // Register a vault for the asset so the deposit can resolve one.
+        let contract = VaultProviderContract::new(storage.clone());
+        contract.asset_vault_set(asset()).insert(vault()).unwrap();
+        contract.assets.insert(asset()).unwrap();
+
+        let calldata = IVaultProvider::depositLiquidityCall {
+            asset: asset(),
+            assetsAmount: U256::from(10),
+        }
+        .abi_encode();
+
+        // Unregistered caller resolves to Unknown -> rejected.
+        let err = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity source"),
+            "{err}"
+        );
+
+        // Register the caller as a source, then the same ABI call succeeds and
+        // the precompile resolves the discriminant from the registry.
+        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
+        let out = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap();
+        assert_eq!(
+            IVaultProvider::depositLiquidityCall::abi_decode_returns(&out).unwrap(),
+            shares
+        );
+    });
+}
+
+#[test]
+fn abi_withdraw_liquidity_gates_msg_sender_against_registry() {
+    let x = U256::from(50u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(x));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultProviderContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        let calldata = IVaultProvider::withdrawLiquidityCall {
+            asset: asset(),
+            amount: U256::from(10),
+            receiver: receiver(),
+        }
+        .abi_encode();
+
+        // Unregistered caller resolves to Unknown -> rejected.
+        let err = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity target"),
+            "{err}"
+        );
+
+        // Register the caller as a target, then the ABI call succeeds.
+        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        let out = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap();
+        assert_eq!(
+            IVaultProvider::withdrawLiquidityCall::abi_decode_returns(&out).unwrap(),
+            x
+        );
     });
 }
 
