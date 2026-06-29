@@ -285,7 +285,7 @@ contract EscrowAdapterTest is Test {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized));
     }
 
-    // --- OIP-00094: post-finalize abandon refund for omitted/mismatched bidders ---
+    // --- post-finalize abandon refund for omitted/mismatched bidders ---
 
     // Finalize the series settling bidder2 only; bidder1 is omitted, left Locked with no split.
     function _finalizeOmittingBidder1() internal {
@@ -301,14 +301,14 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(seriesId1, GUID, instructions);
     }
 
-    function test_OIP94_OmittedBidder_RevertsBeforeAbandon() public {
+    function test_OmittedBidder_RevertsBeforeAbandon() public {
         _finalizeOmittingBidder1();
         vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, seriesId1, bidder1));
         escrow.claimRefund(seriesId1, bidder1);
     }
 
-    function test_OIP94_OmittedBidder_RecoversAfterAbandon() public {
+    function test_OmittedBidder_RecoversAfterAbandon() public {
         _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
@@ -325,7 +325,7 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(seriesId1, bidder1);
     }
 
-    function test_OIP94_RetryFinalizePreemptsAbandon() public {
+    function test_RetryFinalizePreemptsAbandon() public {
         _finalizeOmittingBidder1();
 
         vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
