@@ -137,8 +137,9 @@ pub struct SyncStatusInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UpdateScheduledUpdateStatus {
-    Pending,
+    Scheduled,
     Activated,
+    Canceled,
 }
 
 /// Active on-chain protocol version.
@@ -167,8 +168,9 @@ pub struct UpdateScheduledUpdateInfo {
 impl From<outbe_update::state::ScheduledUpdateStatus> for UpdateScheduledUpdateStatus {
     fn from(status: outbe_update::state::ScheduledUpdateStatus) -> Self {
         match status {
-            outbe_update::state::ScheduledUpdateStatus::Pending => Self::Pending,
+            outbe_update::state::ScheduledUpdateStatus::Scheduled => Self::Scheduled,
             outbe_update::state::ScheduledUpdateStatus::Activated => Self::Activated,
+            outbe_update::state::ScheduledUpdateStatus::Canceled => Self::Canceled,
         }
     }
 }
@@ -434,12 +436,12 @@ mod tests {
             minor: 2,
             activation_height: 1000,
             info: "6869".to_string(),
-            status: UpdateScheduledUpdateStatus::Pending,
+            status: UpdateScheduledUpdateStatus::Scheduled,
         };
 
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"proposalId\""));
         assert!(json.contains("\"activationHeight\""));
-        assert!(json.contains("\"pending\""));
+        assert!(json.contains("\"scheduled\""));
     }
 }
