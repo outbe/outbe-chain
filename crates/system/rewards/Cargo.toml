@@ -24,6 +24,7 @@ alloy-sol-types.workspace = true
 ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
+outbe-common.workspace = true
 outbe-metadosis.workspace = true
 outbe-oracle.workspace = true
 outbe-gem.workspace = true

@@ -6,7 +6,18 @@ use crate::schema::{
 };
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+
+fn checked_hours_to_seconds(hours: u64, label: &'static str) -> Result<u64> {
+    hours
+        .checked_mul(SECONDS_PER_HOUR)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} seconds overflow")))
+}
+
+fn checked_timestamp_add(base: u64, delta: u64, label: &'static str) -> Result<u64> {
+    base.checked_add(delta)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} timestamp overflow")))
+}
 
 impl MetadosisContract<'_> {
     // --- WorldwideDay Management ---
@@ -19,10 +30,26 @@ impl MetadosisContract<'_> {
         lookback_delay_hours: u64,
         offering_period_hours: u64,
     ) -> Result<()> {
-        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let lookback_end = forming_end + lookback_delay_hours * SECONDS_PER_HOUR;
-        let offering_end = lookback_end + offering_period_hours * SECONDS_PER_HOUR;
-        let scheduled_process_time = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let forming_end = checked_timestamp_add(
+            forming_start,
+            checked_hours_to_seconds(FORMING_PERIOD_HOURS, "forming period")?,
+            "forming_end",
+        )?;
+        let lookback_end = checked_timestamp_add(
+            forming_end,
+            checked_hours_to_seconds(lookback_delay_hours, "lookback delay")?,
+            "lookback_end",
+        )?;
+        let offering_end = checked_timestamp_add(
+            lookback_end,
+            checked_hours_to_seconds(offering_period_hours, "offering period")?,
+            "offering_end",
+        )?;
+        let scheduled_process_time = checked_timestamp_add(
+            offering_end,
+            checked_hours_to_seconds(WAITING_PERIOD_HOURS, "waiting period")?,
+            "scheduled_process_time",
+        )?;
 
         self.worldwide_days.create(&WorldwideDay {
             wwd,
@@ -64,7 +91,11 @@ impl MetadosisContract<'_> {
         self.worldwide_days.entry(wwd).status().read()
     }
 
-    pub fn set_wwd_day_type(&mut self, wwd: WorldwideDayKey, dtype: DayType) -> Result<()> {
+    pub(crate) fn get_wwd_status_checked(&self, wwd: WorldwideDayKey) -> Result<Status> {
+        Status::try_from(self.get_wwd_status(wwd)?)
+    }
+
+    pub(crate) fn set_wwd_day_type(&mut self, wwd: WorldwideDayKey, dtype: DayType) -> Result<()> {
         self.worldwide_days.entry(wwd).day_type().write(dtype as u8)
     }
 
@@ -75,28 +106,36 @@ impl MetadosisContract<'_> {
     /// READY → IN_PROGRESS: the metadosis run begins. Not terminal, so the day
     /// stays in the active set.
     pub fn mark_wwd_in_progress(&mut self, wwd: WorldwideDayKey) -> Result<()> {
-        let current = self.get_wwd_status(wwd)?;
-        if current != status::READY {
-            return Err(MetadosisError::InvalidTransitionToInProgress { wwd, current }.into());
+        let current = self.get_wwd_status_checked(wwd)?;
+        if current != Status::Ready {
+            return Err(MetadosisError::InvalidTransitionToInProgress {
+                wwd,
+                current: current as u8,
+            }
+            .into());
         }
         self.write_status(wwd, Status::InProgress)
     }
 
     pub fn mark_wwd_completed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
-        let current = self.get_wwd_status(wwd)?;
-        if current != status::IN_PROGRESS {
-            return Err(MetadosisError::InvalidTransitionToCompleted { wwd, current }.into());
+        let current = self.get_wwd_status_checked(wwd)?;
+        if current != Status::InProgress {
+            return Err(MetadosisError::InvalidTransitionToCompleted {
+                wwd,
+                current: current as u8,
+            }
+            .into());
         }
         self.write_status(wwd, Status::Completed)?;
         self.retire_terminal_wwd(wwd)
     }
 
     pub fn mark_wwd_failed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
-        let current = self.get_wwd_status(wwd)?;
-        if current == status::COMPLETED {
+        let current = self.get_wwd_status_checked(wwd)?;
+        if current == Status::Completed {
             return Err(MetadosisError::InvalidTransitionToFailed { wwd }.into());
         }
-        if current == status::FAILED {
+        if current == Status::Failed {
             // Already terminal: idempotent re-fail must not double-enqueue.
             return Ok(());
         }
@@ -128,32 +167,47 @@ impl MetadosisContract<'_> {
     // --- Active WWD List ---
 
     pub fn add_active_wwd(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
+        if self.worldwide_days.entry(wwd_key).forming_start().read()? == 0 {
+            return Err(PrecompileError::Revert(format!(
+                "cannot activate missing worldwide day {wwd_key}"
+            )));
+        }
+        match self.get_wwd_status_checked(wwd_key)? {
+            Status::Completed | Status::Failed => {
+                return Err(PrecompileError::Revert(format!(
+                    "cannot activate terminal worldwide day {wwd_key}"
+                )));
+            }
+            _ => {}
+        }
         self.active_wwd.insert(wwd_key)?;
         Ok(())
     }
 
-    pub fn remove_active_wwd(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
+    pub(crate) fn remove_active_wwd(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
         self.active_wwd.remove(&wwd_key)?;
         Ok(())
     }
 
     pub fn get_active_wwd_by_status(&self, wanted_status: u8) -> Result<Vec<WorldwideDayKey>> {
+        let wanted = Status::try_from(wanted_status)?;
         let mut result = Vec::new();
         for wwd in self.active_wwd.read_all()? {
-            if self.get_wwd_status(wwd)? == wanted_status {
+            if self.get_wwd_status_checked(wwd)? == wanted {
                 result.push(wwd);
             }
         }
         // Terminal records live in the bounded delete-queue, not active_wwd, so
         // COMPLETED/FAILED status queries must also scan the queue. The two sets
         // are disjoint (active = non-terminal, queue = terminal), so no dedup.
-        if wanted_status == status::COMPLETED || wanted_status == status::FAILED {
+        if wanted == Status::Completed || wanted == Status::Failed {
             for wwd in self.closed_wwd.read_all()? {
-                if self.get_wwd_status(wwd)? == wanted_status {
+                if self.get_wwd_status_checked(wwd)? == wanted {
                     result.push(wwd);
                 }
             }
         }
+        result.sort_unstable();
         Ok(result)
     }
 

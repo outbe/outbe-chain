@@ -48,6 +48,23 @@ fn test_create_worldwide_day() {
 }
 
 #[test]
+fn test_create_worldwide_day_rejects_window_overflow() {
+    with_contract(|m| {
+        let wwd = WwdKey::new(20241220);
+        let err = m
+            .create_worldwide_day(wwd, u64::MAX, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+            .unwrap_err();
+        assert!(err.to_string().contains("timestamp overflow"));
+
+        let wwd = WwdKey::new(20241221);
+        let err = m
+            .create_worldwide_day(wwd, 1000, u64::MAX, OFFERING_PERIOD_HOURS)
+            .unwrap_err();
+        assert!(err.to_string().contains("seconds overflow"));
+    });
+}
+
+#[test]
 fn test_wwd_settlement_transitions() {
     with_contract(|m| {
         let wwd = WwdKey::new(20241220);
@@ -114,9 +131,15 @@ fn test_set_metadosis_limit_overwrites() {
 #[test]
 fn test_active_wwd_add_remove() {
     with_contract(|m| {
-        m.add_active_wwd(WwdKey::new(20241218)).unwrap();
-        m.add_active_wwd(WwdKey::new(20241219)).unwrap();
-        m.add_active_wwd(WwdKey::new(20241220)).unwrap();
+        for wwd in [
+            WwdKey::new(20241218),
+            WwdKey::new(20241219),
+            WwdKey::new(20241220),
+        ] {
+            m.create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+                .unwrap();
+            m.add_active_wwd(wwd).unwrap();
+        }
 
         let active = m.active_wwd.read_all().unwrap();
         assert_eq!(active.len(), 3);
@@ -139,24 +162,47 @@ fn test_active_wwd_add_remove() {
 }
 
 #[test]
+fn test_active_wwd_rejects_missing_and_terminal_records() {
+    with_contract(|m| {
+        let missing = WwdKey::new(20241217);
+        assert!(m.add_active_wwd(missing).is_err());
+
+        let terminal = WwdKey::new(20241218);
+        m.create_worldwide_day(terminal, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+            .unwrap();
+        m.write_status(terminal, Status::Completed).unwrap();
+        assert!(m.add_active_wwd(terminal).is_err());
+    });
+}
+
+#[test]
 fn test_bootstrap_effective_hours_depend_on_chain_identity() {
     with_contract(|m| {
         let bootstrap_end = 100_000u64;
         m.set_bootstrap_end_time(bootstrap_end).unwrap();
 
+        // Devnet/testnet BEFORE the bootstrap boundary: accelerated schedule.
         let (lookback, offering) = m
-            .effective_hours(outbe_primitives::chain::CHAIN_ID)
+            .effective_hours(outbe_primitives::chain::CHAIN_ID, bootstrap_end - 1)
             .unwrap();
         assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
 
         let (lookback, offering) = m
-            .effective_hours(outbe_primitives::chain::TESTNET_CHAIN_ID)
+            .effective_hours(outbe_primitives::chain::TESTNET_CHAIN_ID, 0)
             .unwrap();
         assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
 
-        let (lookback, offering) = m.effective_hours(CHAIN_ID).unwrap();
+        // Devnet AT/AFTER the boundary: bootstrap expires → normal schedule.
+        let (lookback, offering) = m
+            .effective_hours(outbe_primitives::chain::CHAIN_ID, bootstrap_end)
+            .unwrap();
+        assert_eq!(lookback, LOOKBACK_DELAY_HOURS);
+        assert_eq!(offering, OFFERING_PERIOD_HOURS);
+
+        // Mainnet-style id: normal schedule regardless of timestamp.
+        let (lookback, offering) = m.effective_hours(CHAIN_ID, 0).unwrap();
         assert_eq!(lookback, LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, OFFERING_PERIOD_HOURS);
     });
@@ -171,6 +217,9 @@ fn test_query_worldwide_days_by_status_via_precompile() {
             (WwdKey::new(20260321), status::OFFERING),
             (WwdKey::new(20260322), status::FORMING),
         ] {
+            metadosis
+                .create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+                .unwrap();
             metadosis
                 .worldwide_days
                 .entry(wwd)
@@ -191,6 +240,15 @@ fn test_query_worldwide_days_by_status_via_precompile() {
         assert_eq!(decoded.len(), 2);
         assert!(decoded.contains(&20260320));
         assert!(decoded.contains(&20260321));
+    });
+}
+
+#[test]
+fn test_query_worldwide_days_by_status_rejects_invalid_status() {
+    with_storage(|storage| {
+        let call_data = IMetadosis::getWorldwideDaysByStatusCall { status: 255 }.abi_encode();
+        let err = metadosis_dispatch(storage, &call_data, Address::ZERO, U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("bad worldwide day status 255"));
     });
 }
 
@@ -276,11 +334,12 @@ fn test_storage_dsl_layout_slots() {
         // WorldwideDay gained `metadosis_limit_amount`, so the record is now
         // 10 scalar slots (was 9); worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
-        assert_eq!(m.active_wwd_count.slot(), U256::from(11u64));
-        // `active_wwd` is a Set (2 slots: 12 = length, 13 = positions), so the
-        // next schema field lands at 14 — this pins the Set's position too.
-        // `closed_wwd` is a Deque (2 slots: 14 = begin, 15 = end).
-        assert_eq!(m.closed_wwd.base_slot(), U256::from(14u64));
+        // The dead `active_wwd_count` field was removed, so `active_wwd` (a Set:
+        // 2 slots — 11 = length, 12 = positions) follows worldwide_days directly,
+        // and `closed_wwd` (a Deque: 2 slots — 13 = begin, 14 = end) follows it.
+        // `StorageSet` exposes no public slot accessor, so pinning `closed_wwd`'s
+        // base slot at 13 transitively pins `active_wwd` to slots 11–12.
+        assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
     });
 }
 
@@ -381,4 +440,38 @@ fn test_terminal_records_capped_oldest_evicted() {
         })
         .count();
     assert_eq!(cleaned, 2);
+}
+
+#[test]
+fn production_status_and_day_type_writes_stay_centralized() {
+    fn count(haystack: &str, needle: &str) -> usize {
+        haystack.match_indices(needle).count()
+    }
+
+    let production_sources = [
+        include_str!("../daily_accumulation.rs"),
+        include_str!("../metadosis.rs"),
+        include_str!("../precompile.rs"),
+        include_str!("../runtime.rs"),
+        include_str!("../state.rs"),
+        include_str!("../worldwideday.rs"),
+    ];
+
+    let status_writes: usize = production_sources
+        .iter()
+        .map(|source| count(source, ".status().write("))
+        .sum();
+    let day_type_writes: usize = production_sources
+        .iter()
+        .map(|source| count(source, ".day_type().write("))
+        .sum();
+
+    assert_eq!(
+        status_writes, 1,
+        "production status writes must stay centralized in MetadosisContract::write_status"
+    );
+    assert_eq!(
+        day_type_writes, 1,
+        "production day-type writes must stay centralized in MetadosisContract::set_wwd_day_type"
+    );
 }

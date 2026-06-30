@@ -5306,6 +5306,7 @@ mod tests {
                     &seed_ctx,
                     settle_target,
                     settle_fb_hash,
+                    seed_ctx.block.timestamp,
                     settle_fee,
                     settle_committee as u32,
                     epoch,

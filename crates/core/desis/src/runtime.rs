@@ -221,15 +221,31 @@ pub fn begin_clearing(
     }
 
     let supply_intex = supply_promis / config.promis_load_minor;
+    // Auction intex count is `u32` on the BNB-side IntexAuction. If the
+    // accumulated supply ever exceeds the `u32` ceiling, cap the auctioned count
+    // at `u32::MAX` and carry the excess whole intex units back to PromisLimit
+    // (conserved) instead of failing the clearing forever — an uncapped
+    // `try_from` error would permanently stall liquidity once the un-auctioned
+    // accumulator crosses the ceiling. Below the ceiling this is a no-op:
+    // `capped_intex == supply_intex` and `carried_units == 0`, so behavior is
+    // unchanged. NOTE: assumes IntexAuction accepts a `u32::MAX` count; revisit
+    // with a smaller documented protocol cap if the BNB side bounds it lower.
+    let u32_ceiling = u128::from(u32::MAX);
+    let capped_intex = supply_intex.min(u32_ceiling);
     let supply_intex32 =
-        u32::try_from(supply_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
-    let rounding_remainder = supply_promis % config.promis_load_minor;
+        u32::try_from(capped_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
+    let carried_units = supply_intex - capped_intex;
+    let rounding_remainder =
+        supply_promis % config.promis_load_minor + carried_units * config.promis_load_minor;
 
-    contract.clearing_initiated.write(&series_id, 1u8)?;
-    contract
-        .pending_supply_intex
-        .write(&series_id, supply_intex32)?;
-
+    // Dispatch the messenger calls FIRST; persist the clearing marker +
+    // pending-intex ONLY after they succeed. A reverting / no-code messenger
+    // fails the quote decode or the send below: if the writes were persisted
+    // first, the api layer would swallow the error and return the whole supply to
+    // PromisLimit, while a later `clear_auction` seeing the stale
+    // `clearing_initiated == 1` marker would re-credit the same supply
+    // (double-count). No write below depends on these calls' results, so the
+    // reorder is behavior-preserving on the success path.
     let quote_ret = storage.staticcall(
         ORIGIN_MESSENGER_ADDRESS,
         IOriginMessenger::quoteSendAuctionStageClearingCall {
@@ -258,6 +274,11 @@ pub fn begin_clearing(
         .abi_encode()
         .into(),
     )?;
+
+    contract.clearing_initiated.write(&series_id, 1u8)?;
+    contract
+        .pending_supply_intex
+        .write(&series_id, supply_intex32)?;
 
     Ok(rounding_remainder)
 }

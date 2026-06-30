@@ -78,6 +78,7 @@ pub fn escrow_block_fee(
     ctx: &BlockRuntimeContext,
     fb_number: u64,
     fb_hash: B256,
+    fb_timestamp: u64,
     fee_sum: U256,
     committee_size: u32,
     canonical_epoch: u64,
@@ -91,6 +92,13 @@ pub fn escrow_block_fee(
         return Ok(());
     }
     rewards.pending_fees.write(&fb_hash, fee_sum)?;
+    // Anchor the finalized block's own UTC day for terminal-remainder bucketing.
+    // Settlement runs K blocks later (block N+K); using the settling block's
+    // timestamp would misbucket recycled emission headroom into day N+K whenever
+    // the K-window straddles UTC midnight. `settle_window` reads this back so the
+    // residue lands in the finalized block's day, matching the Cycle handler's
+    // `date_key_to_utc_timestamp(prev_day)` anchor.
+    rewards.pending_fb_day_ts_at.write(&fb_hash, fb_timestamp)?;
     // Settle-trigger lookup by number (so block N+K can find block N's escrow)
     // and the canonical binding the Late phase authenticates each credit against
     // number -> {fb_hash, epoch, view, parent_view,
@@ -216,11 +224,12 @@ pub fn settle_window(
         // dispatcher. Keeping both here decouples the begin-zone
         // precompile from Metadosis emission internals.
         ctx.storage.decrease_balance(REWARDS_ADDRESS, residue)?;
-        outbe_emissionlimit::block::dispatch_terminal_remainder_at(
-            ctx,
-            residue,
-            ctx.block.timestamp,
-        )?;
+        // Bucket the recycled residue at the FINALIZED block's UTC day, not the
+        // settling block's. This window settles at N+K, so `ctx.block.timestamp`
+        // would misattribute the headroom to day N+K across a midnight-straddling
+        // window. The anchor is written at escrow (`pending_fb_day_ts_at`).
+        let fb_day_ts = rewards.pending_fb_day_ts_at.read(&fb_hash)?;
+        outbe_emissionlimit::block::dispatch_terminal_remainder_at(ctx, residue, fb_day_ts)?;
     }
 
     // Parity invariant (checked once): Σ payout + residue == pending.
@@ -259,6 +268,7 @@ pub fn settle_window(
     }
     rewards.late_voter_count.write(&fb_hash, 0)?;
     rewards.pending_fees.write(&fb_hash, U256::ZERO)?;
+    rewards.pending_fb_day_ts_at.write(&fb_hash, 0)?;
 
     Ok((distributed, residue))
 }
@@ -317,6 +327,9 @@ mod tests {
 
     const CHAIN_ID: u64 = 1;
     const FB: B256 = B256::repeat_byte(0xAB);
+    // Finalized-block timestamp anchor for escrow; matches the test block time so
+    // terminal-residue bucketing is deterministic in these tests.
+    const FB_TS: u64 = 100;
     const V0: Address = address!("0x00000000000000000000000000000000000000A0");
     const V1: Address = address!("0x00000000000000000000000000000000000000A1");
     const V2: Address = address!("0x00000000000000000000000000000000000000A2");
@@ -351,6 +364,7 @@ mod tests {
                 ctx,
                 10,
                 FB,
+                FB_TS,
                 pending,
                 4,
                 0,
@@ -393,6 +407,7 @@ mod tests {
                 ctx,
                 10,
                 FB,
+                FB_TS,
                 pending,
                 4,
                 0,
@@ -424,7 +439,20 @@ mod tests {
             let pending = U256::from(committee) * U256::from(1_000u64);
             fund(ctx, pending);
             // Only 3 of 4 voters credited (one excluded).
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(
+                ctx,
+                10,
+                FB,
+                FB_TS,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
 
             let (distributed, residue) = settle_window(ctx, FB, committee).unwrap();
             let each = pending / U256::from(committee); // unchanged by exclusion
@@ -448,7 +476,7 @@ mod tests {
             let committee = 4u64;
             let pending = U256::from(committee) * U256::from(1_000u64);
             fund(ctx, pending);
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0]).unwrap(); // base at k=0
+            escrow_block_fee(ctx, 10, FB, FB_TS, pending, 4, 0, 0, 0, B256::ZERO, &[V0]).unwrap(); // base at k=0
             record_late_credit(ctx, FB, V1, 3).unwrap(); // k = K = 3, weight 0
 
             let (distributed, residue) = settle_window(ctx, FB, committee).unwrap();
@@ -468,6 +496,7 @@ mod tests {
                 ctx,
                 10,
                 FB,
+                FB_TS,
                 U256::from(4_000u64),
                 4,
                 0,
@@ -529,6 +558,7 @@ mod tests {
                 ctx,
                 10,
                 FB,
+                FB_TS,
                 pending,
                 4,
                 0,
@@ -566,6 +596,7 @@ mod tests {
                 ctx,
                 10,
                 FB,
+                FB_TS,
                 pending,
                 4,
                 0,
@@ -610,7 +641,20 @@ mod tests {
             fund(ctx, pending);
             // Escrow block 10 (committee 4): V0/V1/V2 base at k=0, V3 late at k=1.
             // Non-zero view/parent_view so freeing them at settle is observable.
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 9, 8, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(
+                ctx,
+                10,
+                FB,
+                FB_TS,
+                pending,
+                4,
+                0,
+                9,
+                8,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
             record_late_credit(ctx, FB, V3, 1).unwrap();
             assert_eq!(
                 ctx.storage
@@ -655,6 +699,81 @@ mod tests {
             assert_eq!(
                 settle_matured(ctx, 13, 3).unwrap(),
                 (U256::ZERO, U256::ZERO)
+            );
+        });
+    }
+
+    /// N3 regression: the recycled terminal residue must bucket at the FINALIZED
+    /// block's UTC day, not the settling block's. The window settles K blocks
+    /// later, so using `ctx.block.timestamp` misattributes the headroom whenever
+    /// the window straddles UTC midnight. Escrow finalized block N at day D,
+    /// settle at a block whose own timestamp is a strictly later day, and assert
+    /// the residue lands in day D's Metadosis bucket — not the settling day's.
+    #[test]
+    fn residue_buckets_at_finalized_day_not_settling_day() {
+        use outbe_common::WorldwideDay;
+        use outbe_metadosis::schema::{MetadosisContract, WorldwideDayEntryExt};
+
+        let day_fb = WorldwideDay::new(20260610);
+        let day_settle = WorldwideDay::new(20260613);
+        let t_fb = day_fb.start_timestamp() + 3600; // finalized block's day (D)
+        let t_settle = day_settle.start_timestamp() + 3600; // settling block, later day
+
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.set_timestamp(U256::from(t_settle));
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(13, t_settle, CHAIN_ID, Address::ZERO, Vec::new()),
+                handle,
+            );
+            let committee = 4u64;
+            let pending = U256::from(committee) * U256::from(1_000u64);
+            fund(&ctx, pending);
+            // Finalized block N=10 at day D; only 3 of 4 voters credited so the
+            // 4th's share becomes residue.
+            escrow_block_fee(
+                &ctx,
+                10,
+                FB,
+                t_fb,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
+
+            let (distributed, residue) = settle_window(&ctx, FB, committee).unwrap();
+            assert!(!residue.is_zero(), "partial attendance must leave residue");
+            assert_eq!(distributed + residue, pending, "parity");
+
+            let md = MetadosisContract::new(ctx.storage.clone());
+            let fb_bucket = WorldwideDay::from_timestamp(t_fb);
+            let settle_bucket = WorldwideDay::from_timestamp(t_settle);
+            assert_ne!(fb_bucket, settle_bucket, "test setup: days must differ");
+
+            // Residue lands in the finalized block's day bucket …
+            assert_eq!(
+                md.worldwide_days
+                    .entry(fb_bucket)
+                    .metadosis_limit_amount()
+                    .read()
+                    .unwrap(),
+                residue,
+                "residue must bucket at the finalized block's day, not the settling block's"
+            );
+            // … and the settling-day bucket is untouched.
+            assert_eq!(
+                md.worldwide_days
+                    .entry(settle_bucket)
+                    .metadosis_limit_amount()
+                    .read()
+                    .unwrap(),
+                U256::ZERO,
+                "settling-day bucket must be untouched"
             );
         });
     }

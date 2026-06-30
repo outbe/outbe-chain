@@ -42,6 +42,21 @@ pub(crate) struct MetadosisCalculation {
     metadosis_limit_remainder: U256,
 }
 
+fn checked_u256_add(left: U256, right: U256, label: &'static str) -> MdResult<U256> {
+    left.checked_add(right)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} overflow")))
+}
+
+fn checked_u256_sub(left: U256, right: U256, label: &'static str) -> MdResult<U256> {
+    left.checked_sub(right)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} underflow")))
+}
+
+fn checked_u256_mul(left: U256, right: U256, label: &'static str) -> MdResult<U256> {
+    left.checked_mul(right)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} overflow")))
+}
+
 /// The gratis-allocation formula for one settled day. **Pure** — it operates on the
 /// already-materialized day type, tribute total, and metadosis limit (no storage),
 /// so it is unit-testable in isolation. RED days halve both demand and supply, and
@@ -51,7 +66,11 @@ pub(crate) fn compute_allocation(
     tribute_nominal_total: U256,
     wwd_metadosis_limit: U256,
 ) -> MdResult<MetadosisCalculation> {
-    let mut demand = tribute_nominal_total * U256::from(SYMBOLIC_RATE) / U256::from(100u64);
+    let mut demand = checked_u256_mul(
+        tribute_nominal_total,
+        U256::from(SYMBOLIC_RATE),
+        "gratis demand",
+    )? / U256::from(100u64);
     let mut supply = wwd_metadosis_limit;
 
     match wwd_type {
@@ -64,7 +83,8 @@ pub(crate) fn compute_allocation(
     }
 
     let allocation = if demand < supply { demand } else { supply };
-    let metadosis_limit_remainder = wwd_metadosis_limit - allocation;
+    let metadosis_limit_remainder =
+        checked_u256_sub(wwd_metadosis_limit, allocation, "metadosis limit remainder")?;
 
     Ok(MetadosisCalculation {
         gratis_demand: demand,
@@ -152,7 +172,11 @@ impl MetadosisStateMachineContext for MetadosisCtx<'_, '_> {
         self.md().emit(IMetadosis::MetadosisSkipped {
             worldwideDay: self.wwd.into(),
             reason: "day_metadosis_limit_is_zero".into(),
-            status: "SKIPPED".into(),
+            // The zero-limit branch maps `Aborted → Fail → mark_wwd_failed`, so the
+            // day persists `Status::Failed`. Report the same status in the event so
+            // the event string can never diverge from the persisted on-chain status
+            // (the sibling unknown-day branch is already FAILED-consistent).
+            status: Status::Failed.label().into(),
             blockNumber: self.rt.block.block_number,
         })
     }
@@ -188,18 +212,32 @@ impl MetadosisStateMachineContext for MetadosisCtx<'_, '_> {
             self.wwd,
             params.gratis_allocation,
         ) {
-            Ok(result) => Ok(LysisOutput {
-                gratis_demand: params.gratis_demand,
-                gratis_supply: params.gratis_supply,
-                gratis_allocation: params.gratis_allocation,
-                lysis_remaining_gratis: result.remaining_gratis,
-                // Both terms are bounded by the day metadosis limit, so the sum
-                // cannot overflow U256; saturating keeps the consensus path
-                // panic-free (mirrors the `saturating_sub` in `on_clear_and_emit`).
-                remainder: result
-                    .remaining_gratis
-                    .saturating_add(params.metadosis_limit_remainder),
-            }),
+            Ok(result) => {
+                if result.remaining_gratis > params.gratis_allocation {
+                    let mut md = self.md();
+                    emit_failed_execution(
+                        &mut md,
+                        self.rt,
+                        self.wwd,
+                        self.tribute_nominal_total,
+                        self.limit_amount,
+                    )?;
+                    return Err(PrecompileError::Revert(
+                        "lysis remaining gratis exceeds metadosis allocation".into(),
+                    ));
+                }
+                Ok(LysisOutput {
+                    gratis_demand: params.gratis_demand,
+                    gratis_supply: params.gratis_supply,
+                    gratis_allocation: params.gratis_allocation,
+                    lysis_remaining_gratis: result.remaining_gratis,
+                    remainder: checked_u256_add(
+                        result.remaining_gratis,
+                        params.metadosis_limit_remainder,
+                        "metadosis remainder",
+                    )?,
+                })
+            }
             Err(err) => {
                 // Genuine corruption (e.g. NOD-id collision): record + propagate.
                 let mut md = self.md();
@@ -225,6 +263,12 @@ impl MetadosisStateMachineContext for MetadosisCtx<'_, '_> {
             dispatch_auction_clearing(self.rt, self.wwd_type, ts, promis_total_unallocated)?;
         promis_limit.set_total_unallocated(clearing_reminder)?;
 
+        let net_day_gratis_allocation = checked_u256_sub(
+            lysis.gratis_allocation,
+            lysis.lysis_remaining_gratis,
+            "net gratis allocation",
+        )?;
+
         self.md().emit(IMetadosis::MetadosisExecuted {
             worldwideDay: self.wwd.into(),
             tributeTotals: self.tribute_nominal_total,
@@ -232,9 +276,7 @@ impl MetadosisStateMachineContext for MetadosisCtx<'_, '_> {
             dayGratisLimit: lysis.gratis_supply,
             dayGratisAllocation: lysis.gratis_allocation,
             dayGratisAllocationRemainder: lysis.lysis_remaining_gratis,
-            netDayGratisAllocation: lysis
-                .gratis_allocation
-                .saturating_sub(lysis.lysis_remaining_gratis),
+            netDayGratisAllocation: net_day_gratis_allocation,
             dayMetadosisLimitRemainder: lysis.remainder,
             status: Status::Completed.label().into(),
             blockNumber: self.rt.block.block_number,
@@ -375,5 +417,13 @@ mod tests {
             U256::from(5_000u64)
         )
         .is_err());
+    }
+
+    #[test]
+    fn compute_allocation_rejects_demand_overflow() {
+        let Err(err) = compute_allocation(DayType::Green, U256::MAX, U256::MAX) else {
+            panic!("overflowing demand must be rejected");
+        };
+        assert!(err.to_string().contains("gratis demand overflow"));
     }
 }

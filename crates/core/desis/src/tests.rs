@@ -106,6 +106,85 @@ fn begin_clearing_stores_pending() {
     });
 }
 
+/// N2 regression: when the messenger dispatch fails (here: an undecodable quote
+/// reply), `begin_clearing` must NOT persist `clearing_initiated` /
+/// `pending_supply_intex`. Otherwise the api layer returns the whole supply to
+/// PromisLimit AND a later `clear_auction` seeing the stale marker re-credits the
+/// same supply (double-count). The fix dispatches the messenger calls before the
+/// persistent writes.
+#[test]
+fn failed_begin_clearing_leaves_no_stale_pending_state() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    // Stub the messenger with a too-short reply so the clearing-fee quote decode
+    // fails (8 bytes cannot decode into MessagingFee's two uint256 fields). We set
+    // up the `Revealing` stage directly rather than via start/reveal — those also
+    // dispatch the (now-failing) messenger — so only the clearing quote hits it.
+    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 8]));
+    StorageHandle::enter(&mut storage, |s| {
+        let contract = s.contract::<DesisContract>();
+        contract
+            .write_auction_config(SERIES_ID, &default_config())
+            .unwrap();
+        contract
+            .write_stage(SERIES_ID, AuctionStage::Revealing)
+            .unwrap();
+
+        let res = runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR);
+        assert!(
+            res.is_err(),
+            "an undecodable quote must fail begin_clearing"
+        );
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.clearing_initiated.read(&SERIES_ID).unwrap(),
+            0,
+            "no stale clearing_initiated after a failed dispatch"
+        );
+        assert_eq!(
+            contract.pending_supply_intex.read(&SERIES_ID).unwrap(),
+            0,
+            "no stale pending_supply_intex after a failed dispatch"
+        );
+    });
+}
+
+/// N5 regression: a supply whose intex count exceeds the `u32` auction ceiling
+/// must be capped at `u32::MAX` (no `try_from` error that would permanently stall
+/// clearing) and the excess whole units carried back via the returned remainder.
+/// Conservation: `capped * load + remainder == supply_promis`.
+#[test]
+fn begin_clearing_caps_supply_at_u32_and_carries_remainder() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+
+        let over = u128::from(u32::MAX) + 5; // 5 whole units above the ceiling
+        let dust = 123u128;
+        let supply_promis = over * PROMIS_LOAD_MINOR + dust;
+
+        let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
+        assert_eq!(
+            remainder,
+            5 * PROMIS_LOAD_MINOR + dust,
+            "carried whole units + rounding dust all return to PromisLimit"
+        );
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.pending_supply_intex.read(&SERIES_ID).unwrap(),
+            u32::MAX,
+            "auctioned count is capped at u32::MAX"
+        );
+        assert_eq!(
+            u128::from(u32::MAX) * PROMIS_LOAD_MINOR + remainder,
+            supply_promis,
+            "conservation across the cap"
+        );
+    });
+}
+
 #[test]
 fn start_auction_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
@@ -574,9 +653,15 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[w_idx],
+            PROMIS_LOAD_MINOR * 300 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[l_idx],
+            PROMIS_LOAD_MINOR * 200 / 1_000_000
+        );
         assert_eq!(supply, result.issued_intex_count);
     });
 }
@@ -597,8 +682,7 @@ fn clear_rate_escrow_scales_by_strike() {
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -635,12 +719,24 @@ fn clear_rate_escrow_scales_by_strike() {
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
-        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
-        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
-        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 200_000 / 1_000_000
+        );
+        assert_eq!(
+            result.paid_amounts[idx(bidder(1))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
-        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(2))],
+            PROMIS_LOAD_MINOR * 400_000 / 1_000_000
+        );
     });
 }
 

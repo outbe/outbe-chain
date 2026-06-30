@@ -3,7 +3,7 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::MetadosisContract;
+use crate::schema::{MetadosisContract, Status};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -46,6 +46,7 @@ pub fn dispatch(
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),
             getWorldwideDaysByStatus(c) => view(c, |c| {
+                Status::try_from(c.status)?;
                 let wwds = metadosis.get_active_wwd_by_status(c.status)?;
                 Ok(wwds.into_iter().map(u32::from).collect())
             }),

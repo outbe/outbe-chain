@@ -133,6 +133,7 @@ pub fn on_finalized_metadata(
         ctx,
         metadata.finalized_block_number,
         fb_hash,
+        finalized_block_timestamp,
         validator_fee_sum,
         committee_size,
         metadata.finalized_epoch,

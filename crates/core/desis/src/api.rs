@@ -81,6 +81,13 @@ pub fn dispatch_stage_clearing(
 
 /// Emit `AuctionDispatchFailed` for a clearing dispatch and return the whole
 /// supply so the caller keeps the full budget (nothing cleared).
+///
+/// Also resets the clearing-progress fields for `series_id`. `begin_clearing`
+/// now persists them only after its messenger calls succeed, so on the failure
+/// path they should already be clean — this is a defensive belt-and-suspenders
+/// reset so a failed clearing can never leave a stale `clearing_initiated == 1`
+/// and `pending_supply_intex` that a later `clear_auction` would re-credit as a
+/// double-count.
 fn clearing_failed(
     storage: StorageHandle<'_>,
     series_id: u32,
@@ -88,6 +95,8 @@ fn clearing_failed(
     supply_promis: U256,
 ) -> Result<U256> {
     let mut contract = storage.contract::<DesisContract>();
+    contract.clearing_initiated.write(&series_id, 0u8)?;
+    contract.pending_supply_intex.write(&series_id, 0u32)?;
     contract.emit(IDesis::AuctionDispatchFailed {
         seriesId: series_id,
         stage: "auction_stage_clearing".into(),

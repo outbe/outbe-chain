@@ -7173,6 +7173,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
+ "tracing",
 ]
 
 [[package]]
@@ -7402,6 +7403,7 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "commonware-utils",
+ "outbe-common",
  "outbe-consensus",
  "outbe-emissionlimit",
  "outbe-gem",

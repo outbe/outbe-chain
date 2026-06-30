@@ -150,6 +150,137 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
     });
 }
 
+/// N1 regression: a tribute whose reference currency has no oracle price (no
+/// VWAP, no S-curve) must be SKIPPED, not revert lysis. On the begin-zone
+/// settlement path a revert would roll back the FAILED write and halt the chain.
+/// The unpriced tribute is still consumed (consume-all), and its gratis is left
+/// unspent (flows back as the remainder).
+#[test]
+fn missing_reference_price_skips_tribute_instead_of_reverting() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let nominal = U256::in_units(100u64);
+    let gratis_allocation = nominal / U256::from(10u64);
+    let owner = gas_audit_address(1);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut storage, |storage| {
+        // Deliberately seed NO oracle price for ISO 840.
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&gas_audit_tribute(1, owner, wwd, nominal))
+            .unwrap();
+
+        let result = crate::runtime::lysis(storage.clone(), wwd, gratis_allocation)
+            .expect("missing reference price must NOT revert lysis");
+
+        assert!(
+            result.nod_ids.is_empty(),
+            "no NOD is issued for an unpriced tribute"
+        );
+        assert_eq!(
+            result.remaining_gratis, gratis_allocation,
+            "a skipped tribute leaves its gratis unspent"
+        );
+
+        let tribute = TributeContract::new(storage.clone());
+        assert!(
+            tribute.get_all_day_tributes(wwd).unwrap().is_empty(),
+            "the unpriced tribute still drains the day index (consume-all)"
+        );
+        assert_eq!(
+            tribute.total_supply().unwrap(),
+            0,
+            "the unpriced tribute is burned"
+        );
+    });
+}
+
+/// N4 regression: when only SOME tributes issue a NOD — here one is funded and
+/// priced, one is skipped for a missing reference price — the day index must
+/// still be FULLY drained. The day retires terminal exactly once and is never
+/// re-lysed, so any surviving tribute would strand in the index forever.
+#[test]
+fn partial_coverage_drains_day_index_consume_all() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260527);
+    let nominal = U256::in_units(100u64);
+    let gratis_allocation = nominal;
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let funded_owner = gas_audit_address(1);
+    let skipped_owner = gas_audit_address(2);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut storage, |storage| {
+        // Seed an 840 price only; the second tribute references unregistered
+        // currency 999, which resolves to no price → it is skipped.
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&gas_audit_tribute(1, funded_owner, wwd, nominal))
+            .unwrap();
+        tribute
+            .issue(&TributeData {
+                token_id: U256::from(2u64),
+                owner: skipped_owner,
+                worldwide_day: wwd,
+                issuance_amount_minor: nominal / U256::from(2u64),
+                issuance_currency: 1,
+                nominal_amount_minor: nominal,
+                reference_currency: 999, // unregistered → no price → skipped
+                tribute_price_minor: U256::ZERO,
+            })
+            .unwrap();
+
+        let result = crate::runtime::lysis(storage.clone(), wwd, gratis_allocation)
+            .expect("a partial-coverage day must still complete");
+
+        assert_eq!(result.tribute_ids.len(), 2, "both tributes are loaded");
+        assert_eq!(
+            result.nod_ids.len(),
+            1,
+            "only the priced tribute issues a NOD"
+        );
+
+        let tribute = TributeContract::new(storage.clone());
+        assert!(
+            tribute.get_all_day_tributes(wwd).unwrap().is_empty(),
+            "the day index is fully drained despite the skipped tribute (N4)"
+        );
+        assert_eq!(
+            tribute.total_supply().unwrap(),
+            0,
+            "both tributes are burned (consume-all)"
+        );
+    });
+}
+
 #[test]
 fn test_empty_population() {
     let result = calc_fraction_distribution_fp(&[], &[], 10, 0, F_FP_DEFAULT, F_MAX_FP).unwrap();

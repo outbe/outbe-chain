@@ -181,15 +181,15 @@ pub struct MetadosisContract {
     #[attribute(order = 1)]
     pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
 
+    /// Active (non-terminal) WorldwideDay membership. The Set carries its own
+    /// length slot, so this is the sole source of the active-day count — there is
+    /// no separate counter field.
     #[attribute(order = 2)]
-    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u16>,
-
-    #[attribute(order = 3)]
     pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDayKey>,
 
     /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
     /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
     /// the cap, the oldest is popped from the front and its record deleted.
-    #[attribute(order = 4)]
+    #[attribute(order = 3)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 }

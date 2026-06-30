@@ -2,7 +2,7 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     chain,
-    error::Result,
+    error::{PrecompileError, Result},
     time::{
         date_key_to_utc_timestamp as primitives_date_key_to_timestamp,
         previous_date_key as primitives_previous_date_key, timestamp_to_date_key as utc_date_key,
@@ -14,10 +14,32 @@ use crate::constants::*;
 use crate::precompile::IMetadosis;
 use crate::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 
+fn checked_hours_to_seconds(hours: u64, label: &'static str) -> Result<u64> {
+    hours
+        .checked_mul(SECONDS_PER_HOUR)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} seconds overflow")))
+}
+
+fn checked_timestamp_add(base: u64, delta: u64, label: &'static str) -> Result<u64> {
+    base.checked_add(delta)
+        .ok_or_else(|| PrecompileError::Revert(format!("metadosis {label} timestamp overflow")))
+}
+
 impl MetadosisContract<'_> {
-    /// Returns effective lookback and offering hours based on chain identity.
-    pub fn effective_hours(&self, chain_id: u64) -> Result<(u64, u64)> {
-        if chain::is_devnet(chain_id) || chain::is_testnet(chain_id) {
+    /// Returns effective lookback and offering hours for a day created at `now`.
+    ///
+    /// Devnet/testnet use the accelerated bootstrap schedule, but ONLY while the
+    /// chain is still inside its bootstrap window: `now < bootstrap_end_time`
+    /// (the boundary is written once on block 1 as `block_ts + BOOTSTRAP_DURATION`).
+    /// Past the boundary — or on mainnet, where the field is never set (`0`) —
+    /// the normal schedule applies. This makes `bootstrap_end_time` actually bound
+    /// the schedule it names instead of being a dead, RPC-only field.
+    pub fn effective_hours(&self, chain_id: u64, now: u64) -> Result<(u64, u64)> {
+        let in_bootstrap = (chain::is_devnet(chain_id) || chain::is_testnet(chain_id)) && {
+            let end = self.get_bootstrap_end_time()?;
+            end != 0 && now < end
+        };
+        if in_bootstrap {
             Ok((
                 BOOTSTRAP_LOOKBACK_DELAY_HOURS,
                 BOOTSTRAP_OFFERING_PERIOD_HOURS,
@@ -75,10 +97,11 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     // Phase 1 — ensure today's worldwide day exists.
     create_worldwide_day_if_needed(&mut metadosis, ctx, ctx.block.timestamp)?;
 
-    let active = metadosis.active_wwd.read_all()?;
+    let mut active = metadosis.active_wwd.read_all()?;
+    active.sort_unstable();
     // Phase 2 — advance every active day by the clock.
     advance_all_active_days(ctx, &active)?;
-    // Phase 3 — settle the (at most one) day that has reached READY.
+    // Phase 3 — settle the oldest READY day, if a backlog contains several.
     settle_ready_day(ctx, &metadosis, &active)?;
 
     // Terminal-day cleanup is no longer a per-tick scan: each COMPLETED/FAILED
@@ -96,8 +119,10 @@ fn advance_all_active_days(ctx: &BlockRuntimeContext, active: &[WorldwideDay]) -
     Ok(())
 }
 
-/// Phase 3 of [`start_metadosis`]: settle the first day that reached READY (at
-/// most one per tick), running the full Metadosis flow for it.
+/// Phase 3 of [`start_metadosis`]: settle the oldest day that reached READY (at
+/// most one per tick), running the full Metadosis flow for it. The caller passes
+/// `active` in ascending WorldwideDay order, so storage-set swap ordering cannot
+/// influence which backlog item is processed first.
 fn settle_ready_day(
     ctx: &BlockRuntimeContext,
     metadosis: &MetadosisContract,
@@ -144,7 +169,11 @@ fn initialize_bootstrap_if_needed(
     if (chain::is_devnet(ctx.block.chain_id) || chain::is_testnet(ctx.block.chain_id))
         && metadosis.get_bootstrap_end_time()? == 0
     {
-        let end_time = ctx.block.timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR;
+        let end_time = checked_timestamp_add(
+            ctx.block.timestamp,
+            checked_hours_to_seconds(BOOTSTRAP_DURATION_HOURS, "bootstrap duration")?,
+            "bootstrap_end_time",
+        )?;
         metadosis.set_bootstrap_end_time(end_time)?;
     }
     Ok(())
@@ -182,7 +211,8 @@ pub fn create_worldwide_day_for_date(
         return Ok(());
     }
 
-    let (lookback_hours, offering_hours) = metadosis.effective_hours(ctx.block.chain_id)?;
+    let (lookback_hours, offering_hours) =
+        metadosis.effective_hours(ctx.block.chain_id, ctx.block.timestamp)?;
     let forming_start = wwd.start_timestamp();
     metadosis.create_worldwide_day(wwd, forming_start, lookback_hours, offering_hours)?;
     metadosis.add_active_wwd(wwd)?;

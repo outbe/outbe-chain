@@ -64,6 +64,18 @@ fn test_cold_start_creates_utc_day_and_current_utc_plus_14_day() {
 }
 
 #[test]
+fn test_bootstrap_init_rejects_end_time_overflow() {
+    with_storage(|storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, u64::MAX, outbe_primitives::chain::CHAIN_ID),
+            storage,
+        );
+        let err = crate::runtime::init_genesis_day(&ctx).unwrap_err();
+        assert!(err.to_string().contains("bootstrap_end_time"));
+    });
+}
+
+#[test]
 fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_end_time() {
     with_storage(|storage| {
         let timestamp =
@@ -102,6 +114,38 @@ fn test_cold_start_non_bootstrap_chain_uses_default_schedule_and_no_bootstrap_en
                 .unwrap(),
             expected_offering_end
         );
+    });
+}
+
+#[test]
+fn multiple_ready_days_settle_oldest_first() {
+    with_storage(|storage| {
+        let older = outbe_common::WorldwideDay::new(20260410);
+        let newer = outbe_common::WorldwideDay::new(20260411);
+
+        for wwd in [newer, older] {
+            let forming_start = wwd.start_timestamp();
+            seed_active_day(&storage, wwd, forming_start);
+            let mut metadosis = MetadosisContract::new(storage.clone());
+            metadosis.set_wwd_day_type(wwd, DayType::Red).unwrap();
+            metadosis.write_status(wwd, Status::Ready).unwrap();
+            metadosis
+                .set_metadosis_limit(wwd, U256::from(777u64))
+                .unwrap();
+        }
+
+        run_begin_block(
+            storage.clone(),
+            2,
+            older.start_timestamp() + SECONDS_PER_HOUR,
+        );
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(metadosis.get_wwd_status(older).unwrap(), status::COMPLETED);
+        assert_eq!(metadosis.get_wwd_status(newer).unwrap(), status::READY);
+        let active = metadosis.active_wwd.read_all().unwrap();
+        assert!(!active.contains(&older));
+        assert!(active.contains(&newer));
     });
 }
 
@@ -464,6 +508,38 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
+        // Seed an 840 entry price so the tribute is actually PROCESSED (not
+        // skipped for a missing reference price), letting the run reach
+        // `issue_nod` and hit the genuine NOD-id collision seeded below. Without
+        // this the unpriced tribute is skipped (graceful missing-oracle handling)
+        // and no corruption occurs — the previous version of this test asserted
+        // `is_err()` only because the missing 840 price reverted, conflating
+        // routine missing data with genuine corruption.
+        {
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+            oracle
+                .settlement_iso_to_pair
+                .write(&840u16, pair_hash)
+                .unwrap();
+            oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+            oracle
+                .worldwide_day_vwap_pair_count
+                .write(&wwd, 1u32)
+                .unwrap();
+            oracle
+                .worldwide_day_vwap_pair_id
+                .get_nested(&wwd)
+                .write(&0u32, pair_id)
+                .unwrap();
+            oracle
+                .worldwide_day_vwap_value
+                .get_nested(&wwd)
+                .write(&0u32, U256::from(500_000_000_000_000_000u128))
+                .unwrap();
+        }
+
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         tribute
@@ -729,4 +805,96 @@ fn test_terminal_day_leaves_active_set() {
             .unwrap()
             .contains(&wwd));
     });
+}
+
+/// M2 regression: a zero-limit day persists `Status::Failed`, so the
+/// `MetadosisSkipped` event must report `status == "FAILED"` — never the phantom
+/// "SKIPPED" string that no schema status backs. Pins event/persisted parity.
+#[test]
+fn zero_limit_event_status_matches_persisted_failed() {
+    use alloy_sol_types::SolEvent;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let md_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
+    let wwd = outbe_common::WorldwideDay::new(20260311u32);
+    let forming_start = wwd.start_timestamp();
+    let scheduled = forming_start
+        + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+        + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+        + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+        + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+    StorageHandle::enter(&mut storage, |storage| {
+        seed_active_day(&storage, wwd, forming_start);
+        mark_day_waiting(&storage, wwd, DayType::Red);
+        MetadosisContract::new(storage.clone())
+            .set_metadosis_limit(wwd, U256::ZERO)
+            .unwrap();
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        assert_eq!(
+            MetadosisContract::new(storage.clone())
+                .get_wwd_status(wwd)
+                .unwrap(),
+            status::FAILED
+        );
+    });
+
+    let sig = IMetadosis::MetadosisSkipped::SIGNATURE_HASH;
+    let ev = storage
+        .get_events(md_addr)
+        .iter()
+        .find_map(|log| {
+            (log.topics().first() == Some(&sig))
+                .then(|| IMetadosis::MetadosisSkipped::decode_log_data(log).unwrap())
+        })
+        .expect("a zero-limit day must emit MetadosisSkipped");
+    assert_eq!(
+        ev.status, "FAILED",
+        "event status must match persisted FAILED"
+    );
+    assert_eq!(ev.reason, "day_metadosis_limit_is_zero");
+}
+
+/// M1 regression: when a single clock tick crosses the ENTIRE Offering window
+/// (missed UTC day / halt / forward-ts jump), the forward walk must still fire
+/// `RevealOffering` before `CloseOffering` — otherwise the GREEN auction is left
+/// in `Started` and settlement's `begin_clearing` (which requires `Revealing`)
+/// fails while the day still reaches COMPLETED. Probed via Desis's best-effort
+/// `AuctionDispatchFailed` (Desis has no code in tests).
+#[test]
+fn single_tick_jump_past_offering_window_still_reveals() {
+    use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
+    let wwd = outbe_common::WorldwideDay::new(20260701u32);
+    let forming_start = wwd.start_timestamp();
+
+    let target_series = StorageHandle::enter(&mut storage, |storage| {
+        seed_active_day(&storage, wwd, forming_start);
+        let md = MetadosisContract::new(storage.clone());
+        let scheduled = md
+            .worldwide_days
+            .entry(wwd)
+            .scheduled_process_time()
+            .read()
+            .unwrap();
+        let offering_end = md.worldwide_days.entry(wwd).offering_end().read().unwrap();
+        // ONE tick lands past the whole 50h Offering window (in WAITING): the walk
+        // is Forming → LookbackDelay → Offering → Waiting in a single advance.
+        run_begin_block(storage.clone(), 2, offering_end + SECONDS_PER_HOUR);
+        timestamp_to_date_key(scheduled)
+    });
+
+    let revealed = storage.get_events(desis_addr).iter().any(|log| {
+        if log.topics().first() != Some(&fail_sig) {
+            return false;
+        }
+        let ev = IDesis::AuctionDispatchFailed::decode_log_data(log).unwrap();
+        ev.seriesId == target_series && ev.stage == "auction_stage_reveal"
+    });
+    assert!(
+        revealed,
+        "reveal must dispatch even when one tick crosses the whole Offering window"
+    );
 }

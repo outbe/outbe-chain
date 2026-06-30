@@ -3,10 +3,7 @@ use crate::constants::calc_floor_price;
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::units::SCALE_1E18;
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 /// FI tree height constant used in the distribution algorithm.
 const FI_TREE_HEIGHT: usize = 10;
@@ -25,9 +22,12 @@ pub struct LysisResult {
 /// 1. Loads all tributes for the day
 /// 2. Groups by fidelity index
 /// 3. Runs the distribution algorithm (fixed-point)
-/// 4. Creates NODs for each tribute
+/// 4. Creates NODs for each fundable tribute
 /// 5. Leaves gratis unminted until a later NOD mine step
-/// 6. Deletes processed tributes and clears the day index
+/// 6. Consumes the whole day: burns **every** tribute for the day and clears the
+///    day index, even ones skipped for zero gratis-load or a missing reference
+///    price. The day retires terminal exactly once and is never re-lysed, so a
+///    tribute left in the index would strand there forever.
 pub fn lysis(
     storage: StorageHandle,
     wwd: WorldwideDay,
@@ -57,6 +57,9 @@ pub fn lysis(
 
     if total_interest.is_zero() {
         let tribute_ids = tributes.iter().map(|t| t.token_id).collect();
+        // No interest to distribute against, but the day still retires terminal:
+        // drain its tributes so none strand in the day index (consume-all).
+        tribute_contract.burn_all_by_wwd(wwd)?;
         return Ok(LysisResult {
             nod_ids: vec![],
             tribute_ids,
@@ -73,15 +76,19 @@ pub fn lysis(
         gratis_allocation,
     )?;
 
-    // 8. Resolve entry_price_minor for default currency
-    let entry_price_minor_840 = resolve_entry_price_minor(storage.clone(), wwd, 840)?;
-
-    // 9. Issue NODs for each tribute
+    // 9. Issue NODs for each tribute. Entry prices are resolved lazily per
+    // reference currency (memoized below) — there is no single unconditional
+    // resolve, so a missing reference price degrades to skipping that one tribute
+    // instead of reverting the whole day.
     let mut nod_ids = Vec::with_capacity(tributes.len());
     let mut tribute_ids = Vec::with_capacity(tributes.len());
-    // Track which tribute token_ids were successfully processed.
-    let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
+    // Per-currency entry-price cache for this call. `Some(None)` records "resolved,
+    // but no price" so a repeated unpriced currency is not re-read. `BTreeMap`
+    // (not `HashMap`) keeps this lookup-only structure off the HashMap-on-consensus
+    // rule even though it is never iterated.
+    let mut price_cache: std::collections::BTreeMap<u16, Option<U256>> =
+        std::collections::BTreeMap::new();
 
     for (i, tribute) in tributes.iter().enumerate() {
         tribute_ids.push(tribute.token_id);
@@ -93,16 +100,36 @@ pub fn lysis(
         let gratis_load = tribute.nominal_amount_minor * fraction_fp / SCALE_1E18;
 
         if gratis_load.is_zero() || gratis_load > remaining {
-            // Cannot cover this tribute — skip NOD issuance
+            // Cannot cover this tribute — skip NOD issuance. The tribute is still
+            // burned with the rest of the day below (consume-all).
             continue;
         }
 
-        remaining -= gratis_load;
-
-        let entry_price_minor = match tribute.reference_currency {
-            840 => entry_price_minor_840,
-            _ => resolve_entry_price_minor(storage.clone(), wwd, tribute.reference_currency)?,
+        // Resolve the reference price (memoized). A missing price is routine
+        // missing oracle data, not corruption: skip issuance, leave the gratis
+        // unspent (it flows back as `remaining`), and let the tribute be consumed
+        // below. Reverting here would roll back the begin-zone settlement tx and
+        // halt the chain at this height. Genuine storage faults still propagate.
+        let ccy = tribute.reference_currency;
+        let entry_price_minor = match price_cache.get(&ccy) {
+            Some(cached) => *cached,
+            None => {
+                let resolved = outbe_oracle::api::entry_price_minor(storage.clone(), wwd, ccy)?;
+                price_cache.insert(ccy, resolved);
+                resolved
+            }
         };
+        let Some(entry_price_minor) = entry_price_minor else {
+            tracing::warn!(
+                worldwide_day = u32::from(wwd),
+                token_id = %tribute.token_id,
+                reference_currency = ccy,
+                "lysis: no reference price (VWAP/S-curve) for currency — tribute skipped and consumed"
+            );
+            continue;
+        };
+
+        remaining -= gratis_load;
 
         // floor_price = max(tribute_price, entry_price) * (1 + floor_rate 8%)
         let floor_price_minor =
@@ -132,22 +159,19 @@ pub fn lysis(
             },
         )?;
         nod_ids.push(nod_id);
-        processed_tribute_ids.push(tribute.token_id);
     }
     // Bucket qualification is NOT written here. Buckets become qualified when
     // the COEN/0xUSD oracle exchange rate reaches bucket.floor_price_minor —
     // see `outbe_nod::runtime::NodContract::mine_gratis` for the price check
     // and `outbe_nod::hooks::NodLifecycle` (if present) for eager bulk scan.
 
-    // Only delete tributes that were successfully processed (NOD issued).
-    // Skipped tributes are preserved for potential reprocessing.
-    for token_id in &processed_tribute_ids {
-        tribute_contract.burn(*token_id)?;
-    }
-    // Only clear the day index if ALL tributes were processed.
-    if processed_tribute_ids.len() == tributes.len() {
-        tribute_contract.clear_day_index(wwd)?;
-    }
+    // Consume-all: burn every tribute for the day and clear the day index — both
+    // the ones that issued a NOD and the ones skipped (zero gratis-load or a
+    // missing reference price). The day retires terminal exactly once and is
+    // never re-lysed, so any tribute left in the index would strand there
+    // permanently. Each burn emits `TributeBurned`, so the consumption is
+    // observable on-chain.
+    tribute_contract.burn_all_by_wwd(wwd)?;
 
     Ok(LysisResult {
         nod_ids,
@@ -226,27 +250,4 @@ pub(crate) fn compute_fi_fraction_map(
     }
 
     Ok(fi_fraction_map)
-}
-
-fn resolve_entry_price_minor(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    iso_code: u16,
-) -> Result<U256> {
-    let pair_id = outbe_oracle::api::get_pair_id(storage.clone(), iso_code)?;
-    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair_id(
-        storage.clone(),
-        worldwide_day,
-        pair_id,
-    )?
-    .unwrap_or(U256::ZERO);
-    let max_scurve =
-        outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair_id)?;
-    let nominal = vwap.max(max_scurve);
-    if nominal.is_zero() {
-        return Err(PrecompileError::Revert(
-            "nominal price is zero: no VWAP or S-curve data available for this WorldwideDay".into(),
-        ));
-    }
-    Ok(nominal)
 }

@@ -255,10 +255,28 @@ pub fn advance_worldwide_day(rt: &BlockRuntimeContext, wwd: WorldwideDay) -> MdR
         to_state(start),
     );
     while *day.state() != target_state {
-        let Some(ev) = advance_event(*day.state()) else {
-            return Err(PrecompileError::Revert(format!(
-                "worldwideday stalled toward {target:?}"
-            )));
+        let ev = match *day.state() {
+            // Leaving OFFERING in a forward walk: reveal once before closing.
+            // The steady-state reveal rides the same-state self-loop (target ==
+            // start == Offering, above), but a single tick that crosses the whole
+            // 50h Offering window (missed UTC day / chain halt / forward-ts jump)
+            // never hits that self-loop — it would `CloseOffering` without ever
+            // revealing, stranding a GREEN auction in `Started` so settlement's
+            // `begin_clearing` fails. A redundant reveal on an already-revealed
+            // auction is a harmless best-effort no-op (same as the self-loop).
+            WorldwideDayLifecycleStates::Offering => {
+                day.process_event(WorldwideDayLifecycleEvents::RevealOffering)
+                    .map_err(map_smlang_err)?;
+                WorldwideDayLifecycleEvents::CloseOffering
+            }
+            s => {
+                let Some(ev) = advance_event(s) else {
+                    return Err(PrecompileError::Revert(format!(
+                        "worldwideday stalled toward {target:?}"
+                    )));
+                };
+                ev
+            }
         };
         day.process_event(ev).map_err(map_smlang_err)?;
     }

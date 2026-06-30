@@ -44,6 +44,7 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  26:  pending_parent_view_at             — mapping(uint64 => uint64)
 /// 27: block_guard_ring — mapping(uint64 => B256) (prune ring of fb_hash)
 /// 28: block_guard_ring_seq — uint64 (ring write cursor)
+/// 29: pending_fb_day_ts_at — mapping(B256 => uint64) (fb_hash -> finalized block ts)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -222,4 +223,12 @@ pub struct Rewards {
     /// Monotonic write cursor for `block_guard_ring`; the live slot index is
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
+
+    /// Finalized block (key `fb_hash`) -> the finalized block's own timestamp.
+    /// Late settlement runs K blocks later, so the settling block's timestamp
+    /// would misbucket the recycled terminal residue into day `N+K` whenever the
+    /// window straddles UTC midnight. `settle_window` reads this anchor to
+    /// attribute the residue to the finalized block's UTC day. Written at escrow
+    /// alongside `pending_fees`, cleared at settle. `0` = absent.
+    pub pending_fb_day_ts_at: Mapping<B256, u64>,
 }

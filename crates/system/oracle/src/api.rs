@@ -130,6 +130,40 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair_id, scurve_timestamp)
 }
 
+/// Resolves the entry/nominal price (minor units) for `iso_code` on
+/// `worldwide_day`: the maximum of the day's stored VWAP and the highest active
+/// S-curve value for the currency's pair.
+///
+/// Returns `Ok(None)` when no price can be determined from on-chain data — the
+/// reference currency's pair is not registered, or the day has neither a VWAP
+/// snapshot nor an active S-curve for it. This is *routine* missing data (early
+/// chain, feeder downtime, no oracle quorum) and is deliberately kept distinct
+/// from a genuine storage fault, which still propagates as `Err`. Mirrors the
+/// "no data → `Ok(None)`" policy of [`day_type_pair_vwap`] so settlement callers
+/// (lysis) can skip an unpriced tribute gracefully instead of reverting — a
+/// revert on the begin-zone settlement path would halt the chain.
+pub fn entry_price_minor(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    iso_code: u16,
+) -> Result<Option<U256>> {
+    // Unregistered reference currency → no price (not an error): mirrors
+    // `get_pair_id`'s `id == 0` check but degrades to `None` instead of `Err`.
+    let pair_id = {
+        let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
+        let pair = oracle.settlement_iso_to_pair.read(&iso_code)?;
+        oracle.pair_hash_to_id.read(&pair)?
+    };
+    if pair_id == 0 {
+        return Ok(None);
+    }
+    let vwap = get_worldwide_day_vwap_for_pair_id(storage.clone(), worldwide_day, pair_id)?
+        .unwrap_or(U256::ZERO);
+    let max_scurve = get_max_active_scurve_value(storage, worldwide_day, pair_id)?;
+    let nominal = vwap.max(max_scurve);
+    Ok((!nominal.is_zero()).then_some(nominal))
+}
+
 pub fn get_exchange_rate(storage: StorageHandle, base: &str, quote: &str) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let (rate, _, _) = oracle.get_exchange_rate(base, quote)?;
