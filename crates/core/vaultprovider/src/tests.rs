@@ -443,9 +443,8 @@ fn gate_hooks_authorize_only_the_provider() {
             .abi_encode(),
         ] {
             let out = dispatch(storage.clone(), &selector, stranger(), U256::ZERO).unwrap();
-            assert_eq!(
-                IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap(),
-                true
+            assert!(
+                IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap()
             );
         }
 
@@ -460,9 +459,6 @@ fn gate_hooks_authorize_only_the_provider() {
             U256::ZERO,
         )
         .unwrap();
-        assert_eq!(
-            IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap(),
-            false
-        );
+        assert!(!IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap());
     });
 }

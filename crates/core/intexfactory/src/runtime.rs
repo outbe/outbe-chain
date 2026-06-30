@@ -276,8 +276,7 @@ pub fn settle(
         .abi_encode()
         .into(),
     )?;
-    // Deposit into the reserve via the vaultprovider's in-process api,
-    // declaring the IntexStrikePrice liquidity source.
+
     let shares = outbe_vaultprovider::api::deposit_liquidity(
         storage.clone(),
         INTEX_FACTORY_ADDRESS,

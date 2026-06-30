@@ -77,10 +77,7 @@ fn zero_word() -> Bytes {
 }
 
 /// Seeds a vault for `asset()` so the in-process vault legs of `request_credis`
-/// (withdraw) and `pay_anadosis` (deposit) resolve a configured vault. These ran
-/// through the sub-call stub before the vaultprovider was called directly; in
-/// production genesis seeds the same vault registration. The source/target
-/// discriminant is no longer stored — credisfactory declares it at call time.
+/// (withdraw) and `pay_anadosis` (deposit) resolve a configured vault.
 fn seed_reserve_vault(storage: StorageHandle<'_>) {
     let vp = outbe_vaultprovider::VaultProviderContract::new(storage);
     vp.assets.insert(asset()).unwrap();

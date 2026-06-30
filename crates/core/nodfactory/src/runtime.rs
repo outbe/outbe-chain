@@ -143,8 +143,7 @@ pub fn mine_gratis(
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
-        // 3) Vault pulls and deposits into the reserve via the vaultprovider's
-        //    in-process api, declaring the NodCostPrice liquidity source.
+        // 3) Vault pulls and deposits into the vault.
         outbe_vaultprovider::api::deposit_liquidity(
             storage.clone(),
             NOD_FACTORY_ADDRESS,

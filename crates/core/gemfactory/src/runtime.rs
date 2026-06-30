@@ -129,8 +129,6 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // Vault pulls and deposits into the reserve via the vaultprovider's
-    // in-process api, declaring the GemSettle liquidity source.
     outbe_vaultprovider::api::deposit_liquidity(
         storage.clone(),
         GEM_FACTORY_ADDRESS,

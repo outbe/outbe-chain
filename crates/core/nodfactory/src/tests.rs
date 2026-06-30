@@ -37,22 +37,13 @@ fn sample_params() -> NodIssueParams {
     }
 }
 
-/// Dummy asset address for payment-path tests. The provider has
-/// `enable_sub_call_stub()` flipped on, so the sub-calls return
-/// `default_success()` without touching real ERC20 or vault state.
+/// Dummy asset address for payment-path tests.
 const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
-
-/// Dummy ERC-4626 vault registered for `PAY_ASSET`. The in-process
-/// `deposit_liquidity` call routes its inner vault deposit here; the test pins
-/// this address' `uint256` share return via `stub_sub_call_at` so the runtime's
-/// decode succeeds.
 const PAY_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
 
 /// Seeds a vault for `PAY_ASSET` so nodfactory's in-process `deposit_liquidity`
 /// resolves a configured vault. This ran through the sub-call stub before the
-/// vaultprovider was called directly; in production genesis seeds the same vault
-/// registration. The `LiquiditySource` discriminant is no longer stored —
-/// nodfactory declares `NodCostPrice` at call time.
+/// vaultprovider was called directly.
 fn seed_reserve_vault(storage: &StorageHandle<'_>) {
     let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
     vp.assets.insert(PAY_ASSET).unwrap();
