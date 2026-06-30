@@ -30,11 +30,10 @@ use tracing::info;
 
 use crate::digest::Digest;
 use crate::follow::driver::{self, Driver};
-use crate::follow::resolver::FollowResolver;
+use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
 use crate::follow::{stubs, CommitteeChain};
 use crate::marshal_types::{MarshalActor, MarshalMailbox};
-use crate::network_identity::NetworkIdentity;
 
 /// Inputs to [`run_follow_engine`].
 pub struct FollowEngineConfig<E, F, L, T, R>
@@ -46,7 +45,6 @@ where
         + Storage
         + RngCore
         + CryptoRng
-        + Clone
         + Send
         + Sync
         + 'static,
@@ -67,8 +65,14 @@ where
     pub tip: T,
     /// Height→epoch strategy, shared with the marshal.
     pub epocher: FixedEpocher,
-    /// The trust anchor (group key + start epoch).
-    pub anchor: NetworkIdentity,
+    /// The shared committee chain. Its `scheme_provider()` MUST be the same
+    /// provider the `marshal_actor` was initialized with, so committee
+    /// registrations are visible to the marshal's certificate verification.
+    /// It is bootstrapped at the anchor epoch by this function.
+    pub chain: Arc<Mutex<CommitteeChain>>,
+    /// The trust anchor's start epoch (for the bootstrap + driver). Equal to
+    /// `chain.anchor_epoch()`.
+    pub anchor_epoch: Epoch,
     /// Mailbox capacity for the resolver handler.
     pub mailbox_size: NonZeroUsize,
 }
@@ -86,7 +90,6 @@ where
         + Storage
         + RngCore
         + CryptoRng
-        + Clone
         + Send
         + Sync
         + 'static,
@@ -105,27 +108,26 @@ where
         local,
         tip,
         epocher,
-        anchor,
+        chain,
+        anchor_epoch,
         mailbox_size,
     } = config;
 
-    let anchor_epoch = Epoch::new(anchor.from_epoch);
-
     // ── 1. Bootstrap the committee chain at the anchor epoch ────────────────
-    let chain = Arc::new(Mutex::new(CommitteeChain::new(anchor)));
     bootstrap_anchor(&chain, &upstream, &epocher, anchor_epoch).await?;
 
     // ── 2. Build the marshal resolver handler pair + follow resolver ────────
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
         handler::init(context.child("follow_resolver_handler"), mailbox_size);
 
-    let follow_resolver = FollowResolver::new(
+    let (resolver_actor, follow_resolver) = resolver::init(
         context.child("follow_resolver"),
         handler,
         upstream.clone(),
         local,
         chain.clone(),
     );
+    let _resolver_handle = resolver_actor.start();
 
     // ── 3. Null broadcast (the follower never disseminates) ─────────────────
     let broadcast = stubs::null_broadcast(context.child("follow_broadcast"), mailbox_size);

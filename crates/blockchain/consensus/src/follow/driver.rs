@@ -23,7 +23,7 @@ use std::time::Duration;
 use alloy_consensus::BlockHeader as _;
 use commonware_consensus::types::{Epoch, Epocher, FixedEpocher, Height};
 use commonware_cryptography::bls12381;
-use commonware_runtime::{Clock, Spawner};
+use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
 use tracing::{debug, info, warn};
 
@@ -72,7 +72,7 @@ pub(super) struct Driver<E, F, T> {
 
 impl<E, F, T> Driver<E, F, T>
 where
-    E: Spawner + Clock + Clone + Send + Sync + 'static,
+    E: Spawner + Clock + Metrics + Send + Sync + 'static,
     F: FinalizedSource,
     T: TipSource,
 {
@@ -90,7 +90,7 @@ where
     }
 
     pub(super) fn start(self) -> commonware_runtime::Handle<()> {
-        let context = self.context.clone();
+        let context = self.context.child("run");
         context.spawn(move |_| self.run())
     }
 

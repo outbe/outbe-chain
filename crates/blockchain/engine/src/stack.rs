@@ -1590,7 +1590,7 @@ fn validate_validator_evm_signer(
 /// module), and drive the EL via the existing executor, WITHOUT running the
 /// consensus engine. Selected by `--upstream`.
 async fn run_follow_stack<E>(
-    _ctx: &E,
+    ctx: &E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     _bridge: ConsensusExecutionBridge,
@@ -1634,11 +1634,267 @@ where
         epoch_length,
         "follower mode (--upstream) selected"
     );
-    // Phase 2 wires the follow module (driver/engine/resolver) here.
-    Err(eyre::eyre!(
-        "follower stack not yet implemented (Phase 2): \
-         crates/blockchain/consensus/src/follow/ pending"
-    ))
+
+    // --upstream.nocertify (dev only) has no committee anchor, so there is no
+    // verification core to build. The certified follower requires an anchor.
+    let anchor = anchor.ok_or_else(|| {
+        eyre::eyre!(
+            "certified follower requires a trusted network identity anchor; \
+             --upstream.nocertify (uncertified dev sync) is not yet implemented"
+        )
+    })?;
+
+    run_certified_follow_stack(ctx, anchor, node, upstream, epoch_length).await
+}
+
+/// The committee-chaining follower engine (transport A — upstream RPC, no
+/// consensus P2P). Builds the same marshal + executor as the validator path,
+/// feeds the marshal finalized blocks fetched from the upstream, and verifies
+/// each against the per-epoch committee derived from the trusted anchor.
+async fn run_certified_follow_stack<E>(
+    ctx: &E,
+    anchor: outbe_consensus::network_identity::NetworkIdentity,
+    node: OutbeFullNode,
+    upstream: String,
+    epoch_length_blocks: u32,
+) -> Result<()>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    use commonware_consensus::marshal;
+    use commonware_cryptography::certificate::Scheme as _;
+    use commonware_storage::archive::immutable;
+    use outbe_consensus::follow::{run_follow_engine, CommitteeChain, FollowEngineConfig};
+    use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
+    use std::sync::{Arc, Mutex};
+
+    // ── 0. Startup chain-state sources ───────────────────────────────────
+    let genesis_hash = genesis_hash(&node)?;
+    let last_execution_height = node
+        .provider
+        .last_block_number()
+        .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
+    let last_execution_hash = if last_execution_height > 0 {
+        node.provider
+            .block_hash(last_execution_height)
+            .map_err(|e| {
+                eyre::eyre!("failed to get block hash for height {last_execution_height}: {e}")
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!("missing block hash for execution height {last_execution_height}")
+            })?
+    } else {
+        genesis_hash
+    };
+
+    // ── 1. Committee chain anchored on the trusted identity ──────────────
+    // The marshal verifies finalization certs against THIS chain's per-epoch
+    // verifier provider, so the provider clone we hand the marshal must share
+    // state with the chain (HybridSchemeProvider is Arc-backed; `register`
+    // through a clone is visible everywhere).
+    let chain = CommitteeChain::new(anchor.clone());
+    let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
+        chain.scheme_provider().clone();
+    let anchor_epoch = Epoch::new(chain.anchor_epoch());
+    let chain = Arc::new(Mutex::new(chain));
+
+    // ── 2. Page cache + marshal archives (mirrors run_consensus_stack) ───
+    let page_cache = CacheRef::from_pooler(
+        ctx,
+        nonzero_u16(4096, "page cache page size")?,
+        nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
+    );
+
+    let partition_prefix = "outbe-marshal".to_string();
+
+    let finalizations_archive = immutable::Archive::init(
+        ctx.child("marshal_finalizations"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
+            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
+            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
+            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
+            items_per_section: nonzero_u64(
+                config::IMMUTABLE_ITEMS_PER_SECTION,
+                "IMMUTABLE_ITEMS_PER_SECTION",
+            )?,
+            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
+            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
+            freezer_key_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            freezer_value_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            ordinal_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+        },
+    )
+    .await
+    .wrap_err("failed to initialize finalizations archive")?;
+
+    let blocks_archive = immutable::Archive::init(
+        ctx.child("marshal_blocks"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
+            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
+            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
+            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
+            items_per_section: nonzero_u64(
+                config::IMMUTABLE_ITEMS_PER_SECTION,
+                "IMMUTABLE_ITEMS_PER_SECTION",
+            )?,
+            codec_config: (),
+            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
+            freezer_key_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            freezer_value_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            ordinal_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+        },
+    )
+    .await
+    .wrap_err("failed to initialize blocks archive")?;
+
+    let epocher = commonware_consensus::types::FixedEpocher::new(nonzero_u64(
+        u64::from(epoch_length_blocks),
+        "epochLengthBlocks",
+    )?);
+    let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
+        .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
+        .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
+
+    let marshal_genesis_anchor = genesis_consensus_block(&node)?;
+    let (marshal_actor, marshal_mailbox, last_consensus_finalized_opt) =
+        marshal::core::Actor::init(
+            ctx.child("marshal"),
+            finalizations_archive,
+            blocks_archive,
+            marshal::Config {
+                provider: certificate_scheme_provider,
+                epocher: epocher.clone(),
+                start: marshal::Start::Genesis(marshal_genesis_anchor),
+                partition_prefix: partition_prefix.clone(),
+                mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+                view_retention_timeout: ViewDelta::new(view_retention_timeout),
+                prunable_items_per_section: nonzero_u64(
+                    config::PRUNABLE_ITEMS_PER_SECTION,
+                    "PRUNABLE_ITEMS_PER_SECTION",
+                )?,
+                page_cache: page_cache.clone(),
+                replay_buffer: nonzero_usize(
+                    config::MARSHAL_REPLAY_BUFFER,
+                    "MARSHAL_REPLAY_BUFFER",
+                )?,
+                key_write_buffer: nonzero_usize(
+                    config::MARSHAL_WRITE_BUFFER,
+                    "MARSHAL_WRITE_BUFFER",
+                )?,
+                value_write_buffer: nonzero_usize(
+                    config::MARSHAL_WRITE_BUFFER,
+                    "MARSHAL_WRITE_BUFFER",
+                )?,
+                block_codec_config: (),
+                max_repair: nonzero_usize(config::MAX_REPAIR, "MAX_REPAIR")?,
+                max_pending_acks: nonzero_usize(config::MAX_PENDING_ACKS, "MAX_PENDING_ACKS")?,
+                strategy: commonware_parallel::Sequential,
+            },
+        )
+        .await;
+    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    info!(
+        last_consensus_finalized = last_consensus_finalized.get(),
+        last_execution_height, "follower marshal initialized"
+    );
+
+    // ── 3. Transports ────────────────────────────────────────────────────
+    let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
+    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    // Separate cheap client handle for tip discovery (engine takes the
+    // `FinalizedSource` and `TipSource` as distinct values).
+    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+
+    if !crate::follow_transport::UpstreamRpcClient::finalized_fetch_wired() {
+        // Honest fail-fast: the engine (marshal+executor+driver+resolver+
+        // committee bootstrap) is fully wired, but the upstream finalized-block
+        // fetch + its serving RPC are not yet agreed/added. Refuse to start
+        // rather than spin without ever importing a block.
+        return Err(eyre::eyre!(
+            "follower upstream transport incomplete: `outbe_getFinalization`-style serving RPC \
+             + client not yet wired (external-RPC surface — needs sign-off). Engine, marshal, \
+             executor, resolver, driver and committee-chain bootstrap ARE wired; only the \
+             upstream block-fetch transport remains. Tip discovery via outbe_consensusStatus is \
+             live. See crates/blockchain/engine/src/follow_transport.rs::UpstreamRpcClient."
+        ));
+    }
+
+    // ── 4. Executor (REUSED verbatim) — drives the EL via FCU+newPayload ──
+    let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
+    let (executor_actor, executor_mailbox) = ExecutorActor::new(
+        ctx.child("executor"),
+        engine_handle,
+        genesis_hash,
+        last_execution_height,
+        last_execution_hash,
+        None,
+    );
+    let _executor_handle =
+        executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+
+    // ── 5. Assemble + run the follower engine ────────────────────────────
+    run_follow_engine(
+        ctx.child("follow_engine"),
+        FollowEngineConfig {
+            marshal_actor,
+            marshal_mailbox,
+            executor_reporter: crate::marshal_update_reporter::MarshalUpdateReporter::new(
+                executor_mailbox,
+            ),
+            upstream: upstream_client,
+            local,
+            tip: tip_client,
+            epocher,
+            chain,
+            anchor_epoch,
+            mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+        },
+    )
+    .await
 }
 
 pub async fn run_consensus_stack<E>(
