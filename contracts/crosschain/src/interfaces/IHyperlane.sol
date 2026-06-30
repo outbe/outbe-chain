@@ -25,6 +25,23 @@ interface IMailbox {
         external
         view
         returns (uint256 fee);
+
+    /// @dev {dispatch} variant carrying post-dispatch hook `metadata` (e.g. a per-message destination gas
+    /// override via StandardHookMetadata). The native fee (see the matching {quoteDispatch}) must be `msg.value`.
+    function dispatch(
+        uint32 destinationDomain,
+        bytes32 recipientAddress,
+        bytes calldata messageBody,
+        bytes calldata metadata
+    ) external payable returns (bytes32 messageId);
+
+    /// @dev Native fee required by the metadata-carrying {dispatch} for the same arguments.
+    function quoteDispatch(
+        uint32 destinationDomain,
+        bytes32 recipientAddress,
+        bytes calldata messageBody,
+        bytes calldata metadata
+    ) external view returns (uint256 fee);
 }
 
 interface IMessageRecipient {

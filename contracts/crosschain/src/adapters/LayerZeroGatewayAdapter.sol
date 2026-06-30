@@ -7,6 +7,7 @@ import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
+import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
 /**
  * @dev ERC-7786 gateway adapter for LayerZero V2.
@@ -69,15 +70,8 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     // ============================================ IERC7786GatewaySource ============================================
 
     /// @inheritdoc IERC7786GatewaySource
-    function supportsAttribute(
-        bytes4 /*selector*/
-    )
-        public
-        pure
-        virtual
-        returns (bool)
-    {
-        return false;
+    function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
+        return selector == GasLimitAttribute.SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource
@@ -87,17 +81,12 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         virtual
         returns (bytes32)
     {
-        // Use of `if () revert` syntax to avoid accessing attributes[0] if it's empty.
-        if (attributes.length > 0) {
-            revert UnsupportedAttribute(attributes[0].length < 0x04 ? bytes4(0) : bytes4(attributes[0][0:4]));
-        }
-
         uint32 dstEid = _eidForRecipient(recipient);
 
         // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(defaultGasLimit, 0);
+        bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit));
 
         // msg.value funds the LayerZero native fee; excess is refunded to the caller (the facade).
         _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
@@ -107,13 +96,20 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     }
 
     /// @inheritdoc IGatewayQuote
-    /// @dev Quotes the LayerZero native fee for delivering `payload` to `recipient`.
+    /// @dev Quotes the LayerZero native fee using `defaultGasLimit` for destination execution.
     function quote(bytes calldata recipient, bytes calldata payload) public view virtual returns (uint256 nativeFee) {
-        uint32 dstEid = _eidForRecipient(recipient);
-        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
-        bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(defaultGasLimit, 0);
-        return _quote(dstEid, adapterPayload, options, false).nativeFee;
+        return _quoteWithGas(recipient, payload, defaultGasLimit);
+    }
+
+    /// @dev Quotes the native fee, taking the destination gas from the executionGasLimit attribute (or
+    /// `defaultGasLimit` when absent) so the estimate matches {sendMessage}.
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        public
+        view
+        virtual
+        returns (uint256 nativeFee)
+    {
+        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit));
     }
 
     // ============================================== LayerZero inbound ==============================================
@@ -146,5 +142,20 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         (uint256 chainId,) = recipient.parseEvmV1Calldata();
         dstEid = chainIdToEid[chainId];
         require(dstEid != 0, UnknownDestinationChain(chainId));
+    }
+
+    function _options(uint128 gasLimit) private pure returns (bytes memory) {
+        return OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
+    }
+
+    function _quoteWithGas(bytes calldata recipient, bytes calldata payload, uint128 gasLimit)
+        private
+        view
+        returns (uint256)
+    {
+        uint32 dstEid = _eidForRecipient(recipient);
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        bytes memory adapterPayload = abi.encode(sender, recipient, payload);
+        return _quote(dstEid, adapterPayload, _options(gasLimit), false).nativeFee;
     }
 }

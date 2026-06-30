@@ -48,15 +48,10 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     // ============================================ IERC7786GatewaySource ============================================
 
     /// @inheritdoc IERC7786GatewaySource
-    function supportsAttribute(
-        bytes4 /*selector*/
-    )
-        public
-        view
-        virtual
-        returns (bool)
-    {
-        return false;
+    /// @dev Delegates to the active gateway, which owns the set of supported attributes.
+    function supportsAttribute(bytes4 selector) public view virtual returns (bool) {
+        address gateway = getGateway();
+        return gateway != address(0) && IERC7786GatewaySource(gateway).supportsAttribute(selector);
     }
 
     /// @inheritdoc IERC7786GatewaySource
@@ -67,11 +62,6 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes32 sendId)
     {
-        // Use of `if () revert` syntax to avoid accessing attributes[0] if it's empty
-        if (attributes.length > 0) {
-            revert UnsupportedAttribute(attributes[0].length < 0x04 ? bytes4(0) : bytes4(attributes[0][0:4]));
-        }
-
         address gateway = getGateway();
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
 
@@ -101,6 +91,21 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory wrappedPayload = abi.encode(_nonce + 1, sender, recipient, payload);
         return IGatewayQuote(gateway).quote(bridge, wrappedPayload);
+    }
+
+    /// @dev As {quote}, forwarding `attributes` so the estimate honors per-message options (e.g. gas).
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        public
+        view
+        virtual
+        returns (uint256 nativeFee)
+    {
+        address gateway = getGateway();
+        require(gateway != address(0), ERC7786BridgeGatewayNotSet());
+        bytes memory bridge = getRemoteBridge(recipient);
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        bytes memory wrappedPayload = abi.encode(_nonce + 1, sender, recipient, payload);
+        return IGatewayQuote(gateway).quote(bridge, wrappedPayload, attributes);
     }
 
     // ============================================== IERC7786Recipient ==============================================
