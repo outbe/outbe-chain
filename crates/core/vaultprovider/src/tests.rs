@@ -443,9 +443,7 @@ fn gate_hooks_authorize_only_the_provider() {
             .abi_encode(),
         ] {
             let out = dispatch(storage.clone(), &selector, stranger(), U256::ZERO).unwrap();
-            assert!(
-                IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap()
-            );
+            assert!(IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap());
         }
 
         // A non-provider account is not authorized.
