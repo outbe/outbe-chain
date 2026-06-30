@@ -7,32 +7,56 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
-import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
+import {MessagingFee, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-/// @dev ERC1155 receiver that snapshots the adapter's OZ `ReentrancyGuard` storage
-///      slot during the `onERC1155Received` callback. The slot reads `ENTERED == 2`
-///      iff a `nonReentrant`-guarded function is active on `adapter` at callback time —
-///      which only holds when `_lzReceive` carries the `nonReentrant` modifier.
+Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+/// @dev Selector of OZ `ReentrancyGuardReentrantCall()`, reverted by `nonReentrant` on re-entry.
+bytes4 constant REENTRANCY_GUARD_REENTRANT_CALL = 0x3ee5aeb5;
+
+/// @dev Re-enters the adapter's endpoint-gated `lzReceive` while the outer `_lzReceive` still holds
+///      the guard. Returns true iff that re-entry reverts with `ReentrancyGuardReentrantCall`.
+///      `vm.prank(endpoint)` clears `onlyEndpoint` so the guard (not the gate) rejects the call.
+///      Replaces the old storage-slot probe, which cannot read the now-transient guard across contracts.
+function reentryGuarded(address adapter, address endpoint, uint32 srcEid, bytes32 peer) returns (bool) {
+    Origin memory origin = Origin({srcEid: srcEid, sender: peer, nonce: 2});
+    VM.prank(endpoint);
+    (bool ok, bytes memory ret) = adapter.call(
+        abi.encodeWithSignature(
+            "lzReceive((uint32,bytes32,uint64),bytes32,bytes,address,bytes)",
+            origin,
+            bytes32(0),
+            bytes(""),
+            address(0),
+            bytes("")
+        )
+    );
+    return !ok && ret.length >= 4 && bytes4(ret) == REENTRANCY_GUARD_REENTRANT_CALL;
+}
+
+/// @dev ERC1155 receiver that, on the mint callback inside `_lzReceive`, tries to re-enter the
+///      adapter's inbound entry. The re-entry reverts iff `_lzReceive` carries `nonReentrant`.
 contract ReentrancyGuardProbe is IERC1155Receiver {
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 internal constant REENTRANCY_GUARD_STORAGE =
-        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-    Vm internal constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
     address public immutable adapter;
-    uint256 public observedGuardSlot;
+    address public immutable endpoint;
+    uint32 public immutable srcEid;
+    bytes32 public immutable peer;
     bool public observed;
+    bool public guardHeld;
 
-    constructor(address adapter_) {
+    constructor(address adapter_, address endpoint_, uint32 srcEid_, address peer_) {
         adapter = adapter_;
+        endpoint = endpoint_;
+        srcEid = srcEid_;
+        peer = bytes32(uint256(uint160(peer_)));
     }
 
     function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
-        observedGuardSlot = uint256(VM.load(adapter, REENTRANCY_GUARD_STORAGE));
         observed = true;
+        guardHeld = reentryGuarded(adapter, endpoint, srcEid, peer);
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
@@ -40,8 +64,8 @@ contract ReentrancyGuardProbe is IERC1155Receiver {
         external
         returns (bytes4)
     {
-        observedGuardSlot = uint256(VM.load(adapter, REENTRANCY_GUARD_STORAGE));
         observed = true;
+        guardHeld = reentryGuarded(adapter, endpoint, srcEid, peer);
         return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 
@@ -60,8 +84,6 @@ contract ReentrancyGuardProbe is IERC1155Receiver {
 ///      of the defense-in-depth layer and what this test pins.
 contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
     using OptionsBuilder for bytes;
-
-    uint256 internal constant ENTERED = 2;
 
     uint32 private aEid = 1;
     uint32 private bEid = 2;
@@ -107,7 +129,8 @@ contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
     }
 
     function test_lzReceive_runsUnderNonReentrant() public {
-        ReentrancyGuardProbe probe = new ReentrancyGuardProbe(address(adapterB));
+        ReentrancyGuardProbe probe =
+            new ReentrancyGuardProbe(address(adapterB), address(endpoints[bEid]), aEid, address(adapterA));
 
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(400000, 0);
         SendParam memory sendParam = SendParam({
@@ -127,6 +150,6 @@ contract ONFT1155AdapterReentrancyTest is TestHelperOz5 {
         verifyPackets(bEid, addressToBytes32(address(adapterB)));
 
         assertTrue(probe.observed(), "probe callback never ran");
-        assertEq(probe.observedGuardSlot(), ENTERED, "_lzReceive missing nonReentrant modifier");
+        assertTrue(probe.guardHeld(), "_lzReceive missing nonReentrant modifier");
     }
 }
