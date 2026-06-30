@@ -20,7 +20,7 @@ use outbe_gratis::Gratis;
 use outbe_gratisfactory::runtime as gf;
 use outbe_gratispool::constants::{DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
-use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding};
+use outbe_gratispool::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
 use outbe_gratispool::verifier::with_verifier_outcome;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::contract::OracleContract;
@@ -85,8 +85,9 @@ fn full_request_pay_reclaim_unpledge_flow() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let pledge_amount = DenomAmount::try_from(denom_id).unwrap().amount();
+        let denom = DenomAmount::Gratis1;
+        let denom_id = denom.id();
+        let pledge_amount = denom.amount();
 
         // Mint Alice enough Gratis to pledge.
         Gratis::new(storage.clone())
@@ -102,8 +103,8 @@ fn full_request_pay_reclaim_unpledge_flow() {
         let reclaim_secret = U256::from(0x3333u64);
         let reclaim_null = U256::from(0x4444u64);
 
-        let pledge_commitment = commitment_hash(pledge_secret, pledge_null, denom_id).unwrap();
-        let reclaim_commitment = commitment_hash(reclaim_secret, reclaim_null, denom_id).unwrap();
+        let pledge_commitment = commitment_hash(pledge_secret, pledge_null, denom).unwrap();
+        let reclaim_commitment = commitment_hash(reclaim_secret, reclaim_null, denom).unwrap();
 
         // 1) Pledge: shielded deposit into the per-denomination pool.
         //    pledge_gratis returns the post-insert Merkle root, which we feed
@@ -210,18 +211,19 @@ fn request_credis_rejects_overdue_anadosis() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let amount = DenomAmount::try_from(denom_id).unwrap().amount();
+        let denom = DenomAmount::Gratis1;
+        let denom_id = denom.id();
+        let amount = denom.amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
-        let c1 = commitment_hash(U256::from(1u64), U256::from(2u64), denom_id).unwrap();
-        let c2 = commitment_hash(U256::from(3u64), U256::from(4u64), denom_id).unwrap();
-        let reclaim_c1 = commitment_hash(U256::from(5u64), U256::from(6u64), denom_id).unwrap();
-        let reclaim_c2 = commitment_hash(U256::from(7u64), U256::from(8u64), denom_id).unwrap();
+        let c1 = commitment_hash(U256::from(1u64), U256::from(2u64), denom).unwrap();
+        let c2 = commitment_hash(U256::from(3u64), U256::from(4u64), denom).unwrap();
+        let reclaim_c1 = commitment_hash(U256::from(5u64), U256::from(6u64), denom).unwrap();
+        let reclaim_c2 = commitment_hash(U256::from(7u64), U256::from(8u64), denom).unwrap();
 
         // First pledge + request.
         let (root1, _, _) = gf::pledge_gratis(storage.clone(), alice(), denom_id, c1).unwrap();
@@ -382,14 +384,15 @@ fn pay_anadosis_rejects_non_owner_caller() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let amount = DenomAmount::try_from(denom_id).unwrap().amount();
+        let denom = DenomAmount::Gratis1;
+        let denom_id = denom.id();
+        let amount = denom.amount();
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
-        let pledge_c = commitment_hash(U256::from(11u64), U256::from(12u64), denom_id).unwrap();
-        let reclaim_c = commitment_hash(U256::from(13u64), U256::from(14u64), denom_id).unwrap();
+        let pledge_c = commitment_hash(U256::from(11u64), U256::from(12u64), denom).unwrap();
+        let reclaim_c = commitment_hash(U256::from(13u64), U256::from(14u64), denom).unwrap();
         let (pledge_root, _, _) =
             gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
 
@@ -451,8 +454,9 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let pledge_amount = DenomAmount::try_from(denom_id).unwrap().amount();
+        let denom = DenomAmount::Gratis1;
+        let denom_id = denom.id();
+        let pledge_amount = denom.amount();
 
         Gratis::new(storage.clone())
             .mine(alice(), pledge_amount)
@@ -462,18 +466,18 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
 
         let pledge_secret = U256::from(0xA1u64);
         let pledge_null = U256::from(0xA2u64);
-        let pledge_commitment = commitment_hash(pledge_secret, pledge_null, denom_id).unwrap();
+        let pledge_commitment = commitment_hash(pledge_secret, pledge_null, denom).unwrap();
         let (pledge_root, _, _) =
             gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_commitment).unwrap();
 
         // The honest user's reclaim commitment — what the proof actually
         // binds into `receiver_binding`.
         let reclaim_user =
-            commitment_hash(U256::from(0xB1u64), U256::from(0xB2u64), denom_id).unwrap();
+            commitment_hash(U256::from(0xB1u64), U256::from(0xB2u64), denom).unwrap();
         // The attacker's reclaim commitment — what they substitute in the
         // intercepted `RequestArgs` after copying the proof bytes.
         let reclaim_attacker =
-            commitment_hash(U256::from(0xC1u64), U256::from(0xC2u64), denom_id).unwrap();
+            commitment_hash(U256::from(0xC1u64), U256::from(0xC2u64), denom).unwrap();
         assert_ne!(reclaim_user, reclaim_attacker);
 
         let binding_user =
@@ -515,9 +519,9 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
 /// regression would break replay).
 #[test]
 fn commitment_hash_deterministic() {
-    let h1 = commitment_hash(U256::from(1u64), U256::from(2u64), 1).unwrap();
-    let h2 = commitment_hash(U256::from(1u64), U256::from(2u64), 1).unwrap();
-    let h3 = commitment_hash(U256::from(1u64), U256::from(2u64), 2).unwrap();
+    let h1 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis1).unwrap();
+    let h2 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis1).unwrap();
+    let h3 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis10).unwrap();
     assert_eq!(h1, h2);
     assert_ne!(h1, h3);
     // Anchor against an unrelated keccak so a change in the Poseidon

@@ -6,64 +6,19 @@
 //! check a proof's `merkle_root` public input against an on-chain-recomputed
 //! root without re-hashing field-element-by-field-element on both sides.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use ark_bn254::Fr;
 use outbe_poseidon::{Poseidon, PoseidonHasher};
 
 use outbe_primitives::error::Result;
 
 use crate::constants::{
-    MERKLE_DEPTH, ROOT_WINDOW, TAG_BINDING, TAG_COMMIT_GRATIS, TAG_MERKLE_GRATIS,
-    TAG_NULLIFIER_GRATIS, ZERO_LEAF,
+    MERKLE_DEPTH, ROOT_WINDOW, TAG_MERKLE_GRATIS
+    , ZERO_LEAF,
 };
 use crate::errors::GratisPoolError;
 use crate::schema::GratisPoolContract;
-use crate::zkp_utils::{address_to_fr, fr_to_u256, poseidon, u256_to_fr, u64_to_fr};
-
-// ---------------------------------------------------------------------------
-// Public helpers — formulas exposed to runtime / tests
-// ---------------------------------------------------------------------------
-
-/// `commitment = poseidon(TAG_COMMIT_GRATIS, secret, nullifier_secret, denom_id)`.
-pub fn commitment_hash(secret: U256, nullifier_secret: U256, denom_id: u8) -> Result<U256> {
-    let secret_fr = u256_to_fr(secret)
-        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("secret".to_string()))?;
-    let nullifier_secret_fr = u256_to_fr(nullifier_secret)
-        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_secret".to_string()))?;
-
-    poseidon(&[
-        u64_to_fr(TAG_COMMIT_GRATIS),
-        secret_fr,
-        nullifier_secret_fr,
-        u64_to_fr(denom_id as u64),
-    ])
-}
-
-/// `nullifier_hash = poseidon(TAG_NULLIFIER_GRATIS, nullifier_secret)`.
-pub fn nullifier_hash(nullifier_secret: U256) -> Result<U256> {
-    let nullifier_secret_fr = u256_to_fr(nullifier_secret)
-        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nullifier_secret".to_string()))?;
-    poseidon(&[u64_to_fr(TAG_NULLIFIER_GRATIS), nullifier_secret_fr])
-}
-
-/// `receiver_binding = poseidon(TAG_BINDING, action_tag, target_address, chain_id, nonce)`.
-pub fn receiver_binding(
-    action_tag: u64,
-    target: Address,
-    chain_id: u64,
-    nonce: U256,
-) -> Result<U256> {
-    let nonce_fr = u256_to_fr(nonce)
-        .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("nonce".to_string()))?;
-
-    poseidon(&[
-        u64_to_fr(TAG_BINDING),
-        u64_to_fr(action_tag),
-        address_to_fr(target),
-        u64_to_fr(chain_id),
-        nonce_fr,
-    ])
-}
+use crate::zkp_utils::{fr_to_u256, poseidon, u256_to_fr, u64_to_fr};
 
 /// Per-level "empty subtree" hashes.
 ///

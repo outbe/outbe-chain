@@ -4,7 +4,7 @@ use alloy_sol_types::{SolCall, SolInterface};
 use outbe_gratis::Gratis;
 use outbe_gratispool::constants::{DenomAmount, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
-use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding};
+use outbe_gratispool::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
 use outbe_gratispool::verifier::with_verifier_outcome;
 use outbe_primitives::addresses::CREDIS_ADDRESS;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
@@ -46,7 +46,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = DenomAmount::try_from(1).unwrap().amount();
+        let amount = DenomAmount::Gratis1.amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
@@ -97,7 +97,7 @@ fn pledge_duplicate_commitment_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = DenomAmount::try_from(1).unwrap().amount();
+        let amount = DenomAmount::Gratis1.amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
@@ -120,15 +120,16 @@ fn unpledge_releases_escrow_back_to_pledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let denom_id: u8 = 1;
-        let amount = DenomAmount::try_from(denom_id).unwrap().amount();
+        let denom = DenomAmount::Gratis1;
+        let denom_id = denom.id();
+        let amount = denom.amount();
 
         // Alice pledges.
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         let secret = U256::from(0xAAu64);
         let null_s = U256::from(0xBBu64);
-        let commitment = commitment_hash(secret, null_s, denom_id).unwrap();
+        let commitment = commitment_hash(secret, null_s, denom).unwrap();
         // pledge_gratis returns the post-insert Merkle root; reuse it as the
         // spend proof's public input instead of re-reading from state.
         let (pledge_root, _, _) =

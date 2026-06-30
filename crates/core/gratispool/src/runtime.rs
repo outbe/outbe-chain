@@ -32,9 +32,8 @@ use crate::constants::{
 use crate::errors::GratisPoolError;
 use crate::precompile::emit_commitment_inserted;
 use crate::schema::GratisPoolContract;
-use crate::state::receiver_binding;
 use crate::verifier;
-use crate::zkp_utils::u256_to_fr;
+use crate::zkp_utils::{receiver_binding, u256_to_fr};
 
 /// ABI-shape of a spend proof (same shape for both `requestCredis` and
 /// `unpledgeGratis`). Reused from the precompile dispatch path; lives on the

@@ -21,7 +21,7 @@ pub mod runtime;
 pub mod schema;
 pub mod state;
 
-pub(crate) mod zkp_utils;
+pub mod zkp_utils;
 
 pub mod verifier;
 
