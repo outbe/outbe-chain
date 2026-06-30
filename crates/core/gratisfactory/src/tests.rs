@@ -54,7 +54,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
 
         let pledge_call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
             IGratisFactory::pledgeGratisCall {
-                denomId: 1,
+                denomId: DenomAmount::Gratis1.id(),
                 commitment: U256::from(0xA1u64),
             },
         ));
@@ -68,7 +68,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
 
         // Commitment landed in the pool tree.
         let pool = GratisPoolContract::new(storage);
-        assert_eq!(pool.leaf_count(1).unwrap(), 1);
+        assert_eq!(pool.leaf_count(DenomAmount::Gratis1.id()).unwrap(), 1);
     });
 }
 
@@ -93,6 +93,27 @@ fn pledge_unknown_denom_reverts() {
 }
 
 #[test]
+fn pledge_rejects_reserved_denom() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        // Seed fidelity so the pledge clears the RCFI gate and reaches the
+        // pledgeability check. `Gratis0_1` is reserved as the anadosis-only
+        // reclaim destination and must never accept a direct pledge.
+        seed_fidelity(storage.clone(), alice());
+
+        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
+            IGratisFactory::pledgeGratisCall {
+                denomId: DenomAmount::Gratis0_1.id(),
+                commitment: U256::from(0xA6u64),
+            },
+        ));
+        let err = dispatch(storage, &call, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("reserved and cannot be pledged"));
+    });
+}
+
+#[test]
 fn pledge_duplicate_commitment_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
@@ -105,7 +126,7 @@ fn pledge_duplicate_commitment_reverts() {
 
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
             IGratisFactory::pledgeGratisCall {
-                denomId: 1,
+                denomId: DenomAmount::Gratis1.id(),
                 commitment: U256::from(0xA3u64),
             },
         ));

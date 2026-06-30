@@ -500,19 +500,32 @@ fn denom_amount_id_roundtrips_and_rejects_out_of_range() {
 }
 
 #[test]
-fn anadosis_denomination_is_exact_one_tenth() {
+fn anadosis_denomination_maps_one_decade_down() {
+    // Every pledgeable rung maps to the denom one decade down, whose amount is
+    // exactly one tenth (no truncation): ten installments reconstitute the full
+    // deposit amount (credisfactory's NUMBER_OF_ANADOSIS = 10). The reserved
+    // floor `Gratis0_1` has no decade below it and maps to `None`.
     for d in DenomAmount::ALL {
-        let anadosis = d.anadosis_denomination();
-        // Exactly one tenth, with no truncation: ten installments reconstitute
-        // the full deposit amount (credisfactory's NUMBER_OF_ANADOSIS = 10).
-        assert_eq!(anadosis, d.amount() / U256::from(10u64));
-        assert_eq!(anadosis * U256::from(10u64), d.amount());
+        match d.anadosis_denomination() {
+            Some(anadosis) => {
+                assert_eq!(anadosis.amount(), d.amount() / U256::from(10u64));
+                assert_eq!(anadosis.amount() * U256::from(10u64), d.amount());
+            }
+            None => assert_eq!(d, DenomAmount::Gratis0_1),
+        }
     }
-    // Smallest denomination: 1 GRATIS / 10 == 0.1 GRATIS == 10^17 base units.
+    // Explicit edge mappings.
     assert_eq!(
         DenomAmount::Gratis1.anadosis_denomination(),
-        ONE_COEN / U256::from(10u64),
+        Some(DenomAmount::Gratis0_1),
     );
+    assert_eq!(
+        DenomAmount::Gratis10.anadosis_denomination(),
+        Some(DenomAmount::Gratis1),
+    );
+    assert_eq!(DenomAmount::Gratis0_1.anadosis_denomination(), None);
+    // 0.1 GRATIS == 10^17 base units.
+    assert_eq!(DenomAmount::Gratis0_1.amount(), ONE_COEN / U256::from(10u64));
 }
 
 #[test]

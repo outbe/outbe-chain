@@ -2,9 +2,9 @@
 //!
 //! `requestCredis` consumes a pool commitment via the supplied ZK proof and
 //! opens a credis position bound to `bundleAccount`. `anadosis` advances the
-//! schedule and, at position completion, re-inserts the position's reclaim
-//! commitment into the gratispool so the holder of the reclaim secret can
-//! later `unpledgeGratis`.
+//! schedule and inserts the caller-supplied reclaim commitment for that
+//! installment into the gratispool so the holder of the reclaim secret can
+//! `unpledgeGratis` one installment's share immediately.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
@@ -41,7 +41,6 @@ pub fn dispatch(
                         denom_id: c.args.denomId,
                         receiver_binding: c.args.receiverBinding,
                         proof: c.args.proof.to_vec(),
-                        reclaim_commitment: c.args.reclaimCommitment,
                     };
                     let (position_id, amount_stables) = runtime::request_credis(
                         storage.clone(),
@@ -65,6 +64,7 @@ pub fn dispatch(
                         storage.clone(),
                         sender,
                         c.positionId,
+                        c.reclaimCommitment,
                         timestamp,
                         block_number,
                     )?;

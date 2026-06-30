@@ -2,27 +2,25 @@
 //!
 //! - [`request_credis`] verifies a pledge-commitment spend proof through the
 //!   gratispool, opens a credis position bound to `bundleAccount`, persists
-//!   the user-supplied `(denom_id, reclaim_commitment)` pair for later
-//!   reclaim insertion, and delivers the stablecoin loan via the vault
-//!   sub-call.
-//! - [`pay_anadosis`] advances the position by one installment. When the
-//!   position completes (`next_anadosis_number > NUMBER_OF_ANADOSIS`), the
-//!   stored reclaim commitment is inserted back into the gratispool so the
-//!   reclaim-secret holder can later `unpledgeGratis(args, destination)`.
+//!   the position's `denom_id`, and delivers the stablecoin loan via the
+//!   vault sub-call.
+//! - [`pay_anadosis`] advances the position by one installment and inserts the
+//!   user-supplied reclaim commitment for that installment into the gratispool
+//!   at the anadosis (one-decade-down) denomination. Each note is worth
+//!   `denom.amount() / 10`, so the reclaim-secret holder can `unpledgeGratis`
+//!   one installment's share immediately — without waiting for the position to
+//!   complete.
 //!
 //! Pre-pool note: the previous flow looked up a plaintext `PledgeTicket` by
-//! `secret`, ran a fidelity check on the pledger's address, and minted a
-//! fresh ticket per installment. After the shielded-pool migration the
-//! pledger's address is no longer observable to the factory, so:
-//!
-//! - the fidelity gate operates on `bundleAccount` rather than the pledger;
-//! - the per-installment ticket mint becomes a single reclaim-commitment
-//!   insert at position completion (PoC limitation).
+//! `secret` and ran a fidelity check on the pledger's address. After the
+//! shielded-pool migration the pledger's address is no longer observable to
+//! the factory, so the fidelity gate operates on `bundleAccount` rather than
+//! the pledger.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_credis::{AnadosisResult, CredisContract, NUMBER_OF_ANADOSIS};
+use outbe_credis::{AnadosisResult, CredisContract};
 use outbe_gratispool::api as pool;
 use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
@@ -60,7 +58,6 @@ pub struct RequestArgs {
     pub denom_id: u8,
     pub receiver_binding: U256,
     pub proof: Vec<u8>,
-    pub reclaim_commitment: U256,
 }
 
 impl RequestArgs {
@@ -108,6 +105,12 @@ pub fn request_credis(
     // never be persisted to a position (or reach the pledge spend). Rejects
     // with the `DenomUnknown` revert ("denomination id out of range").
     let denom = DenomAmount::try_from(args.denom_id)?;
+    // Only denominations with an anadosis (one-decade-down) sub-denomination
+    // can be repaid in installments, so a reserved floor like `Gratis0_1`
+    // (which maps to `None`) can never open a position.
+    denom
+        .anadosis_denomination()
+        .ok_or(CredisFactoryError::DenomNotCredisEligible)?;
 
     // Reject borrowers with overdue anadosis on any of their positions.
     {
@@ -118,19 +121,15 @@ pub fn request_credis(
     }
 
     // Verify the pledge proof, mark the nullifier spent, and learn the
-    // gratis amount from the pool's denomination ladder. Receiver binding
-    // is recomputed against `bundle_account` (the action_tag is
-    // ACTION_REQUEST_CREDIS inside the pool runtime) and folds in
-    // `args.reclaim_commitment` as the context nonce so a mempool
-    // front-runner cannot swap the reclaim leg and capture the eventual
-    // `unpledgeGratis`.
+    // gratis amount from the pool's denomination ladder. Receiver binding is
+    // recomputed against `bundle_account` (the action_tag is
+    // ACTION_REQUEST_CREDIS inside the pool runtime). The context nonce is
+    // unused now that reclaim happens per-installment in `pay_anadosis`, so it
+    // is pinned to zero; the proof still binds `bundle_account` as the target,
+    // so a mempool copy cannot redirect the loan.
     let spend_args = args.spend_args();
-    let gratis_amount = pool::verify_and_spend_for_credis(
-        storage.clone(),
-        bundle_account,
-        args.reclaim_commitment,
-        &spend_args,
-    )?;
+    let gratis_amount =
+        pool::verify_and_spend_for_credis(storage.clone(), bundle_account, U256::ZERO, &spend_args)?;
 
     let amount_stables = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
 
@@ -149,16 +148,14 @@ pub fn request_credis(
         current_time,
     )?;
 
-    // Persist the per-position reclaim metadata so `pay_anadosis` can insert
-    // the reclaim commitment when the position completes.
+    // Persist the position's denomination so `pay_anadosis` can derive the
+    // anadosis (one-decade-down) denomination for each installment's reclaim
+    // insert.
     {
         let factory = CredisFactoryContract::new(storage.clone());
         factory
             .position_denom
             .write(&position_id, denom.id() as u32)?;
-        factory
-            .position_reclaim_commitment
-            .write(&position_id, args.reclaim_commitment)?;
     }
 
     // Withdraw the matching stablecoin from the vault to the borrower's
@@ -186,14 +183,21 @@ pub fn request_credis(
 // pay_anadosis
 // ---------------------------------------------------------------------------
 
-/// Advances the credis position by one anadosis installment. When the final
-/// installment completes the runtime inserts the position's stored reclaim
-/// commitment back into the gratispool at the matching denomination so the
-/// reclaim-secret holder can later `unpledgeGratis(args, destination)`.
+/// Advances the credis position by one anadosis installment and inserts the
+/// caller-supplied `reclaim_commitment` into the gratispool at the anadosis
+/// (one-decade-down) denomination. The note is worth `denom.amount() / 10`, so
+/// the reclaim-secret holder can `unpledgeGratis(args, destination)` for that
+/// installment's share immediately — every installment, not only the last.
+///
+/// The `reclaim_commitment` MUST have been computed with the **anadosis
+/// denomination id** (see [`DenomAmount::anadosis_denomination`]); the runtime
+/// stores it opaquely and cannot verify the preimage, so a note built against
+/// the wrong denomination inserts successfully but is permanently unspendable.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
+    reclaim_commitment: U256,
     current_time: u64,
     _current_block: u64,
 ) -> Result<AnadosisResult> {
@@ -216,6 +220,11 @@ pub fn pay_anadosis(
         }
         if caller != position.bundle_account {
             return Err(CredisFactoryError::UnauthorizedCaller.into());
+        }
+        // Checked after authorization so an unauthorized caller still sees the
+        // `bundleAccount` error regardless of the reclaim value.
+        if reclaim_commitment.is_zero() {
+            return Err(CredisFactoryError::InvalidReclaimCommitment.into());
         }
     }
 
@@ -253,30 +262,19 @@ pub fn pay_anadosis(
     .abi_encode();
     storage.call(vault, U256::ZERO, deposit.into())?;
 
-    // 4) If this completed the position, append the per-position reclaim
-    //    commitment to the pool so the reclaim secret can later be used to
-    //    unpledge. No Gratis-ledger movement: the pledger's per-account
-    //    pledged balance was set at pledge time and stays in place until
-    //    they (or whoever holds the reclaim secret bound to their address)
-    //    invokes `unpledgeGratis`.
-    if result.anadosis_number == NUMBER_OF_ANADOSIS {
-        let factory = CredisFactoryContract::new(storage.clone());
-        let denom_id = factory.position_denom.read(&position_id)? as u8;
-        let reclaim_commitment = factory.position_reclaim_commitment.read(&position_id)?;
-        // Defensive: a zero reclaim_commitment indicates the position was
-        // opened before the shielded-pool migration. Skip the pool-side
-        // insertion rather than error out so legacy positions still settle
-        // through the existing payAnadosis sub-call sequence.
-        if reclaim_commitment != U256::ZERO {
-            let denom = DenomAmount::try_from(denom_id)?;
-            pool::add_commitment(storage.clone(), denom, reclaim_commitment)?;
-        }
-        // Clear the metadata — single-use per position.
-        factory.position_denom.write(&position_id, 0u32)?;
-        factory
-            .position_reclaim_commitment
-            .write(&position_id, U256::ZERO)?;
-    }
+    // 4) Append this installment's reclaim note so the pledger can unpledge
+    //    1/10 of the collateral immediately. No Gratis-ledger movement here:
+    //    the pledger's per-account pledged balance was set at pledge time and
+    //    stays in place until they (or whoever holds the reclaim secret bound
+    //    to their address) invokes `unpledgeGratis`. The note lives in the
+    //    anadosis (one-decade-down) pool; its amount resolves to
+    //    `denom.amount() / 10` at unpledge time.
+    let factory = CredisFactoryContract::new(storage.clone());
+    let denom = DenomAmount::try_from(factory.position_denom.read(&position_id)? as u8)?;
+    let anadosis_denom = denom
+        .anadosis_denomination()
+        .ok_or(CredisFactoryError::DenomNotCredisEligible)?;
+    pool::add_commitment(storage.clone(), anadosis_denom, reclaim_commitment)?;
 
     Ok(result)
 }

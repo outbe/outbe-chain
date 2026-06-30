@@ -15,18 +15,27 @@ use crate::errors::GratisPoolError;
 /// Each variant is a separate Tornado-style anonymity pool with a fixed deposit
 /// amount; fixed amounts ensure the pledge amount itself is not a unique
 /// fingerprint that could link a `pledgeGratis` to a later spend.
+///
+/// Ids are assigned in ascending amount order. [`Gratis0_1`](Self::Gratis0_1)
+/// is a reserved sub-rung that exists only as the destination for a single
+/// anadosis installment's reclaim note (one decade below the smallest
+/// pledgeable rung). It cannot be pledged directly — see
+/// [`is_pledgeable`](Self::is_pledgeable).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DenomAmount {
-    Gratis1 = 1,
-    Gratis10 = 2,
-    Gratis100 = 3,
-    Gratis1k = 4,
-    Gratis10k = 5,
+    /// Reserved anadosis-only sub-rung (0.1 GRATIS). Not directly pledgeable.
+    Gratis0_1 = 1,
+    Gratis1 = 2,
+    Gratis10 = 3,
+    Gratis100 = 4,
+    Gratis1k = 5,
+    Gratis10k = 6,
 }
 
 impl DenomAmount {
-    pub const ALL: [DenomAmount; 5] = [
+    pub const ALL: [DenomAmount; 6] = [
+        Self::Gratis0_1,
         Self::Gratis1,
         Self::Gratis10,
         Self::Gratis100,
@@ -41,6 +50,7 @@ impl DenomAmount {
     pub fn amount(self) -> U256 {
         let gratis = |g: u64| U256::from(g) * ONE_COEN;
         match self {
+            Self::Gratis0_1 => ONE_COEN / U256::from(10u64),
             Self::Gratis1 => gratis(1),
             Self::Gratis10 => gratis(10),
             Self::Gratis100 => gratis(100),
@@ -49,8 +59,30 @@ impl DenomAmount {
         }
     }
 
-    pub fn anadosis_denomination(self) -> U256 {
-        self.amount() / U256::from(10u64)
+    /// Whether users may open a pledge in this denomination. The reserved
+    /// sub-rung [`Gratis0_1`](Self::Gratis0_1) exists only as the destination
+    /// for a single anadosis installment's reclaim note, so it cannot be
+    /// pledged directly.
+    pub const fn is_pledgeable(self) -> bool {
+        !matches!(self, Self::Gratis0_1)
+    }
+
+    /// The denomination one decade down — the pool a single anadosis
+    /// installment's reclaim note lives in. Its [`amount`](Self::amount) is
+    /// exactly `self.amount() / 10` (credisfactory's `NUMBER_OF_ANADOSIS = 10`),
+    /// so a later `unpledgeGratis` of that note releases one installment's
+    /// share. Returns `None` for the reserved floor
+    /// [`Gratis0_1`](Self::Gratis0_1), which has no decade below it and is
+    /// therefore not credis-eligible.
+    pub fn anadosis_denomination(self) -> Option<DenomAmount> {
+        match self {
+            Self::Gratis10k => Some(Self::Gratis1k),
+            Self::Gratis1k => Some(Self::Gratis100),
+            Self::Gratis100 => Some(Self::Gratis10),
+            Self::Gratis10 => Some(Self::Gratis1),
+            Self::Gratis1 => Some(Self::Gratis0_1),
+            Self::Gratis0_1 => None,
+        }
     }
 }
 

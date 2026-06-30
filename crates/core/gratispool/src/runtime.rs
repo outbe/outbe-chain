@@ -48,9 +48,8 @@ use crate::zkp_utils::{receiver_binding, u256_to_fr};
 ///
 /// `receiver_binding` itself folds in an application-derived context
 /// nonce on top of `(action_tag, target, chain_id)` — see
-/// `state::receiver_binding`. For `requestCredis` the prover binds the
-/// position's `reclaim_commitment` into that slot; for `unpledgeGratis`
-/// the slot is zero.
+/// `state::receiver_binding`. Both `requestCredis` and `unpledgeGratis`
+/// currently pin that slot to zero.
 #[derive(Debug, Clone)]
 pub struct SpendArgs {
     pub merkle_root: U256,
@@ -94,11 +93,10 @@ pub fn add_commitment(
 /// (typically `bundleAccount` as forwarded by credisfactory).
 ///
 /// `nonce` is the application-derived context-binding payload the prover
-/// folded into `receiver_binding`. For `credisfactory::requestCredis` the
-/// caller passes `args.reclaim_commitment` — this closes the
-/// reclaim-swap front-running attack where a mempool observer copies
-/// `(args, proof)` and substitutes their own reclaim commitment to
-/// capture the eventual `unpledgeGratis`.
+/// folded into `receiver_binding`. `credisfactory::requestCredis` now passes
+/// zero — reclaim moved to per-installment `pay_anadosis`, so there is no
+/// reclaim leg to bind here; the proof still binds `caller` (`bundleAccount`)
+/// as the target, so the loan cannot be redirected.
 ///
 /// Returns the gratis amount for `denom_id`. The Gratis-side ledger is the
 /// caller's responsibility (see `Gratis::bind_pool_to_credis`).
