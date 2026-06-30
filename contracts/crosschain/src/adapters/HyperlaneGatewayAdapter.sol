@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
@@ -44,6 +43,9 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
 
     /// @dev Destination execution gas used when a message carries no executionGasLimit attribute.
     uint128 public defaultGasLimit;
+
+    /// @dev Variant selector of Hyperlane's StandardHookMetadata (the gas/value override format).
+    uint16 private constant HOOK_METADATA_VARIANT = 1;
 
     event RouterRegistered(uint256 indexed chainId, uint32 indexed domain, bytes32 router);
     event MessageReceived(uint32 indexed origin, bytes32 indexed sender, bytes payload);
@@ -97,8 +99,10 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
 
+        bytes memory metadata = _metadata(GasLimitAttribute.resolve(attributes, defaultGasLimit));
+
         // msg.value funds the Hyperlane native fee.
-        MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, _metadata(_gasLimit(attributes)));
+        MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, metadata);
 
         emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
         return bytes32(0);
@@ -118,7 +122,7 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         virtual
         returns (uint256 nativeFee)
     {
-        return _quoteWithGas(recipient, payload, _gasLimit(attributes));
+        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit));
     }
 
     // =============================================== Hyperlane inbound ==============================================
@@ -151,17 +155,10 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         require(remoteRouter != bytes32(0), RemoteRouterNotSet(domain));
     }
 
-    /// @dev Destination gas from the executionGasLimit attribute, or `defaultGasLimit` when absent.
-    function _gasLimit(bytes[] calldata attributes) private view returns (uint128) {
-        (bool found, uint256 gasLimit) = GasLimitAttribute.find(attributes);
-        if (!found) return defaultGasLimit;
-        return SafeCast.toUint128(gasLimit);
-    }
-
     /// @dev Hyperlane StandardHookMetadata overriding the destination gas limit (refunds excess to the caller).
-    ///      Layout: variant(1) | msgValue(0) | gasLimit | refundAddress.
+    ///      Layout: variant | msgValue(0) | gasLimit | refundAddress.
     function _metadata(uint128 gasLimit) private view returns (bytes memory) {
-        return abi.encodePacked(uint16(1), uint256(0), uint256(gasLimit), msg.sender);
+        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), uint256(gasLimit), msg.sender);
     }
 
     function _quoteWithGas(bytes calldata recipient, bytes calldata payload, uint128 gasLimit)

@@ -6,7 +6,6 @@ import {OApp, Origin, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contract
 import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
@@ -87,7 +86,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        bytes memory options = _options(_gasLimit(attributes));
+        bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit));
 
         // msg.value funds the LayerZero native fee; excess is refunded to the caller (the facade).
         _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
@@ -110,7 +109,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         virtual
         returns (uint256 nativeFee)
     {
-        return _quoteWithGas(recipient, payload, _gasLimit(attributes));
+        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit));
     }
 
     // ============================================== LayerZero inbound ==============================================
@@ -143,13 +142,6 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         (uint256 chainId,) = recipient.parseEvmV1Calldata();
         dstEid = chainIdToEid[chainId];
         require(dstEid != 0, UnknownDestinationChain(chainId));
-    }
-
-    /// @dev Destination gas from the executionGasLimit attribute, or `defaultGasLimit` when absent.
-    function _gasLimit(bytes[] calldata attributes) private view returns (uint128) {
-        (bool found, uint256 gasLimit) = GasLimitAttribute.find(attributes);
-        if (!found) return defaultGasLimit;
-        return SafeCast.toUint128(gasLimit);
     }
 
     function _options(uint128 gasLimit) private pure returns (bytes memory) {

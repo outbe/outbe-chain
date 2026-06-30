@@ -3,6 +3,7 @@
 pragma solidity ^0.8.30;
 
 import {IERC7786GatewaySource} from "../interfaces/IERC7786.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @dev The single ERC-7786 attribute the gateway adapters understand: a per-message destination
@@ -35,5 +36,15 @@ library GasLimitAttribute {
             gasLimit = abi.decode(attribute[4:], (uint256));
             found = true;
         }
+    }
+
+    /**
+     * @dev Resolves the destination gas for a message: the executionGasLimit attribute bounded to `uint128`, or
+     * `defaultGasLimit` when the attribute is absent. Reverts as {find} for any other attribute, or via {SafeCast}
+     * if the requested gas exceeds `uint128`.
+     */
+    function resolve(bytes[] calldata attributes, uint128 defaultGasLimit) internal pure returns (uint128) {
+        (bool found, uint256 gasLimit) = find(attributes);
+        return found ? SafeCast.toUint128(gasLimit) : defaultGasLimit;
     }
 }
