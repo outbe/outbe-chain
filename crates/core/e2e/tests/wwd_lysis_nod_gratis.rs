@@ -41,7 +41,7 @@
 //!   - Reth payload building, state-root computation, and txpool admission
 //!     (we drive only the pre-execution hook phase, not the full executor).
 
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_gratis::Gratis;
@@ -75,14 +75,19 @@ use outbe_tribute::{TributeContract, TributeData};
 // and bootstrap init is skipped.
 const CHAIN_ID: u64 = 1;
 
-// Dummy asset + vault provider addresses passed into `mineGratis`. The
-// provider has `enable_sub_call_stub()` flipped on, so the resulting
-// `IERC20.transferFrom` / `IERC20.approve` / `IVaultProvider.depositLiquidity`
-// sub-calls return `default_success()` without touching real ERC20 or vault
-// state. The e2e exercises the lysis → nod → gratis pipeline; vault-side
+// Dummy asset address passed into `mineGratis`. The provider has
+// `enable_sub_call_stub()` flipped on, so the resulting `IERC20.transferFrom` /
+// `IERC20.approve` sub-calls return `default_success()` without touching real
+// ERC20 state. The e2e exercises the lysis → nod → gratis pipeline; vault-side
 // behavior is covered separately.
 const MINE_GRATIS_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
-const MINE_GRATIS_VAULT_PROVIDER: Address = address!("0x000000000000000000000000000000000000A11D");
+
+// Dummy ERC-4626 reserve vault registered for `MINE_GRATIS_ASSET`. The
+// precompile's payment branch now calls `vaultprovider::deposit_liquidity`
+// in-process (not through the sub-call stub), so the vault must be registered
+// in storage. Its `deposit` sub-call return is pinned to a 32-byte zero via
+// `stub_sub_call_at` so the runtime's `uint256` shares decode succeeds.
+const MINE_GRATIS_VAULT: Address = address!("0x000000000000000000000000000000000000A11D");
 
 struct WwdPhases {
     forming_end: u64,
@@ -273,10 +278,9 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
         nodId: item.nod_id,
         nonce,
         asset: MINE_GRATIS_ASSET,
-        vaultProvider: MINE_GRATIS_VAULT_PROVIDER,
     };
-    let calldata = call.abi_encode();
-    let output = nodfactory_dispatch(storage.clone(), &calldata, owner, U256::ZERO).unwrap();
+    let output =
+        nodfactory_dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO).unwrap();
     let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
     assert_eq!(mined, item.gratis_load_minor);
 
@@ -294,6 +298,9 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
 fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_sub_call_stub();
+    // Pin the reserve vault's `deposit` return so the precompile's in-process
+    // `deposit_liquidity` can decode the `uint256` shares it yields.
+    provider.stub_sub_call_at(MINE_GRATIS_VAULT, Bytes::from(vec![0u8; 32]));
     StorageHandle::enter(&mut provider, |storage| {
         // Pick non-adjacent WWDs so each day's full ~24-day lifecycle does not
         // accidentally interleave with the other's.
@@ -306,6 +313,14 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
         let carol = address!("0x3333333333333333333333333333333333333333");
+
+        // Register the reserve vault for `MINE_GRATIS_ASSET` so the precompile's
+        // NOD-cost payment branch resolves a configured vault.
+        let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
+        vp.assets.insert(MINE_GRATIS_ASSET).unwrap();
+        vp.asset_vault_set(MINE_GRATIS_ASSET)
+            .insert(MINE_GRATIS_VAULT)
+            .unwrap();
 
         let pair_id = init_oracle(storage.clone());
 

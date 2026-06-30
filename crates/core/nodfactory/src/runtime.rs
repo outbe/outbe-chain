@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -18,7 +18,7 @@ use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use crate::sol_ext::{IVaultProvider, IERC20};
+use crate::sol_ext::IERC20;
 
 /// Issue a new Nod at the originating owner's (worldwide_day) bucket.
 ///
@@ -83,24 +83,21 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 ///
 /// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
 /// that amount of `asset` from the caller into the precompile address via
-/// `IERC20.transferFrom`, approves `vault_provider` for the same amount,
-/// and calls `IVaultProvider.depositLiquidity`. The caller MUST grant the
+/// `IERC20.transferFrom`, approves the reserve `VAULT_PROVIDER_ADDRESS` for the
+/// same amount, and calls `IVaultProvider.depositLiquidity` declaring the
+/// `LiquiditySource::NodCostPrice` classifier. The caller MUST grant the
 /// NodFactory precompile an ERC20 allowance of at least `cost_amount_minor`
-/// before invoking `mineGratis`. The vault provider is responsible for
-/// classifying `NOD_FACTORY_ADDRESS` as a registered liquidity source
-/// (operator runbook: `addLiquiditySource(NOD_FACTORY_ADDRESS,
-/// LiquiditySource.NodCostPrice)`).
+/// before invoking `mineGratis`.
 ///
 /// When `cost_amount_minor == 0` the payment sequence is skipped entirely
-/// and `asset`/`vault_provider` are not validated, so callers mining
-/// zero-cost Nods can pass `Address::ZERO`.
+/// and `asset` is not validated, so callers mining zero-cost Nods can pass
+/// `Address::ZERO`.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     caller: Address,
     nod_id: U256,
     nonce: U256,
     asset: Address,
-    vault_provider: Address,
 ) -> Result<U256> {
     let item = nod_api::get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     if caller != item.owner {
@@ -126,9 +123,6 @@ pub fn mine_gratis(
         if asset.is_zero() {
             return Err(NodFactoryError::InvalidAsset.into());
         }
-        if vault_provider.is_zero() {
-            return Err(NodFactoryError::InvalidVaultProvider.into());
-        }
 
         // 1) Pull stablecoin from caller into the nodfactory precompile address.
         let transfer = IERC20::transferFromCall {
@@ -139,24 +133,24 @@ pub fn mine_gratis(
         .abi_encode();
         storage.call(asset, U256::ZERO, transfer.into())?;
 
-        // 2) Approve the vault to spend that exact amount. The precompile owns
-        //    the intermediate balance and resets to `cost` each call, so there
-        //    is no leftover allowance to clear.
+        // 2) Approve the reserve vault to spend that exact amount. The precompile
+        //    owns the intermediate balance and resets to `cost` each call, so
+        //    there is no leftover allowance to clear.
         let approve = IERC20::approveCall {
-            spender: vault_provider,
+            spender: VAULT_PROVIDER_ADDRESS,
             amount: cost,
         }
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
-        // 3) Vault pulls and deposits into the reserve. The vault classifies
-        //    NOD_FACTORY_ADDRESS via its `liquiditySources` registry.
-        let deposit = IVaultProvider::depositLiquidityCall {
+        // 3) Vault pulls and deposits into the vault.
+        outbe_vaultprovider::api::deposit_liquidity(
+            storage.clone(),
+            NOD_FACTORY_ADDRESS,
             asset,
-            assetsAmount: cost,
-        }
-        .abi_encode();
-        storage.call(vault_provider, U256::ZERO, deposit.into())?;
+            cost,
+            outbe_vaultprovider::api::LiquiditySource::NodCostPrice,
+        )?;
     }
 
     nod_api::remove_nod(storage, &item)?;

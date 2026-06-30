@@ -12,12 +12,12 @@ use outbe_intex::IntexState;
 use crate::config;
 use crate::constants::{
     CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
-    POW_DIFFICULTY, RESERVE_VAULT,
+    POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -270,24 +270,20 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: RESERVE_VAULT,
+            spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
             amount: received,
         }
         .abi_encode()
         .into(),
     )?;
-    let shares_ret = storage.call(
-        RESERVE_VAULT,
-        U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
-            asset: payment_token,
-            assetsAmount: received,
-        }
-        .abi_encode()
-        .into(),
+
+    let shares = outbe_vaultprovider::api::deposit_liquidity(
+        storage.clone(),
+        INTEX_FACTORY_ADDRESS,
+        payment_token,
+        received,
+        outbe_vaultprovider::api::LiquiditySource::IntexStrikePrice,
     )?;
-    let shares = IVaultProvider::depositLiquidityCall::abi_decode_returns(&shares_ret)
-        .map_err(|_| PrecompileError::Revert("vault depositLiquidity undecodable".into()))?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -333,14 +329,8 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let ret = storage.staticcall(
-        RESERVE_VAULT,
-        IVaultProvider::assetAtCall { index: U256::ZERO }
-            .abi_encode()
-            .into(),
-    )?;
-    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("vault assetAt undecodable".into()))?;
+    // TODO pick up the asset ERC20 address properly
+    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }
