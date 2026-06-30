@@ -49,6 +49,9 @@ contract EndpointV2Mock {
     address public oapp;
     address public delegate;
 
+    /// @dev Records the `options` bytes of the most recent send, so tests can inspect per-message gas.
+    bytes public lastOptions;
+
     error NotOApp();
     error RemoteEndpointNotSet(uint32 eid);
     error PeerNotSet(uint32 eid);
@@ -100,6 +103,8 @@ contract EndpointV2Mock {
         onlyOApp
         returns (MessagingReceipt memory)
     {
+        lastOptions = _params.options;
+
         EndpointV2Mock dstEndpoint = remoteEndpoints[_params.dstEid];
         if (address(dstEndpoint) == address(0)) revert RemoteEndpointNotSet(_params.dstEid);
 
