@@ -11,6 +11,7 @@ import {ERC7786RecipientMock} from "@openzeppelin/contracts/mocks/crosschain/ERC
 import {IERC7786GatewaySource, IERC7786Recipient} from "src/interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the recorded options.
 contract PermissiveRecipient is IERC7786Recipient {
@@ -170,5 +171,12 @@ contract LayerZeroGatewayAdapterTest is Test {
         attrs[0] = hex"12345678";
         vm.expectRevert(abi.encodeWithSelector(IERC7786GatewaySource.UnsupportedAttribute.selector, bytes4(0x12345678)));
         adapterA.quote(_interop(address(facadeB)), "x", attrs);
+    }
+
+    function test_RevertWhen_GasLimitExceedsUint128() public {
+        uint256 tooBig = uint256(type(uint128).max) + 1;
+        vm.prank(app);
+        vm.expectRevert(abi.encodeWithSelector(SafeCast.SafeCastOverflowedUintDowncast.selector, uint8(128), tooBig));
+        adapterA.sendMessage(_interop(address(facadeB)), "x", _gasAttrs(tooBig));
     }
 }

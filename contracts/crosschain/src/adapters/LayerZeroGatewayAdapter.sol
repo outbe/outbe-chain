@@ -6,6 +6,7 @@ import {OApp, Origin, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contract
 import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
@@ -148,8 +149,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     function _gasLimit(bytes[] calldata attributes) private view returns (uint128) {
         (bool found, uint256 gasLimit) = GasLimitAttribute.find(attributes);
         if (!found) return defaultGasLimit;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint128(gasLimit);
+        return SafeCast.toUint128(gasLimit);
     }
 
     function _options(uint128 gasLimit) private pure returns (bytes memory) {
