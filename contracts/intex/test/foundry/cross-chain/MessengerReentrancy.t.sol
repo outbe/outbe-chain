@@ -163,8 +163,9 @@ contract MessengerReentrancyTest is TestHelperOz5 {
     }
 
     function test_TM_lzReceive_runsUnderNonReentrant() public {
-        ReentrancyProbeAuction probeAuction =
-            new ReentrancyProbeAuction(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger));
+        ReentrancyProbeAuction probeAuction = new ReentrancyProbeAuction(
+            address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger)
+        );
         // intex / escrow / onftBatch don't fire on STAGE_START, can be the zero-stub probe too,
         // but `wire` rejects address(0). Reuse the probe so all four wires are non-zero.
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
@@ -179,8 +180,9 @@ contract MessengerReentrancyTest is TestHelperOz5 {
     }
 
     function test_OM_lzReceive_runsUnderNonReentrant() public {
-        ReentrancyProbeDesis probeDesis =
-            new ReentrancyProbeDesis(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger));
+        ReentrancyProbeDesis probeDesis = new ReentrancyProbeDesis(
+            address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger)
+        );
         outbeMessenger.wire(address(probeDesis), makeAddr("factory"));
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
