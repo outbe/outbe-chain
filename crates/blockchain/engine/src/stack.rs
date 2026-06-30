@@ -1229,6 +1229,55 @@ fn genesis_consensus_block(node: &OutbeFullNode) -> Result<outbe_consensus::bloc
     ))
 }
 
+/// Spawn the drainer that answers `outbe_getFinalization` RPC requests from the
+/// marshal. The `outbe-rpc` handler cannot see the marshal or `ConsensusBlock`,
+/// so it requests bytes through [`ConsensusExecutionBridge::request_finalization`];
+/// this task is the consensus-side responder. Wired on BOTH the validator path
+/// (`run_consensus_stack`) and the certified-follower path (a follower can serve
+/// upstream too), right after `marshal_mailbox` exists.
+///
+/// For each `(height, reply)` it reads the finalization certificate and the
+/// finalized block from the marshal, encodes both with `commonware_codec`, and
+/// answers `Some` only when both are present locally (otherwise `None`, which
+/// the RPC maps to a "not available" error).
+fn spawn_finalization_drainer<E>(
+    ctx: &E,
+    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
+    bridge: ConsensusExecutionBridge,
+) where
+    E: Spawner + Metrics,
+{
+    let rx = bridge.set_finalization_fetcher();
+    ctx.child("finalization_drainer").spawn(move |_| async move {
+        let mut rx = rx;
+        while let Some((height, reply)) = rx.recv().await {
+            let answer =
+                finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
+            // The receiver may have gone away (RPC client disconnected); ignore.
+            let _ = reply.send(answer);
+        }
+    });
+}
+
+/// Read `(finalization, block)` for `height` from the marshal and encode them
+/// for transport. `None` if either is missing locally.
+async fn finalization_bytes_for_height(
+    marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+    height: Height,
+) -> Option<outbe_primitives::consensus::FinalizedBlockBytes> {
+    use commonware_codec::Encode as _;
+
+    let finalization = marshal_mailbox.get_finalization(height).await?;
+    // The block is keyed by the finalization's payload digest.
+    let block = marshal_mailbox
+        .get_block(&finalization.proposal.payload)
+        .await?;
+    Some(outbe_primitives::consensus::FinalizedBlockBytes {
+        finalization: alloy_primitives::Bytes::from(finalization.encode().to_vec()),
+        block: alloy_primitives::Bytes::from(block.encode().to_vec()),
+    })
+}
+
 fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
     NonZeroU16::new(value).ok_or_else(|| eyre::eyre!("{name} must be > 0"))
 }
@@ -1593,7 +1642,7 @@ async fn run_follow_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
     node: OutbeFullNode,
-    _bridge: ConsensusExecutionBridge,
+    bridge: ConsensusExecutionBridge,
     upstream: String,
 ) -> Result<()>
 where
@@ -1644,7 +1693,7 @@ where
         )
     })?;
 
-    run_certified_follow_stack(ctx, anchor, node, upstream, epoch_length).await
+    run_certified_follow_stack(ctx, anchor, node, bridge, upstream, epoch_length).await
 }
 
 /// The committee-chaining follower engine (transport A — upstream RPC, no
@@ -1655,6 +1704,7 @@ async fn run_certified_follow_stack<E>(
     ctx: &E,
     anchor: outbe_consensus::network_identity::NetworkIdentity,
     node: OutbeFullNode,
+    bridge: ConsensusExecutionBridge,
     upstream: String,
     epoch_length_blocks: u32,
 ) -> Result<()>
@@ -1849,20 +1899,6 @@ where
     // `FinalizedSource` and `TipSource` as distinct values).
     let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
 
-    if !crate::follow_transport::UpstreamRpcClient::finalized_fetch_wired() {
-        // Honest fail-fast: the engine (marshal+executor+driver+resolver+
-        // committee bootstrap) is fully wired, but the upstream finalized-block
-        // fetch + its serving RPC are not yet agreed/added. Refuse to start
-        // rather than spin without ever importing a block.
-        return Err(eyre::eyre!(
-            "follower upstream transport incomplete: `outbe_getFinalization`-style serving RPC \
-             + client not yet wired (external-RPC surface — needs sign-off). Engine, marshal, \
-             executor, resolver, driver and committee-chain bootstrap ARE wired; only the \
-             upstream block-fetch transport remains. Tip discovery via outbe_consensusStatus is \
-             live. See crates/blockchain/engine/src/follow_transport.rs::UpstreamRpcClient."
-        ));
-    }
-
     // ── 4. Executor (REUSED verbatim) — drives the EL via FCU+newPayload ──
     let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
     let (executor_actor, executor_mailbox) = ExecutorActor::new(
@@ -1875,6 +1911,10 @@ where
     );
     let _executor_handle =
         executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+
+    // ── 4b. Serve `outbe_getFinalization` so this follower can itself be an
+    //        upstream for other followers. ────────────────────────────────
+    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge);
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
     run_follow_engine(
@@ -3105,6 +3145,10 @@ where
             .add_block_consumer(peer_manager_mailbox.clone());
     let mut marshal_handle =
         marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
+
+    // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
+    // can backfill + verify finalized blocks from this validator.
+    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
 
     let recovered_finalized_round = match recover_application_finalized_round(
         ctx,

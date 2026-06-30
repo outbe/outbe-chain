@@ -22,9 +22,9 @@ use reth_ethereum::storage::{
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, OutbeApiServer, ParticipationInfo,
-    Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo,
-    ValidatorInfo,
+    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
+    ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo,
+    ValidatorDetailInfo, ValidatorInfo,
 };
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -48,22 +48,41 @@ impl StorageReader for RethStateReader<'_> {
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     bridge: Option<ConsensusExecutionBridge>,
+    /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
+    /// also holds a bridge (to serve `outbe_getFinalization` to downstream
+    /// followers) but must report itself as a non-validator / TrustedFinality
+    /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
+    is_validator: bool,
 }
 
 impl<P> OutbeApiHandler<P> {
-    /// Create a new handler backed by the given state provider factory.
+    /// Create a new handler backed by the given state provider factory (no
+    /// bridge; plain EL full node).
     pub fn new(provider: Arc<P>) -> Self {
         Self {
             provider,
             bridge: None,
+            is_validator: false,
         }
     }
 
-    /// Create a new handler with access to the consensus bridge.
+    /// Create a validator handler with full access to the consensus bridge.
     pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
+            is_validator: true,
+        }
+    }
+
+    /// Create a `--upstream` follower handler: it holds the bridge so it can
+    /// serve `outbe_getFinalization` (chaining followers), but reports itself as
+    /// a non-validator (TrustedFinality) node, not a validator.
+    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+        Self {
+            provider,
+            bridge: Some(bridge),
+            is_validator: false,
         }
     }
 }
@@ -186,7 +205,7 @@ where
     }
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
-        let is_validator = self.bridge.is_some();
+        let is_validator = self.is_validator;
         let status = self
             .bridge
             .as_ref()
@@ -293,6 +312,25 @@ where
                 })
             }
         }
+    }
+
+    async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
+        // Only nodes running consensus (or a follower that has itself synced the
+        // height) can serve this — both install a finalization fetcher on the
+        // bridge at marshal-start. A node without a bridge (pure EL full node)
+        // has no marshal and cannot answer.
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err("node is not serving consensus finalizations".to_string())
+        })?;
+        let proof = bridge.request_finalization(height).await.ok_or_else(|| {
+            internal_err(format!(
+                "no finalization available for height {height} (not finalized locally or pruned)"
+            ))
+        })?;
+        Ok(FinalizationProof {
+            finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
+            block_hex: format!("0x{}", hex::encode(&proof.block)),
+        })
     }
 }
 

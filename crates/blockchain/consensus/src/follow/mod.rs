@@ -424,4 +424,76 @@ mod tests {
             "the delivery buffer must be fully consumed (cert ++ block, nothing trailing)"
         );
     }
+
+    /// Full `outbe_getFinalization` server→client interop. The SERVER side
+    /// (drainer) encodes the certificate and block separately and hexes them
+    /// (`FinalizedBlockBytes` → `FinalizationProof`); the CLIENT side hex-decodes
+    /// and decodes the certificate with the UNBOUNDED committee config (the
+    /// engine `UpstreamRpcClient` path — it has no committee size yet), then the
+    /// follower registers the epoch committee from the boundary block and the
+    /// marshal-equivalent verification passes. This pins that:
+    ///   (a) the unbounded cfg decodes a real committee-length certificate, and
+    ///   (b) the decoded `(finalization, block)` is exactly what the resolver
+    ///       registers + the `CommitteeChain` verifies — i.e. a follower accepts
+    ///       what a validator serves, end to end.
+    #[test]
+    fn served_finalization_round_trips_to_verified_certified_block() {
+        use crate::block::ConsensusBlock;
+        use commonware_codec::Read as _;
+        use commonware_cryptography::certificate::Scheme as _;
+
+        let epoch = Epoch::new(4);
+        let c = committee(40);
+
+        // Anchor a chain on this committee and register epoch 4 from its boundary
+        // block — exactly what the follower does on the fetch path.
+        let mut chain = CommitteeChain::new(NetworkIdentity {
+            from_epoch: 4,
+            identity: c.group_key(),
+        });
+        let boundary_extra = c.boundary_block_extra_data(epoch);
+        assert_eq!(
+            chain.advance_from_block_extra_data(&boundary_extra).unwrap(),
+            Some(epoch)
+        );
+
+        // SERVER: encode cert + block separately (the drainer's FinalizedBlockBytes)
+        // and hex them (the FinalizationProof shipped over RPC).
+        let finalization = c.finalization(epoch);
+        let block = {
+            use alloy_primitives::Bytes;
+            use outbe_primitives::OutbeHeader;
+            use reth_ethereum::primitives::SealedBlock;
+            use reth_ethereum::Block;
+            let mut b = Block::default();
+            b.header.number = 4;
+            b.header.extra_data = Bytes::from(boundary_extra.clone());
+            let b = b.map_header(OutbeHeader::new);
+            ConsensusBlock::from_sealed(SealedBlock::seal_slow(b))
+        };
+        let finalization_hex = format!("0x{}", hex::encode(finalization.encode().to_vec()));
+        let block_hex = format!("0x{}", hex::encode(block.encode().to_vec()));
+
+        // CLIENT: hex-decode and decode the certificate with the UNBOUNDED
+        // committee config (the engine UpstreamRpcClient path).
+        let fin_bytes = hex::decode(finalization_hex.trim_start_matches("0x")).unwrap();
+        let block_bytes = hex::decode(block_hex.trim_start_matches("0x")).unwrap();
+        let unbounded_cfg = HybridScheme::<MinSig>::certificate_codec_config_unbounded();
+        let mut fin_reader: &[u8] = &fin_bytes;
+        let decoded_fin =
+            Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut fin_reader, &unbounded_cfg)
+                .expect("client must decode the served finalization with the unbounded cfg");
+        assert!(fin_reader.is_empty(), "no trailing bytes after finalization");
+        let mut block_reader: &[u8] = &block_bytes;
+        let _decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
+            .expect("client must decode the served block");
+        assert!(block_reader.is_empty(), "no trailing bytes after block");
+
+        // The decoded certificate verifies against the committee the follower
+        // registered from the boundary block — a follower accepts what the
+        // validator served.
+        chain
+            .verify_finalization(epoch, &decoded_fin)
+            .expect("the round-tripped certificate must verify against the registered committee");
+    }
 }

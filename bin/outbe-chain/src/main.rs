@@ -439,11 +439,19 @@ fn run_node() -> eyre::Result<()> {
             .extend_rpc_modules({
                 let bridge = bridge.clone();
                 let is_validator = args.is_validator;
+                let is_follower = args.upstream.is_some();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
+                    // Validators get the full bridge-backed handler.
+                    // `--upstream` followers also run a marshal and CAN serve
+                    // `outbe_getFinalization` (chaining followers), but must NOT
+                    // report validator status; they get a follower-scoped handler
+                    // that exposes only the finalization-serving capability.
                     let outbe_api = if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
+                    } else if is_follower {
+                        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
                     } else {
                         outbe_rpc::OutbeApiHandler::new(provider)
                     };

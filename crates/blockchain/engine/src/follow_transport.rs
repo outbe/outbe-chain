@@ -4,21 +4,29 @@
 //! [`LocalBlockSource`], [`TipSource`]). This module provides the concrete
 //! implementations the engine layer can build, because they need the reth node
 //! handle (local block reads) and an RPC client (upstream finalized blocks +
-//! tip discovery) — neither of which `outbe-consensus` depends on.
+//! tip discovery) — neither of which `outbe-consensus` depends on. Both halves
+//! are wired: a follower fetches finalized blocks from a validator's
+//! `outbe_getFinalization` and verifies them against the epoch committee.
 //!
 //! * [`RethLocalBlockSource`] — REAL: reads already-imported blocks from the
 //!   reth execution DB by hash. Used to serve the marshal's `Request::Block`.
-//! * [`UpstreamRpcClient`] — the upstream finalized-block + tip transport. The
-//!   serving side (an upstream node's consensus `getFinalization` RPC) and this
-//!   jsonrpsee client are an EXTERNAL-RPC surface; until that surface is agreed
-//!   and added, this is a clearly-named NOT-YET-WIRED transport that fails fast
-//!   rather than silently pretending to sync. See `run_follow_stack`.
+//! * [`UpstreamRpcClient`] — the upstream finalized-block + tip transport: a
+//!   jsonrpsee HTTP client. Tip discovery calls `outbe_consensusStatus`;
+//!   finalized-block fetch calls `outbe_getFinalization(height)` and decodes the
+//!   returned `(finalizationHex, blockHex)` into a [`CertifiedFinalizedBlock`].
+//!   The certificate is decoded with the UNBOUNDED committee codec config (a
+//!   permissive length upper bound — the same the marshal's archive uses), so
+//!   the client does not need the epoch committee size to decode; the marshal
+//!   re-verifies the certificate against the actual committee afterwards.
 
 use std::future::Future;
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
+use commonware_cryptography::certificate::Scheme as _;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
@@ -26,6 +34,8 @@ use outbe_consensus::block::ConsensusBlock;
 use outbe_consensus::follow::{
     CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource,
 };
+use outbe_consensus::hybrid::HybridScheme;
+use outbe_consensus::marshal_types::Finalization;
 use outbe_node::OutbeFullNode;
 use reth_ethereum::storage::{BlockReader, TransactionVariant};
 use tracing::{debug, warn};
@@ -84,22 +94,24 @@ struct UpstreamConsensusStatus {
     last_finalized_block: u64,
 }
 
+/// The upstream's `outbe_getFinalization` response (mirrors `FinalizationProof`
+/// in `outbe-rpc`): hex of the encoded finalization cert + the encoded block.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamFinalizationProof {
+    finalization_hex: String,
+    block_hex: String,
+}
+
 /// The upstream finalized-block + tip transport: a jsonrpsee HTTP client against
 /// an upstream node's `outbe_*` RPC.
 ///
-/// **Tip discovery is REAL** — it calls the upstream's existing
-/// `outbe_consensusStatus` and reads `lastFinalizedBlock`.
-///
-/// **Finalized-block fetch is NOT YET WIRED.** It needs a serving RPC on the
-/// upstream that returns, for a height, the native-encoded `ConsensusBlock` plus
-/// the finalization certificate bytes (mirroring Tempo's
-/// `consensus_getFinalization`). That method does not yet exist on outbe's
-/// served RPC surface, and ADDING it is an external-RPC change that must be
-/// agreed first. Until then `get_finalization` returns `None`; the follower's
-/// anchor bootstrap therefore fails fast at startup (see `run_follow_stack`),
-/// so the node refuses to pretend it is syncing. Wiring is a localized change:
-/// implement `get_finalization` to call the agreed serving method and decode
-/// `(Finalization, ConsensusBlock)`.
+/// * Tip discovery → `outbe_consensusStatus.lastFinalizedBlock`.
+/// * Finalized-block fetch → `outbe_getFinalization(height)`, decoded into a
+///   [`CertifiedFinalizedBlock`]. The certificate is decoded with the UNBOUNDED
+///   committee codec config (a permissive length bound, the same the marshal's
+///   archive uses), so the client needs no committee-size knowledge; the marshal
+///   re-verifies the cert against the actual epoch committee.
 #[derive(Clone)]
 pub struct UpstreamRpcClient {
     client: Arc<HttpClient>,
@@ -123,23 +135,71 @@ impl UpstreamRpcClient {
             url: normalized,
         })
     }
+}
 
-    /// Whether the upstream finalized-block-fetch transport is wired. Used by
-    /// `run_follow_stack` to fail fast rather than spin without progress.
-    pub const fn finalized_fetch_wired() -> bool {
-        false
+/// Decode an `outbe_getFinalization` proof into a `CertifiedFinalizedBlock`.
+///
+/// The certificate is decoded with the unbounded committee config (a permissive
+/// upper bound on length). Trust is NOT established here — the marshal verifies
+/// the cert against the epoch committee. `None` on any malformed field.
+fn decode_finalization_proof(
+    proof: &UpstreamFinalizationProof,
+) -> Option<CertifiedFinalizedBlock> {
+    let fin_bytes = alloy_primitives::hex::decode(proof.finalization_hex.trim_start_matches("0x"))
+        .inspect_err(|error| debug!(%error, "malformed finalizationHex from upstream"))
+        .ok()?;
+    let block_bytes = alloy_primitives::hex::decode(proof.block_hex.trim_start_matches("0x"))
+        .inspect_err(|error| debug!(%error, "malformed blockHex from upstream"))
+        .ok()?;
+
+    let cert_cfg = HybridScheme::<MinSig>::certificate_codec_config_unbounded();
+    let mut fin_reader: &[u8] = &fin_bytes;
+    let finalization = Finalization::read_cfg(&mut fin_reader, &cert_cfg)
+        .inspect_err(|error| debug!(%error, "failed to decode upstream finalization"))
+        .ok()?;
+    if !fin_reader.is_empty() {
+        debug!("trailing bytes after upstream finalization");
+        return None;
     }
+
+    let mut block_reader: &[u8] = &block_bytes;
+    let block = ConsensusBlock::read_cfg(&mut block_reader, &())
+        .inspect_err(|error| debug!(%error, "failed to decode upstream block"))
+        .ok()?;
+    if !block_reader.is_empty() {
+        debug!("trailing bytes after upstream block");
+        return None;
+    }
+
+    Some(CertifiedFinalizedBlock {
+        finalization,
+        block,
+    })
 }
 
 impl FinalizedSource for UpstreamRpcClient {
     fn get_finalization(
         &self,
-        _height: Height,
+        height: Height,
     ) -> impl Future<Output = Option<CertifiedFinalizedBlock>> + Send {
-        // NOT YET WIRED — see the type-level note. Returns None so the
-        // driver/resolver treat it as "upstream lacks it"; the startup
-        // fail-fast in run_follow_stack is what prevents a silent no-op node.
-        async move { None }
+        let client = self.client.clone();
+        let url = self.url.clone();
+        async move {
+            let proof: UpstreamFinalizationProof = match client
+                .request("outbe_getFinalization", rpc_params![height.get()])
+                .await
+            {
+                Ok(proof) => proof,
+                Err(error) => {
+                    // A "not available" upstream answer is expected while the
+                    // upstream catches up; downgrade to debug, retry happens via
+                    // the driver/marshal.
+                    debug!(%url, height = height.get(), %error, "upstream getFinalization failed");
+                    return None;
+                }
+            };
+            decode_finalization_proof(&proof)
+        }
     }
 }
 
