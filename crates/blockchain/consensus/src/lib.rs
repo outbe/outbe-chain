@@ -21,6 +21,7 @@ pub mod epoch_subchannels;
 pub mod forfeit;
 pub mod hybrid;
 pub mod metrics;
+pub mod network_identity;
 pub(crate) mod missed_proposers;
 pub mod proof;
 pub mod timing;

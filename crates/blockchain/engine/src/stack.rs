@@ -181,6 +181,32 @@ fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
     }
 }
 
+/// Read the optional trusted network identity from genesis.json `config`:
+///   `"networkIdentity": "0x<group-pubkey hex>"`, `"networkIdentityFromEpoch": <u64>`.
+/// Returns `None` when absent. The `--consensus.network-identity` CLI override
+/// (resolved by the follower) takes precedence over this genesis value.
+fn network_identity_from_genesis(
+    node: &OutbeFullNode,
+) -> Result<Option<outbe_consensus::network_identity::NetworkIdentity>> {
+    let extra = &node.chain_spec().genesis.config.extra_fields;
+    let Some(id_hex) = extra.get_deserialized::<String>("networkIdentity") else {
+        return Ok(None);
+    };
+    let id_hex = id_hex.map_err(|e| eyre::eyre!("invalid genesis config networkIdentity: {e}"))?;
+    let from_epoch = match extra.get_deserialized::<u64>("networkIdentityFromEpoch") {
+        Some(Ok(value)) => value,
+        Some(Err(error)) => {
+            return Err(eyre::eyre!(
+                "invalid genesis config networkIdentityFromEpoch: {error}"
+            ))
+        }
+        None => 0,
+    };
+    Ok(Some(
+        outbe_consensus::network_identity::NetworkIdentity::from_hex(&id_hex, from_epoch)?,
+    ))
+}
+
 /// JSON shape of `genesis.config.teePolicy`, seeded by
 /// `scripts/seed_genesis.py`. `B256` fields deserialize from `0x…` hex.
 #[derive(serde::Deserialize)]
@@ -1559,6 +1585,62 @@ fn validate_validator_evm_signer(
 /// 6. Simplex consensus engine (restarted on reshare)
 /// 7. Block propagation — proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
+/// Follower stack: cold-sync finalized blocks from an upstream node, verify them
+/// against the trusted network identity (committee-chaining — see the `follow`
+/// module), and drive the EL via the existing executor, WITHOUT running the
+/// consensus engine. Selected by `--upstream`.
+async fn run_follow_stack<E>(
+    _ctx: &E,
+    args: ConsensusArgs,
+    node: OutbeFullNode,
+    _bridge: ConsensusExecutionBridge,
+    upstream: String,
+) -> Result<()>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    // Resolve the trust anchor: CLI override > genesis config.
+    let anchor = match &args.network_identity {
+        Some(hex) => Some(
+            outbe_consensus::network_identity::NetworkIdentity::from_hex(
+                hex,
+                args.network_identity_from_epoch,
+            )?,
+        ),
+        None => network_identity_from_genesis(&node)?,
+    };
+    if anchor.is_none() && !args.upstream_nocertify {
+        return Err(eyre::eyre!(
+            "follower (--upstream) requires a trusted network identity: set genesis \
+             `networkIdentity`, pass --consensus.network-identity, or use \
+             --upstream.nocertify (dev only)"
+        ));
+    }
+    let epoch_length = epoch_length_blocks_from_genesis(&node)?;
+    info!(
+        %upstream,
+        anchor_from_epoch = ?anchor.as_ref().map(|a| a.from_epoch),
+        nocertify = args.upstream_nocertify,
+        epoch_length,
+        "follower mode (--upstream) selected"
+    );
+    // Phase 2 wires the follow module (driver/engine/resolver) here.
+    Err(eyre::eyre!(
+        "follower stack not yet implemented (Phase 2): \
+         crates/blockchain/consensus/src/follow/ pending"
+    ))
+}
+
 pub async fn run_consensus_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
@@ -1578,6 +1660,13 @@ where
         + Sync
         + 'static,
 {
+    // Follower mode: cold-sync finalized blocks from an upstream node and verify
+    // them against the trusted network identity, WITHOUT running the consensus
+    // engine. Short-circuits before any validator material is loaded.
+    if let Some(upstream) = args.upstream.clone() {
+        return run_follow_stack(ctx, args, node, bridge, upstream).await;
+    }
+
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
     let chain_id = node.chain_spec().chain().id();
     if (args.trust_el_head || args.force_dkg) && outbe_primitives::chain::is_mainnet(chain_id) {

@@ -459,10 +459,16 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
-        if args.is_validator {
-            info!("outbe node launched in VALIDATOR mode");
+        if args.is_validator || args.upstream.is_some() {
+            if args.upstream.is_some() {
+                info!("outbe node launched in FOLLOWER mode (--upstream)");
+            } else {
+                info!("outbe node launched in VALIDATOR mode");
+            }
 
-            // Spawn consensus thread ONLY for validator mode (per Task 02 spec).
+            // Spawn the consensus thread for validator OR follower mode; the
+            // follower branch inside `run_consensus_stack` selects the lightweight
+            // follow stack (no consensus engine).
             let consensus_handle = thread::spawn(consensus_thread_fn);
 
             let _ = node_tx.send((node, args));
