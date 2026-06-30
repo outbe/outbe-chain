@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
@@ -27,7 +27,7 @@ fn sample_params() -> NodIssueParams {
         floor_price_minor: U256::from(540_000_000_000_000_000u128),
         entry_price_minor: U256::from(500_000_000_000_000_000u128),
         // Tests that don't exercise the payment branch set cost to zero so
-        // they can pass `Address::ZERO` for asset/vault_provider into
+        // they can pass `Address::ZERO` for asset into
         // `mine_gratis` without hitting the `InvalidAsset` rejection. The
         // dedicated payment tests below override this with non-zero costs
         // after enabling `sub_call_stub` on the provider.
@@ -37,11 +37,18 @@ fn sample_params() -> NodIssueParams {
     }
 }
 
-/// Dummy asset/vault addresses for payment-path tests. The provider has
-/// `enable_sub_call_stub()` flipped on, so the sub-calls return
-/// `default_success()` without touching real ERC20 or vault state.
+/// Dummy asset address for payment-path tests.
 const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
-const PAY_VAULT: Address = address!("0x000000000000000000000000000000000000A11D");
+const PAY_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
+
+/// Seeds a vault for `PAY_ASSET` so nodfactory's in-process `deposit_liquidity`
+/// resolves a configured vault. This ran through the sub-call stub before the
+/// vaultprovider was called directly.
+fn seed_reserve_vault(storage: &StorageHandle<'_>) {
+    let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
+    vp.assets.insert(PAY_ASSET).unwrap();
+    vp.asset_vault_set(PAY_ASSET).insert(PAY_VAULT).unwrap();
+}
 
 fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {
     let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
@@ -149,15 +156,8 @@ fn test_mine_gratis_requires_qualification() {
 
     provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut provider, |storage| {
-        let err = factory_api::mine_gratis(
-            &storage,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap_err();
+        let err = factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
+            .unwrap_err();
         assert!(err.to_string().contains("qualified"));
     });
 }
@@ -176,15 +176,8 @@ fn test_mine_gratis_with_valid_pow() {
 
     provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut provider, |storage| {
-        let gratis = factory_api::mine_gratis(
-            &storage,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap();
+        let gratis =
+            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
         let nod = NodContract::new(storage);
         assert_eq!(nod.total_supply().unwrap(), 0);
@@ -201,15 +194,10 @@ fn test_mine_gratis_wrong_owner_fails() {
         let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
 
         let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        assert!(factory_api::mine_gratis(
-            &storage,
-            wrong_owner,
-            nod_id,
-            U256::ZERO,
-            Address::ZERO,
-            Address::ZERO
-        )
-        .is_err());
+        assert!(
+            factory_api::mine_gratis(&storage, wrong_owner, nod_id, U256::ZERO, Address::ZERO)
+                .is_err()
+        );
     });
 }
 
@@ -232,15 +220,10 @@ fn test_mine_gratis_invalid_pow_fails() {
 
     provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(factory_api::mine_gratis(
-            &storage,
-            params.owner,
-            nod_id,
-            bad_nonce,
-            Address::ZERO,
-            Address::ZERO
-        )
-        .is_err());
+        assert!(
+            factory_api::mine_gratis(&storage, params.owner, nod_id, bad_nonce, Address::ZERO)
+                .is_err()
+        );
     });
 }
 
@@ -266,30 +249,16 @@ fn test_mine_gratis_rejects_when_locked() {
     // One second before unlock — locked.
     storage.set_timestamp(U256::from(T_NOW + UNLOCK_PERIOD_SECONDS - 1));
     StorageHandle::enter(&mut storage, |s| {
-        let err = factory_api::mine_gratis(
-            &s,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap_err();
+        let err =
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
         assert!(err.to_string().contains("locked"), "expected locked: {err}");
     });
 
     // At unlock — mining succeeds.
     storage.set_timestamp(U256::from(T_NOW + UNLOCK_PERIOD_SECONDS));
     StorageHandle::enter(&mut storage, |s| {
-        let gratis = factory_api::mine_gratis(
-            &s,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap();
+        let gratis =
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
     });
 }
@@ -331,7 +300,7 @@ fn test_nods_by_owner_sparse_after_mine() {
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
-        factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO, Address::ZERO).unwrap();
+        factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO).unwrap();
 
         let nod = NodContract::new(s);
         let nods = nod.get_nods_by_owner(alice).unwrap();
@@ -355,15 +324,8 @@ fn test_mine_gratis_atomic_burn_and_gratis_mint() {
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
-        let gratis_load = factory_api::mine_gratis(
-            &s,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap();
+        let gratis_load =
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
         assert!(!gratis_load.is_zero());
 
         let nod = NodContract::new(s.clone());
@@ -386,14 +348,7 @@ fn test_mine_gratis_failure_no_partial_loss() {
 
         let supply_before = NodContract::new(s.clone()).total_supply().unwrap();
         let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        let result = factory_api::mine_gratis(
-            &s,
-            wrong_owner,
-            nod_id,
-            U256::ZERO,
-            Address::ZERO,
-            Address::ZERO,
-        );
+        let result = factory_api::mine_gratis(&s, wrong_owner, nod_id, U256::ZERO, Address::ZERO);
         assert!(result.is_err());
 
         let nod = NodContract::new(s);
@@ -424,9 +379,7 @@ fn test_mine_gratis_supply_invariant() {
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
-        let load1 =
-            factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO, Address::ZERO)
-                .unwrap();
+        let load1 = factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO).unwrap();
         let nod = NodContract::new(s.clone());
         let gratis = outbe_gratis::Gratis::new(s);
         assert_eq!(nod.total_supply().unwrap(), 1);
@@ -454,7 +407,6 @@ fn test_precompile_mine_gratis_burns_and_mints() {
             nodId: nod_id,
             nonce,
             asset: Address::ZERO,
-            vaultProvider: Address::ZERO,
         };
         let calldata = call.abi_encode();
         let output = dispatch(s.clone(), &calldata, params.owner, U256::ZERO).unwrap();
@@ -479,7 +431,6 @@ fn test_precompile_rejects_msg_value() {
             nodId: nod_id,
             nonce: U256::ZERO,
             asset: Address::ZERO,
-            vaultProvider: Address::ZERO,
         };
         let calldata = call.abi_encode();
         let result = dispatch(storage, &calldata, params.owner, U256::from(1u64));
@@ -513,15 +464,7 @@ fn test_set_clear_does_not_corrupt_root() {
         // stays marked because we don't touch the bin-tree on mine.
         // That's the documented invariant — the qualifier loop's
         // stale-bucket branch handles dangling bin entries.
-        factory_api::mine_gratis(
-            &s,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap();
+        factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
     });
 }
 
@@ -539,17 +482,17 @@ fn test_mine_gratis_pays_cost_amount() {
 
     let mut storage = HashMapStorageProvider::new(1);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(PAY_VAULT, Bytes::from(vec![0u8; 32]));
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         factory_api::issue_nod(&s, &params).unwrap();
         qualify_params(&s, &params);
+        seed_reserve_vault(&s);
     });
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
-        let gratis =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET, PAY_VAULT)
-                .unwrap();
+        let gratis = factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
         let nod = NodContract::new(s);
         assert!(nod.get_item(nod_id).unwrap().is_none());
@@ -575,8 +518,7 @@ fn test_mine_gratis_rejects_zero_asset_when_cost_nonzero() {
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
         let err =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO, PAY_VAULT)
-                .unwrap_err();
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
         assert!(
             err.to_string().contains("asset"),
             "expected asset error: {err}"
@@ -584,37 +526,8 @@ fn test_mine_gratis_rejects_zero_asset_when_cost_nonzero() {
     });
 }
 
-/// With a non-zero `cost_amount_minor`, mining MUST reject a zero
-/// `vault_provider`.
-#[test]
-fn test_mine_gratis_rejects_zero_vault_when_cost_nonzero() {
-    let mut params = sample_params();
-    params.cost_amount_minor = U256::from(500_000_000_000_000_000u128);
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.enable_sub_call_stub();
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
-
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
-    StorageHandle::enter(&mut storage, |s| {
-        let err =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET, Address::ZERO)
-                .unwrap_err();
-        assert!(
-            err.to_string().contains("vault"),
-            "expected vault error: {err}"
-        );
-    });
-}
-
 /// With `cost_amount_minor == 0`, mining MUST skip the three sub-calls
-/// entirely — including the asset/vault zero-address checks. Proves the
+/// entirely — including the asset zero-address check. Proves the
 /// skip branch by running without `enable_sub_call_stub()`: any real
 /// sub-call would fail with `SubCallError::NotAvailable`.
 #[test]
@@ -634,15 +547,8 @@ fn test_mine_gratis_skips_payment_when_cost_zero() {
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
     StorageHandle::enter(&mut storage, |s| {
-        let gratis = factory_api::mine_gratis(
-            &s,
-            params.owner,
-            nod_id,
-            nonce,
-            Address::ZERO,
-            Address::ZERO,
-        )
-        .unwrap();
+        let gratis =
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
     });
 }

@@ -14,10 +14,6 @@ pub fn bob() -> Address {
     address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
 }
 
-pub fn vault() -> Address {
-    address!("0x0000000000000000000000000000000000000777")
-}
-
 pub fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }

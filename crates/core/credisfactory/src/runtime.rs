@@ -25,7 +25,7 @@ use outbe_gratispool::api as pool;
 use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::api::get_exchange_rate;
-use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
@@ -33,7 +33,7 @@ use outbe_primitives::units::SCALE_1E18;
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
 use crate::schema::CredisFactoryContract;
-use crate::sol_ext::{IVaultProvider, IERC20};
+use crate::sol_ext::IERC20;
 
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
 pub const NATIVE_TOKEN: &str = "COEN";
@@ -85,7 +85,6 @@ pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
     asset: Address,
-    vault_provider: Address,
     bundle_account: Address,
     args: RequestArgs,
     current_time: u64,
@@ -93,9 +92,6 @@ pub fn request_credis(
 ) -> Result<(U256, U256)> {
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
-    }
-    if vault_provider.is_zero() {
-        return Err(CredisFactoryError::InvalidVaultProvider.into());
     }
     if bundle_account.is_zero() {
         return Err(CredisFactoryError::InvalidBundleAccount.into());
@@ -141,7 +137,7 @@ pub fn request_credis(
     let position_id = credis.create_position(
         args.nullifier_hash,
         bundle_account,
-        vault_provider,
+        VAULT_PROVIDER_ADDRESS,
         asset,
         amount_stables,
         gratis_amount,
@@ -158,15 +154,16 @@ pub fn request_credis(
             .write(&position_id, denom.id() as u32)?;
     }
 
-    // Withdraw the matching stablecoin from the vault to the borrower's
-    // smart account. Sub-call revert unwinds bookkeeping via the outer frame.
-    let calldata = IVaultProvider::withdrawLiquidityCall {
+    // Withdraw the matching stablecoin from the vault to the borrower's smart
+    // account via the vaultprovider's.
+    outbe_vaultprovider::api::withdraw_liquidity(
+        storage.clone(),
+        CREDIS_FACTORY_ADDRESS,
         asset,
-        amount: amount_stables,
-        receiver: bundle_account,
-    }
-    .abi_encode();
-    storage.call(vault_provider, U256::ZERO, calldata.into())?;
+        amount_stables,
+        bundle_account,
+        outbe_vaultprovider::api::LiquidityTarget::Credis,
+    )?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
@@ -254,13 +251,14 @@ pub fn pay_anadosis(
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // 3) Vault pulls and deposits into the reserve.
-    let deposit = IVaultProvider::depositLiquidityCall {
+    // 3) Vault pulls and deposits into the reserve vault.
+    outbe_vaultprovider::api::deposit_liquidity(
+        storage.clone(),
+        CREDIS_FACTORY_ADDRESS,
         asset,
-        assetsAmount: amount,
-    }
-    .abi_encode();
-    storage.call(vault, U256::ZERO, deposit.into())?;
+        amount,
+        outbe_vaultprovider::api::LiquiditySource::CredisAnadosis,
+    )?;
 
     // 4) Append this installment's reclaim note so the pledger can unpledge
     //    1/10 of the collateral immediately. No Gratis-ledger movement here:

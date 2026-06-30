@@ -19,7 +19,7 @@ const MAPPING = {
   ICredis: "precompiles/abi-export/ICredis.json",
   ICredisFactory: "precompiles/abi-export/ICredisFactory.json",
   IGratisPool: "precompiles/abi-export/IGratisPool.json",
-  IVaultProvider: "vault/abi-export/IVaultProvider.json",
+  IVaultProvider: "precompiles/abi-export/IVaultProvider.json",
   SmartAccountFactory: "smart-account/abi-export/SmartAccountFactory.json",
   ITokenBundle: "smart-account/abi-export/ITokenBundle.json",
   IEntryPoint: "smart-account/abi-export/IEntryPoint.json",
