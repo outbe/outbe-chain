@@ -2,7 +2,7 @@ use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
 use outbe_gratis::Gratis;
-use outbe_gratispool::constants::{denomination, ACTION_UNPLEDGE};
+use outbe_gratispool::constants::{DenomAmount, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
 use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding};
 use outbe_gratispool::verifier::with_verifier_outcome;
@@ -46,7 +46,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = denomination(1).unwrap();
+        let amount = DenomAmount::from_id(1).unwrap().amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
@@ -97,7 +97,7 @@ fn pledge_duplicate_commitment_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = denomination(1).unwrap();
+        let amount = DenomAmount::from_id(1).unwrap().amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
@@ -121,7 +121,7 @@ fn unpledge_releases_escrow_back_to_pledger() {
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let amount = denomination(denom_id).unwrap();
+        let amount = DenomAmount::from_id(denom_id).unwrap().amount();
 
         // Alice pledges.
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();

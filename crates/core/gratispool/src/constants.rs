@@ -8,33 +8,63 @@
 use alloy_primitives::U256;
 use outbe_primitives::units::ONE_COEN;
 
-/// Number of supported denominations (length of the ladder returned by
-/// [`denomination`]).
-pub const DENOMINATION_COUNT: u8 = 3;
+/// A supported gratis denomination.
+///
+/// Each variant is a separate Tornado-style anonymity pool with a fixed deposit
+/// amount; fixed amounts ensure the pledge amount itself is not a unique
+/// fingerprint that could link a `pledgeGratis` to a later spend.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenomAmount {
+    Gratis1 = 1,
+    Gratis10 = 2,
+    Gratis100 = 3,
+    Gratis1k = 4,
+    Gratis10k = 5,
+}
 
-/// Gratis denomination amount in 18-decimal base units for the given
-/// `denom_id`, or `None` if `denom_id` is outside the supported ladder.
-///
-/// Valid ids are `1..=DENOMINATION_COUNT`. Id `0` is intentionally invalid
-/// so the zero-initialised default of a `denom_id` field rejects rather
-/// than silently aliasing the first denomination.
-///
-/// Each denomination defines a separate anonymity pool. Tornado-style fixed
-/// amounts ensure the pledge amount itself is not a unique fingerprint that
-/// could link a `pledgeGratis` to a later spend.
-///
-/// PoC ladder: 100, 1_000, 10_000 GRATIS. Expected to grow once activity
-/// warrants larger anonymity sets.
-pub fn denomination(denom_id: u8) -> Option<U256> {
-    match denom_id {
-        1 => Some(U256::from(100u64) * ONE_COEN),
-        2 => Some(U256::from(1_000u64) * ONE_COEN),
-        3 => Some(U256::from(10_000u64) * ONE_COEN),
-        _ => None,
+impl DenomAmount {
+    pub const ALL: [DenomAmount; 5] = [
+        Self::Gratis1,
+        Self::Gratis10,
+        Self::Gratis100,
+        Self::Gratis1k,
+        Self::Gratis10k,
+    ];
+
+    pub fn from_id(denom_id: u8) -> Option<Self> {
+        match denom_id {
+            1 => Some(Self::Gratis1),
+            2 => Some(Self::Gratis10),
+            3 => Some(Self::Gratis100),
+            4 => Some(Self::Gratis1k),
+            5 => Some(Self::Gratis10k),
+            _ => None,
+        }
+    }
+
+    pub const fn id(self) -> u8 {
+        self as u8
+    }
+
+    pub fn amount(self) -> U256 {
+        let gratis = |g: u64| U256::from(g) * ONE_COEN;
+        match self {
+            Self::Gratis1 => gratis(1),
+            Self::Gratis10 => gratis(10),
+            Self::Gratis100 => gratis(100),
+            Self::Gratis1k => gratis(1_000),
+            Self::Gratis10k => gratis(10_000),
+        }
+    }
+
+    pub fn anadosis_denomination(self) -> U256 {
+        self.amount() / U256::from(10u64)
     }
 }
 
-// TODO peek correct params
+/// Number of supported denominations (the length of [`DenomAmount::ALL`]).
+pub const DENOMINATION_COUNT: u8 = DenomAmount::ALL.len() as u8;
 
 /// Number of leaves the per-denomination Merkle tree can hold.
 ///

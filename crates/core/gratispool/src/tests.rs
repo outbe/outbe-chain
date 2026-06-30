@@ -16,8 +16,12 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
+use outbe_primitives::units::ONE_COEN;
+
 use crate::api;
-use crate::constants::{denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_MERKLE_GRATIS};
+use crate::constants::{
+    DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, DENOMINATION_COUNT, TAG_MERKLE_GRATIS,
+};
 use crate::runtime::SpendArgs;
 use crate::schema::GratisPoolContract;
 use crate::state::{commitment_hash, merkle_node, nullifier_hash, receiver_binding};
@@ -61,7 +65,7 @@ fn add_commitment_appends_leaf_and_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = denomination(denom_id).unwrap();
+        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
 
         let secret = U256::from(0xCAFE_u64);
         let null_s = U256::from(0xBEEF_u64);
@@ -137,7 +141,7 @@ fn verify_and_spend_for_credis_consumes_nullifier_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = denomination(denom_id).unwrap();
+        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
 
         let secret = U256::from(0x11_u64);
         let null_s = U256::from(0x22_u64);
@@ -170,7 +174,7 @@ fn verify_and_spend_for_unpledge_consumes_nullifier_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = denomination(denom_id).unwrap();
+        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
 
         let secret = U256::from(0x33_u64);
         let null_s = U256::from(0x44_u64);
@@ -486,4 +490,63 @@ fn build_combined_lays_out_count_inputs_then_body() {
 
     // Body.
     assert_eq!(&combined[header_end..], proof_body.as_slice());
+}
+
+// ---------------------------------------------------------------------------
+// Denomination ladder (DenomAmount)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn denom_amount_id_roundtrips_and_rejects_out_of_range() {
+    for d in DenomAmount::ALL {
+        assert_eq!(DenomAmount::from_id(d.id()), Some(d));
+    }
+    // Id 0 is intentionally invalid; ids past the ladder are unknown.
+    assert_eq!(DenomAmount::from_id(0), None);
+    assert_eq!(DenomAmount::from_id(DENOMINATION_COUNT + 1), None);
+}
+
+#[test]
+fn denom_amount_values_follow_power_of_ten_ladder() {
+    use crate::constants::DenomAmount::*;
+    assert_eq!(Gratis1.amount(), U256::from(1u64) * ONE_COEN);
+    assert_eq!(Gratis10.amount(), U256::from(10u64) * ONE_COEN);
+    assert_eq!(Gratis100.amount(), U256::from(100u64) * ONE_COEN);
+    assert_eq!(Gratis1k.amount(), U256::from(1_000u64) * ONE_COEN);
+    assert_eq!(Gratis10k.amount(), U256::from(10_000u64) * ONE_COEN);
+}
+
+#[test]
+fn anadosis_denomination_is_exact_one_tenth() {
+    for d in DenomAmount::ALL {
+        let anadosis = d.anadosis_denomination();
+        // Exactly one tenth, with no truncation: ten installments reconstitute
+        // the full deposit amount (credisfactory's NUMBER_OF_ANADOSIS = 10).
+        assert_eq!(anadosis, d.amount() / U256::from(10u64));
+        assert_eq!(anadosis * U256::from(10u64), d.amount());
+    }
+    // Smallest denomination: 1 GRATIS / 10 == 0.1 GRATIS == 10^17 base units.
+    assert_eq!(
+        DenomAmount::Gratis1.anadosis_denomination(),
+        ONE_COEN / U256::from(10u64),
+    );
+}
+
+#[test]
+fn dispatch_supported_denoms_returns_full_ladder() {
+    use alloy_sol_types::SolCall;
+
+    use crate::precompile::{dispatch, IGratisPool};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let call = IGratisPool::supportedDenomsCall {}.abi_encode();
+        let out = dispatch(storage, &call, bob(), U256::ZERO).unwrap();
+        let ret = IGratisPool::supportedDenomsCall::abi_decode_returns(&out).unwrap();
+
+        let want_ids: Vec<u8> = DenomAmount::ALL.iter().map(|d| d.id()).collect();
+        let want_amounts: Vec<U256> = DenomAmount::ALL.iter().map(|d| d.amount()).collect();
+        assert_eq!(ret.ids, want_ids);
+        assert_eq!(ret.amounts, want_amounts);
+    });
 }

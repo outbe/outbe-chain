@@ -26,7 +26,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{
-    denomination, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_COMMIT_GRATIS, TAG_MERKLE_GRATIS,
+    DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_COMMIT_GRATIS, TAG_MERKLE_GRATIS,
     TAG_NULLIFIER_GRATIS,
 };
 use crate::errors::GratisPoolError;
@@ -71,13 +71,15 @@ pub struct SpendArgs {
 ///
 /// Returns `(new_root, leaf_index, denom_amount)`. The amount is returned
 /// for caller convenience so it doesn't have to re-derive it from
-/// [`denomination`].
+/// [`DenomAmount::amount`].
 pub fn add_commitment(
     storage: StorageHandle<'_>,
     denom_id: u8,
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
-    let amount = denomination(denom_id).ok_or(GratisPoolError::DenomUnknown)?;
+    let amount = DenomAmount::from_id(denom_id)
+        .ok_or(GratisPoolError::DenomUnknown)?
+        .amount();
 
     let mut pool = GratisPoolContract::new(storage.clone());
     let (new_root, leaf_index) = pool.append_leaf(denom_id, commitment)?;
@@ -141,7 +143,9 @@ fn verify_and_spend(
     nonce: U256,
     args: &SpendArgs,
 ) -> Result<U256> {
-    let amount = denomination(args.denom_id).ok_or(GratisPoolError::DenomUnknown)?;
+    let amount = DenomAmount::from_id(args.denom_id)
+        .ok_or(GratisPoolError::DenomUnknown)?
+        .amount();
 
     u256_to_fr(args.merkle_root)
         .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("merkle_root".to_string()))?;
