@@ -30,6 +30,15 @@ use crate::digest::Digest;
 use crate::hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider};
 use crate::network_identity::NetworkIdentity;
 
+mod driver;
+mod resolver;
+mod stubs;
+pub mod engine;
+pub mod upstream;
+
+pub use engine::{run_follow_engine, FollowEngineConfig};
+pub use upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource};
+
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
 /// blocks, anchored on a trusted [`NetworkIdentity`]. Verifiers are kept in a
 /// [`HybridSchemeProvider`] keyed by epoch — the same provider type the live
