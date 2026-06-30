@@ -49,6 +49,7 @@ pub mod ancestry_readiness;
 pub mod application;
 pub mod executor;
 pub mod finalization;
+pub mod follow;
 pub mod reporter;
 pub(crate) mod test_faults;
 #[cfg(test)]
