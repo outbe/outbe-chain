@@ -6,7 +6,8 @@ import {OApp, Origin, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contract
 import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "../interfaces/IERC7786.sol";
+import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
 /**
@@ -86,8 +87,6 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        // Destination gas comes from the executionGasLimit attribute, or `defaultGasLimit` when absent;
-        // any other attribute reverts UnsupportedAttribute.
         bytes memory options = _options(_gasLimit(attributes));
 
         // msg.value funds the LayerZero native fee; excess is refunded to the caller (the facade).

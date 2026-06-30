@@ -5,7 +5,8 @@ pragma solidity ^0.8.30;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "./interfaces/IERC7786.sol";
+import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 
 /**
  *
@@ -62,7 +63,6 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes32 sendId)
     {
-        // Attributes are not interpreted here; they are forwarded to (and validated by) the active gateway.
         address gateway = getGateway();
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
 

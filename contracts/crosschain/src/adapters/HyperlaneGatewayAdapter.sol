@@ -4,10 +4,10 @@ pragma solidity ^0.8.30;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "../interfaces/IERC7786.sol";
+import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
 import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
-import {StandardHookMetadata} from "../libs/StandardHookMetadata.sol";
 
 /**
  * @dev ERC-7786 gateway adapter for Hyperlane.
@@ -97,8 +97,7 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
 
-        // Destination gas comes from the executionGasLimit attribute, or `defaultGasLimit` when absent; any other
-        // attribute reverts UnsupportedAttribute. msg.value funds the Hyperlane native fee.
+        // msg.value funds the Hyperlane native fee.
         MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, _metadata(_gasLimit(attributes)));
 
         emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
@@ -160,9 +159,10 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         return uint128(gasLimit);
     }
 
-    /// @dev Hyperlane hook metadata overriding the destination gas limit; refunds excess to the caller.
+    /// @dev Hyperlane StandardHookMetadata overriding the destination gas limit (refunds excess to the caller).
+    ///      Layout: variant(1) | msgValue(0) | gasLimit | refundAddress.
     function _metadata(uint128 gasLimit) private view returns (bytes memory) {
-        return StandardHookMetadata.overrideGasLimit(gasLimit, msg.sender);
+        return abi.encodePacked(uint16(1), uint256(0), uint256(gasLimit), msg.sender);
     }
 
     function _quoteWithGas(bytes calldata recipient, bytes calldata payload, uint128 gasLimit)
