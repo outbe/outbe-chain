@@ -24,9 +24,10 @@ import {
 import { writeTicket } from "./ticket.js";
 
 // Parse CLI args: [denomId] [envName]
-// denomId defaults to 1 (the smallest valid denomination); id 0 is
-// intentionally invalid on-chain — see `utils.ts::GRATIS_DENOMINATIONS`.
-const denomId = process.argv[2] !== undefined ? Number(process.argv[2]) : 1;
+// denomId defaults to 2 (Gratis1, the smallest *pledgeable* denomination).
+// id 0 is invalid and id 1 (Gratis0_1) is the reserved anadosis-only sub-rung
+// that `pledgeGratis` rejects — see `utils.ts::GRATIS_DENOMINATIONS`.
+const denomId = process.argv[2] !== undefined ? Number(process.argv[2]) : 2;
 const envName = process.argv[3] || DEFAULT_ENV;
 
 const denom = (() => {
@@ -34,6 +35,12 @@ const denom = (() => {
   if (!d) {
     console.error(
       `Unknown denomId ${denomId}. Valid: ${GRATIS_DENOMINATIONS.map((x) => x.id).join(", ")}`,
+    );
+    process.exit(1);
+  }
+  if (!d.pledgeable) {
+    console.error(
+      `denomId ${denomId} is reserved (anadosis-only) and cannot be pledged. Pledgeable ids: ${GRATIS_DENOMINATIONS.filter((x) => x.pledgeable).map((x) => x.id).join(", ")}`,
     );
     process.exit(1);
   }

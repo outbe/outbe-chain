@@ -4,20 +4,23 @@ End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. E
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
 flow — from pledging Gratis to repaying anadosis and unpledging.
 
-### ⚠ ABI drift vs current outbe-chain
+### Shielded Gratis/Credis design
 
-The scripts were authored against a pre-shielded version of Gratis/Credis where
-the factory exposed direct `getPledgeTicketByAddress`, `getAllPledgeTickets`, and
-a simple-args `unpledgeGratis`/`requestCredis`/`anadosis(positionId, amount)`.
-Current outbe-chain moved the pool surface to `IGratisPool` and switched to a
-shielded design (merkle commitments, nullifier hashes, ZK proofs in
-`unpledgeGratis(args)` and `requestCredis(asset, vaultProvider, bundleAccount, args)`).
-`anadosis` now takes only `positionId`. `npm run generate-types` succeeds and
-produces working bindings for all 10 staged ABIs (including `IGratisPool`),
-but `npx tsc --noEmit` against the imported scripts surfaces ~20 call-site
-mismatches — they need to be ported to the new shielded interfaces before the
-flow runs end-to-end. The imported scripts are kept verbatim as the porting
-reference.
+These scripts target the current shielded Gratis/Credis interfaces: the pool
+surface lives in `IGratisPool` (merkle commitments, nullifier hashes, ZK
+proofs), `unpledgeGratis(args)` and `requestCredis(asset, vaultProvider,
+bundleAccount, args)` take shielded args, and `anadosis(positionId,
+reclaimCommitment)` carries a **per-installment** reclaim commitment.
+
+Reclaim is no longer pre-supplied at `requestCredis`. Instead, each anadosis
+payment generates a fresh reclaim note and inserts it into the **anadosis
+denomination** — one decade below the pledge denom, worth `pledge / 10` — so the
+borrower can `unpledgeGratis` one installment's share immediately, without
+waiting for the loan to complete. The reclaim commitment MUST be computed with
+the anadosis denomination's id (`5-user-pays-anadosis.ts` derives it from
+`getNextAnadosis().gratisAmount`); a wrong-denom note inserts but is permanently
+unspendable, and the chain cannot detect it. `npm run generate-types` stages the
+ABIs and runs typechain; `npx tsc --noEmit` is clean.
 
 Contract bindings come from this repo's own ABIs. `npm run generate-types` first
 runs `scripts/prepare-abis.mjs`, which copies the required JSONs out of
@@ -56,8 +59,8 @@ src/
 ├── 3-request-credis.ts         CCA calls requestCredis; vault funds enter bundle balance
 ├── 4-cca-simulate-purchase.ts  CCA uses bundle funds via per-token permission
 ├── 4.1-user-sa-withdraw.ts     User withdraws their free (non-bundled) balance
-├── 5-user-pays-anadosis.ts     User repays an installment via batched UserOp
-└── 6-user-unpledge-gratis.ts   User unpledges Gratis using the original secret
+├── 5-user-pays-anadosis.ts     User repays an installment (batched UserOp) + inserts that installment's reclaim note
+└── 6-user-unpledge-gratis.ts   User unpledges a reclaim ticket to unlock one installment's gratis (shielded)
 ```
 
 ## Installation
@@ -163,9 +166,12 @@ npx tsx src/4-cca-simulate-purchase.ts
 # Optional: user withdraws their free balance
 npx tsx src/4.1-user-sa-withdraw.ts 5.5
 
-# User pays the next anadosis on a credis position
+# User pays the next anadosis on a credis position. Each payment also inserts a
+# fresh reclaim note (worth pledge/10) and writes a reclaim ticket.
 npx tsx src/5-user-pays-anadosis.ts <positionId>
 
-# User unpledges the originally pledged Gratis
-npx tsx src/6-user-unpledge-gratis.ts <secret>
+# Unlock one installment's gratis by unpledging a reclaim ticket (latest by
+# default, or pass an explicit tickets/*.json path). Run once per paid installment.
+npx tsx src/6-user-unpledge-gratis.ts                     # latest reclaim ticket
+npx tsx src/6-user-unpledge-gratis.ts tickets/1-abc123.json
 ```
