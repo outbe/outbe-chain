@@ -15,44 +15,73 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// @dev Storage slot of OZ `ReentrancyGuard._status` (ERC-7201).
-///      keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-bytes32 constant REENTRANCY_GUARD_STORAGE = 0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-uint256 constant ENTERED = 2;
+/// @dev Selector of OZ `ReentrancyGuardReentrantCall()`, reverted by `nonReentrant` on re-entry.
+bytes4 constant REENTRANCY_GUARD_REENTRANT_CALL = 0x3ee5aeb5;
 
 Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-/// @notice Stub Auction that, during the inbound STAGE_START path, snapshots the bridge's
-///         ReentrancyGuard `_status` slot. Reads `ENTERED == 2` iff `_lzReceive` carries
-///         `nonReentrant`.
-/// @dev Does NOT inherit `IIntexAuction` — the interface has many other methods unrelated to
-///      the STAGE_START path. The high-level call from `TargetMessenger` dispatches by selector,
-///      so matching the signature here is sufficient.
-contract ReentrancyProbeAuction {
-    address public immutable bridge;
-    uint256 public observedGuardSlot;
-    bool public observed;
+/// @dev Re-enters the messenger's endpoint-gated `lzReceive` while the outer `_lzReceive` still holds
+///      the guard. Returns true iff that re-entry reverts with `ReentrancyGuardReentrantCall` — the
+///      observable signature of the `nonReentrant` modifier on the inbound entry. `vm.prank(endpoint)`
+///      clears the `onlyEndpoint` gate so the guard (not the gate) is what rejects the call. Replaces
+///      the old storage-slot probe, which cannot read the now-transient guard across contracts.
+function reentryGuarded(address messenger, address endpoint, uint32 srcEid, bytes32 peer) returns (bool) {
+    Origin memory origin = Origin({srcEid: srcEid, sender: peer, nonce: 2});
+    VM.prank(endpoint);
+    (bool ok, bytes memory ret) = messenger.call(
+        abi.encodeWithSignature(
+            "lzReceive((uint32,bytes32,uint64),bytes32,bytes,address,bytes)",
+            origin,
+            bytes32(0),
+            bytes(""),
+            address(0),
+            bytes("")
+        )
+    );
+    return !ok && ret.length >= 4 && bytes4(ret) == REENTRANCY_GUARD_REENTRANT_CALL;
+}
 
-    constructor(address bridge_) {
-        bridge = bridge_;
+/// @notice Stub Auction that, during the inbound STAGE_START path, tries to re-enter the messenger's
+///         inbound entry. The re-entry reverts iff `_lzReceive` carries `nonReentrant`.
+/// @dev Does NOT inherit `IIntexAuction` — the high-level call dispatches by selector, so matching
+///      the `auctionStart` signature here is sufficient.
+contract ReentrancyProbeAuction {
+    address public immutable messenger;
+    address public immutable endpoint;
+    uint32 public immutable srcEid;
+    bytes32 public immutable peer;
+    bool public observed;
+    bool public guardHeld;
+
+    constructor(address messenger_, address endpoint_, uint32 srcEid_, address peer_) {
+        messenger = messenger_;
+        endpoint = endpoint_;
+        srcEid = srcEid_;
+        peer = bytes32(uint256(uint160(peer_)));
     }
 
     function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
         external
     {
-        observedGuardSlot = uint256(VM.load(bridge, REENTRANCY_GUARD_STORAGE));
         observed = true;
+        guardHeld = reentryGuarded(messenger, endpoint, srcEid, peer);
     }
 }
 
-/// @notice Stub Desis that snapshots OM's ReentrancyGuard slot during BIDS_BATCH dispatch.
+/// @notice Stub Desis that tries to re-enter OM's inbound entry during BIDS_BATCH dispatch.
 contract ReentrancyProbeDesis {
-    address public immutable bridge;
-    uint256 public observedGuardSlot;
+    address public immutable messenger;
+    address public immutable endpoint;
+    uint32 public immutable srcEid;
+    bytes32 public immutable peer;
     bool public observed;
+    bool public guardHeld;
 
-    constructor(address bridge_) {
-        bridge = bridge_;
+    constructor(address messenger_, address endpoint_, uint32 srcEid_, address peer_) {
+        messenger = messenger_;
+        endpoint = endpoint_;
+        srcEid = srcEid_;
+        peer = bytes32(uint256(uint160(peer_)));
     }
 
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
@@ -60,28 +89,22 @@ contract ReentrancyProbeDesis {
     }
 
     function processBidsBatch(
-        uint32, /* seriesId */
-        uint32, /* srcEid */
-        bool, /* isLast */
-        uint32, /* relayGeneration */
-        address[] calldata, /* bidders */
-        uint16[] calldata, /* quantities */
-        uint32[] calldata, /* rates */
-        uint32[] calldata /* timestamps */
+        uint32,
+        uint32,
+        bool,
+        uint32,
+        address[] calldata,
+        uint16[] calldata,
+        uint32[] calldata,
+        uint32[] calldata
     ) external {
-        observedGuardSlot = uint256(VM.load(bridge, REENTRANCY_GUARD_STORAGE));
         observed = true;
+        guardHeld = reentryGuarded(messenger, endpoint, srcEid, peer);
     }
 
     /// @dev OriginMessenger reads stage post-processBidsBatch to decide on auto-clear.
     ///      Return `None` so the auto-clear branch is skipped in this probe-only test.
-    function getAuctionStage(
-        uint32 /*seriesId*/
-    )
-        external
-        pure
-        returns (IDesis.AuctionStage)
-    {
+    function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
         return IDesis.AuctionStage.None;
     }
 }
@@ -140,7 +163,8 @@ contract MessengerReentrancyTest is TestHelperOz5 {
     }
 
     function test_TM_lzReceive_runsUnderNonReentrant() public {
-        ReentrancyProbeAuction probeAuction = new ReentrancyProbeAuction(address(bnbMessenger));
+        ReentrancyProbeAuction probeAuction =
+            new ReentrancyProbeAuction(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger));
         // intex / escrow / onftBatch don't fire on STAGE_START, can be the zero-stub probe too,
         // but `wire` rejects address(0). Reuse the probe so all four wires are non-zero.
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
@@ -151,11 +175,12 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         _deliver(address(bnbMessenger), address(endpoints[BNB_EID]), OUTBE_EID, address(outbeMessenger), packet);
 
         assertTrue(probeAuction.observed(), "TM auction callback never ran");
-        assertEq(probeAuction.observedGuardSlot(), ENTERED, "TargetMessenger._lzReceive missing nonReentrant");
+        assertTrue(probeAuction.guardHeld(), "TargetMessenger._lzReceive missing nonReentrant");
     }
 
     function test_OM_lzReceive_runsUnderNonReentrant() public {
-        ReentrancyProbeDesis probeDesis = new ReentrancyProbeDesis(address(outbeMessenger));
+        ReentrancyProbeDesis probeDesis =
+            new ReentrancyProbeDesis(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger));
         outbeMessenger.wire(address(probeDesis), makeAddr("factory"));
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
@@ -165,6 +190,6 @@ contract MessengerReentrancyTest is TestHelperOz5 {
         _deliver(address(outbeMessenger), address(endpoints[OUTBE_EID]), BNB_EID, address(bnbMessenger), packet);
 
         assertTrue(probeDesis.observed(), "OM Desis callback never ran");
-        assertEq(probeDesis.observedGuardSlot(), ENTERED, "OriginMessenger._lzReceive missing nonReentrant");
+        assertTrue(probeDesis.guardHeld(), "OriginMessenger._lzReceive missing nonReentrant");
     }
 }
