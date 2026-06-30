@@ -17,6 +17,7 @@ use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
 use outbe_gratis::Gratis;
 use outbe_gratispool::api as pool;
+use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
@@ -39,10 +40,8 @@ pub fn pledge_gratis(
         }
     }
 
-    // Append the commitment first so denomination / duplicate checks fire
-    // before any Gratis movement. The pool returns the amount to escrow.
-    let (new_root, leaf_index, amount) =
-        pool::add_commitment(storage.clone(), denom_id, commitment)?;
+    let denom = DenomAmount::try_from(denom_id)?;
+    let (new_root, leaf_index, amount) = pool::add_commitment(storage.clone(), denom, commitment)?;
     let mut gratis = Gratis::new(storage);
     gratis.pledge(caller, amount)?;
     Ok((new_root, leaf_index, amount))

@@ -19,9 +19,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::ONE_COEN;
 
 use crate::api;
-use crate::constants::{
-    DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, DENOMINATION_COUNT, TAG_MERKLE_GRATIS,
-};
+use crate::constants::{DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_MERKLE_GRATIS};
 use crate::runtime::SpendArgs;
 use crate::schema::GratisPoolContract;
 use crate::state::{commitment_hash, merkle_node, nullifier_hash, receiver_binding};
@@ -65,14 +63,18 @@ fn add_commitment_appends_leaf_and_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let expected_amount = DenomAmount::try_from(denom_id).unwrap().amount();
 
         let secret = U256::from(0xCAFE_u64);
         let null_s = U256::from(0xBEEF_u64);
         let commitment = commitment_hash(secret, null_s, denom_id).unwrap();
 
-        let (root, idx, amount) =
-            api::add_commitment(storage.clone(), denom_id, commitment).unwrap();
+        let (root, idx, amount) = api::add_commitment(
+            storage.clone(),
+            DenomAmount::try_from(denom_id).unwrap(),
+            commitment,
+        )
+        .unwrap();
         assert_eq!(idx, 0);
         assert_eq!(amount, expected_amount);
         assert_ne!(root, U256::ZERO);
@@ -84,21 +86,12 @@ fn add_commitment_appends_leaf_and_returns_amount() {
 }
 
 #[test]
-fn add_commitment_unknown_denom_reverts() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let err = api::add_commitment(storage, 99, U256::from(1u64)).unwrap_err();
-        assert!(err.to_string().contains("denomination id out of range"));
-    });
-}
-
-#[test]
 fn add_commitment_duplicate_reverts() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let c = commitment_hash(U256::from(1u64), U256::from(2u64), 1).unwrap();
-        api::add_commitment(storage.clone(), 1, c).unwrap();
-        let err = api::add_commitment(storage, 1, c).unwrap_err();
+        api::add_commitment(storage.clone(), DenomAmount::Gratis1, c).unwrap();
+        let err = api::add_commitment(storage, DenomAmount::Gratis1, c).unwrap_err();
         assert!(err.to_string().contains("commitment already exists"));
     });
 }
@@ -124,7 +117,8 @@ fn add_commitment_rejects_non_canonical_commitment() {
         buf[32 - p_be.len()..].copy_from_slice(&p_be);
         let p = U256::from_be_bytes(buf);
 
-        let err = api::add_commitment(storage, denom_id, p).unwrap_err();
+        let err =
+            api::add_commitment(storage, DenomAmount::try_from(denom_id).unwrap(), p).unwrap_err();
         assert!(
             err.to_string().contains("canonical"),
             "non-canonical commitment must be rejected, got: {err}"
@@ -141,12 +135,12 @@ fn verify_and_spend_for_credis_consumes_nullifier_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let expected_amount = DenomAmount::try_from(denom_id).unwrap().amount();
 
         let secret = U256::from(0x11_u64);
         let null_s = U256::from(0x22_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         // Per-test nonce stands in for the reclaim_commitment that
         // credisfactory passes through in the real flow.
@@ -174,12 +168,12 @@ fn verify_and_spend_for_unpledge_consumes_nullifier_returns_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let expected_amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let expected_amount = DenomAmount::try_from(denom_id).unwrap().amount();
 
         let secret = U256::from(0x33_u64);
         let null_s = U256::from(0x44_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let args = make_spend_args(
             storage.clone(),
@@ -207,7 +201,7 @@ fn double_spend_rejected() {
         let secret = U256::from(0x55_u64);
         let null_s = U256::from(0x66_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let args = make_spend_args(
             storage.clone(),
@@ -234,7 +228,7 @@ fn receiver_binding_mismatch_rejected() {
         let secret = U256::from(0x77_u64);
         let null_s = U256::from(0x88_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         // Args built for unpledge → Carol, but submitted as credis → Bob.
         let args = make_spend_args(
@@ -261,7 +255,7 @@ fn stale_root_rejected() {
         let secret = U256::from(0x99_u64);
         let null_s = U256::from(0xAA_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let mut args = make_spend_args(
             storage.clone(),
@@ -311,7 +305,7 @@ fn proof_invalid_does_not_consume_nullifier() {
         let secret = U256::from(0xD1_u64);
         let null_s = U256::from(0xD2_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let args = make_spend_args(
             storage.clone(),
@@ -349,7 +343,7 @@ fn non_canonical_nullifier_rejected() {
         let secret = U256::from(0xE1_u64);
         let null_s = U256::from(0xE2_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let mut args = make_spend_args(
             storage.clone(),
@@ -388,7 +382,7 @@ fn proof_invalid_rejected() {
         let secret = U256::from(0xBB_u64);
         let null_s = U256::from(0xCC_u64);
         let c = commitment_hash(secret, null_s, denom_id).unwrap();
-        api::add_commitment(storage.clone(), denom_id, c).unwrap();
+        api::add_commitment(storage.clone(), DenomAmount::try_from(denom_id).unwrap(), c).unwrap();
 
         let args = make_spend_args(
             storage.clone(),
@@ -499,11 +493,18 @@ fn build_combined_lays_out_count_inputs_then_body() {
 #[test]
 fn denom_amount_id_roundtrips_and_rejects_out_of_range() {
     for d in DenomAmount::ALL {
-        assert_eq!(DenomAmount::from_id(d.id()), Some(d));
+        assert_eq!(DenomAmount::try_from(d.id()).unwrap(), d);
     }
-    // Id 0 is intentionally invalid; ids past the ladder are unknown.
-    assert_eq!(DenomAmount::from_id(0), None);
-    assert_eq!(DenomAmount::from_id(DenomAmount::ALL.len() as u8 + 1), None);
+    // Id 0 is intentionally invalid; ids past the ladder are unknown. Both must
+    // reject with the `DenomUnknown` revert string ("denomination id out of
+    // range") so a bad on-chain `denom_id` never reaches the pool.
+    for bad in [0u8, DenomAmount::ALL.len() as u8 + 1] {
+        let err = DenomAmount::try_from(bad).unwrap_err();
+        assert!(
+            err.to_string().contains("denomination id out of range"),
+            "try_from({bad}) should reject with the denom-range message, got: {err}"
+        );
+    }
 }
 
 #[test]

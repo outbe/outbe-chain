@@ -22,15 +22,13 @@ use crate::constants::DenomAmount;
 use crate::runtime;
 use crate::runtime::SpendArgs;
 
-/// User-pledge entrypoint. See [`runtime::add_commitment`]. Resolves the raw
-/// on-chain `denom_id` to a [`DenomAmount`], reverting with `DenomUnknown` if it
-/// is outside the supported ladder.
+/// User-pledge entrypoint. See [`runtime::add_commitment`].
 pub fn add_commitment(
     storage: StorageHandle<'_>,
-    denom_id: u8,
+    denom_id: DenomAmount,
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
-    runtime::add_commitment(storage, DenomAmount::try_from(denom_id)?, commitment)
+    runtime::add_commitment(storage, denom_id, commitment)
 }
 
 /// `requestCredis` spend path. See [`runtime::verify_and_spend_for_credis`].

@@ -34,10 +34,6 @@ impl DenomAmount {
         Self::Gratis10k,
     ];
 
-    pub fn from_id(denom_id: u8) -> Option<Self> {
-        Self::try_from(denom_id).ok()
-    }
-
     pub const fn id(self) -> u8 {
         self as u8
     }

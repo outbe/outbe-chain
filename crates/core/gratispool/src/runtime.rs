@@ -139,9 +139,7 @@ fn verify_and_spend(
     nonce: U256,
     args: &SpendArgs,
 ) -> Result<U256> {
-    let amount = DenomAmount::from_id(args.denom_id)
-        .ok_or(GratisPoolError::DenomUnknown)?
-        .amount();
+    let amount = DenomAmount::try_from(args.denom_id)?.amount();
 
     u256_to_fr(args.merkle_root)
         .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("merkle_root".to_string()))?;

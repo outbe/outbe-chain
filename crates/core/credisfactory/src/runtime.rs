@@ -24,6 +24,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::{AnadosisResult, CredisContract, NUMBER_OF_ANADOSIS};
 use outbe_gratispool::api as pool;
+use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::api::get_exchange_rate;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
@@ -103,6 +104,11 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidBundleAccount.into());
     }
 
+    // Validate the supplied denomination up front so an unknown `denom_id` can
+    // never be persisted to a position (or reach the pledge spend). Rejects
+    // with the `DenomUnknown` revert ("denomination id out of range").
+    let denom = DenomAmount::try_from(args.denom_id)?;
+
     // Reject borrowers with overdue anadosis on any of their positions.
     {
         let credis = CredisContract::new(storage.clone());
@@ -149,7 +155,7 @@ pub fn request_credis(
         let factory = CredisFactoryContract::new(storage.clone());
         factory
             .position_denom
-            .write(&position_id, args.denom_id as u32)?;
+            .write(&position_id, denom.id() as u32)?;
         factory
             .position_reclaim_commitment
             .write(&position_id, args.reclaim_commitment)?;
@@ -262,7 +268,8 @@ pub fn pay_anadosis(
         // insertion rather than error out so legacy positions still settle
         // through the existing payAnadosis sub-call sequence.
         if reclaim_commitment != U256::ZERO {
-            pool::add_commitment(storage.clone(), denom_id, reclaim_commitment)?;
+            let denom = DenomAmount::try_from(denom_id)?;
+            pool::add_commitment(storage.clone(), denom, reclaim_commitment)?;
         }
         // Clear the metadata — single-use per position.
         factory.position_denom.write(&position_id, 0u32)?;

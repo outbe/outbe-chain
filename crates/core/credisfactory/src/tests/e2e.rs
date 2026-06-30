@@ -18,9 +18,7 @@ use alloy_primitives::{keccak256, Address, U256};
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_gratis::Gratis;
 use outbe_gratisfactory::runtime as gf;
-use outbe_gratispool::constants::{
-    DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, DENOMINATION_COUNT,
-};
+use outbe_gratispool::constants::{DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE};
 use outbe_gratispool::schema::GratisPoolContract;
 use outbe_gratispool::state::{commitment_hash, nullifier_hash, receiver_binding};
 use outbe_gratispool::verifier::with_verifier_outcome;
@@ -88,7 +86,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let pledge_amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let pledge_amount = DenomAmount::try_from(denom_id).unwrap().amount();
 
         // Mint Alice enough Gratis to pledge.
         Gratis::new(storage.clone())
@@ -213,7 +211,7 @@ fn request_credis_rejects_overdue_anadosis() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let amount = DenomAmount::try_from(denom_id).unwrap().amount();
         Gratis::new(storage.clone())
             .mine(alice(), amount * U256::from(2u64))
             .unwrap();
@@ -385,7 +383,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let amount = DenomAmount::try_from(denom_id).unwrap().amount();
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
@@ -454,7 +452,7 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         let denom_id: u8 = 1;
-        let pledge_amount = DenomAmount::from_id(denom_id).unwrap().amount();
+        let pledge_amount = DenomAmount::try_from(denom_id).unwrap().amount();
 
         Gratis::new(storage.clone())
             .mine(alice(), pledge_amount)
