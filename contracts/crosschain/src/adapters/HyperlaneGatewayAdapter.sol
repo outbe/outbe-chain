@@ -4,8 +4,7 @@ pragma solidity ^0.8.30;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient} from "../interfaces/IERC7786.sol";
-import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
+import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
