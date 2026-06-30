@@ -503,7 +503,7 @@ fn denom_amount_id_roundtrips_and_rejects_out_of_range() {
     }
     // Id 0 is intentionally invalid; ids past the ladder are unknown.
     assert_eq!(DenomAmount::from_id(0), None);
-    assert_eq!(DenomAmount::from_id(DENOMINATION_COUNT + 1), None);
+    assert_eq!(DenomAmount::from_id(DenomAmount::ALL.len() as u8 + 1), None);
 }
 
 #[test]

@@ -65,7 +65,7 @@ pub struct SpendArgs {
 // Deposit paths
 // ---------------------------------------------------------------------------
 
-/// Append `commitment` to `denom_id`'s tree. Pure cryptographic operation —
+/// Append `commitment` to `denom`'s tree. Pure cryptographic operation —
 /// caller is responsible for any matching Gratis-balance movement and pool
 /// ledger bookkeeping (see `outbe_gratis::Gratis::pledge_to_pool`).
 ///
@@ -74,17 +74,13 @@ pub struct SpendArgs {
 /// [`DenomAmount::amount`].
 pub fn add_commitment(
     storage: StorageHandle<'_>,
-    denom_id: u8,
+    denom: DenomAmount,
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
-    let amount = DenomAmount::from_id(denom_id)
-        .ok_or(GratisPoolError::DenomUnknown)?
-        .amount();
-
     let mut pool = GratisPoolContract::new(storage.clone());
-    let (new_root, leaf_index) = pool.append_leaf(denom_id, commitment)?;
-    emit_commitment_inserted(&storage, denom_id, commitment, leaf_index, new_root)?;
-    Ok((new_root, leaf_index, amount))
+    let (new_root, leaf_index) = pool.append_leaf(denom.id(), commitment)?;
+    emit_commitment_inserted(&storage, denom.id(), commitment, leaf_index, new_root)?;
+    Ok((new_root, leaf_index, denom.amount()))
 }
 
 // ---------------------------------------------------------------------------

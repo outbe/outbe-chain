@@ -512,13 +512,6 @@ fn request_credis_rejects_swapped_reclaim_commitment() {
     });
 }
 
-/// Anchor: the denomination ladder length matches the constant the
-/// rewired e2e tests assume.
-#[test]
-fn denomination_ladder_count() {
-    assert_eq!(DENOMINATION_COUNT, 5);
-}
-
 /// Sanity check: the commitment-hash helper is deterministic for the same
 /// inputs (used as the position-id input in `create_position`, so a
 /// regression would break replay).

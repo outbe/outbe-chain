@@ -8,6 +8,8 @@
 use alloy_primitives::U256;
 use outbe_primitives::units::ONE_COEN;
 
+use crate::errors::GratisPoolError;
+
 /// A supported gratis denomination.
 ///
 /// Each variant is a separate Tornado-style anonymity pool with a fixed deposit
@@ -33,14 +35,7 @@ impl DenomAmount {
     ];
 
     pub fn from_id(denom_id: u8) -> Option<Self> {
-        match denom_id {
-            1 => Some(Self::Gratis1),
-            2 => Some(Self::Gratis10),
-            3 => Some(Self::Gratis100),
-            4 => Some(Self::Gratis1k),
-            5 => Some(Self::Gratis10k),
-            _ => None,
-        }
+        Self::try_from(denom_id).ok()
     }
 
     pub const fn id(self) -> u8 {
@@ -63,8 +58,18 @@ impl DenomAmount {
     }
 }
 
-/// Number of supported denominations (the length of [`DenomAmount::ALL`]).
-pub const DENOMINATION_COUNT: u8 = DenomAmount::ALL.len() as u8;
+impl TryFrom<u8> for DenomAmount {
+    type Error = GratisPoolError;
+
+    /// Resolves the on-chain `denom_id`, or [`GratisPoolError::DenomUnknown`].
+    fn try_from(denom_id: u8) -> Result<Self, Self::Error> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|denom| denom.id() == denom_id)
+            .ok_or(GratisPoolError::DenomUnknown)
+    }
+}
 
 /// Number of leaves the per-denomination Merkle tree can hold.
 ///
