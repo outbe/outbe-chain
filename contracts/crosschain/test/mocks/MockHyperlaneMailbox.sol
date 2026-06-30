@@ -74,11 +74,7 @@ contract MockHyperlaneMailbox {
         bytes32 recipientAddress,
         bytes calldata messageBody,
         bytes calldata metadata
-    )
-        external
-        payable
-        returns (bytes32 messageId)
-    {
+    ) external payable returns (bytes32 messageId) {
         lastMetadata = metadata;
 
         MockHyperlaneMailbox dst = remoteMailboxes[destinationDomain];
