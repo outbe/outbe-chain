@@ -86,6 +86,12 @@ pub fn lysis(
     for (i, tribute) in tributes.iter().enumerate() {
         tribute_ids.push(tribute.token_id);
 
+        // Skip if a Nod already exists for this owner+day; don't re-create.
+        let nod_id = outbe_nod::NodContract::generate_nod_id(tribute.owner, wwd);
+        if outbe_nod::api::get_item(&storage, nod_id)?.is_some() {
+            continue;
+        }
+
         let fi = tribute_fis[i];
         let fraction_fp = fi_fraction_map.get(&fi).copied().unwrap_or(U256::ZERO);
 
