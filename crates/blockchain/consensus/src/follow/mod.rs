@@ -115,6 +115,28 @@ impl CommitteeChain {
         Ok(participants)
     }
 
+    /// Advance the chain from a finalized block's `extra_data`: if it is a DKG
+    /// boundary block, register its epoch's committee verifier (the
+    /// forward-chaining step). Returns the registered epoch, if any.
+    ///
+    /// Safe only for `extra_data` from blocks already verified as finalized by
+    /// the trusted committee (the marshal enforces this via its `provider`), so
+    /// the announced committee inherits that trust.
+    pub fn advance_from_block_extra_data(&mut self, extra_data: &[u8]) -> Result<Option<Epoch>> {
+        let artifacts =
+            outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(extra_data)
+                .map_err(|e| eyre::eyre!("failed to decode block artifacts: {e:?}"))?;
+        let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
+            boundary,
+        )) = artifacts.consensus_header_artifact
+        else {
+            return Ok(None);
+        };
+        let epoch = Epoch::new(boundary.epoch);
+        self.register_epoch_from_outcome(epoch, &boundary.outcome)?;
+        Ok(Some(epoch))
+    }
+
     /// Verify a finalization certificate for `epoch` against its registered
     /// committee verifier. Errors if no verifier is registered for `epoch` or the
     /// certificate fails verification.
@@ -152,16 +174,17 @@ mod tests {
         N3f1, TryCollect as _,
     };
 
-    /// One committee for `epoch`: returns its boundary `outcome` bytes (public,
-    /// as on-chain) plus a verifiable finalization signed by the committee.
-    fn committee_epoch(
-        epoch: Epoch,
-        seed_base: u8,
-    ) -> (
-        Vec<u8>,
-        Finalization<HybridScheme<MinSig>, Digest>,
-        <MinSig as Variant>::Public,
-    ) {
+    /// A single committee + its DKG, used to build BOTH a boundary block's
+    /// `extra_data` and a matching finalization signed by that committee. (The
+    /// DKG dealing is randomized, so the boundary and the finalization MUST come
+    /// from the same `Committee`.)
+    struct Committee {
+        keys: Vec<bls12381::PrivateKey>,
+        participants: OrderedSet<bls12381::PublicKey>,
+        dkg: crate::bls::ParticipantDkgBootstrapResult,
+    }
+
+    fn committee(seed_base: u8) -> Committee {
         let mut keys: Vec<bls12381::PrivateKey> = (0..4u8)
             .map(|i| bls12381::PrivateKey::from_seed((seed_base + i + 1) as u64))
             .collect();
@@ -169,93 +192,157 @@ mod tests {
         let participants: OrderedSet<bls12381::PublicKey> =
             keys.iter().map(|k| k.public_key()).try_collect().unwrap();
         let dkg = crate::bls::bootstrap_dkg_for_participants(participants.clone()).unwrap();
-        let group_key = dkg.polynomial.public().clone();
+        Committee {
+            keys,
+            participants,
+            dkg,
+        }
+    }
 
-        // Public boundary outcome bytes (what the chain writes into the block).
-        let outcome = crate::dkg_manager::encode_outcome(epoch, &dkg.output, false).to_vec();
+    impl Committee {
+        fn group_key(&self) -> <MinSig as Variant>::Public {
+            self.dkg.polynomial.public().clone()
+        }
 
-        // A finalization signed by the committee.
-        let ns = crate::config::outbe_app_namespace();
-        let verifier =
-            HybridScheme::<MinSig>::verifier(&ns, participants.clone(), dkg.polynomial.clone())
-                .unwrap();
-        let signers: Vec<HybridScheme<MinSig>> = keys
-            .iter()
-            .map(|key| {
-                let idx = participants.index(&key.public_key()).unwrap();
-                HybridScheme::signer(
-                    &ns,
-                    participants.clone(),
-                    key.clone(),
-                    dkg.polynomial.clone(),
-                    dkg.shares[idx.get() as usize].clone(),
-                )
-                .unwrap()
+        /// The public boundary `outcome` bytes (the ODKO DKG output).
+        fn outcome(&self, epoch: Epoch) -> Vec<u8> {
+            crate::dkg_manager::encode_outcome(epoch, &self.dkg.output, false).to_vec()
+        }
+
+        /// A full boundary block's `extra_data` carrying this committee's outcome.
+        fn boundary_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
+            use outbe_primitives::reshare_artifact::{
+                encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+            };
+            use outbe_primitives::validators::ValidatorP2pAddress;
+            let vs = crate::validators::ValidatorSet {
+                public_keys: self.participants.iter().cloned().collect(),
+                addresses: (0..self.participants.len() as u8)
+                    .map(|i| alloy_primitives::Address::repeat_byte(i + 1))
+                    .collect(),
+                p2p_addresses: vec![ValidatorP2pAddress::Missing; self.participants.len()],
+            };
+            let artifact = crate::dkg_manager::build_boundary_artifact(
+                crate::dkg_manager::BoundaryArtifactInput {
+                    epoch,
+                    validator_set: &vs,
+                    output: &self.dkg.output,
+                    is_full_dkg: false,
+                    dkg_cycle: 1,
+                    freeze_height: 100,
+                    planned_activation_height: 120,
+                    vrf_material_version: 1,
+                    is_validator_set_change: false,
+                    tee_reshare_registrations: vec![],
+                },
+            )
+            .unwrap();
+            encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+                consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)),
+                ..Default::default()
             })
-            .collect();
-        let digest = Digest::from(alloy_primitives::B256::from_slice(
-            Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
-        ));
-        let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
-        let subject = Subject::Finalize {
-            proposal: &proposal,
-        };
-        let attestations: Vec<_> = signers
-            .iter()
-            .map(|s| s.sign::<Digest>(subject).unwrap())
-            .collect();
-        let certificate = verifier.assemble::<_, N3f1>(attestations, &Sequential).unwrap();
-        (
-            outcome,
+            .unwrap()
+            .to_vec()
+        }
+
+        /// A finalization for `epoch` signed by this committee.
+        fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let ns = crate::config::outbe_app_namespace();
+            let verifier = HybridScheme::<MinSig>::verifier(
+                &ns,
+                self.participants.clone(),
+                self.dkg.polynomial.clone(),
+            )
+            .unwrap();
+            let signers: Vec<HybridScheme<MinSig>> = self
+                .keys
+                .iter()
+                .map(|key| {
+                    let idx = self.participants.index(&key.public_key()).unwrap();
+                    HybridScheme::signer(
+                        &ns,
+                        self.participants.clone(),
+                        key.clone(),
+                        self.dkg.polynomial.clone(),
+                        self.dkg.shares[idx.get() as usize].clone(),
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let digest = Digest::from(alloy_primitives::B256::from_slice(
+                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
+            ));
+            let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
+            let subject = Subject::Finalize {
+                proposal: &proposal,
+            };
+            let attestations: Vec<_> = signers
+                .iter()
+                .map(|s| s.sign::<Digest>(subject).unwrap())
+                .collect();
+            let certificate = verifier.assemble::<_, N3f1>(attestations, &Sequential).unwrap();
             Finalization {
                 proposal,
                 certificate,
-            },
-            group_key,
-        )
+            }
+        }
     }
 
     #[test]
     fn committee_chain_anchors_then_chains_across_epochs() {
-        let e5 = Epoch::new(5);
-        let e6 = Epoch::new(6);
-        let (outcome5, fin5, group5) = committee_epoch(e5, 10);
-        let (outcome6, fin6, _group6) = committee_epoch(e6, 50);
-
-        // Anchor on epoch 5's group key.
-        let anchor = NetworkIdentity {
+        let (e5, e6) = (Epoch::new(5), Epoch::new(6));
+        let c5 = committee(10);
+        let c6 = committee(50);
+        let mut chain = CommitteeChain::new(NetworkIdentity {
             from_epoch: 5,
-            identity: group5,
-        };
-        let mut chain = CommitteeChain::new(anchor);
+            identity: c5.group_key(),
+        });
 
-        // Register + verify the anchor epoch.
-        chain.register_epoch_from_outcome(e5, &outcome5).unwrap();
-        chain.verify_finalization(e5, &fin5).unwrap();
+        chain.register_epoch_from_outcome(e5, &c5.outcome(e5)).unwrap();
+        chain.verify_finalization(e5, &c5.finalization(e5)).unwrap();
 
         // Chain forward to epoch 6 (a different committee) and verify it.
-        chain.register_epoch_from_outcome(e6, &outcome6).unwrap();
-        chain.verify_finalization(e6, &fin6).unwrap();
+        chain.register_epoch_from_outcome(e6, &c6.outcome(e6)).unwrap();
+        chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         assert_eq!(chain.highest_registered(), Some(e6));
 
         // A finalization can't be verified for an unregistered epoch.
-        assert!(chain.verify_finalization(Epoch::new(7), &fin6).is_err());
+        assert!(chain
+            .verify_finalization(Epoch::new(7), &c6.finalization(e6))
+            .is_err());
     }
 
     #[test]
     fn committee_chain_rejects_anchor_mismatch() {
         let e5 = Epoch::new(5);
-        let (outcome5, _fin5, _group5) = committee_epoch(e5, 10);
-        // Anchor on a DIFFERENT committee's group key.
-        let (_o, _f, wrong_group) = committee_epoch(e5, 99);
+        let c5 = committee(10);
+        let wrong = committee(99);
         let mut chain = CommitteeChain::new(NetworkIdentity {
             from_epoch: 5,
-            identity: wrong_group,
+            identity: wrong.group_key(),
         });
         let err = chain
-            .register_epoch_from_outcome(e5, &outcome5)
+            .register_epoch_from_outcome(e5, &c5.outcome(e5))
             .unwrap_err()
             .to_string();
         assert!(err.contains("anchor mismatch"), "error: {err}");
+    }
+
+    #[test]
+    fn committee_chain_advances_from_boundary_block_extra_data() {
+        let e6 = Epoch::new(6);
+        let c6 = committee(70);
+        // Anchor on epoch 6 — the boundary block we process announces it.
+        let mut chain = CommitteeChain::new(NetworkIdentity {
+            from_epoch: 6,
+            identity: c6.group_key(),
+        });
+        // Feeding the boundary block's extra_data registers epoch 6's committee.
+        let extra = c6.boundary_block_extra_data(e6);
+        assert_eq!(chain.advance_from_block_extra_data(&extra).unwrap(), Some(e6));
+        // That epoch's finalization now verifies.
+        chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
+        // A non-boundary block (empty extra_data) registers nothing.
+        assert_eq!(chain.advance_from_block_extra_data(&[]).unwrap(), None);
     }
 }
