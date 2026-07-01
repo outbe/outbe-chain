@@ -40,7 +40,7 @@ contract OriginMessenger is
     /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_QUALIFIED, MARK_CALLED.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
 
-    /// @notice Destination gas for inbound ISSUANCE_INSTRUCTIONS: createSeries + per-recipient mintBatch.
+    /// @notice Destination gas for inbound ISSUANCE_INSTRUCTIONS: createSeries + per-recipient mint.
     /// @dev Calibrated via GasCalibration.t.sol; LzGasEstimator adds +20%.
     uint128 internal constant ISSUANCE_BASE_GAS = 300_000;
     uint128 internal constant ISSUANCE_PER_ITEM_GAS = 230_000;
@@ -253,7 +253,7 @@ contract OriginMessenger is
     }
 
     /// @dev Destination `lzReceiveOption` sized for an inbound ISSUANCE_INSTRUCTIONS of
-    ///      `recipientCount` recipients (`intex.mintBatch` loop) —.
+    ///      `recipientCount` recipients (`intex.mint` loop) —.
     function _issuanceReceiveOption(uint256 recipientCount) internal pure returns (bytes memory) {
         return LzGasEstimator.receiveOption(ISSUANCE_BASE_GAS, ISSUANCE_PER_ITEM_GAS, recipientCount);
     }

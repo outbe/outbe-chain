@@ -130,7 +130,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
-    // --- _handleIssuanceInstructions: createSeries + mintBatch on the local IntexNFT1155 ---
+    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
     function test_handleIssuanceInstructions_createsSeriesAndMints() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;

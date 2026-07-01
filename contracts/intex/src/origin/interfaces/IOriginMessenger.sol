@@ -134,7 +134,7 @@ interface IOriginMessenger {
 
     /// @notice Issuance instructions parameters grouped to keep the calldata layout
     ///         resilient against EVM stack depth limits at call sites.
-    /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint`/`mintBatch` on
+    /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint` on
     ///      the destination NFT contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         uint32 seriesId;
