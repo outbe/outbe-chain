@@ -1,7 +1,5 @@
 @contracts/=src/
 @test-mocks/=test/mocks/
-@layerzerolabs/oapp-evm/=node_modules/@layerzerolabs/oapp-evm/contracts/
-@layerzerolabs/oapp-evm-upgradeable/=node_modules/@layerzerolabs/oapp-evm-upgradeable/contracts/
-@layerzerolabs/onft-evm/=node_modules/@layerzerolabs/onft-evm/contracts/
-@layerzerolabs/lz-evm-protocol-v2/=node_modules/@layerzerolabs/lz-evm-protocol-v2/
-@layerzerolabs/lz-evm-messagelib-v2/=node_modules/@layerzerolabs/lz-evm-messagelib-v2/
+forge-std/=node_modules/forge-std/src/
+ds-test/=node_modules/forge-std/lib/ds-test/src/
+@openzeppelin/=node_modules/@openzeppelin/
