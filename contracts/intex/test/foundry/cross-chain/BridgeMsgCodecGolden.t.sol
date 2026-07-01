@@ -139,22 +139,24 @@ contract BridgeMsgCodecGoldenTest is Test {
 
         (
             uint32 seriesId,
-            uint32 srcEid,
-            bool isLast,
+            uint32 srcChainId,
             uint32 relayGeneration,
+            uint16 batchIndex,
+            uint16 totalBatches,
             address[] memory dBidders,
             uint16[] memory dQuantities,
             uint32[] memory dRates,
             uint32[] memory dTimestamps
         ) = this.exposedDecodeBidsBatch(
             BridgeMsgCodec.encodeBidsBatch(
-                0x11223344, 0x0000ABCD, true, 0x0000002A, bidders, quantities, rates, timestamps
+                0x11223344, 0x0000ABCD, 0x0000002A, 0x0000, 0x0001, bidders, quantities, rates, timestamps
             )
         );
 
         assertEq(seriesId, 0x11223344, "seriesId");
-        assertEq(srcEid, 0x0000ABCD, "srcEid");
-        assertTrue(isLast, "isLast");
+        assertEq(srcChainId, 0x0000ABCD, "srcChainId");
+        assertEq(batchIndex, 0x0000, "batchIndex");
+        assertEq(totalBatches, 0x0001, "totalBatches");
         assertEq(relayGeneration, 0x0000002A, "relayGeneration");
         assertEq(dBidders.length, 2, "bidders len");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
@@ -167,13 +169,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(dTimestamps[1], 0x66666666, "timestamps[1]");
     }
 
-    function test_RoundTrip_BidsBatch_IsLastFalse_RelayGenerationOne() public view {
-        (,, bool isLast, uint32 relayGeneration,,,,) = this.exposedDecodeBidsBatch(
+    function test_RoundTrip_BidsBatch_MidBatch_RelayGenerationOne() public view {
+        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,,,) = this.exposedDecodeBidsBatch(
             BridgeMsgCodec.encodeBidsBatch(
-                7, 30101, false, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+                7, 30101, 1, 0, 2, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
             )
         );
-        assertFalse(isLast, "isLast");
+        assertEq(batchIndex, 0, "batchIndex");
+        assertEq(totalBatches, 2, "totalBatches");
         assertEq(relayGeneration, 1, "relayGeneration");
     }
 
@@ -305,7 +308,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint32[] memory, uint32[] memory)
+        returns (
+            uint32,
+            uint32,
+            uint32,
+            uint16,
+            uint16,
+            address[] memory,
+            uint16[] memory,
+            uint32[] memory,
+            uint32[] memory
+        )
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }

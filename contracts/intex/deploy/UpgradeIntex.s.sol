@@ -43,14 +43,15 @@ abstract contract UpgradeBase is BaseScript {
 
 /// @title UpgradeBsc
 /// @notice Upgrade the BNB-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), LZ_ENDPOINT, OUTBE_EID.
+/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, LZ_ENDPOINT, OUTBE_CHAIN_ID.
 ///      Impl constructor args mirror DeployBsc so the immutables are unchanged.
 contract UpgradeBsc is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
-        uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
+        uint32 outbeChainId = uint32(vm.envUint("OUTBE_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
@@ -60,21 +61,23 @@ contract UpgradeBsc is UpgradeBase {
         upgradeProxy(factory, deployer, "EscrowAdapter", address(new EscrowAdapter()));
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
         upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, lzEndpoint)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, lzEndpoint)));
-        upgradeProxy(factory, deployer, "TargetMessenger", address(new TargetMessenger(lzEndpoint, outbeEid)));
+        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
+        upgradeProxy(factory, deployer, "TargetMessenger", address(new TargetMessenger(bridge, outbeChainId)));
         vm.stopBroadcast();
     }
 }
 
 /// @title UpgradeOutbe
 /// @notice Upgrade the Outbe-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID. Impl constructor args mirror DeployOutbe.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, LZ_ENDPOINT, BNB_CHAIN_ID. Impl constructor args mirror
+///      DeployOutbe.
 contract UpgradeOutbe is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
-        uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
+        uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
@@ -82,26 +85,26 @@ contract UpgradeOutbe is UpgradeBase {
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
         upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, lzEndpoint)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, lzEndpoint)));
-        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(lzEndpoint, bnbEid)));
+        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
+        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
         vm.stopBroadcast();
     }
 }
 
 /// @title UpgradeOriginMessenger
 /// @notice Upgrade only the OriginMessenger proxy in place (UUPS), leaving the other proxies untouched.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID.
 contract UpgradeOriginMessenger is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
-        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
-        uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
+        uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
 
         vm.startBroadcast(pk);
-        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(lzEndpoint, bnbEid)));
+        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
         vm.stopBroadcast();
     }
 }

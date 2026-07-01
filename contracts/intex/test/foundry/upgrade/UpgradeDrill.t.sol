@@ -3,6 +3,8 @@ pragma solidity 0.8.30;
 
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -38,15 +40,30 @@ interface IUpgradeProbe {
 ///      implementation to a v1.1 stub that adds a new view, then assert that persisted state
 ///      survived the upgrade, the implementation pointer moved, and the new view is callable.
 ///      Covers one upgrade per impl contract.
+/// @dev The three ERC-7786 clients (OriginMessenger, TargetMessenger, ONFT1155AdapterBatch) run against a standalone
+///      {MockERC7786Bridge}; the single `ONFT1155Adapter` stays a LayerZero OApp, so the `TestHelperOz5` endpoint
+///      harness is retained for it (mirrors `ONFTAdapters.uups.t.sol`).
 contract UpgradeDrillTest is TestHelperOz5 {
+    // LayerZero endpoint ids for the single (unchanged) `ONFT1155Adapter` drill.
     uint32 internal constant A_EID = 1;
     uint32 internal constant B_EID = 2;
+    // ERC-7786 chainIds for the bridge-client drills.
+    uint32 internal constant A_CHAIN_ID = 1;
+    uint32 internal constant B_CHAIN_ID = 2;
 
     address internal admin = makeAddr("admin");
+
+    MockERC7786Bridge internal bridge;
 
     function setUp() public override {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
+        bridge = new MockERC7786Bridge();
+    }
+
+    /// @dev ERC-7930 interoperable address for `a` on `chainId`.
+    function _interop(uint32 chainId, address a) internal pure returns (bytes memory) {
+        return InteroperableAddress.formatEvmV1(chainId, a);
     }
 
     function _assertUpgraded(address proxy, address newImpl) internal view {
@@ -165,46 +182,48 @@ contract UpgradeDrillTest is TestHelperOz5 {
     }
 
     function test_Drill_OriginMessenger() public {
-        OriginMessenger origin = DeployProxy.originMessenger(address(endpoints[A_EID]), admin, B_EID);
+        OriginMessenger origin = DeployProxy.originMessenger(address(bridge), admin, B_CHAIN_ID);
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
+        bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
         vm.startPrank(admin);
         origin.wire(address(desisMock), factory);
-        origin.setPeer(B_EID, addressToBytes32(address(0xBEEF)));
+        origin.setRemoteMessenger(B_CHAIN_ID, remote);
         vm.stopPrank();
 
-        OriginMessengerV2 newImpl = new OriginMessengerV2(address(endpoints[A_EID]), B_EID);
+        OriginMessengerV2 newImpl = new OriginMessengerV2(address(bridge), B_CHAIN_ID);
         vm.prank(admin);
         origin.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(origin), address(newImpl));
         assertEq(origin.desis(), address(desisMock), "desis wiring lost");
         assertEq(origin.intexFactory(), factory, "factory wiring lost");
-        assertEq(origin.peers(B_EID), addressToBytes32(address(0xBEEF)), "peer lost");
-        assertEq(origin.BNB_EID(), B_EID, "immutable lost");
+        assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
+        assertEq(origin.BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
     }
 
     function test_Drill_TargetMessenger() public {
-        TargetMessenger target = DeployProxy.targetMessenger(address(endpoints[B_EID]), admin, A_EID);
+        TargetMessenger target = DeployProxy.targetMessenger(address(bridge), admin, A_CHAIN_ID);
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
         address onft = makeAddr("onft");
+        bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);
         target.wire(auction, intex, escrow, onft);
-        target.setPeer(A_EID, addressToBytes32(address(0xCAFE)));
+        target.setRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 
-        TargetMessengerV2 newImpl = new TargetMessengerV2(address(endpoints[B_EID]), A_EID);
+        TargetMessengerV2 newImpl = new TargetMessengerV2(address(bridge), A_CHAIN_ID);
         vm.prank(admin);
         target.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(target), address(newImpl));
         assertEq(address(target.auction()), auction, "auction wiring lost");
         assertEq(address(target.escrowAdapter()), escrow, "escrow wiring lost");
-        assertEq(target.peers(A_EID), addressToBytes32(address(0xCAFE)), "peer lost");
+        assertEq(target.remoteMessenger(A_CHAIN_ID), remote, "remote messenger lost");
     }
 
     function test_Drill_ONFT1155Adapter() public {
@@ -226,20 +245,21 @@ contract UpgradeDrillTest is TestHelperOz5 {
 
     function test_Drill_ONFT1155AdapterBatch() public {
         address tokenAddr = makeAddr("token");
-        ONFT1155AdapterBatch batch = DeployProxy.onftAdapterBatch(tokenAddr, address(endpoints[A_EID]), admin);
+        ONFT1155AdapterBatch batch = DeployProxy.onftAdapterBatch(tokenAddr, address(bridge), admin);
         address relayer = makeAddr("relayer");
+        bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
         vm.startPrank(admin);
-        batch.setPeer(B_EID, addressToBytes32(address(0xBEEF)));
+        batch.setRemoteMessenger(B_CHAIN_ID, remote);
         batch.grantRole(batch.SYSTEM_RELAYER_ROLE(), relayer);
         vm.stopPrank();
 
-        ONFT1155AdapterBatchV2 newImpl = new ONFT1155AdapterBatchV2(tokenAddr, address(endpoints[A_EID]));
+        ONFT1155AdapterBatchV2 newImpl = new ONFT1155AdapterBatchV2(tokenAddr, address(bridge));
         vm.prank(admin);
         batch.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(batch), address(newImpl));
-        assertEq(batch.peers(B_EID), addressToBytes32(address(0xBEEF)), "peer lost");
+        assertEq(batch.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
         assertEq(address(batch.token()), tokenAddr, "token immutable lost");
         assertTrue(batch.hasRole(batch.SYSTEM_RELAYER_ROLE(), relayer), "role lost");
     }

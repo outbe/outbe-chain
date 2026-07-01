@@ -1,29 +1,25 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
-import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
+import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {BatchSendParam} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 
-/// @dev Cross-chain conservation invariants for the IntexNFT1155 + ONFT1155Adapter pair:
+/// @dev Cross-chain conservation invariants for the IntexNFT1155 + ONFT1155AdapterBatch pair:
 ///
 ///   - SI-08: `Σ totalSupply(issuedId)` across chains is never larger than the on-chain
 ///     `issuedIntexCount` cap of the underlying series. Mint+bridge+round-trip moves balances
 ///     between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
-///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[guid].amount` holds
-///     the in-flight units until retry, so the source-burned amount equals
+///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].amount`
+///     holds the in-flight units until retry, so the source-burned amount equals
 ///     `destination-minted + destination-parked` at every step.
-contract CrossChainSupplyConservationTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
-
-    uint32 private constant A_EID = 1;
-    uint32 private constant B_EID = 2;
+contract CrossChainSupplyConservationTest is CrossChainTest {
+    uint32 private constant A_CHAIN_ID = 1;
+    uint32 private constant B_CHAIN_ID = 2;
 
     uint32 private constant SERIES_ID = 20260401;
     uint256 private constant TOKEN_ID = uint256(SERIES_ID);
@@ -31,30 +27,27 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
-    ONFT1155Adapter private adapterA;
-    ONFT1155Adapter private adapterB;
+    ONFT1155AdapterBatch private adapterA;
+    ONFT1155AdapterBatch private adapterB;
 
     address private user = address(0x1);
 
-    function setUp() public virtual override {
+    function setUp() public {
         vm.deal(user, 1000 ether);
 
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+        _setUpBridge();
 
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.onftAdapter(address(tokenA), address(endpoints[A_EID]), address(this));
-        adapterB = DeployProxy.onftAdapter(address(tokenB), address(endpoints[B_EID]), address(this));
+        adapterA = DeployProxy.onftAdapterBatch(address(tokenA), address(bridge), address(this));
+        adapterB = DeployProxy.onftAdapterBatch(address(tokenB), address(bridge), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
 
-        address[] memory oapps = new address[](2);
-        oapps[0] = address(adapterA);
-        oapps[1] = address(adapterB);
-        this.wireOApps(oapps);
+        adapterA.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
+        adapterB.setRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
@@ -68,7 +61,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         tokenA.mint(user, minted, SERIES_ID);
 
         uint256 bridged = 60;
-        _send(adapterA, B_EID, user, TOKEN_ID, bridged);
+        _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
 
         // Source burns exactly `bridged`; destination mints exactly `bridged`.
         assertEq(tokenA.totalSupply(TOKEN_ID), minted - bridged, "A.totalSupply -= bridged");
@@ -84,11 +77,11 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         uint256 minted = 100;
         tokenA.mint(user, minted, SERIES_ID);
 
-        _send(adapterA, B_EID, user, TOKEN_ID, minted);
+        _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, minted);
         assertEq(tokenA.totalSupply(TOKEN_ID), 0, "A drained after outbound");
         assertEq(tokenB.totalSupply(TOKEN_ID), minted, "B holds the bridged units");
 
-        _send(adapterB, A_EID, user, TOKEN_ID, minted);
+        _send(adapterB, adapterA, B_CHAIN_ID, user, TOKEN_ID, minted);
         assertEq(tokenA.totalSupply(TOKEN_ID), minted, "A restored after return");
         assertEq(tokenB.totalSupply(TOKEN_ID), 0, "B drained after return");
 
@@ -110,7 +103,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         uint256 bridged = 100;
         tokenA.mint(user, minted, parkSeries);
 
-        MessagingReceipt memory r = _send(adapterA, B_EID, user, parkTokenId, bridged);
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, bridged);
 
         // Source-side: the source intex burned the bridged amount; the cap-respecting supply on A
         // is the remainder.
@@ -118,7 +111,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
 
         // Park entry holds the in-flight amount, so the global accounting still adds up.
-        (,, uint256 parkedAmount,,, bool exists) = adapterB.failedCrosschainMints(r.guid);
+        (,, uint256 parkedAmount,, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(exists, "park entry present");
         assertEq(parkedAmount, bridged, "park amount == bridged");
 
@@ -129,10 +122,10 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         // change to the global sum.
         tokenB.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(parkSeries);
-        adapterB.retryCrosschainMint(r.guid);
+        adapterB.retryCrosschainMint(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
-        (,,,,, bool stillExists) = adapterB.failedCrosschainMints(r.guid);
+        (,,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillExists, "park entry cleared on retry");
 
         uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);
@@ -145,7 +138,7 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
 
         tokenA.mint(user, minted, SERIES_ID);
         if (bridged > 0) {
-            _send(adapterA, B_EID, user, TOKEN_ID, bridged);
+            _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
         }
 
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
@@ -153,24 +146,34 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
     }
 
-    function _send(ONFT1155Adapter from, uint32 dstEid, address recipient, uint256 tokenId, uint256 amount)
-        internal
-        returns (MessagingReceipt memory)
-    {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(400000, 0);
-        SendParam memory params = SendParam({
-            dstEid: dstEid,
-            to: bytes32(uint256(uint160(recipient))),
-            tokenId: tokenId,
-            amount: amount,
-            extraOptions: options,
-            composeMsg: ""
+    /// @dev Bridge a single tokenId to `recipient` on the destination and deliver the packet.
+    ///      Returns the destination `receiveId` (matching `MockERC7786Bridge._deliver`) so a parked
+    ///      inbound can be retried.
+    function _send(
+        ONFT1155AdapterBatch from,
+        ONFT1155AdapterBatch to,
+        uint32 srcChainId,
+        address recipient,
+        uint256 tokenId,
+        uint256 amount
+    ) internal returns (bytes32 receiveId) {
+        uint32 dstChainId = srcChainId == A_CHAIN_ID ? B_CHAIN_ID : A_CHAIN_ID;
+
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = tokenId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+
+        BatchSendParam memory params = BatchSendParam({
+            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
         });
-        MessagingFee memory fee = from.quoteSend(params, false);
+
+        uint256 fee = from.quoteBatchSend(params);
         vm.prank(recipient);
-        MessagingReceipt memory r = from.send{value: fee.nativeFee}(params, fee, recipient);
-        ONFT1155Adapter dest = (dstEid == B_EID) ? adapterB : adapterA;
-        verifyPackets(dstEid, bytes32(uint256(uint160(address(dest)))));
-        return r;
+        from.batchSend{value: fee}(params);
+
+        bytes memory packet = bridge.lastPayload();
+        receiveId = keccak256(abi.encode(_interop(srcChainId, address(from)), packet));
+        _deliver(srcChainId, address(from), address(to), packet);
     }
 }

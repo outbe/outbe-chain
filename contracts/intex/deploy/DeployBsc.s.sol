@@ -14,9 +14,10 @@ import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 /// @title DeployBsc
 /// @author Outbe
 /// @notice Deploy the BNB-side intex contracts as UUPS proxies through the CREATE3 factory.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, OUTBE_EID (the remote endpoint id for the BNB-side
-///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE) and the owner / LZ
-///      delegate. Wiring (peers, escrow/compact/vault, roles) is a separate step.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge the messenger + batch adapter speak to),
+///      LZ_ENDPOINT (the LayerZero endpoint the single ONFT1155Adapter still uses), OUTBE_CHAIN_ID (Outbe's EVM
+///      chainId). The deployer is the admin (DEFAULT_ADMIN_ROLE) and the owner / LZ delegate. Wiring
+///      (remote messengers, escrow/compact/vault, roles) is a separate step.
 contract DeployBsc is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -24,8 +25,9 @@ contract DeployBsc is BaseScript {
         // The deployer is admin and owner/LZ delegate.
         address admin = deployer;
         address delegate = deployer;
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
-        uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
+        uint32 outbeChainId = uint32(vm.envUint("OUTBE_CHAIN_ID"));
 
         vm.startBroadcast(pk);
 
@@ -63,14 +65,14 @@ contract DeployBsc is BaseScript {
             factory,
             deployer,
             "ONFT1155AdapterBatch",
-            address(new ONFT1155AdapterBatch(nft, lzEndpoint)),
+            address(new ONFT1155AdapterBatch(nft, bridge)),
             abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate))
         );
         address messenger = deployProxy(
             factory,
             deployer,
             "TargetMessenger",
-            address(new TargetMessenger(lzEndpoint, outbeEid)),
+            address(new TargetMessenger(bridge, outbeChainId)),
             abi.encodeCall(TargetMessenger.initialize, (delegate))
         );
 

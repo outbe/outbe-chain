@@ -9,7 +9,11 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 
+/// @dev UUPS coverage for both ONFT adapters. The single `ONFT1155Adapter` stays a LayerZero OApp, so the
+///      `TestHelperOz5` endpoint harness is retained for it; the batch adapter is an ERC-7786 client, so it
+///      runs against a standalone {MockERC7786Bridge} in place of a LZ endpoint.
 contract ONFTAdaptersUupsTest is TestHelperOz5 {
     uint32 internal constant A_EID = 1;
     uint32 internal constant B_EID = 2;
@@ -18,6 +22,8 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
     address internal stranger = makeAddr("stranger");
     address internal tokenA = makeAddr("tokenA");
 
+    MockERC7786Bridge internal bridge;
+
     ONFT1155Adapter internal adapter;
     ONFT1155AdapterBatch internal batch;
 
@@ -25,13 +31,14 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
         super.setUp();
         setUpEndpoints(2, LibraryType.UltraLightNode);
 
+        bridge = new MockERC7786Bridge();
+
         adapter = DeployProxy.onftAdapter(tokenA, address(endpoints[A_EID]), admin);
-        batch = DeployProxy.onftAdapterBatch(tokenA, address(endpoints[A_EID]), admin);
+        batch = DeployProxy.onftAdapterBatch(tokenA, address(bridge), admin);
     }
 
     function test_Initialize_SetsOwnerAndAdmin() public view {
         assertEq(adapter.owner(), admin);
-        assertEq(batch.owner(), admin);
         assertTrue(batch.hasRole(batch.DEFAULT_ADMIN_ROLE(), admin));
         assertEq(address(adapter.token()), tokenA);
         assertEq(address(batch.token()), tokenA);
@@ -49,7 +56,7 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
 
-        ONFT1155AdapterBatch batchImpl = new ONFT1155AdapterBatch(tokenA, address(endpoints[A_EID]));
+        ONFT1155AdapterBatch batchImpl = new ONFT1155AdapterBatch(tokenA, address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         batchImpl.initialize(admin);
     }
@@ -62,7 +69,7 @@ contract ONFTAdaptersUupsTest is TestHelperOz5 {
     }
 
     function test_RevertWhen_BatchUpgradeByNonAdmin() public {
-        ONFT1155AdapterBatch newImpl = new ONFT1155AdapterBatch(tokenA, address(endpoints[A_EID]));
+        ONFT1155AdapterBatch newImpl = new ONFT1155AdapterBatch(tokenA, address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
