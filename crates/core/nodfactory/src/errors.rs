@@ -31,9 +31,6 @@ pub enum NodFactoryError {
 
     #[error("invalid asset")]
     InvalidAsset,
-
-    #[error("invalid vault provider")]
-    InvalidVaultProvider,
 }
 
 impl From<NodFactoryError> for PrecompileError {

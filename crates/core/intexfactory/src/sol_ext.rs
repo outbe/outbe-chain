@@ -75,13 +75,6 @@ sol! {
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IVaultProvider {
-        function assetAt(uint256 index) external view returns (address);
-        function depositLiquidity(address asset, uint256 assetsAmount)
-            external returns (uint256 sharesAmount);
-    }
-
-    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexNFT1155 {
         struct IntexCallTrigger {
             uint16 windowDays;

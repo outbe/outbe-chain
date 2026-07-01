@@ -268,7 +268,7 @@ pub fn begin_clearing(
 
 /// Accept a relayed bid batch. Bids accumulate while stage is `Revealing`.
 /// A higher `generation` flushes all prior bids. The final batch (`is_last`)
-/// transitions to `BidsReceived` if any bids exist, else to `Cancelled`.
+/// always transitions to `BidsReceived` — a zero-bid batch then clears as a no-sale.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -305,20 +305,17 @@ pub fn process_bids_batch(
     }
 
     if is_last {
+        // Always advance to BidsReceived so OriginMessenger auto-fires clearing. A zero-bid batch
+        // then clears as a no-sale (0 issued, full supply returned to PromisLimit) and still reports
+        // the result to the target chain, instead of dead-ending in Cancelled with no cross-chain
+        // notice. Cancelled is reserved for red days (see `reveal_auction`).
         let count = contract.read_bid_count(series_id)?;
-        if count > 0 {
-            contract.write_stage(series_id, AuctionStage::BidsReceived)?;
-            contract.emit(IDesis::BidsReceived {
-                seriesId: series_id,
-                srcEid: src_eid,
-                bidsCount: U256::from(count),
-            })?;
-        } else {
-            contract.write_stage(series_id, AuctionStage::Cancelled)?;
-            contract.emit(IDesis::AuctionCancelledNoBids {
-                seriesId: series_id,
-            })?;
-        }
+        contract.write_stage(series_id, AuctionStage::BidsReceived)?;
+        contract.emit(IDesis::BidsReceived {
+            seriesId: series_id,
+            srcEid: src_eid,
+            bidsCount: U256::from(count),
+        })?;
     }
 
     Ok(())
@@ -350,10 +347,9 @@ pub fn clear_auction(
 
     let config = contract.read_auction_config(series_id)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&series_id)? as u16;
+    // A zero-bid batch is valid here: `calculate_clearing` yields 0 issued, the full supply returns
+    // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to the target chain.
     let bids = contract.read_all_bids(series_id)?;
-    if bids.is_empty() {
-        return Err(DesisError::PendingClearingDataMissing(series_id).into());
-    }
 
     let total_demand: u64 = bids.iter().map(|b| u64::from(b.intex_quantity)).sum();
     let mut sorted = bids;

@@ -323,10 +323,12 @@ fn stale_generation_is_rejected() {
 }
 
 #[test]
-fn no_bids_last_batch_cancels() {
+fn no_bids_last_batch_clears_as_no_sale() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR).unwrap();
+        // An empty final batch advances to BidsReceived (not Cancelled), so clearing auto-fires.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
@@ -337,11 +339,20 @@ fn no_bids_last_batch_cancels() {
             vec![],
         )
         .unwrap();
-
-        let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
-            AuctionStage::Cancelled
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::BidsReceived
+        );
+
+        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
+        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        assert_eq!(result.issued_intex_count, 0);
+        assert!(result.winners.is_empty());
+        assert_eq!(
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Cleared
         );
     });
 }

@@ -119,19 +119,6 @@
   },
   {
     "type": "event",
-    "name": "AuctionCancelledNoBids",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "AuctionCancelledRedDay",
     "inputs": [
       {

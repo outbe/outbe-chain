@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
+import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
 /**
  * @dev ERC-7786 gateway adapter for Hyperlane.
@@ -22,8 +23,8 @@ import {IMailbox, IMessageRecipient} from "../interfaces/IHyperlane.sol";
  * peer -- it delivers from any sender that passes the ISM. This adapter therefore enforces the peer check itself in
  * {handle}: the message must originate from the registered remote router for its origin domain.
  *
- * NOTE: EVM chains only. The destination-execution gas uses the Mailbox's default hook; per-message gas overrides
- * (via hook metadata) are intentionally out of scope for this version.
+ * NOTE: EVM chains only. Destination-execution gas is set per message via Hyperlane hook metadata
+ * (the executionGasLimit attribute, or `defaultGasLimit` when absent).
  */
 contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessageRecipient, Ownable {
     using InteroperableAddress for bytes;
@@ -40,8 +41,15 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
     /// @dev Hyperlane domain => remote adapter (the trusted peer on that chain), as a Hyperlane bytes32 address.
     mapping(uint32 domain => bytes32 router) public routers;
 
+    /// @dev Destination execution gas used when a message carries no executionGasLimit attribute.
+    uint128 public defaultGasLimit;
+
+    /// @dev Variant selector of Hyperlane's StandardHookMetadata (the gas/value override format).
+    uint16 private constant HOOK_METADATA_VARIANT = 1;
+
     event RouterRegistered(uint256 indexed chainId, uint32 indexed domain, bytes32 router);
     event MessageReceived(uint32 indexed origin, bytes32 indexed sender, bytes payload);
+    event DefaultGasLimitUpdated(uint128 gasLimit);
 
     error UnknownDestinationChain(uint256 chainId);
     error RemoteRouterNotSet(uint32 domain);
@@ -51,6 +59,7 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
 
     constructor(address mailbox_, address owner_) Ownable(owner_) {
         MAILBOX = IMailbox(mailbox_);
+        defaultGasLimit = 200_000;
     }
 
     // =================================================== Config ====================================================
@@ -65,18 +74,16 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         emit RouterRegistered(chainId, domain, router);
     }
 
+    function setDefaultGasLimit(uint128 gasLimit) public virtual onlyOwner {
+        defaultGasLimit = gasLimit;
+        emit DefaultGasLimitUpdated(gasLimit);
+    }
+
     // ============================================ IERC7786GatewaySource ============================================
 
     /// @inheritdoc IERC7786GatewaySource
-    function supportsAttribute(
-        bytes4 /*selector*/
-    )
-        public
-        pure
-        virtual
-        returns (bool)
-    {
-        return false;
+    function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
+        return selector == GasLimitAttribute.SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource
@@ -86,31 +93,36 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         virtual
         returns (bytes32)
     {
-        // Use of `if () revert` syntax to avoid accessing attributes[0] if it's empty.
-        if (attributes.length > 0) {
-            revert UnsupportedAttribute(attributes[0].length < 0x04 ? bytes4(0) : bytes4(attributes[0][0:4]));
-        }
-
         (uint32 domain, bytes32 remoteRouter) = _route(recipient);
 
         // Carry the source sender and the final recipient so the remote adapter can deliver per ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
 
+        bytes memory metadata = _metadata(GasLimitAttribute.resolve(attributes, defaultGasLimit));
+
         // msg.value funds the Hyperlane native fee.
-        MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload);
+        MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, metadata);
 
         emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
         return bytes32(0);
     }
 
     /// @inheritdoc IGatewayQuote
-    /// @dev Quotes the Hyperlane native fee for delivering `payload` to `recipient`.
+    /// @dev Quotes the Hyperlane native fee using `defaultGasLimit` for destination execution.
     function quote(bytes calldata recipient, bytes calldata payload) public view virtual returns (uint256 nativeFee) {
-        (uint32 domain, bytes32 remoteRouter) = _route(recipient);
-        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
-        bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        return MAILBOX.quoteDispatch(domain, remoteRouter, adapterPayload);
+        return _quoteWithGas(recipient, payload, defaultGasLimit);
+    }
+
+    /// @dev Quotes the native fee, taking the destination gas from the executionGasLimit attribute (or
+    /// `defaultGasLimit` when absent) so the estimate matches {sendMessage}.
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        public
+        view
+        virtual
+        returns (uint256 nativeFee)
+    {
+        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit));
     }
 
     // =============================================== Hyperlane inbound ==============================================
@@ -141,5 +153,22 @@ contract HyperlaneGatewayAdapter is IERC7786GatewaySource, IGatewayQuote, IMessa
         require(domain != 0, UnknownDestinationChain(chainId));
         remoteRouter = routers[domain];
         require(remoteRouter != bytes32(0), RemoteRouterNotSet(domain));
+    }
+
+    /// @dev Hyperlane StandardHookMetadata overriding the destination gas limit (refunds excess to the caller).
+    ///      Layout: variant | msgValue(0) | gasLimit | refundAddress.
+    function _metadata(uint128 gasLimit) private view returns (bytes memory) {
+        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), uint256(gasLimit), msg.sender);
+    }
+
+    function _quoteWithGas(bytes calldata recipient, bytes calldata payload, uint128 gasLimit)
+        private
+        view
+        returns (uint256)
+    {
+        (uint32 domain, bytes32 remoteRouter) = _route(recipient);
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        bytes memory adapterPayload = abi.encode(sender, recipient, payload);
+        return MAILBOX.quoteDispatch(domain, remoteRouter, adapterPayload, _metadata(gasLimit));
     }
 }
