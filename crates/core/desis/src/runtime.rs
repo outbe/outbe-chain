@@ -35,7 +35,7 @@ pub fn start_auction(
     if series_id == 0 {
         return Err(DesisError::InvalidSeriesId(0).into());
     }
-    if config.promis_load_minor == 0 || config.cost_amount_minor() == 0 {
+    if config.promis_load_minor == 0 || config.escrow_basis_minor() == 0 {
         return Err(DesisError::InvalidSeriesId(series_id).into());
     }
 
@@ -268,7 +268,7 @@ pub fn begin_clearing(
 
 /// Accept a relayed bid batch. Bids accumulate while stage is `Revealing`.
 /// A higher `generation` flushes all prior bids. The final batch (`is_last`)
-/// transitions to `BidsReceived` if any bids exist, else to `Cancelled`.
+/// always transitions to `BidsReceived` — a zero-bid batch then clears as a no-sale.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -305,20 +305,17 @@ pub fn process_bids_batch(
     }
 
     if is_last {
+        // Always advance to BidsReceived so OriginMessenger auto-fires clearing. A zero-bid batch
+        // then clears as a no-sale (0 issued, full supply returned to PromisLimit) and still reports
+        // the result to the target chain, instead of dead-ending in Cancelled with no cross-chain
+        // notice. Cancelled is reserved for red days (see `reveal_auction`).
         let count = contract.read_bid_count(series_id)?;
-        if count > 0 {
-            contract.write_stage(series_id, AuctionStage::BidsReceived)?;
-            contract.emit(IDesis::BidsReceived {
-                seriesId: series_id,
-                srcEid: src_eid,
-                bidsCount: U256::from(count),
-            })?;
-        } else {
-            contract.write_stage(series_id, AuctionStage::Cancelled)?;
-            contract.emit(IDesis::AuctionCancelledNoBids {
-                seriesId: series_id,
-            })?;
-        }
+        contract.write_stage(series_id, AuctionStage::BidsReceived)?;
+        contract.emit(IDesis::BidsReceived {
+            seriesId: series_id,
+            srcEid: src_eid,
+            bidsCount: U256::from(count),
+        })?;
     }
 
     Ok(())
@@ -350,10 +347,9 @@ pub fn clear_auction(
 
     let config = contract.read_auction_config(series_id)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&series_id)? as u16;
+    // A zero-bid batch is valid here: `calculate_clearing` yields 0 issued, the full supply returns
+    // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to the target chain.
     let bids = contract.read_all_bids(series_id)?;
-    if bids.is_empty() {
-        return Err(DesisError::PendingClearingDataMissing(series_id).into());
-    }
 
     let total_demand: u64 = bids.iter().map(|b| u64::from(b.intex_quantity)).sum();
     let mut sorted = bids;
@@ -508,18 +504,18 @@ fn sort_bids(bids: &mut [BidData]) {
 }
 
 /// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
-/// per-Intex `strike`: `qty * strike * rate / RATE_SCALE`, saturating to u128
+/// per-Intex escrow basis: `qty * basis * rate / RATE_SCALE`, saturating to u128
 /// (wCOEN amounts at 18 decimals exceed u64).
-fn rate_lock(qty: u64, strike: u128, rate: u32) -> u128 {
+fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
-        .saturating_mul(U256::from(strike))
+        .saturating_mul(U256::from(basis))
         .saturating_mul(U256::from(rate))
         / U256::from(RATE_SCALE);
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
 /// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
-/// clearing rate is the last allocated bid's. lock/pay = qty * strike * rate / RATE_SCALE.
+/// clearing rate is the last allocated bid's. lock/pay = qty * escrow_basis * rate / RATE_SCALE.
 fn calculate_clearing(
     bids: &[BidData],
     config: &AuctionConfig,
@@ -531,7 +527,7 @@ fn calculate_clearing(
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
-    let strike = config.cost_amount_minor();
+    let escrow_basis = config.escrow_basis_minor();
     let mut total_allocated: u32 = 0;
     let mut clearing_rate: u32 = config.min_intex_bid_rate;
 
@@ -565,13 +561,17 @@ fn calculate_clearing(
     for (i, bid) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
 
-        // locked = quantity * strike * rate / RATE_SCALE (escrowed at bid time).
-        let locked = rate_lock(u64::from(bid.intex_quantity), strike, bid.intex_bid_rate);
+        // locked = quantity * escrow_basis * rate / RATE_SCALE (escrowed at bid time).
+        let locked = rate_lock(
+            u64::from(bid.intex_quantity),
+            escrow_basis,
+            bid.intex_bid_rate,
+        );
 
         let won = won_by_index[i];
         if won > 0 {
             // Uniform clearing: winners pay at the clearing rate; refund the rest.
-            let paid = rate_lock(u64::from(won), strike, clearing_rate);
+            let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
             let refunded = locked.saturating_sub(paid);
             paid_amounts.push(paid);
             refunded_amounts.push(refunded);

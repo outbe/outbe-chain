@@ -85,9 +85,9 @@
         "internalType": "uint16[]"
       },
       {
-        "name": "intexBidPrices",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
+        "name": "intexBidRates",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
       },
       {
         "name": "timestamps",
@@ -119,19 +119,6 @@
   },
   {
     "type": "event",
-    "name": "AuctionCancelledNoBids",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "AuctionCancelledRedDay",
     "inputs": [
       {
@@ -160,10 +147,29 @@
         "internalType": "uint32"
       },
       {
-        "name": "clearingPrice",
+        "name": "clearingRate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalDemand",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AuctionClearedEmpty",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
         "name": "totalDemand",

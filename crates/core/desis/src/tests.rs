@@ -39,8 +39,7 @@ fn default_config() -> AuctionConfig {
         call_trigger: IntexCallTrigger::default(),
         min_intex_bid_rate: 100,
         min_intex_bid_quantity: 0,
-        // entry_price chosen so the derived strike == RATE_SCALE (lock = qty * rate).
-        entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13 → strike 1e6
+        entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13, reference ccy (feeds floor/call)
     }
 }
 
@@ -324,10 +323,12 @@ fn stale_generation_is_rejected() {
 }
 
 #[test]
-fn no_bids_last_batch_cancels() {
+fn no_bids_last_batch_clears_as_no_sale() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR).unwrap();
+        // An empty final batch advances to BidsReceived (not Cancelled), so clearing auto-fires.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
@@ -338,11 +339,20 @@ fn no_bids_last_batch_cancels() {
             vec![],
         )
         .unwrap();
-
-        let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
-            AuctionStage::Cancelled
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::BidsReceived
+        );
+
+        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
+        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        assert_eq!(result.issued_intex_count, 0);
+        assert!(result.winners.is_empty());
+        assert_eq!(
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Cleared
         );
     });
 }
@@ -562,7 +572,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
-        // strike = promis_load; lock/pay = qty * strike * rate / RATE_SCALE.
+        // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
@@ -574,16 +584,22 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], PROMIS_LOAD_MINOR * 300 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[w_idx],
+            PROMIS_LOAD_MINOR * 300 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], PROMIS_LOAD_MINOR * 200 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[l_idx],
+            PROMIS_LOAD_MINOR * 200 / 1_000_000
+        );
         assert_eq!(supply, result.issued_intex_count);
     });
 }
 
 #[test]
-fn clear_rate_escrow_scales_by_strike() {
-    // strike != RATE_SCALE, so this exercises the * strike / RATE_SCALE.
+fn clear_rate_escrow_scales_by_basis() {
+    // escrow basis != RATE_SCALE, so this exercises the * basis / RATE_SCALE.
     with_storage(|s| {
         let cfg = AuctionConfig {
             issuance_currency: 840,
@@ -592,13 +608,12 @@ fn clear_rate_escrow_scales_by_strike() {
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
-            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; strike = promis_load)
+            entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; escrow basis = promis_load)
         };
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -633,14 +648,26 @@ fn clear_rate_escrow_scales_by_strike() {
             runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
 
         assert_eq!(result.clearing_rate, 600_000);
-        // lock/pay = qty * strike(promis_load) * rate / 1e6; clearing rate 60%.
+        // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
-        assert_eq!(result.paid_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
-        assert_eq!(result.refunded_amounts[idx(bidder(0))], PROMIS_LOAD_MINOR * 200_000 / 1_000_000);
-        assert_eq!(result.paid_amounts[idx(bidder(1))], PROMIS_LOAD_MINOR * 600_000 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(0))],
+            PROMIS_LOAD_MINOR * 200_000 / 1_000_000
+        );
+        assert_eq!(
+            result.paid_amounts[idx(bidder(1))],
+            PROMIS_LOAD_MINOR * 600_000 / 1_000_000
+        );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
-        assert_eq!(result.refunded_amounts[idx(bidder(2))], PROMIS_LOAD_MINOR * 400_000 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[idx(bidder(2))],
+            PROMIS_LOAD_MINOR * 400_000 / 1_000_000
+        );
     });
 }
 
@@ -675,15 +702,15 @@ fn test_iface_id_matches_selector_xor() {
 // --- Config construction ---
 
 #[test]
-fn cost_amount_is_promis_load() {
-    // wCOEN strike = promis_load per Intex; entry no longer drives it.
+fn escrow_basis_is_promis_load() {
+    // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
     let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
-    assert_eq!(cfg.cost_amount_minor(), cfg.promis_load_minor);
+    assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
 
 // --- Best-effort dispatch API ---
 
-const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry; strike = promis_load, not entry-derived)
+const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry feeds floor/call; escrow basis = promis_load)
 
 #[test]
 fn dispatch_stage_start_success_returns_true() {

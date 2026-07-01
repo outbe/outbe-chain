@@ -21,8 +21,8 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 }
 
 /// Burn the caller-owned Nod after a PoW + unlock + qualification check,
-/// pull `cost_amount_minor` of `asset` from the caller and deposit it into
-/// `vault_provider` (skipped when `cost_amount_minor == 0`), and mint the
+/// pull `cost_amount_minor` of `asset` from the caller and deposit it into the
+/// reserve vault provider (skipped when `cost_amount_minor == 0`), and mint the
 /// matching gratis load to the caller. Returns the minted amount.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
@@ -30,7 +30,6 @@ pub fn mine_gratis(
     nod_id: U256,
     nonce: U256,
     asset: Address,
-    vault_provider: Address,
 ) -> Result<U256> {
-    runtime::mine_gratis(storage, caller, nod_id, nonce, asset, vault_provider)
+    runtime::mine_gratis(storage, caller, nod_id, nonce, asset)
 }

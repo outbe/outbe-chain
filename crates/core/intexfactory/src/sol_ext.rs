@@ -15,7 +15,6 @@ sol! {
             uint32 seriesId;
             uint32 issuedIntexCount;
             uint128 promisLoadMinor;
-            uint64 costAmountMinor;
             uint64 entryPriceMinor;
             uint64 floorPriceMinor;
             uint32 intexCallPeriod;
@@ -73,13 +72,6 @@ sol! {
         function transferFrom(address from, address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
-    }
-
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IVaultProvider {
-        function assetAt(uint256 index) external view returns (address);
-        function depositLiquidity(address asset, uint256 assetsAmount)
-            external returns (uint256 sharesAmount);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {
     OAppUpgradeable,
@@ -49,7 +49,7 @@ contract ONFT1155AdapterBatch is
     OAppUpgradeable,
     OAppOptionsType3Upgradeable,
     AccessControlUpgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuardTransient,
     UUPSUpgradeable
 {
     /// @notice Wire `msgType` tag for a single-recipient batch transfer (mirrors the codec constant).
@@ -154,8 +154,6 @@ contract ONFT1155AdapterBatch is
         __Ownable_init(_delegate);
         __OApp_init(_delegate);
         __AccessControl_init();
-        __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
     }

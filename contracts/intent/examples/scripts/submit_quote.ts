@@ -1,6 +1,6 @@
 import { ethers, JsonRpcProvider, Wallet, parseUnits, formatUnits } from 'ethers';
 import { chains, privateKey, ROUTER } from '../config';
-import { LayerZeroRouter__factory, Auction__factory } from '../typechain';
+import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData, sleep } from '../lib/common';
 
 /**
@@ -27,7 +27,7 @@ async function main() {
   const provider = new JsonRpcProvider(chain.rpc);
   const wallet = new Wallet(privateKey!, provider);
   const solverAddress = await wallet.getAddress();
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   // Check order is OPENED
   const OPENED = await router.OPENED();
@@ -35,7 +35,7 @@ async function main() {
   if (orderStatus !== OPENED) { console.error('Order is not OPENED'); process.exit(1); }
 
   // Read order data from on-chain storage
-  const { orderData } = await getOrderData(orderIdHex, router);
+  const { originData, orderData } = await getOrderData(orderIdHex, router);
 
   const inputTokenAddress = ethers.toBeHex(orderData.inputToken);
   const outputTokenAddress = ethers.toBeHex(orderData.outputToken);
@@ -56,7 +56,7 @@ async function main() {
   console.log(`  Deadline:     ${new Date(Number(orderData.fillDeadline) * 1000).toISOString()}`);
 
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   const auction = Auction__factory.connect(await destRouter.AUCTION(), destWallet);
 
@@ -104,7 +104,7 @@ async function main() {
 
   // === PHASE 2: REVEAL ===
   console.log('\n[2/2] Revealing...');
-  const revealTx = await auction.reveal(orderIdHex, outputAmountWei, salt);
+  const revealTx = await auction.reveal(orderIdHex, outputAmountWei, salt, originData);
   const revealReceipt = await revealTx.wait();
 
   const quoteCount = await auction.getQuoteCount(orderIdHex);

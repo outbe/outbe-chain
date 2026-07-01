@@ -287,11 +287,6 @@
               "internalType": "uint128"
             },
             {
-              "name": "costAmountMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
               "name": "entryPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
@@ -933,11 +928,6 @@
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
-            },
-            {
-              "name": "costAmountMinor",
-              "type": "uint64",
-              "internalType": "uint64"
             },
             {
               "name": "entryPriceMinor",

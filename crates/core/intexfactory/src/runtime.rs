@@ -12,12 +12,12 @@ use outbe_intex::IntexState;
 use crate::config;
 use crate::constants::{
     CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
-    POW_DIFFICULTY, RESERVE_VAULT,
+    POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IVaultProvider, MessagingFee, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -95,14 +95,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let cost_amount_minor_u64 =
-        u64::try_from(derived_cost_amount(params.entry_price_minor, U256::from(params.promis_load_minor)))
-            .map_err(|_| PrecompileError::Revert("cost amount exceeds u64".into()))?;
     let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
-        costAmountMinor: cost_amount_minor_u64,
         entryPriceMinor: entry_price_minor_u64,
         floorPriceMinor: floor_price_minor_u64,
         intexCallPeriod: cfg.intex_call_period_secs,
@@ -174,8 +170,11 @@ pub(crate) fn derived_call_price(entry_price: U256, call_price_num: u64) -> Resu
 /// Per-Intex cost = entry_price * promis_load / 1e30 (payment-token minor).
 /// Mirrors the desis derivation: entry(1e18) * PROMIS_LOAD / 1e12, expressed via
 /// promis_load_minor (= PROMIS_LOAD * 1e18), so the divisor is 1e30.
-pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> U256 {
-    entry_price.saturating_mul(promis_load_minor) / U256::from(10u64).pow(U256::from(30u64))
+pub(crate) fn derived_cost_amount(entry_price: U256, promis_load_minor: U256) -> Result<U256> {
+    entry_price
+        .checked_mul(promis_load_minor)
+        .map(|v| v / U256::from(10u64).pow(U256::from(30u64)))
+        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -243,7 +242,7 @@ pub fn settle(
     }
 
     // payment = per-Intex cost * amount; cost derives from entry_price * promis_load.
-    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)
+    let payment = derived_cost_amount(series.entry_price_minor, series.promis_load_minor)?
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
 
@@ -271,24 +270,20 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: RESERVE_VAULT,
+            spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
             amount: received,
         }
         .abi_encode()
         .into(),
     )?;
-    let shares_ret = storage.call(
-        RESERVE_VAULT,
-        U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
-            asset: payment_token,
-            assetsAmount: received,
-        }
-        .abi_encode()
-        .into(),
+
+    let shares = outbe_vaultprovider::api::deposit_liquidity(
+        storage.clone(),
+        INTEX_FACTORY_ADDRESS,
+        payment_token,
+        received,
+        outbe_vaultprovider::api::LiquiditySource::IntexStrikePrice,
     )?;
-    let shares = IVaultProvider::depositLiquidityCall::abi_decode_returns(&shares_ret)
-        .map_err(|_| PrecompileError::Revert("vault depositLiquidity undecodable".into()))?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -334,14 +329,8 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 }
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let ret = storage.staticcall(
-        RESERVE_VAULT,
-        IVaultProvider::assetAtCall { index: U256::ZERO }
-            .abi_encode()
-            .into(),
-    )?;
-    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("vault assetAt undecodable".into()))?;
+    // TODO pick up the asset ERC20 address properly
+    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {
     OAppUpgradeable,
@@ -30,7 +30,7 @@ contract ONFT1155Adapter is
     IONFT1155Adapter,
     OAppUpgradeable,
     OAppOptionsType3Upgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuardTransient,
     UUPSUpgradeable
 {
     using ONFT1155MsgCodec for bytes;
@@ -161,8 +161,6 @@ contract ONFT1155Adapter is
         if (_delegate == address(0)) revert ZeroAddress("delegate");
         __Ownable_init(_delegate);
         __OApp_init(_delegate);
-        __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
     }
 
     /// @dev Upgrades are gated by the owner.

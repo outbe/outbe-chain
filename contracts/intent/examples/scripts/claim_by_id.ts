@@ -1,6 +1,6 @@
 import { ethers, JsonRpcProvider, formatUnits } from 'ethers';
 import { chains, privateKey, ROUTER } from '../config';
-import { LayerZeroRouter__factory, Auction__factory } from '../typechain';
+import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 
 /**
@@ -10,7 +10,7 @@ import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/comm
  * Usage: tsx scripts/claim_by_id.ts <originChain> <orderId>
  */
 async function main() {
-  console.log('LayerZeroRouter - Claim Order\n');
+  console.log('Router - Claim Order\n');
 
   const [originChain, orderId] = process.argv.slice(2);
   if (!originChain || !orderId) {
@@ -24,14 +24,14 @@ async function main() {
 
   const provider = new JsonRpcProvider(chains[originChain].rpc);
   const wallet = new ethers.Wallet(privateKey!, provider);
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   // Read order data from on-chain storage
   const { originData, orderData } = await getOrderData(orderId, router);
 
   // Connect to destination
   const destWallet = new ethers.Wallet(privateKey!, getProviderByDomain(orderData.destinationDomain));
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   const auction = Auction__factory.connect(await destRouter.AUCTION(), destWallet);
 

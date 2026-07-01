@@ -37,7 +37,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     uint32 internal constant SERIES_ID = 20250101;
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
-    uint64 internal constant STRIKE_PRICE = 100e6;
+    uint64 internal constant ENTRY_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant REFERENCE_CURRENCY = 840;
 
@@ -141,8 +141,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             issuedIntexCount: ISSUED_INTEX_COUNT,
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            costAmountMinor: STRIKE_PRICE,
-            entryPriceMinor: STRIKE_PRICE,
+            entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
             issuanceCurrency: 840,
@@ -309,9 +308,9 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 60e6,
-            entryPriceMinor: STRIKE_PRICE,
+            entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
-            callPriceMinor: STRIKE_PRICE,
+            callPriceMinor: ENTRY_PRICE,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
@@ -332,8 +331,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
             seriesId: SERIES_ID,
             issuedIntexCount: ISSUED_INTEX_COUNT,
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            costAmountMinor: STRIKE_PRICE,
-            entryPriceMinor: STRIKE_PRICE,
+            entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
             intexCallPeriod: 0,
             issuanceCurrency: 840,

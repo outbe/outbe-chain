@@ -21,9 +21,7 @@ library CreateSeriesLib {
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
-                windowDays: 0,
-                thresholdDays: 0,
-                intexCallPeriod: intexCallPeriod
+                windowDays: 0, thresholdDays: 0, intexCallPeriod: intexCallPeriod
             })
         });
     }

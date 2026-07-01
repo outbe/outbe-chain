@@ -77,12 +77,26 @@ contract DeployFlowTest is TestHelperOz5 {
         address predicted = Create3Deploy.predictProxy(factory, address(this), "AddrTest", VERSION);
 
         uint256 snap = vm.snapshotState();
-        address a =
-            Create3Deploy.deployProxy(factory, address(this), "AddrTest", VERSION, address(new IntexNFT1155()), "");
+        // OZ 5.6 `ERC1967Proxy` rejects empty init data; pass each impl's initializer. The CREATE3
+        // address depends only on salt + deployer, so it stays independent of impl + init data.
+        address a = Create3Deploy.deployProxy(
+            factory,
+            address(this),
+            "AddrTest",
+            VERSION,
+            address(new IntexNFT1155()),
+            abi.encodeCall(IntexNFT1155.initialize, (admin))
+        );
         vm.revertToState(snap);
         // Different implementation bytecode, same salt + deployer -> same proxy address.
-        address b =
-            Create3Deploy.deployProxy(factory, address(this), "AddrTest", VERSION, address(new IntexAuction()), "");
+        address b = Create3Deploy.deployProxy(
+            factory,
+            address(this),
+            "AddrTest",
+            VERSION,
+            address(new IntexAuction()),
+            abi.encodeCall(IntexAuction.initialize, (admin))
+        );
 
         assertEq(a, predicted, "a != predicted");
         assertEq(b, predicted, "b != predicted");
@@ -97,8 +111,14 @@ contract DeployFlowTest is TestHelperOz5 {
         assertTrue(predSelf != predOther, "deployer must namespace the salt");
 
         // Deploying as this contract occupies only its own namespaced slot; `other`'s stays free.
-        address proxy =
-            Create3Deploy.deployProxy(factory, address(this), "NsTest", VERSION, address(new IntexNFT1155()), "");
+        address proxy = Create3Deploy.deployProxy(
+            factory,
+            address(this),
+            "NsTest",
+            VERSION,
+            address(new IntexNFT1155()),
+            abi.encodeCall(IntexNFT1155.initialize, (admin))
+        );
         assertEq(proxy, predSelf, "proxy != predicted");
         assertEq(predOther.code.length, 0, "another deployer's address must remain free");
     }

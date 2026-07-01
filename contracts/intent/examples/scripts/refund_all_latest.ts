@@ -1,7 +1,7 @@
 import { ethers, JsonRpcProvider } from 'ethers';
 import { chains, privateKey, ROUTER, QUERY_BLOCKS_BACK } from '../config';
-import { LayerZeroRouter__factory } from '../typechain';
-import type { OnchainCrossChainOrderStruct } from '../typechain/LayerZeroRouter';
+import { Router__factory } from '../typechain';
+import type { OnchainCrossChainOrderStruct } from '../typechain/Router';
 import * as OrderEncoder from '../lib/OrderEncoder';
 import { estimateGasWithBuffer, calculateRefundFee } from '../lib/gasEstimation';
 import { queryEventsWithChunking } from '../lib/eventQuery';
@@ -12,7 +12,7 @@ import { queryEventsWithChunking } from '../lib/eventQuery';
  * Usage: tsx scripts/refund_all_latest.ts [originChain] [destChain] [blocksBack]
  */
 async function main() {
-  console.log('LayerZeroRouter - Refund All Expired Orders\n');
+  console.log('Router - Refund All Expired Orders\n');
 
   const [originChain = 'bsc', destChain = 'sepolia', blocksBackArg] = process.argv.slice(2);
   const blocksBack = blocksBackArg ? parseInt(blocksBackArg) : QUERY_BLOCKS_BACK;
@@ -30,8 +30,8 @@ async function main() {
   const wallet = new ethers.Wallet(privateKey!, provider);
   const destWallet = new ethers.Wallet(privateKey!, destProvider);
 
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
-  const destRouter = LayerZeroRouter__factory.connect(ROUTER, destWallet);
+  const router = Router__factory.connect(ROUTER, wallet);
+  const destRouter = Router__factory.connect(ROUTER, destWallet);
 
   const blockInfo = await provider.getBlock('latest');
   const currentBlock = await provider.getBlockNumber();
@@ -91,8 +91,8 @@ async function main() {
     console.log(`  Same-chain orders — no LZ fee\n`);
   } else {
     const fee = await calculateRefundFee(destRouter, origin.chainId, orderIds);
-    value = fee.nativeFee;
-    console.log(`  LZ Fee: ${ethers.formatEther(fee.nativeFee)}\n`);
+    value = fee;
+    console.log(`  LZ Fee: ${ethers.formatEther(fee)}\n`);
   }
 
   console.log('Refunding...');

@@ -18,8 +18,7 @@
     "solver:balance": "tsx scripts/solver-escrow/balance.ts",
     "solver:deposit": "tsx scripts/solver-escrow/deposit.ts",
     "solver:withdraw": "tsx scripts/solver-escrow/withdraw.ts",
-    "oracle:rates": "tsx scripts/oracle_rates.ts",
-    "clear-nonces": "tsx scripts/clear_nonces.ts"
+    "oracle:rates": "tsx scripts/oracle_rates.ts"
   },
   "dependencies": {
     "cli-table3": "^0.6.3",
