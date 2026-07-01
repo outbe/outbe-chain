@@ -8,7 +8,6 @@
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
