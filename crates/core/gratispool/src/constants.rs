@@ -14,13 +14,7 @@ use crate::errors::GratisPoolError;
 ///
 /// Each variant is a separate Tornado-style anonymity pool with a fixed deposit
 /// amount; fixed amounts ensure the pledge amount itself is not a unique
-/// fingerprint that could link a `pledgeGratis` to a later spend.
-///
-/// Ids are assigned in ascending amount order. [`Gratis0_1`](Self::Gratis0_1)
-/// is a reserved sub-rung that exists only as the destination for a single
-/// anadosis installment's reclaim note (one decade below the smallest
-/// pledgeable rung). It cannot be pledged directly — see
-/// [`is_pledgeable`](Self::is_pledgeable).
+/// fingerprint that could link to a later spend.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DenomAmount {
@@ -107,6 +101,8 @@ impl TryFrom<u32> for DenomAmount {
         Self::try_from(denom_id)
     }
 }
+
+// TODO peek correct params
 
 /// Number of leaves the per-denomination Merkle tree can hold.
 ///
