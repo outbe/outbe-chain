@@ -40,15 +40,12 @@ fn decimals_diff() -> U256 {
 ///   the position's `denom_id`, and delivers the stablecoin loan via the
 ///   vault sub-call.
 /// Returns `(position_id, amount_stables)`.
-#[allow(clippy::too_many_arguments)]
 pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
     asset: Address,
     bundle_account: Address,
     args: SpendArgs,
-    current_time: u64,
-    _current_block: u64,
 ) -> Result<(U256, U256)> {
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
@@ -62,6 +59,10 @@ pub fn request_credis(
     denom
         .anadosis_denomination()
         .ok_or(CredisFactoryError::DenomNotCredisEligible)?;
+
+    // Block timestamp is read from the execution frame rather than threaded in
+    // by the caller.
+    let current_time = storage.timestamp()?.to::<u64>();
 
     // Reject borrowers with overdue anadosis on any of their positions.
     {
@@ -147,8 +148,6 @@ pub fn pay_anadosis(
     caller: Address,
     position_id: U256,
     reclaim_commitment: U256,
-    current_time: u64,
-    _current_block: u64,
 ) -> Result<AnadosisResult> {
     // Read-only validation pass before any mutation.
     {
@@ -177,6 +176,7 @@ pub fn pay_anadosis(
         }
     }
 
+    let current_time = storage.timestamp()?.to::<u64>();
     let mut credis = CredisContract::new(storage.clone());
     let result = credis.make_next_anadosis(position_id, current_time)?;
 
@@ -213,14 +213,10 @@ pub fn pay_anadosis(
     )?;
 
     // 4) Append this installment's reclaim note so the pledger can unpledge
-    //    1/10 of the collateral immediately. No Gratis-ledger movement here:
-    //    the pledger's per-account pledged balance was set at pledge time and
-    //    stays in place until they (or whoever holds the reclaim secret bound
-    //    to their address) invokes `unpledgeGratis`. The note lives in the
-    //    anadosis (one-decade-down) pool; its amount resolves to
-    //    `denom.amount() / 10` at unpledge time.
+    //    1/10 of the collateral immediately.
     let factory = CredisFactoryContract::new(storage.clone());
-    let denom = DenomAmount::try_from(factory.position_denom.read(&position_id)? as u8)?;
+    let credis_denom = factory.position_denom.read(&position_id)?;
+    let denom = DenomAmount::try_from(credis_denom as u8)?;
     let anadosis_denom = denom
         .anadosis_denomination()
         .ok_or(CredisFactoryError::DenomNotCredisEligible)?;

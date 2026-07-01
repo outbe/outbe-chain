@@ -156,8 +156,6 @@ fn full_request_pay_reclaim_unpledge_flow() {
                 asset(),
                 alice(),
                 args,
-                CREATED_AT,
-                BLOCK_NUMBER,
             )
             .unwrap()
         });
@@ -185,13 +183,14 @@ fn full_request_pay_reclaim_unpledge_flow() {
             let pre = GratisPoolContract::new(storage.clone())
                 .leaf_count(anadosis_denom_id)
                 .unwrap();
+            storage
+                .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
+                .unwrap();
             runtime::pay_anadosis(
                 storage.clone(),
                 alice(),
                 position_id,
                 reclaim_commitment,
-                CREATED_AT + n as u64 * SECONDS_PER_MONTH,
-                BLOCK_NUMBER + n as u64,
             )
             .unwrap();
             let post = GratisPoolContract::new(storage.clone())
@@ -277,8 +276,6 @@ fn anadosis_inserts_per_installment_reclaim_note() {
                 asset(),
                 alice(),
                 args,
-                CREATED_AT,
-                BLOCK_NUMBER,
             )
             .unwrap()
         });
@@ -290,13 +287,14 @@ fn anadosis_inserts_per_installment_reclaim_note() {
         let pre = GratisPoolContract::new(storage.clone())
             .leaf_count(anadosis_denom.id())
             .unwrap();
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
+            .unwrap();
         runtime::pay_anadosis(
             storage.clone(),
             alice(),
             position_id,
             reclaim_commitment,
-            CREATED_AT + SECONDS_PER_MONTH,
-            BLOCK_NUMBER + 1,
         )
         .unwrap();
         let post = GratisPoolContract::new(storage.clone())
@@ -368,8 +366,6 @@ fn request_credis_rejects_overdue_anadosis() {
                 asset(),
                 alice(),
                 args1,
-                CREATED_AT,
-                BLOCK_NUMBER,
             )
             .unwrap();
         });
@@ -385,6 +381,9 @@ fn request_credis_rejects_overdue_anadosis() {
                 .unwrap(),
             proof: vec![0u8; 32],
         };
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
+            .unwrap();
         let err = with_verifier_outcome(true, || {
             runtime::request_credis(
                 storage.clone(),
@@ -392,8 +391,6 @@ fn request_credis_rejects_overdue_anadosis() {
                 asset(),
                 alice(),
                 args2,
-                CREATED_AT + SECONDS_PER_MONTH + 1,
-                BLOCK_NUMBER,
             )
             .unwrap_err()
         });
@@ -423,8 +420,6 @@ fn request_credis_rejects_zero_asset() {
             Address::ZERO,
             alice(),
             args,
-            CREATED_AT,
-            BLOCK_NUMBER,
         )
         .unwrap_err();
         assert!(err.to_string().contains("asset"));
@@ -449,8 +444,6 @@ fn request_credis_rejects_zero_bundle_account() {
             asset(),
             Address::ZERO,
             args,
-            CREATED_AT,
-            BLOCK_NUMBER,
         )
         .unwrap_err();
         assert!(err.to_string().contains("bundle account"));
@@ -492,8 +485,6 @@ fn pay_anadosis_rejects_non_owner_caller() {
                 asset(),
                 alice(),
                 args,
-                CREATED_AT,
-                BLOCK_NUMBER,
             )
             .unwrap()
         });
@@ -507,8 +498,6 @@ fn pay_anadosis_rejects_non_owner_caller() {
             bob(),
             position_id,
             dummy_reclaim,
-            CREATED_AT + SECONDS_PER_MONTH,
-            BLOCK_NUMBER + 1,
         )
         .unwrap_err();
         assert!(
@@ -552,8 +541,6 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
                 asset(),
                 alice(),
                 args,
-                CREATED_AT,
-                BLOCK_NUMBER,
             )
             .unwrap()
         });
@@ -564,8 +551,6 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
             alice(),
             position_id,
             U256::ZERO,
-            CREATED_AT + SECONDS_PER_MONTH,
-            BLOCK_NUMBER + 1,
         )
         .unwrap_err();
         assert!(

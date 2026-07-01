@@ -33,8 +33,6 @@ pub fn dispatch(
             use ICredisFactory::ICredisFactoryCalls::*;
             match call {
                 requestCredis(c) => mutate(c, caller, |sender, c| {
-                    let timestamp = read_timestamp(&storage)?;
-                    let block_number = storage.block_number()?;
                     let args = SpendArgs {
                         merkle_root: c.args.merkleRoot,
                         nullifier_hash: c.args.nullifierHash,
@@ -48,8 +46,6 @@ pub fn dispatch(
                         c.asset,
                         c.bundleAccount,
                         args,
-                        timestamp,
-                        block_number,
                     )?;
                     Ok(ICredisFactory::requestCredisReturn {
                         positionId: position_id,
@@ -57,15 +53,11 @@ pub fn dispatch(
                     })
                 }),
                 anadosis(c) => mutate_void(c, caller, |sender, c| {
-                    let timestamp = read_timestamp(&storage)?;
-                    let block_number = storage.block_number()?;
                     runtime::pay_anadosis(
                         storage.clone(),
                         sender,
                         c.positionId,
                         c.reclaimCommitment,
-                        timestamp,
-                        block_number,
                     )?;
                     Ok(())
                 }),
@@ -76,8 +68,4 @@ pub fn dispatch(
             }
         },
     )
-}
-
-fn read_timestamp(storage: &StorageHandle<'_>) -> Result<u64> {
-    Ok(storage.timestamp()?.to::<u64>())
 }
