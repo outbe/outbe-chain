@@ -82,6 +82,18 @@ interface IONFT1155AdapterBatch {
     /// @param holdersCount Number of holders included in the migration
     event SystemMultiSent(bytes32 indexed guid, uint32 dstEid, uint256 indexed tokenId, uint256 holdersCount);
 
+    /// @notice Emitted when a holder system-bridge's `systemMultiSend` reverts and the snapshot is parked.
+    /// @param idx Index of the parked `pendingHoldersBridges` slot.
+    /// @param tokenId Token id (series) whose holder bridge was deferred.
+    /// @param holdersCount Number of holders in the deferred bridge.
+    /// @param reason Raw revert data from the failed send.
+    event HoldersBridgeDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
+
+    /// @notice Emitted when `flushHoldersBridge` successfully retries a previously deferred bridge.
+    /// @param idx Index of the flushed `pendingHoldersBridges` slot.
+    /// @param tokenId Token id (series) whose holders were bridged.
+    event HoldersBridgeFlushed(uint256 indexed idx, uint256 indexed tokenId);
+
     /// @notice Emitted when residual pre-funded native tokens are swept to an admin recipient.
     /// @param to Recipient address the native tokens were swept to
     /// @param amount Amount in wei swept
@@ -109,6 +121,17 @@ interface IONFT1155AdapterBatch {
     /// @param guid Inbound LayerZero packet GUID where the crosschainMint originally failed
     /// @param idx Position of the retried item in the original batch
     event CrosschainMintRetried(bytes32 indexed guid, uint256 indexed idx);
+
+    /// @notice Emitted when a terminally-failed item is reclaimed to its origin chain for re-mint.
+    /// @param guid Inbound LayerZero packet GUID whose item was reclaimed
+    /// @param idx Position of the reclaimed item in the original batch
+    /// @param srcEid Origin endpoint id the reverse transfer was sent to
+    /// @param to Holder re-minted on the origin chain
+    /// @param tokenId Token ID reclaimed
+    /// @param amount Amount reclaimed
+    event CrosschainMintReclaimed(
+        bytes32 indexed guid, uint256 indexed idx, uint32 indexed srcEid, address to, uint256 tokenId, uint256 amount
+    );
 
     // --- Errors ---
     /// @notice Receiver address is zero.
@@ -149,6 +172,13 @@ interface IONFT1155AdapterBatch {
     /// @param guid Inbound LayerZero packet GUID being retried.
     /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
     error NoSuchFailedCrosschainMint(bytes32 guid, uint256 idx);
+    /// @notice `flushHoldersBridge` called for an index that holds no parked bridge.
+    /// @param idx Enqueue index with no parked holder bridge.
+    error NoSuchPendingHoldersBridge(uint256 idx);
+    /// @notice Parked entry carries no origin endpoint id (pre-upgrade entry); reclaim cannot route back.
+    /// @param guid Inbound LayerZero packet GUID being reclaimed.
+    /// @param idx Position in the original batch.
+    error NoSourceEid(bytes32 guid, uint256 idx);
 
     /// @notice Sweep residual pre-funded native tokens back to an admin recipient.
     /// @param to Recipient address (must be non-zero)
@@ -230,4 +260,26 @@ interface IONFT1155AdapterBatch {
         bytes calldata extraOptions,
         MessagingFee calldata fee
     ) external payable returns (MessagingReceipt memory msgReceipt);
+
+    /// @notice Read the series holders off the bridged IntexNFT1155, burn them, and relay-funded-bridge
+    ///         them to `dstEid`, parking the snapshot for retry if the send reverts. Called by
+    ///         TargetMessenger on an inbound markCalled.
+    /// @param seriesId Auction series whose holders migrate.
+    /// @param dstEid Destination endpoint id (Outbe).
+    function bridgeHoldersWithRecovery(uint32 seriesId, uint32 dstEid) external;
+
+    /// @notice Permissionless retry of a previously deferred holder system-bridge.
+    /// @param idx Index of the parked bridge to flush.
+    function flushHoldersBridge(uint256 idx) external;
+
+    /// @notice Parked holder system-bridge by enqueue index (scalar fields; arrays stay internal).
+    /// @param idx Enqueue index.
+    /// @return tokenId Token id whose holder bridge was deferred.
+    /// @return dstEid Destination endpoint id the bridge targets.
+    /// @return exists True when the index holds a parked bridge.
+    function pendingHoldersBridges(uint256 idx) external view returns (uint256 tokenId, uint32 dstEid, bool exists);
+
+    /// @notice Next index to assign in `pendingHoldersBridges`; also the count ever enqueued.
+    /// @return The next enqueue index.
+    function nextPendingHoldersBridgeIdx() external view returns (uint256);
 }

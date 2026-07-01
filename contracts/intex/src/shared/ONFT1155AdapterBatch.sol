@@ -15,6 +15,7 @@ import {
 } from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
+import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IONFT1155AdapterBatch, BatchSendParam, MultiRecipientSendParam} from "./interfaces/IONFT1155AdapterBatch.sol";
 import {LzGasEstimator} from "./libs/LzGasEstimator.sol";
 import {ONFT1155BatchMsgCodec} from "./libs/ONFT1155BatchMsgCodec.sol";
@@ -91,7 +92,20 @@ contract ONFT1155AdapterBatch is
         address to;
         uint256 tokenId;
         uint256 amount;
+        uint32 srcEid;
         bytes reason;
+        bool exists;
+    }
+
+    /// @notice Snapshot of a holder system-bridge whose `systemMultiSend` reverted (e.g. low pre-funded
+    ///         balance), parked for permissionless retry via `flushHoldersBridge`.
+    /// @dev Migrated from TargetMessenger: the bridge + recovery live with the adapter that owns
+    ///      `systemMultiSend`. `markCalled` itself stays on TargetMessenger.
+    struct PendingHoldersBridge {
+        uint256 tokenId;
+        address[] holders;
+        uint256[] amounts;
+        uint32 dstEid;
         bool exists;
     }
 
@@ -107,6 +121,10 @@ contract ONFT1155AdapterBatch is
         ///      draw the fee from the pre-funded balance. The user-facing `batchSend`/`multiSend`
         ///      leave it false and are always caller-funded — they can never spend the system float.
         bool relayFunded;
+        /// @dev Parked holder system-bridges awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingHoldersBridge) pendingHoldersBridges;
+        /// @dev Next index to assign in `pendingHoldersBridges`; also the count ever enqueued.
+        uint256 nextPendingHoldersBridgeIdx;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.ONFT1155AdapterBatch")) - 1)) & ~bytes32(uint256(0xff))
@@ -161,6 +179,22 @@ contract ONFT1155AdapterBatch is
     {
         FailedCrosschainMint storage f = _s().failedCrosschainMints[guid][idx];
         return (f.to, f.tokenId, f.amount, f.reason, f.exists);
+    }
+
+    /// @notice Parked holder system-bridge by enqueue index (scalar fields; arrays stay internal).
+    /// @param idx Enqueue index.
+    /// @return tokenId Token id (series) whose holder bridge was deferred.
+    /// @return dstEid Destination endpoint id the bridge targets.
+    /// @return exists True when the index holds a parked bridge.
+    function pendingHoldersBridges(uint256 idx) external view returns (uint256 tokenId, uint32 dstEid, bool exists) {
+        PendingHoldersBridge storage p = _s().pendingHoldersBridges[idx];
+        return (p.tokenId, p.dstEid, p.exists);
+    }
+
+    /// @notice Next index to assign in `pendingHoldersBridges`; also the count ever enqueued.
+    /// @return The next enqueue index.
+    function nextPendingHoldersBridgeIdx() external view returns (uint256) {
+        return _s().nextPendingHoldersBridgeIdx;
     }
 
     /// @notice ERC-165 support check; reports `IONFT1155AdapterBatch` in addition to inherited interfaces.
@@ -323,9 +357,80 @@ contract ONFT1155AdapterBatch is
         address[] calldata holders,
         uint256[] calldata amounts,
         uint32 dstEid,
-        bytes calldata extraOptions,
+        bytes calldata, /*extraOptions*/
         MessagingFee calldata fee
     ) external payable onlyRole(SYSTEM_RELAYER_ROLE) nonReentrant returns (MessagingReceipt memory msgReceipt) {
+        return _systemMultiSend(tokenId, holders, amounts, dstEid, fee);
+    }
+
+    /// @inheritdoc IONFT1155AdapterBatch
+    function bridgeHoldersWithRecovery(uint32 seriesId, uint32 dstEid)
+        external
+        onlyRole(SYSTEM_RELAYER_ROLE)
+        nonReentrant
+    {
+        // The adapter owns the holder migration end-to-end: it reads the series holders off the
+        // IntexNFT1155 it bridges, so TargetMessenger only forwards `(seriesId, dstEid)`.
+        IIntexNFT1155 nft = IIntexNFT1155(address(token));
+        uint256 tokenId = nft.issuedTokenId(seriesId);
+        (address[] memory holders, uint256[] memory amounts) = nft.getSeriesHoldersWithBalances(tokenId);
+        if (holders.length == 0) return;
+
+        bytes memory message = _buildSystemMultiMsg(tokenId, holders, amounts);
+        MessagingFee memory fee = _quote(dstEid, message, _receiveOption(holders.length), false);
+
+        // Isolate burn+send: a failure (e.g. low pre-funded balance) parks the snapshot for retry
+        // instead of reverting the inbound `markCalled` transition on TargetMessenger.
+        try this.systemMultiSendSelf(tokenId, holders, amounts, dstEid, fee) {
+        // ok — holders bridged
+        }
+        catch (bytes memory reason) {
+            ONFT1155AdapterBatchStorage storage $ = _s();
+            uint256 idx = $.nextPendingHoldersBridgeIdx++;
+            $.pendingHoldersBridges[idx] = PendingHoldersBridge({
+                tokenId: tokenId, holders: holders, amounts: amounts, dstEid: dstEid, exists: true
+            });
+            emit HoldersBridgeDeferred(idx, tokenId, holders.length, reason);
+        }
+    }
+
+    /// @notice Permissionless retry of a previously deferred holder system-bridge.
+    /// @param idx Index of the parked bridge to flush.
+    function flushHoldersBridge(uint256 idx) external nonReentrant {
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        PendingHoldersBridge memory p = $.pendingHoldersBridges[idx];
+        if (!p.exists) revert NoSuchPendingHoldersBridge(idx);
+        // Consume once before the send (CEI): a still-failing send reverts the whole call, the delete
+        // is rolled back, and the entry stays parked.
+        delete $.pendingHoldersBridges[idx];
+        bytes memory message = _buildSystemMultiMsg(p.tokenId, p.holders, p.amounts);
+        MessagingFee memory fee = _quote(p.dstEid, message, _receiveOption(p.holders.length), false);
+        _systemMultiSend(p.tokenId, p.holders, p.amounts, p.dstEid, fee);
+        emit HoldersBridgeFlushed(idx, p.tokenId);
+    }
+
+    /// @notice Self-call shim around `_systemMultiSend`; a failure is caught by `bridgeHoldersWithRecovery`.
+    /// @dev `NotSelf` for any external caller; only `address(this)` may invoke it.
+    function systemMultiSendSelf(
+        uint256 tokenId,
+        address[] memory holders,
+        uint256[] memory amounts,
+        uint32 dstEid,
+        MessagingFee memory fee
+    ) external returns (MessagingReceipt memory) {
+        if (msg.sender != address(this)) revert NotSelf();
+        return _systemMultiSend(tokenId, holders, amounts, dstEid, fee);
+    }
+
+    /// @dev Burn the holders' tokens and relay-funded `_lzSend` the migration to `dstEid`. Memory args
+    ///      so both the role-gated entry and the recovery retry share one implementation.
+    function _systemMultiSend(
+        uint256 tokenId,
+        address[] memory holders,
+        uint256[] memory amounts,
+        uint32 dstEid,
+        MessagingFee memory fee
+    ) internal returns (MessagingReceipt memory msgReceipt) {
         uint256 len = holders.length;
         if (len == 0) revert EmptyBatch();
         if (len != amounts.length) revert ArrayLengthMismatch();
@@ -354,7 +459,7 @@ contract ONFT1155AdapterBatch is
     /// @param holders Source chain holder addresses
     /// @param amounts Corresponding balances for each holder
     /// @return message Encoded LayerZero message
-    function _buildSystemMultiMsg(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts)
+    function _buildSystemMultiMsg(uint256 tokenId, address[] memory holders, uint256[] memory amounts)
         internal
         pure
         returns (bytes memory message)
@@ -522,8 +627,9 @@ contract ONFT1155AdapterBatch is
         // ok — crosschainMint landed
         }
         catch (bytes memory reason) {
-            _s().failedCrosschainMints[guid][idx] =
-                FailedCrosschainMint({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
+            _s().failedCrosschainMints[guid][idx] = FailedCrosschainMint({
+                to: to, tokenId: tokenId, amount: amount, srcEid: srcEid, reason: reason, exists: true
+            });
             emit CrosschainMintFailed(srcEid, guid, idx, to, tokenId, amount, reason);
         }
     }
@@ -553,5 +659,37 @@ contract ONFT1155AdapterBatch is
         delete $.failedCrosschainMints[guid][idx];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(guid, idx);
+    }
+
+    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints
+    ///         the holder on the origin chain via a reverse one-item transfer, the only exit that does
+    ///         not re-hit the destination lifecycle gate. Consumes the entry once (CEI delete first).
+    /// @param guid Inbound packet GUID where the item's crosschainMint is stranded.
+    /// @param idx Position of the stranded item in that batch.
+    /// @param fee LayerZero messaging fee for the reverse send (caller-funded).
+    /// @param refundAddress Address refunded any excess native fee.
+    function reclaimToSource(bytes32 guid, uint256 idx, MessagingFee calldata fee, address refundAddress)
+        external
+        payable
+        nonReentrant
+        returns (MessagingReceipt memory msgReceipt)
+    {
+        ONFT1155AdapterBatchStorage storage $ = _s();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(guid, idx);
+        if (f.srcEid == 0) revert NoSourceEid(guid, idx);
+        delete $.failedCrosschainMints[guid][idx];
+
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = bytes32(uint256(uint160(f.to)));
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = f.tokenId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = f.amount;
+        bytes memory message = ONFT1155BatchMsgCodec.encodeMulti(
+            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        );
+        emit CrosschainMintReclaimed(guid, idx, f.srcEid, f.to, f.tokenId, f.amount);
+        msgReceipt = _lzSend(f.srcEid, message, _receiveOption(1), fee, refundAddress);
     }
 }

@@ -586,29 +586,6 @@
     },
     {
       "type": "function",
-      "name": "mintBatch",
-      "inputs": [
-        {
-          "name": "recipients",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "quantities",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "ownedSeriesCount",
       "inputs": [
         {
@@ -1332,22 +1309,6 @@
     },
     {
       "type": "error",
-      "name": "ArrayLengthMismatch",
-      "inputs": [
-        {
-          "name": "length1",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "length2",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "BridgeAfterDeadline",
       "inputs": [
         {
@@ -1392,11 +1353,6 @@
     {
       "type": "error",
       "name": "CollectionDescriptionTooLong",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "EmptyArray",
       "inputs": []
     },
     {

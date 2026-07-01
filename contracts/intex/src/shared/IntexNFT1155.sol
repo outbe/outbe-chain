@@ -23,7 +23,7 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role; gates series lifecycle, mint/mintBatch, expireSeries, and
+    /// @notice Bridge relayer role; gates series lifecycle, mint, expireSeries, and
     ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
@@ -249,68 +249,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function mintBatch(address[] calldata recipients, uint256[] calldata quantities, uint32 seriesId)
-        external
-        onlyRole(RELAYER_ROLE)
-    {
-        if (recipients.length != quantities.length) {
-            revert ArrayLengthMismatch(recipients.length, quantities.length);
-        }
-        if (recipients.length == 0) {
-            revert EmptyArray();
-        }
-
-        IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
-
-        if (data.issuedAt == 0) {
-            revert NonexistentToken(tokenId);
-        }
-
-        // Pre-validate every recipient and per-quantity bound before any state mutation, and
-        // sum the batch so the supply cap is enforced once with the full batch total (not
-        // partially mid-loop). This makes the batch all-or-nothing wrt. the cap.
-        uint256 batchSum = 0;
-        for (uint256 i = 0; i < recipients.length; i++) {
-            if (recipients[i] == address(0)) {
-                revert ZeroAddress("recipient", recipients[i]);
-            }
-            if (quantities[i] > type(uint16).max) revert QuantityTooLarge(quantities[i]);
-            batchSum += quantities[i];
-        }
-
-        // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate is
-        // widened to uint256 so a series with `issuedIntexCount` near `type(uint32).max`
-        // surfaces `SupplyCapExceeded` rather than an arithmetic panic. The cap field is
-        // itself uint32, so any `newTotal > issuedIntexCount` covers `batchSum > uint32.max`
-        // implicitly — no separate batchSum overflow guard is needed.
-        uint256 newTotal = uint256(data.totalSupply) + batchSum;
-        if (newTotal > data.issuedIntexCount) {
-            revert SupplyCapExceeded(seriesId, newTotal, data.issuedIntexCount);
-        }
-        // CEI ok: write the post-batch total before the per-recipient _mint loop so each
-        // ERC1155 receiver callback sees (totalSupply == Σ balanceOf) for the final batch.
-        // Cast is safe because `newTotal ≤ issuedIntexCount ≤ uint32.max`.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.totalSupply = uint32(newTotal);
-
-        for (uint256 i = 0; i < recipients.length; i++) {
-            if (quantities[i] == 0) {
-                continue;
-            }
-            _mint(recipients[i], tokenId, quantities[i], "");
-
-            if ($.auctionWonCount[tokenId][recipients[i]] == 0) {
-                // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-                $.auctionWonCount[tokenId][recipients[i]] = uint16(quantities[i]);
-            }
-
-            emit IntexIssued(msg.sender, tokenId, recipients[i], quantities[i]);
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function markQualified(uint32 seriesId) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = uint256(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
@@ -488,7 +426,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
         // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. The
-        // live-supply invariant matches mint/mintBatch, which also cap on live `totalSupply`.
+        // live-supply invariant matches mint, which also caps on live `totalSupply`.
         // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
         // even at the `issuedIntexCount == type(uint32).max` boundary.
         uint256 newTotal = uint256(data.totalSupply) + amount;
@@ -698,7 +636,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///         owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
-    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint/mintBatch).
+    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
     ///          * Issued token ids are transferable in every series state

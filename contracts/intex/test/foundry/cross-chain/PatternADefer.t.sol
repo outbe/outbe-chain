@@ -59,60 +59,6 @@ contract StubAuctionWithBids {
     }
 }
 
-/// @notice Stub `IONFT1155AdapterBatch` whose `systemMultiSend` and `quoteSystemMultiSend` always
-///         revert with a controllable reason. Used by TM holders-relay defer tests.
-contract StubBatchAdapterReverter is IONFT1155AdapterBatch {
-    error StubBatchRevert();
-
-    function quoteSystemMultiSend(uint256, address[] calldata, uint256[] calldata, uint32, bytes calldata, bool)
-        external
-        pure
-        returns (MessagingFee memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function systemMultiSend(
-        uint256,
-        address[] calldata,
-        uint256[] calldata,
-        uint32,
-        bytes calldata,
-        MessagingFee calldata
-    ) external payable returns (MessagingReceipt memory) {
-        revert StubBatchRevert();
-    }
-
-    // --- Unused interface methods (revert if anyone calls them in this test) ---
-    function quoteBatchSend(BatchSendParam calldata, bool) external pure returns (MessagingFee memory) {
-        revert StubBatchRevert();
-    }
-
-    function batchSend(BatchSendParam calldata, MessagingFee calldata, address)
-        external
-        payable
-        returns (MessagingReceipt memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function quoteMultiSend(MultiRecipientSendParam calldata, bool) external pure returns (MessagingFee memory) {
-        revert StubBatchRevert();
-    }
-
-    function multiSend(MultiRecipientSendParam calldata, MessagingFee calldata, address)
-        external
-        payable
-        returns (MessagingReceipt memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function sweepNative(address payable, uint256) external pure {
-        revert StubBatchRevert();
-    }
-}
-
 /// @title PatternADeferTest
 /// @notice Behavioural coverage Pattern A on `TargetMessenger` (bids relay + holders
 ///         bridge) and `ONFT1155Adapter` (compose forward). Each inbound handler defers the
@@ -130,7 +76,6 @@ contract PatternADeferTest is TestHelperOz5 {
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
-    StubBatchAdapterReverter internal stubBatch;
 
     address internal admin = address(this);
     uint32 internal constant SERIES_ID = 20260301;
@@ -152,10 +97,12 @@ contract PatternADeferTest is TestHelperOz5 {
         onfts[1] = address(onftOutbe);
         this.wireOApps(onfts);
 
-        // Stubs for TM defer scenarios.
+        // Stub auction drives the bids-relay defer/flush; a real batch adapter satisfies the wire
+        // (the holders bridge + its recovery now live in the adapter, covered by its own tests).
         stubAuction = new StubAuctionWithBids();
-        stubBatch = new StubBatchAdapterReverter();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(stubBatch));
+        ONFT1155AdapterBatch batchAdapter =
+            DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(batchAdapter));
 
         // Configure enforcedOptions so `_doSendBidsToOutbe` builds a valid LZ options blob during
         // retry. Without this the ULN rejects with `LZ_ULN_InvalidWorkerOptions(0)`.
@@ -339,42 +286,6 @@ contract PatternADeferTest is TestHelperOz5 {
                 sizes[j++] = abi.decode(logs[i].data, (uint256));
             }
         }
-    }
-
-    // ---------------------------------------------------------------
-    // TargetMessenger — holders relay defer + flush
-    // ---------------------------------------------------------------
-
-    function _markCalledPacket() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
-    }
-
-    function test_TM_HoldersRelayDeferredOnBatchAdapterRevert() public {
-        // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
-        // Skip `markCalled` first — that's what the inbound packet triggers.
-        intex.mint(address(0xCAFE), 1, SERIES_ID);
-
-        _deliverBridge(1, bytes32(uint256(0xD101)), _markCalledPacket());
-
-        // Stub batch adapter reverted → holders relay deferred.
-        // Auto-getter skips the dynamic-array fields (holders, amounts) — returns
-        // (uint256 tokenId, bool exists, bool done).
-        (uint256 storedTokenId, bool exists, bool done) = bnbMessenger.pendingHoldersRelays(0);
-        assertEq(storedTokenId, TOKEN_ID, "deferred tokenId");
-        assertTrue(exists);
-        assertFalse(done);
-    }
-
-    function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchPendingHoldersRelay.selector, 99));
-        bnbMessenger.flushPendingHoldersRelay(99);
-    }
-
-    function test_TM_BridgeSeriesHoldersExt_ExternalCallerRevertsNotSelf() public {
-        address[] memory holders = new address[](0);
-        uint256[] memory amounts = new uint256[](0);
-        vm.expectRevert(ITargetMessenger.NotSelf.selector);
-        bnbMessenger.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
     }
 
     // ---------------------------------------------------------------

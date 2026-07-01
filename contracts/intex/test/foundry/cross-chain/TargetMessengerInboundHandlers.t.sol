@@ -17,10 +17,12 @@ import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
 /// @dev End-to-end traversal of the five `TargetMessenger` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
@@ -128,7 +130,7 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
-    // --- _handleIssuanceInstructions: createSeries + mintBatch on the local IntexNFT1155 ---
+    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
     function test_handleIssuanceInstructions_createsSeriesAndMints() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;
@@ -156,6 +158,104 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "bidder crosschainMinted 5 Issued tokens");
         assertEq(intex.totalSupply(tokenId), 5, "totalSupply == minted amount");
+    }
+
+    // --- _handleIssuanceInstructions: one reverting recipient parks alone; the rest still mint ---
+    function test_handleIssuanceInstructions_revertingRecipientParkedOthersMinted() public {
+        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
+
+        address[] memory recipients = new address[](2);
+        recipients[0] = bidder; // EOA: no receiver hook
+        recipients[1] = address(bad); // reverting hook
+        uint256[] memory quantities = new uint256[](2);
+        quantities[0] = 5;
+        quantities[1] = 7;
+
+        _deliver(BridgeMsgCodec.encodeIssuanceInstructions(_issuancePayload(recipients, quantities)));
+
+        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
+        assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
+        assertEq(intex.totalSupply(tokenId), 5, "only the good mint counts toward supply");
+
+        (uint32 sId, address recipient, uint256 qty, bool exists, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        assertEq(sId, SERIES_ID, "parked seriesId");
+        assertEq(recipient, address(bad), "parked recipient");
+        assertEq(qty, 7, "parked quantity");
+        assertTrue(exists, "parked entry exists");
+        assertFalse(done, "parked entry not flushed");
+        assertEq(bnbMessenger.nextPendingIssuanceMintIdx(), 1, "exactly one parked");
+    }
+
+    // --- flushPendingIssuanceMint: parked recipient mints once it accepts; re-flush reverts ---
+    function test_flushPendingIssuanceMint_mintsAfterRecipientAccepts() public {
+        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
+
+        address[] memory recipients = new address[](1);
+        recipients[0] = address(bad);
+        uint256[] memory quantities = new uint256[](1);
+        quantities[0] = 7;
+
+        _deliver(BridgeMsgCodec.encodeIssuanceInstructions(_issuancePayload(recipients, quantities)));
+
+        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        assertEq(intex.balanceOf(address(bad), tokenId), 0, "not minted while rejecting");
+
+        bad.setReject(false);
+
+        vm.prank(address(0xDEAD)); // permissionless
+        bnbMessenger.flushPendingIssuanceMint(0);
+
+        assertEq(intex.balanceOf(address(bad), tokenId), 7, "minted after flush");
+        (,,,, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        assertTrue(done, "slot marked done");
+
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.AlreadyFlushed.selector, uint256(0)));
+        bnbMessenger.flushPendingIssuanceMint(0);
+    }
+
+    // --- #73: a downstream-handler revert parks for replay; replayInbound applies it once fixed ---
+    function test_inboundParkedThenReplayedAfterFix() public {
+        bytes32 peer = bytes32(uint256(uint160(address(outbeMessenger))));
+
+        // MARK_QUALIFIED before the series exists: markQualified reverts downstream (not a codec error).
+        vm.expectEmit(true, true, false, false, address(bnbMessenger));
+        emit ITargetMessenger.InboundParkedForReplay(GUID, OUTBE_EID, "");
+        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID));
+
+        (uint32 srcEid, bool exists) = bnbMessenger.droppedInbound(GUID);
+        assertEq(srcEid, OUTBE_EID, "parked srcEid");
+        assertTrue(exists, "transition parked for replay");
+        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "nonce advanced on park");
+
+        // Fix the blocking condition: create the series so markQualified now applies.
+        _seedSeriesOnIntex();
+
+        bnbMessenger.replayInbound(GUID); // permissionless
+
+        assertEq(
+            uint8(intex.readData(SERIES_ID).state),
+            uint8(IIntexNFT1155.IntexState.Qualified),
+            "transition applied on replay"
+        );
+        (, bool stillExists) = bnbMessenger.droppedInbound(GUID);
+        assertFalse(stillExists, "entry cleared on successful replay");
+        assertEq(bnbMessenger.inboundNonce(OUTBE_EID, peer), 1, "replay does not touch the nonce");
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchDropped.selector, GUID));
+        bnbMessenger.replayInbound(GUID);
+    }
+
+    // --- #73: a malformed payload still drops terminally and parks nothing ---
+    function test_malformedInboundStillDropped() public {
+        // Unknown msgType (0xFE) -> BridgeMsgCodec.UnknownMsgType, a wire-format error -> dropped, not parked.
+        vm.expectEmit(true, true, false, false, address(bnbMessenger));
+        emit ITargetMessenger.InboundMessageDropped(GUID, OUTBE_EID, "");
+        _deliver(hex"01FE");
+
+        (, bool exists) = bnbMessenger.droppedInbound(GUID);
+        assertFalse(exists, "malformed payload is not parked");
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---
@@ -220,6 +320,28 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
 
     function _seedSeriesOnIntex() internal {
         intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+    }
+
+    function _issuancePayload(address[] memory recipients, uint256[] memory quantities)
+        internal
+        pure
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+    {
+        return BridgeMsgCodec.IssuanceInstructionsPayload({
+            seriesId: SERIES_ID,
+            issuedIntexCount: ISSUED_INTEX_COUNT,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            entryPriceMinor: ENTRY_PRICE,
+            floorPriceMinor: FLOOR_PRICE_MINOR,
+            intexCallPeriod: 0,
+            issuanceCurrency: 840,
+            referenceCurrency: REFERENCE_CURRENCY,
+            callWindowDays: 30,
+            callThresholdDays: 5,
+            callPriceMinor: 25e6,
+            recipients: recipients,
+            quantities: quantities
+        });
     }
 
     function _deliver(bytes memory packet) internal {

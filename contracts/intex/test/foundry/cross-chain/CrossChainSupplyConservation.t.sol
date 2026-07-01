@@ -139,6 +139,52 @@ contract CrossChainSupplyConservationTest is TestHelperOz5 {
         assertEq(totalAfterRetry, minted, "SI-09: sum preserved after retry");
     }
 
+    function test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply() public {
+        // Series qualified on A only: bridging A->B parks on B (series missing there); the reverse
+        // re-mint on A succeeds because A's series is mintable. reclaimToSource is the only exit when
+        // the destination gate is terminal.
+        uint32 series = 20260701;
+        uint256 tokenId = uint256(series);
+        tokenA.createSeries(CreateSeriesLib.params(series, ISSUED_INTEX_COUNT, 0));
+        tokenA.markQualified(series);
+
+        uint256 minted = 100;
+        tokenA.mint(user, minted, series);
+        MessagingReceipt memory r = _send(adapterA, B_EID, user, tokenId, minted);
+
+        assertEq(tokenA.totalSupply(tokenId), 0, "A burned the bridged units");
+        (,, uint256 parkedAmount,,, bool exists) = adapterB.failedCrosschainMints(r.guid);
+        assertTrue(exists, "stranded on B");
+        assertEq(parkedAmount, minted, "parked == bridged");
+
+        // Reverse the stranded transfer back to the origin chain.
+        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(400000, 0);
+        SendParam memory reverseParams = SendParam({
+            dstEid: A_EID,
+            to: bytes32(uint256(uint160(user))),
+            tokenId: tokenId,
+            amount: minted,
+            extraOptions: options,
+            composeMsg: ""
+        });
+        MessagingFee memory fee = adapterB.quoteSend(reverseParams, false);
+        vm.deal(address(this), fee.nativeFee);
+        adapterB.reclaimToSource{value: fee.nativeFee}(r.guid, options, fee, address(this));
+        verifyPackets(A_EID, bytes32(uint256(uint160(address(adapterA)))));
+
+        assertEq(tokenA.balanceOf(user, tokenId), minted, "holder restored on origin");
+        assertEq(tokenA.totalSupply(tokenId), minted, "A re-minted the reclaimed units");
+        (,,,,, bool stillExists) = adapterB.failedCrosschainMints(r.guid);
+        assertFalse(stillExists, "park entry consumed by reclaim");
+
+        uint256 total = tokenA.totalSupply(tokenId) + tokenB.totalSupply(tokenId);
+        assertEq(total, minted, "supply conserved after reclaim");
+
+        // Consume once: a second reclaim reverts.
+        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, r.guid));
+        adapterB.reclaimToSource(r.guid, options, fee, address(this));
+    }
+
     function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 mintedSeed, uint256 bridgedSeed) public {
         uint256 minted = bound(mintedSeed, 1, ISSUED_INTEX_COUNT);
         uint256 bridged = bound(bridgedSeed, 0, minted);

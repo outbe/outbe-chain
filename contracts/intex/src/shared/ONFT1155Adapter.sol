@@ -62,6 +62,7 @@ contract ONFT1155Adapter is
         address to;
         uint256 tokenId;
         uint256 amount;
+        uint32 srcEid;
         bytes composeMsgData;
         bytes reason;
         bool exists;
@@ -106,6 +107,9 @@ contract ONFT1155Adapter is
     /// @notice No failed-crosschainMint entry exists for `guid`.
     error NoSuchFailedCrosschainMint(bytes32 guid);
 
+    /// @notice Parked entry carries no origin endpoint id (pre-upgrade entry); reclaim cannot route back.
+    error NoSourceEid(bytes32 guid);
+
     /// @notice Emitted when `endpoint.sendCompose` reverts inside `_lzReceive` and the compose
     ///         forward is parked for later recovery via `flushPendingCompose`.
     /// @param idx Index of the parked `pendingComposes` slot.
@@ -132,6 +136,16 @@ contract ONFT1155Adapter is
     /// @notice Emitted when `retryCrosschainMint` successfully crosschainMints a previously failed transfer.
     /// @param guid Inbound packet GUID whose parked crosschainMint was retried.
     event CrosschainMintRetried(bytes32 indexed guid);
+
+    /// @notice Emitted when a terminally-failed crosschainMint is reclaimed to its origin chain for re-mint.
+    /// @param guid Inbound packet GUID whose parked crosschainMint was reclaimed.
+    /// @param srcEid Origin endpoint id the reverse transfer was sent to.
+    /// @param to Holder re-minted on the origin chain.
+    /// @param tokenId Token ID reclaimed.
+    /// @param amount Amount reclaimed.
+    event CrosschainMintReclaimed(
+        bytes32 indexed guid, uint32 indexed srcEid, address indexed to, uint256 tokenId, uint256 amount
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _token, address _lzEndpoint) OAppUpgradeable(_lzEndpoint) {
@@ -294,6 +308,7 @@ contract ONFT1155Adapter is
                 to: toAddress,
                 tokenId: tokenId_,
                 amount: amount_,
+                srcEid: _origin.srcEid,
                 composeMsgData: composeMsgData,
                 reason: reason,
                 exists: true
@@ -328,6 +343,31 @@ contract ONFT1155Adapter is
             _tryDeliverCompose(f.to, guid, f.composeMsgData);
         }
         emit CrosschainMintRetried(guid);
+    }
+
+    /// @notice Permissionless reclaim of a crosschainMint the destination gate rejects terminally:
+    ///         re-mints the holder on the origin chain via a reverse transfer, the only exit that does
+    ///         not re-hit the destination lifecycle gate. Consumes the entry once (CEI delete first).
+    /// @param guid Inbound packet GUID whose crosschainMint is stranded.
+    /// @param extraOptions Caller-supplied LZ options for the reverse send (combined with enforced options).
+    /// @param fee LayerZero messaging fee for the reverse send (caller-funded).
+    /// @param refundAddress Address refunded any excess native fee.
+    function reclaimToSource(
+        bytes32 guid,
+        bytes calldata extraOptions,
+        MessagingFee calldata fee,
+        address refundAddress
+    ) external payable nonReentrant returns (MessagingReceipt memory msgReceipt) {
+        ONFT1155AdapterStorage storage $ = _s();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[guid];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(guid);
+        if (f.srcEid == 0) revert NoSourceEid(guid);
+        delete $.failedCrosschainMints[guid];
+
+        (bytes memory message,) = ONFT1155MsgCodec.encode(bytes32(uint256(uint160(f.to))), f.tokenId, f.amount, "");
+        bytes memory options = combineOptions(f.srcEid, SEND, extraOptions);
+        emit CrosschainMintReclaimed(guid, f.srcEid, f.to, f.tokenId, f.amount);
+        msgReceipt = _lzSend(f.srcEid, message, options, fee, refundAddress);
     }
 
     /// @dev Self-call wrapper around `endpoint.sendCompose` that isolates a composer-side revert

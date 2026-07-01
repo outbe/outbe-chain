@@ -63,16 +63,22 @@ contract TargetMessenger is
         bool done;
     }
 
-    /// @notice Deferred holders bridge enqueued because the inbound `_handleMarkCalled` could not
-    ///         forward all holders+amounts via `onftBatchAdapter.systemMultiSend`.
-    /// @dev Snapshot `tokenId`, `holders[]` and `amounts[]` at `_lzReceive` time — markCalled does
-    ///      not change balances afterwards, so the snapshot remains the canonical work to be done.
-    struct PendingHoldersRelay {
-        uint256 tokenId;
-        address[] holders;
-        uint256[] amounts;
+    /// @notice Issuance mint parked because one recipient's `mint` reverted (e.g. a reverting ERC-1155
+    ///         receiver hook); retried via `flushPendingIssuanceMint`.
+    struct PendingIssuanceMint {
+        uint32 seriesId;
+        address recipient;
+        uint256 quantity;
         bool exists;
         bool done;
+    }
+
+    /// @notice Inbound message parked because its handler (not the codec) reverted, so it can be
+    ///         re-dispatched via `replayInbound` once the blocking condition clears.
+    struct DroppedInbound {
+        uint32 srcEid;
+        bytes message;
+        bool exists;
     }
 
     /// @custom:storage-location erc7201:outbe.intex.TargetMessenger
@@ -96,10 +102,12 @@ contract TargetMessenger is
         ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
         ///      relay cannot double-count demand.
         mapping(uint32 seriesId => uint32 generation) bidsRelayGeneration;
-        /// @dev Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
-        /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-        uint256 nextPendingHoldersRelayIdx;
+        /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
+        /// @dev Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
+        uint256 nextPendingIssuanceMintIdx;
+        /// @dev Inbound messages parked for replay, keyed by guid; set when a handler (not the codec) reverts.
+        mapping(bytes32 guid => DroppedInbound) droppedInbound;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
@@ -184,20 +192,26 @@ contract TargetMessenger is
         return _s().nextPendingBidsRelayIdx;
     }
 
-    /// @notice Parked holders bridge by enqueue index (scalar fields; arrays stay internal).
+    /// @notice Parked issuance mint by enqueue index.
     /// @param idx Enqueue index.
-    /// @return tokenId Token id whose holders bridge was deferred.
-    /// @return exists True when the index holds a parked bridge.
-    /// @return done True when the bridge was already flushed.
-    function pendingHoldersRelays(uint256 idx) external view returns (uint256 tokenId, bool exists, bool done) {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
-        return (p.tokenId, p.exists, p.done);
+    /// @return seriesId Series whose recipient mint was deferred.
+    /// @return recipient Recipient whose mint was deferred.
+    /// @return quantity Quantity that failed to mint.
+    /// @return exists True when the index holds a parked mint.
+    /// @return done True when the mint was already flushed.
+    function pendingIssuanceMints(uint256 idx)
+        external
+        view
+        returns (uint32 seriesId, address recipient, uint256 quantity, bool exists, bool done)
+    {
+        PendingIssuanceMint storage p = _s().pendingIssuanceMints[idx];
+        return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
     }
 
-    /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
+    /// @notice Next index to assign in `pendingIssuanceMints`; also the count of mints ever enqueued.
     /// @return The next enqueue index.
-    function nextPendingHoldersRelayIdx() external view returns (uint256) {
-        return _s().nextPendingHoldersRelayIdx;
+    function nextPendingIssuanceMintIdx() external view returns (uint256) {
+        return _s().nextPendingIssuanceMintIdx;
     }
 
     // --- Admin ---
@@ -309,11 +323,17 @@ contract TargetMessenger is
         // invariant for the next delivery on this `(srcEid, sender)` channel.
         _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
 
-        // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or any
-        // downstream transition must not escape `_lzReceive` and wedge the ORDERED lane.
+        // Drop-don't-block: the nonce is already advanced, so a revert must not escape `_lzReceive`.
+        // A malformed payload still drops; an authentic transition that reverted downstream parks
+        // under its guid for `replayInbound` instead of being lost.
         try this.dispatchInbound(_guid, _origin.srcEid, _message) {}
         catch (bytes memory reason) {
-            emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            if (_isWireFormatError(reason)) {
+                emit InboundMessageDropped(_guid, _origin.srcEid, reason);
+            } else {
+                _s().droppedInbound[_guid] = DroppedInbound({srcEid: _origin.srcEid, message: _message, exists: true});
+                emit InboundParkedForReplay(_guid, _origin.srcEid, reason);
+            }
         }
     }
 
@@ -347,6 +367,41 @@ contract TargetMessenger is
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
+    }
+
+    /// @notice Parked inbound message by guid (scalar fields; the raw message stays internal).
+    /// @param guid LayerZero message GUID.
+    /// @return srcEid Source endpoint id of the parked message.
+    /// @return exists True when a parked message is present.
+    function droppedInbound(bytes32 guid) external view returns (uint32 srcEid, bool exists) {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        return (d.srcEid, d.exists);
+    }
+
+    /// @notice Permissionless re-dispatch of an inbound message parked because its handler reverted.
+    /// @param guid LayerZero message GUID of the parked message.
+    function replayInbound(bytes32 guid) external nonReentrant {
+        DroppedInbound storage d = _s().droppedInbound[guid];
+        if (!d.exists) revert NoSuchDropped(guid);
+        // Re-run the same shim; a still-failing handler reverts the whole call so the entry stays parked.
+        this.dispatchInbound(guid, d.srcEid, d.message);
+        delete _s().droppedInbound[guid];
+        emit InboundReplayed(guid);
+    }
+
+    /// @dev True when `reason` is a BridgeMsgCodec wire-format/decode error (malformed payload) rather
+    ///      than a downstream-handler revert. Malformed payloads drop; everything else parks for replay.
+    function _isWireFormatError(bytes memory reason) private pure returns (bool) {
+        if (reason.length < 4) return false;
+        bytes4 sel = bytes4(reason);
+        return sel == BridgeMsgCodec.UnsupportedBodyVersion.selector
+            || sel == BridgeMsgCodec.InvalidPayloadLength.selector || sel == BridgeMsgCodec.UnknownMsgType.selector
+            || sel == BridgeMsgCodec.InvalidGreenDayFlag.selector
+            || sel == BridgeMsgCodec.IssuanceArrayLengthMismatch.selector
+            || sel == BridgeMsgCodec.IssuanceBatchTooLarge.selector
+            || sel == BridgeMsgCodec.RefundArrayLengthMismatch.selector
+            || sel == BridgeMsgCodec.RefundBatchTooLarge.selector || sel == BridgeMsgCodec.PayloadArrayTooLong.selector
+            || sel == BridgeMsgCodec.MalformedAddress.selector;
     }
 
     /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.
@@ -539,9 +594,45 @@ contract TargetMessenger is
                     })
                 })
             );
-        $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
+        // Per-recipient self-call: a reverting receiver hook parks just that mint, not the whole batch.
+        uint256 recipientsLen = payload.recipients.length;
+        for (uint256 i = 0; i < recipientsLen; i++) {
+            uint256 quantity = payload.quantities[i];
+            if (quantity == 0) continue;
+            address recipient = payload.recipients[i];
+            try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {
+            // ok — recipient minted
+            }
+            catch (bytes memory reason) {
+                uint256 idx = $.nextPendingIssuanceMintIdx++;
+                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                });
+                emit IssuanceMintDeferred(idx, payload.seriesId, reason);
+            }
+        }
 
         emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
+    }
+
+    /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
+    /// @param seriesId Series identifier the recipient is minted under.
+    /// @param to Recipient address.
+    /// @param quantity Amount of Intex to mint.
+    function mintIssuanceOne(uint32 seriesId, address to, uint256 quantity) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        _s().intex.mint(to, quantity, seriesId);
+    }
+
+    /// @notice Permissionless retry of a previously deferred issuance mint.
+    /// @param idx Index of the parked mint to flush.
+    function flushPendingIssuanceMint(uint256 idx) external nonReentrant {
+        PendingIssuanceMint storage p = _s().pendingIssuanceMints[idx];
+        if (!p.exists) revert NoSuchPendingIssuanceMint(idx);
+        if (p.done) revert AlreadyFlushed(idx);
+        p.done = true;
+        _s().intex.mint(p.recipient, p.quantity, p.seriesId);
+        emit IssuanceMintFlushed(idx, p.seriesId);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
@@ -577,22 +668,9 @@ contract TargetMessenger is
         uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
-
-        uint256 tokenId = $.intex.issuedTokenId(seriesId);
-        (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
-
-        if (holders.length > 0) {
-            try this.bridgeSeriesHoldersExt(tokenId, holders, amounts) {
-            // ok — holders forwarded
-            }
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingHoldersRelayIdx++;
-                $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                    tokenId: tokenId, holders: holders, amounts: amounts, exists: true, done: false
-                });
-                emit HoldersRelayDeferred(idx, tokenId, holders.length, reason);
-            }
-        }
+        // The adapter reads the series holders itself, burns + bridges them, and owns the retry
+        // recovery; markCalled (the status flip) stays here.
+        $.onftBatchAdapter.bridgeHoldersWithRecovery(seriesId, OUTBE_EID);
 
         emit MarkCalledReceived(_guid, _srcEid, seriesId);
     }
@@ -609,42 +687,6 @@ contract TargetMessenger is
         _s().intex.markQualified(seriesId);
 
         emit MarkQualifiedReceived(_guid, _srcEid, seriesId);
-    }
-
-    /// @notice Self-call shim around `_doBridgeSeriesHolders`. Only callable by this contract itself.
-    /// @param tokenId Token id (series) whose holders are bridged.
-    /// @param holders Source chain holder addresses.
-    /// @param amounts Corresponding balances for each holder.
-    function bridgeSeriesHoldersExt(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts) external {
-        if (msg.sender != address(this)) revert NotSelf();
-        _doBridgeSeriesHolders(tokenId, holders, amounts);
-    }
-
-    /// @notice Permissionless retry of a previously deferred holders bridge.
-    /// @param idx Index of the parked relay to flush.
-    function flushPendingHoldersRelay(uint256 idx) external nonReentrant {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
-        if (!p.exists) revert NoSuchPendingHoldersRelay(idx);
-        if (p.done) revert AlreadyFlushed(idx);
-        p.done = true;
-        _doBridgeSeriesHolders(p.tokenId, p.holders, p.amounts);
-        emit HoldersRelayFlushed(idx, p.tokenId);
-    }
-
-    /// @notice Quote and execute systemMultiSend via ONFT1155AdapterBatch to bridge series holders.
-    /// @dev Uses the pre-funded balance of `onftBatchAdapter` for LZ fees.
-    /// @param tokenId Token ID (series) to bridge
-    /// @param holders Source chain holder addresses
-    /// @param amounts Corresponding balances for each holder
-    function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        TargetMessengerStorage storage $ = _s();
-        bytes memory empty = "";
-        MessagingFee memory fee =
-            $.onftBatchAdapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_EID, empty, false);
-        // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the LayerZero
-        // MessagingReceipt return value is informational and intentionally discarded.
-        // slither-disable-next-line arbitrary-send-eth,unused-return
-        $.onftBatchAdapter.systemMultiSend{value: fee.nativeFee}(tokenId, holders, amounts, OUTBE_EID, empty, fee);
     }
 
     // --- Internal helpers ---

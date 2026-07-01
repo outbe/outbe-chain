@@ -176,23 +176,6 @@ contract IntexNFT1155Test is Test {
         nft.mint(user, tooLarge, SERIES_ID_1);
     }
 
-    function test_MintBatch() public {
-        address[] memory recipients = new address[](2);
-        recipients[0] = user;
-        recipients[1] = user2;
-
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 5;
-        quantities[1] = 10;
-
-        _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
-
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 10);
-    }
-
     function test_AuctionWonCount_SingleMint() public {
         _createSeries(SERIES_ID_1, 0);
         vm.prank(bridger);
@@ -202,24 +185,6 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.getAuctionWonCount(SERIES_ID_1, user), 10);
         // Non-minted address should return 0.
         assertEq(nft.getAuctionWonCount(SERIES_ID_1, user2), 0);
-    }
-
-    function test_AuctionWonCount_MintBatch() public {
-        address[] memory recipients = new address[](2);
-        recipients[0] = user;
-        recipients[1] = user2;
-
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 5;
-        quantities[1] = 10;
-
-        _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
-
-        // Auction won counts should be recorded for each recipient.
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user), 5);
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user2), 10);
     }
 
     function test_AuctionWonCount_UnchangedAfterTransfer() public {
@@ -239,30 +204,6 @@ contract IntexNFT1155Test is Test {
         // Current balances are different from initial.
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
         assertEq(nft.balanceOf(user2, TOKEN_ID_1), 3);
-    }
-
-    function test_MintBatchArrayLengthMismatch() public {
-        address[] memory recipients = new address[](2);
-        recipients[0] = user;
-        recipients[1] = user2;
-
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 5;
-
-        _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ArrayLengthMismatch.selector, 2, 1));
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
-    }
-
-    function test_MintBatchEmptyArray() public {
-        address[] memory recipients = new address[](0);
-        uint256[] memory quantities = new uint256[](0);
-
-        _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.EmptyArray.selector));
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
     }
 
     function test_MarkCalled() public {
@@ -1151,19 +1092,13 @@ contract IntexNFT1155Test is Test {
         }
     }
 
-    function test_EnumerableMintBatch() public {
+    function test_EnumerableMultiHolderMint() public {
         _createSeries(SERIES_ID_1, 0);
 
-        address[] memory recipients = new address[](2);
-        recipients[0] = user;
-        recipients[1] = user2;
-
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 5;
-        quantities[1] = 10;
-
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
+        vm.startPrank(bridger);
+        nft.mint(user, 5, SERIES_ID_1);
+        nft.mint(user2, 10, SERIES_ID_1);
+        vm.stopPrank();
 
         assertEq(nft.ownedSeriesCount(user), 1);
         assertEq(nft.ownedSeriesCount(user2), 1);
@@ -1389,17 +1324,12 @@ contract IntexNFT1155Test is Test {
         assertEq(holders.length, 0);
     }
 
-    function test_SeriesHolders_MintBatchTracksAll() public {
-        address[] memory recipients = new address[](2);
-        recipients[0] = user;
-        recipients[1] = user2;
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 10;
-        quantities[1] = 5;
-
+    function test_SeriesHolders_TracksAllHolders() public {
         _createSeries(SERIES_ID_1, 0);
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.mint(user2, 5, SERIES_ID_1);
+        vm.stopPrank();
 
         assertEq(nft.seriesHolderCount(TOKEN_ID_1), 2);
 
@@ -1479,25 +1409,6 @@ contract IntexNFT1155Test is Test {
 
         assertTrue(receiver.observed(), "callback did not fire");
         assertEq(receiver.observedBalance(), 9, "balance updated mid-callback");
-        assertEq(
-            receiver.observedTotalSupply(), receiver.observedBalance(), "totalSupply must equal balance mid-callback"
-        );
-    }
-
-    function test_MintBatch_TotalSupplyConsistentMidCallback() public {
-        _createSeries(SERIES_ID_1, 0);
-        MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
-
-        address[] memory recipients = new address[](1);
-        recipients[0] = address(receiver);
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 4;
-
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID_1);
-
-        assertTrue(receiver.observed(), "callback did not fire");
-        assertEq(receiver.observedBalance(), 4, "balance updated mid-callback");
         assertEq(
             receiver.observedTotalSupply(), receiver.observedBalance(), "totalSupply must equal balance mid-callback"
         );

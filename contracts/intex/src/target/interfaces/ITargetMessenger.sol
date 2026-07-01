@@ -76,18 +76,17 @@ interface ITargetMessenger {
     /// @param seriesId Series identifier whose bids were forwarded.
     event BidsRelayFlushed(uint256 indexed idx, uint32 indexed seriesId);
 
-    /// @notice Emitted when the outbound holders bridge from `_handleMarkCalled` reverts and the
-    ///         holders+amounts snapshot is parked for later retry via `flushPendingHoldersRelay`.
-    /// @param idx Index of the parked relay slot.
-    /// @param tokenId Token id whose holders could not be bridged.
-    /// @param holdersCount Number of holders in the deferred snapshot.
-    /// @param reason Raw revert bytes from the failed `systemMultiSend`.
-    event HoldersRelayDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
+    /// @notice Emitted when a single issuance mint reverts (e.g. a reverting recipient ERC-1155 hook) and
+    ///         the recipient is parked for later retry via `flushPendingIssuanceMint`.
+    /// @param idx Index of the parked issuance-mint slot.
+    /// @param seriesId Series identifier whose recipient mint was deferred.
+    /// @param reason Raw revert bytes from the failed `mint`.
+    event IssuanceMintDeferred(uint256 indexed idx, uint32 indexed seriesId, bytes reason);
 
-    /// @notice Emitted when `flushPendingHoldersRelay` successfully bridges a previously deferred snapshot.
-    /// @param idx Index of the parked relay slot that was flushed.
-    /// @param tokenId Token id whose holders were bridged.
-    event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
+    /// @notice Emitted when `flushPendingIssuanceMint` successfully mints a previously deferred recipient.
+    /// @param idx Index of the parked issuance-mint slot that was flushed.
+    /// @param seriesId Series identifier whose recipient was minted.
+    event IssuanceMintFlushed(uint256 indexed idx, uint32 indexed seriesId);
 
     /// @notice Emitted when an inbound message reverts during decode or dispatch and is dropped so the
     ///         ORDERED lane keeps advancing. The nonce has already moved; the message is not retried.
@@ -95,6 +94,17 @@ interface ITargetMessenger {
     /// @param srcEid LayerZero source endpoint id.
     /// @param reason Raw revert bytes from the dropped dispatch.
     event InboundMessageDropped(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
+
+    /// @notice Emitted when an authentic inbound transition reverts downstream and is parked under its
+    ///         guid for `replayInbound` instead of being dropped.
+    /// @param guid LayerZero message GUID.
+    /// @param srcEid LayerZero source endpoint id.
+    /// @param reason Raw revert bytes from the parked dispatch.
+    event InboundParkedForReplay(bytes32 indexed guid, uint32 indexed srcEid, bytes reason);
+
+    /// @notice Emitted when `replayInbound` successfully re-applies a previously parked inbound message.
+    /// @param guid LayerZero message GUID that was replayed.
+    event InboundReplayed(bytes32 indexed guid);
 
     // --- Types ---
     /// @notice Parameters for sending bids batch to Outbe
@@ -126,8 +136,10 @@ interface ITargetMessenger {
     error NotSelf();
     /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
     error NoSuchPendingBidsRelay(uint256 idx);
-    /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
-    error NoSuchPendingHoldersRelay(uint256 idx);
+    /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
+    error NoSuchPendingIssuanceMint(uint256 idx);
+    /// @notice `replayInbound` called for a guid with no parked inbound message.
+    error NoSuchDropped(bytes32 guid);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
     error AlreadyFlushed(uint256 idx);
     /// @notice External entry-funded call supplied less native than the quoted LZ fee.

@@ -59,14 +59,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Series-level data, stored per token id (one entry for the Issued token id
     ///         and one for the Settled token id; `status` distinguishes them).
     /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the current
-    ///      `totalSupply` minted via `mint`/`mintBatch` (a burn frees cap room).
+    ///      `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
         /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
         uint16 referenceCurrency;
         /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
-        ///         never mutated; `mint`/`mintBatch` reject pushing `totalSupply` past it.
+        ///         never mutated; `mint` rejects pushing `totalSupply` past it.
         uint32 issuedIntexCount;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
@@ -165,10 +165,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error InvalidCallPeriod(uint32 intexCallPeriod);
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
-    /// @notice Input array lengths do not match.
-    error ArrayLengthMismatch(uint256 length1, uint256 length2);
-    /// @notice Empty array provided.
-    error EmptyArray();
     /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
     error ZeroIssuedIntexCount();
     /// @notice A settlement or burn amount was zero.
@@ -221,12 +217,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param quantity Amount to mint (bounded by `type(uint16).max` and the series supply cap).
     /// @param seriesId Series identifier.
     function mint(address to, uint256 quantity, uint32 seriesId) external;
-
-    /// @notice Mint Intex to multiple addresses in one transaction.
-    /// @param recipients Recipient addresses, parallel to `quantities`.
-    /// @param quantities Per-recipient mint amounts, parallel to `recipients`.
-    /// @param seriesId Series identifier.
-    function mintBatch(address[] calldata recipients, uint256[] calldata quantities, uint32 seriesId) external;
 
     /// @notice Mark a series as Qualified (Issued -> Qualified).
     /// @param seriesId Series identifier.
