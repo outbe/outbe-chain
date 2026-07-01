@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -39,31 +37,16 @@ interface IUpgradeProbe {
 /// @dev End-to-end upgrade rehearsal: deploy v1 behind a proxy, populate real state, upgrade the
 ///      implementation to a v1.1 stub that adds a new view, then assert that persisted state
 ///      survived the upgrade, the implementation pointer moved, and the new view is callable.
-///      Covers one upgrade per impl contract.
-/// @dev The three ERC-7786 clients (OriginMessenger, TargetMessenger, ONFT1155AdapterBatch) run against a standalone
-///      {MockERC7786Bridge}; the single `ONFT1155Adapter` stays a LayerZero OApp, so the `TestHelperOz5` endpoint
-///      harness is retained for it (mirrors `ONFTAdapters.uups.t.sol`).
-contract UpgradeDrillTest is TestHelperOz5 {
-    // LayerZero endpoint ids for the single (unchanged) `ONFT1155Adapter` drill.
-    uint32 internal constant A_EID = 1;
-    uint32 internal constant B_EID = 2;
-    // ERC-7786 chainIds for the bridge-client drills.
+///      Covers one upgrade per impl contract. All four bridge clients (OriginMessenger, TargetMessenger, both
+///      ONFT adapters) run against a standalone {MockERC7786Bridge}.
+contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
     uint32 internal constant B_CHAIN_ID = 2;
 
     address internal admin = makeAddr("admin");
 
-    MockERC7786Bridge internal bridge;
-
-    function setUp() public override {
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
-        bridge = new MockERC7786Bridge();
-    }
-
-    /// @dev ERC-7930 interoperable address for `a` on `chainId`.
-    function _interop(uint32 chainId, address a) internal pure returns (bytes memory) {
-        return InteroperableAddress.formatEvmV1(chainId, a);
+    function setUp() public {
+        _setUpBridge();
     }
 
     function _assertUpgraded(address proxy, address newImpl) internal view {
@@ -228,19 +211,20 @@ contract UpgradeDrillTest is TestHelperOz5 {
 
     function test_Drill_ONFT1155Adapter() public {
         address tokenAddr = makeAddr("token");
-        ONFT1155Adapter adapter = DeployProxy.onftAdapter(tokenAddr, address(endpoints[A_EID]), admin);
+        ONFT1155Adapter adapter = DeployProxy.onftAdapter(tokenAddr, address(bridge), admin);
+        bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
         vm.prank(admin);
-        adapter.setPeer(B_EID, addressToBytes32(address(0xBEEF)));
+        adapter.setRemoteMessenger(B_CHAIN_ID, remote);
 
-        ONFT1155AdapterV2 newImpl = new ONFT1155AdapterV2(tokenAddr, address(endpoints[A_EID]));
+        ONFT1155AdapterV2 newImpl = new ONFT1155AdapterV2(tokenAddr, address(bridge));
         vm.prank(admin);
         adapter.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(adapter), address(newImpl));
-        assertEq(adapter.peers(B_EID), addressToBytes32(address(0xBEEF)), "peer lost");
+        assertEq(adapter.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
         assertEq(address(adapter.token()), tokenAddr, "token immutable lost");
-        assertEq(adapter.owner(), admin, "owner lost");
+        assertTrue(adapter.hasRole(adapter.DEFAULT_ADMIN_ROLE(), admin), "admin role lost");
     }
 
     function test_Drill_ONFT1155AdapterBatch() public {

@@ -43,14 +43,13 @@ abstract contract UpgradeBase is BaseScript {
 
 /// @title UpgradeBsc
 /// @notice Upgrade the BNB-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, LZ_ENDPOINT, OUTBE_CHAIN_ID.
+/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, OUTBE_CHAIN_ID.
 ///      Impl constructor args mirror DeployBsc so the immutables are unchanged.
 contract UpgradeBsc is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
-        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 outbeChainId = uint32(vm.envUint("OUTBE_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
@@ -60,7 +59,7 @@ contract UpgradeBsc is UpgradeBase {
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
         upgradeProxy(factory, deployer, "EscrowAdapter", address(new EscrowAdapter()));
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, lzEndpoint)));
+        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
         upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
         upgradeProxy(factory, deployer, "TargetMessenger", address(new TargetMessenger(bridge, outbeChainId)));
         vm.stopBroadcast();
@@ -69,14 +68,12 @@ contract UpgradeBsc is UpgradeBase {
 
 /// @title UpgradeOutbe
 /// @notice Upgrade the Outbe-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, LZ_ENDPOINT, BNB_CHAIN_ID. Impl constructor args mirror
-///      DeployOutbe.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID. Impl constructor args mirror DeployOutbe.
 contract UpgradeOutbe is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
-        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
@@ -84,7 +81,7 @@ contract UpgradeOutbe is UpgradeBase {
 
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, lzEndpoint)));
+        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
         upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
         upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
         vm.stopBroadcast();
