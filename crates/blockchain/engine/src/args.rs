@@ -134,25 +134,12 @@ pub struct ConsensusArgs {
     pub tee_bootstrap_timeout_secs: u64,
 
     /// Run as a FOLLOWER: cold-sync finalized blocks from this upstream node and
-    /// verify them against the trusted network identity, instead of running the
-    /// consensus engine. The lightweight full-node path. Mutually exclusive with
+    /// verify them against the committee (anchored on the genesis validator set,
+    /// read from the node's own genesis state), instead of running the consensus
+    /// engine. The lightweight full-node path. Mutually exclusive with
     /// `--validator`.
     #[arg(long = "upstream", value_name = "URL", conflicts_with = "is_validator")]
     pub upstream: Option<String>,
-
-    /// Trusted network identity: the BLS12-381 threshold group public key (hex)
-    /// the follower anchors finalization verification on. Overrides the genesis
-    /// `networkIdentity` config value.
-    #[arg(long = "consensus.network-identity", value_name = "HEX")]
-    pub network_identity: Option<String>,
-
-    /// Epoch from which `--consensus.network-identity` is valid.
-    #[arg(
-        long = "consensus.network-identity-from-epoch",
-        value_name = "EPOCH",
-        default_value_t = 0
-    )]
-    pub network_identity_from_epoch: u64,
 
     /// Dev only: follow without verifying consensus certificates (EL-only sync).
     /// Requires `--upstream`.
@@ -302,8 +289,6 @@ mod tests {
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
             upstream: None,
-            network_identity: None,
-            network_identity_from_epoch: 0,
             upstream_nocertify: false,
         }
     }

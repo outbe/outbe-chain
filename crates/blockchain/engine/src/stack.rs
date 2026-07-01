@@ -181,32 +181,6 @@ fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
     }
 }
 
-/// Read the optional trusted network identity from genesis.json `config`:
-///   `"networkIdentity": "0x<group-pubkey hex>"`, `"networkIdentityFromEpoch": <u64>`.
-/// Returns `None` when absent. The `--consensus.network-identity` CLI override
-/// (resolved by the follower) takes precedence over this genesis value.
-fn network_identity_from_genesis(
-    node: &OutbeFullNode,
-) -> Result<Option<outbe_consensus::network_identity::NetworkIdentity>> {
-    let extra = &node.chain_spec().genesis.config.extra_fields;
-    let Some(id_hex) = extra.get_deserialized::<String>("networkIdentity") else {
-        return Ok(None);
-    };
-    let id_hex = id_hex.map_err(|e| eyre::eyre!("invalid genesis config networkIdentity: {e}"))?;
-    let from_epoch = match extra.get_deserialized::<u64>("networkIdentityFromEpoch") {
-        Some(Ok(value)) => value,
-        Some(Err(error)) => {
-            return Err(eyre::eyre!(
-                "invalid genesis config networkIdentityFromEpoch: {error}"
-            ))
-        }
-        None => 0,
-    };
-    Ok(Some(
-        outbe_consensus::network_identity::NetworkIdentity::from_hex(&id_hex, from_epoch)?,
-    ))
-}
-
 /// JSON shape of `genesis.config.teePolicy`, seeded by
 /// `scripts/seed_genesis.py`. `B256` fields deserialize from `0x…` hex.
 #[derive(serde::Deserialize)]
@@ -1658,42 +1632,38 @@ where
         + Sync
         + 'static,
 {
-    // Resolve the trust anchor: CLI override > genesis config.
-    let anchor = match &args.network_identity {
-        Some(hex) => Some(
-            outbe_consensus::network_identity::NetworkIdentity::from_hex(
-                hex,
-                args.network_identity_from_epoch,
-            )?,
-        ),
-        None => network_identity_from_genesis(&node)?,
-    };
-    if anchor.is_none() && !args.upstream_nocertify {
+    let epoch_length = epoch_length_blocks_from_genesis(&node)?;
+
+    if args.upstream_nocertify {
         return Err(eyre::eyre!(
-            "follower (--upstream) requires a trusted network identity: set genesis \
-             `networkIdentity`, pass --consensus.network-identity, or use \
-             --upstream.nocertify (dev only)"
+            "--upstream.nocertify (uncertified dev sync) is not yet implemented"
         ));
     }
-    let epoch_length = epoch_length_blocks_from_genesis(&node)?;
+
+    // Trust anchor: the genesis validator committee (the MinPk consensus key
+    // set), read from the follower's OWN genesis state. Consensus finality is a
+    // multisig over these keys, so this set — not the VRF group key — is the
+    // trust root, and it is already in genesis (the operator provides nothing).
+    let genesis_validators = validators::read_consensus_validators_at_latest(&node.provider)
+        .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        genesis_validators
+            .public_keys
+            .iter()
+            .cloned()
+            .try_collect()
+            .map_err(|e| {
+                eyre::eyre!("genesis validator set is not a valid participant set: {e:?}")
+            })?;
+
     info!(
         %upstream,
-        anchor_from_epoch = ?anchor.as_ref().map(|a| a.from_epoch),
-        nocertify = args.upstream_nocertify,
+        anchor_validators = anchor_participants.len(),
         epoch_length,
-        "follower mode (--upstream) selected"
+        "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    // --upstream.nocertify (dev only) has no committee anchor, so there is no
-    // verification core to build. The certified follower requires an anchor.
-    let anchor = anchor.ok_or_else(|| {
-        eyre::eyre!(
-            "certified follower requires a trusted network identity anchor; \
-             --upstream.nocertify (uncertified dev sync) is not yet implemented"
-        )
-    })?;
-
-    run_certified_follow_stack(ctx, anchor, node, bridge, upstream, epoch_length).await
+    run_certified_follow_stack(ctx, anchor_participants, node, bridge, upstream, epoch_length).await
 }
 
 /// The committee-chaining follower engine (transport A — upstream RPC, no
@@ -1702,7 +1672,7 @@ where
 /// each against the per-epoch committee derived from the trusted anchor.
 async fn run_certified_follow_stack<E>(
     ctx: &E,
-    anchor: outbe_consensus::network_identity::NetworkIdentity,
+    anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
     upstream: String,
@@ -1752,7 +1722,8 @@ where
     // verifier provider, so the provider clone we hand the marshal must share
     // state with the chain (HybridSchemeProvider is Arc-backed; `register`
     // through a clone is visible everywhere).
-    let chain = CommitteeChain::new(anchor.clone());
+    // Genesis anchor: epoch 0, the genesis validator committee.
+    let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
     let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
         chain.scheme_provider().clone();
     let anchor_epoch = Epoch::new(chain.anchor_epoch());
@@ -1841,10 +1812,12 @@ where
     .await
     .wrap_err("failed to initialize blocks archive")?;
 
-    let epocher = commonware_consensus::types::FixedEpocher::new(nonzero_u64(
-        u64::from(epoch_length_blocks),
-        "epochLengthBlocks",
-    )?);
+    // The follower marshal uses the boundary-aligned `FollowerEpocher`, whose
+    // epoch boundaries match outbe's on-chain committee epochs (`[E·L+1,
+    // (E+1)·L]`). The validator's `FixedEpocher` disagrees by one block at every
+    // multiple of L, which would stall a resolver-only follower at boundary
+    // blocks (see outbe_consensus::follow::epocher).
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(u64::from(epoch_length_blocks));
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;

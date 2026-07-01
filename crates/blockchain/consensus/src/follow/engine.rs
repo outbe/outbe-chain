@@ -22,7 +22,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use commonware_consensus::marshal::resolver::handler;
-use commonware_consensus::types::{Epoch, Epocher, FixedEpocher};
+use commonware_consensus::types::{Epoch, Epocher};
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
 use eyre::{eyre, Result};
 use rand::{CryptoRng, RngCore};
@@ -33,7 +33,8 @@ use crate::follow::driver::{self, Driver};
 use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
 use crate::follow::{stubs, CommitteeChain};
-use crate::marshal_types::{MarshalActor, MarshalMailbox};
+use crate::follow::FollowerEpocher;
+use crate::marshal_types::{FollowMarshalActor, MarshalMailbox};
 
 /// Inputs to [`run_follow_engine`].
 pub struct FollowEngineConfig<E, F, L, T, R>
@@ -51,7 +52,7 @@ where
 {
     /// The marshal actor (already initialized over the committee-chain scheme
     /// provider), ready to `start`.
-    pub marshal_actor: MarshalActor<E>,
+    pub marshal_actor: FollowMarshalActor<E>,
     /// The marshal mailbox (for the driver's `hint_finalized`).
     pub marshal_mailbox: MarshalMailbox,
     /// The executor mailbox, used as the marshal's application reporter. It must
@@ -64,7 +65,7 @@ where
     /// Upstream tip discovery.
     pub tip: T,
     /// Height→epoch strategy, shared with the marshal.
-    pub epocher: FixedEpocher,
+    pub epocher: FollowerEpocher,
     /// The shared committee chain. Its `scheme_provider()` MUST be the same
     /// provider the `marshal_actor` was initialized with, so committee
     /// registrations are visible to the marshal's certificate verification.
@@ -172,7 +173,7 @@ where
 async fn bootstrap_anchor<F>(
     chain: &Arc<Mutex<CommitteeChain>>,
     upstream: &F,
-    epocher: &FixedEpocher,
+    epocher: &FollowerEpocher,
     anchor_epoch: Epoch,
 ) -> Result<()>
 where

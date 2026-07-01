@@ -21,18 +21,38 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy_consensus::BlockHeader as _;
-use commonware_consensus::types::{Epoch, Epocher, FixedEpocher, Height};
+use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_cryptography::bls12381;
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
 use tracing::{debug, info, warn};
 
 use crate::follow::upstream::{FinalizedSource, TipSource};
-use crate::follow::CommitteeChain;
+use crate::follow::{CommitteeChain, FollowerEpocher};
 use crate::marshal_types::MarshalMailbox;
 
-/// How often to poll the upstream for a new finalized tip when caught up.
+/// How often the driver wakes to re-hint the marshal's pull window.
 const TIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Re-query the upstream tip only every Nth wakeup. Hints re-issue every wakeup
+/// (the marshal needs steady re-hinting as its floor advances), but the upstream
+/// `outbe_consensusStatus` tip query is throttled to avoid HTTP 429 rate-limits
+/// on a busy upstream. Between tip queries the driver drives toward the last
+/// known tip.
+const TIP_REFRESH_EVERY: u32 = 4;
+
+/// How many blocks past `first(epoch)` to scan for the epoch's boundary
+/// outcome. The boundary normally rides `first(epoch)` exactly; a skipped view
+/// at the epoch start can push it a few blocks later. A small window absorbs
+/// that without unbounded scanning.
+const BOUNDARY_SCAN_WINDOW: u64 = 16;
+
+/// How many heights above the marshal's processed floor to keep hinted at once.
+/// The marshal fetches the lowest permitted height and processes in order; a
+/// modest window keeps a backlog of in-flight resolver fetches without flooding
+/// the bounded handler mailbox. Re-hinting the (sliding) window each tick is
+/// idempotent — a height already finalized locally is skipped by the marshal.
+const HINT_WINDOW: u64 = 64;
 
 /// A stub target peer for `hint_finalized`. The follower has no real consensus
 /// peers; the resolver ignores targets and serves from the upstream regardless,
@@ -54,7 +74,7 @@ pub(super) struct Config<F, T> {
     /// Upstream tip discovery.
     pub(super) tip: T,
     /// Height→epoch strategy (shared with the marshal).
-    pub(super) epocher: FixedEpocher,
+    pub(super) epocher: FollowerEpocher,
     /// The anchor epoch (the first epoch the follower can verify); the driver
     /// begins pulling from this epoch's first height.
     pub(super) anchor_epoch: Epoch,
@@ -66,8 +86,6 @@ pub(super) struct Driver<E, F, T> {
     config: Config<F, T>,
     /// Highest epoch whose committee the driver has ensured is registered.
     registered_epoch: Option<Epoch>,
-    /// Next height to hint to the marshal.
-    next_height: Height,
 }
 
 impl<E, F, T> Driver<E, F, T>
@@ -77,15 +95,10 @@ where
     T: TipSource,
 {
     pub(super) fn new(context: E, config: Config<F, T>) -> Self {
-        let first = config
-            .epocher
-            .first(config.anchor_epoch)
-            .unwrap_or_else(Height::zero);
         Self {
             context,
             config,
             registered_epoch: None,
-            next_height: first,
         }
     }
 
@@ -97,38 +110,101 @@ where
     async fn run(mut self) {
         info!(
             anchor_epoch = self.config.anchor_epoch.get(),
-            start_height = self.next_height.get(),
             "follow driver started"
         );
+        // Last successfully discovered upstream tip. A fresh tip query can fail
+        // transiently (e.g. the upstream RPC rate-limits our poll with HTTP 429);
+        // we keep driving the marshal toward the last known tip rather than
+        // stalling the whole sync on one failed status call.
+        let mut last_tip: Option<Height> = None;
+        let mut wakeups: u32 = 0;
         loop {
-            match self.config.tip.finalized_tip().await {
-                Some(tip) => self.pull_to(tip).await,
-                None => {
-                    debug!("upstream tip unavailable; will retry");
+            // Refresh the tip on the first wakeup and every TIP_REFRESH_EVERY
+            // after; otherwise reuse the last known tip and just re-hint.
+            if wakeups % TIP_REFRESH_EVERY == 0 {
+                match self.config.tip.finalized_tip().await {
+                    Some(tip) => last_tip = Some(tip),
+                    None => debug!("upstream tip query failed; driving to last known tip"),
                 }
+            }
+            wakeups = wakeups.wrapping_add(1);
+            if let Some(tip) = last_tip {
+                self.pull_to(tip).await;
             }
             self.context.sleep(TIP_POLL_INTERVAL).await;
         }
     }
 
-    /// Hint every height from `next_height` up to (and including) `tip`,
-    /// ensuring each height's epoch committee is registered first.
+    /// Drive the marshal forward to `tip`.
+    ///
+    /// The marshal advances its finalized chain ONE height at a time and only
+    /// admits a resolver fetch for a height ABOVE its processed floor (a flooded
+    /// batch of out-of-order hints is silently dropped — `hint_finalized` is
+    /// fire-and-forget). So each tick we read the marshal's current processed
+    /// height and (re-)hint a small contiguous WINDOW just above it, after
+    /// ensuring every epoch the window spans has its committee registered. As
+    /// the marshal processes the lowest height the floor rises, and the next
+    /// tick's window slides up — keeping a bounded backlog of in-flight fetches
+    /// without ever leaving a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {
-        while self.next_height <= tip {
-            let height = self.next_height;
-            let Some(info) = self.config.epocher.containing(height) else {
-                warn!(%height, "epocher cannot map height; stopping pull");
-                return;
-            };
-            if !self.ensure_epoch_registered(info.epoch()).await {
-                // Could not register this epoch's committee yet (upstream gap or
-                // verification failure). Stop; retry on the next poll.
-                return;
-            }
-            let targets = stub_targets();
-            self.config.marshal.hint_finalized(height, targets);
-            self.next_height = Height::new(height.get().saturating_add(1));
+        // Marshal's processed floor (genesis anchor = height 0 on a fresh node).
+        let processed = self
+            .config
+            .marshal
+            .get_processed_height()
+            .await
+            .map_or(0, |h| h.get());
+        if processed >= tip.get() {
+            return; // caught up
         }
+
+        let window_end = tip.get().min(processed.saturating_add(HINT_WINDOW));
+
+        // Ensure every epoch the window spans is registered before hinting (the
+        // marshal drops a hint whose epoch has no verifier). Register from the
+        // window's first NEW height up to its last.
+        let first_epoch = self
+            .config
+            .epocher
+            .containing(Height::new(processed.saturating_add(1)))
+            .map_or(self.config.anchor_epoch, |i| i.epoch());
+        let last_epoch = self
+            .config
+            .epocher
+            .containing(Height::new(window_end))
+            .map_or(first_epoch, |i| i.epoch());
+        let mut epoch = first_epoch;
+        while epoch <= last_epoch {
+            if !self.ensure_epoch_registered(epoch).await {
+                // Could not register this epoch yet (upstream gap). Hint only up
+                // to the highest height of the last successfully registered epoch
+                // and retry the rest next tick.
+                break;
+            }
+            epoch = Epoch::new(epoch.get().saturating_add(1));
+        }
+        // The highest epoch we actually registered bounds how far we may hint.
+        let registered_ceiling = self
+            .registered_epoch
+            .and_then(|e| self.config.epocher.last(e))
+            .map_or(window_end, |h| h.get());
+        let hint_end = window_end.min(registered_ceiling);
+
+        let targets = stub_targets();
+        let hint_start = processed.saturating_add(1);
+        for height in hint_start..=hint_end {
+            self.config
+                .marshal
+                .hint_finalized(Height::new(height), targets.clone());
+        }
+        debug!(
+            tip = tip.get(),
+            processed,
+            hint_start,
+            hint_end,
+            registered = ?self.registered_epoch.map(|e| e.get()),
+            "follow driver hinted window"
+        );
     }
 
     /// Ensure epoch `epoch`'s committee verifier is registered in the shared
@@ -147,59 +223,96 @@ where
             .highest_registered()
             .is_some_and(|h| h >= epoch)
         {
-            self.registered_epoch = Some(epoch);
+            self.registered_epoch = Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
             return true;
         }
 
-        // Epoch N's committee rides epoch N's first finalized block.
+        // Epoch E's `BoundaryOutcome` (which announces epoch E's committee)
+        // rides the FIRST block of epoch E — `epocher.first(E)` under the
+        // [`FollowerEpocher`](crate::follow::FollowerEpocher), i.e. block E·L+1.
+        // Normally the boundary is exactly there; a skipped view at the epoch
+        // start can push it a few blocks later (still within the epoch), so scan
+        // a bounded window forward from `first(E)` for the first block that
+        // `advance_from_block_extra_data` registers as epoch `E`.
         let Some(first) = self.config.epocher.first(epoch) else {
             warn!(epoch = epoch.get(), "epocher has no first height for epoch");
             return false;
         };
-        let Some(certified) = self.config.upstream.get_finalization(first).await else {
-            debug!(
-                epoch = epoch.get(),
-                first = first.get(),
-                "upstream has no boundary block yet for epoch; will retry"
-            );
-            return false;
-        };
-        let extra = certified.block.header().extra_data().clone();
-        match self
+        // Cap the scan at the epoch's last block (a boundary must land inside its
+        // own epoch); guard against an absurd window on a misconfigured epocher.
+        let last = self
             .config
-            .chain
-            .lock()
-            .expect("committee chain mutex poisoned")
-            .advance_from_block_extra_data(extra.as_ref())
-        {
-            Ok(Some(registered)) => {
+            .epocher
+            .last(epoch)
+            .map(|h| h.get())
+            .unwrap_or(first.get());
+        let scan_end = last.min(first.get().saturating_add(BOUNDARY_SCAN_WINDOW));
+
+        let mut height = first.get();
+        while height <= scan_end {
+            let Some(certified) = self
+                .config
+                .upstream
+                .get_finalization(Height::new(height))
+                .await
+            else {
+                // The upstream does not have this height yet — the epoch's
+                // boundary block isn't available. Retry on the next poll.
                 debug!(
                     epoch = epoch.get(),
-                    registered = registered.get(),
-                    "registered epoch committee from boundary block"
+                    height, "upstream has no block yet while scanning for epoch boundary; will retry"
                 );
-                self.registered_epoch = Some(epoch);
-                true
-            }
-            Ok(None) => {
-                // The first block of an epoch must carry that epoch's boundary
-                // outcome. If it does not, the upstream is inconsistent with our
-                // epoch model; refuse rather than silently skip.
-                warn!(
-                    epoch = epoch.get(),
-                    first = first.get(),
-                    "epoch's first block carried no boundary outcome; refusing to advance"
-                );
-                false
-            }
-            Err(error) => {
-                warn!(
-                    epoch = epoch.get(),
-                    %error,
-                    "failed to register epoch committee from boundary block"
-                );
-                false
+                return false;
+            };
+            let extra = certified.block.header().extra_data().clone();
+            let registered = {
+                let mut chain = self
+                    .config
+                    .chain
+                    .lock()
+                    .expect("committee chain mutex poisoned");
+                chain.advance_from_block_extra_data(extra.as_ref())
+            };
+            match registered {
+                Ok(Some(reg)) if reg == epoch => {
+                    debug!(
+                        epoch = epoch.get(),
+                        height, "registered epoch committee from boundary block"
+                    );
+                    self.registered_epoch = Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
+                    return true;
+                }
+                Ok(Some(reg)) => {
+                    // A boundary for a DIFFERENT epoch than expected — the chain
+                    // model and the upstream disagree. Refuse rather than skip.
+                    warn!(
+                        epoch = epoch.get(),
+                        registered = reg.get(),
+                        height,
+                        "boundary block registered an unexpected epoch; refusing to advance"
+                    );
+                    return false;
+                }
+                Ok(None) => {
+                    // Not a boundary block — keep scanning forward.
+                    height = height.saturating_add(1);
+                }
+                Err(error) => {
+                    warn!(
+                        epoch = epoch.get(),
+                        height, %error, "failed to register epoch committee from block"
+                    );
+                    return false;
+                }
             }
         }
+
+        warn!(
+            epoch = epoch.get(),
+            first = first.get(),
+            scan_end,
+            "no boundary outcome found in the epoch's leading window; refusing to advance"
+        );
+        false
     }
 }

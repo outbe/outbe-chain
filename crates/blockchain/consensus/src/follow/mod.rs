@@ -2,14 +2,14 @@
 //! verify them against the chain's committee, WITHOUT running consensus.
 //!
 //! **Trust model — committee-chaining.** outbe's finalize certificate is an
-//! aggregate of individual MinPk votes over a *committee-bound* namespace, so a
-//! single group key cannot verify it (unlike Tempo); the verifier needs the
-//! exact per-epoch committee, which changes on every reshare. A follower
-//! therefore:
+//! aggregate of individual MinPk votes over a *committee-bound* namespace
+//! (the MinSig VRF group key is an optional seed sidecar, NOT required for
+//! finality), so finality is authenticated by the committee's MinPk key set,
+//! which changes on every reshare. A follower therefore:
 //!
-//! 1. anchors the START epoch's committee on a single trusted
-//!    [`NetworkIdentity`](crate::network_identity::NetworkIdentity) (the group
-//!    public key) — the trust root;
+//! 1. anchors the START epoch's committee on the **genesis validator MinPk
+//!    set**, read from the follower's OWN genesis state — the trust root;
+//!    nothing the operator must provide;
 //! 2. reads each later epoch's committee from the finalized **boundary block**
 //!    that activates it, and trusts it transitively because that boundary block
 //!    was finalized by the already-trusted previous committee.
@@ -21,40 +21,55 @@
 
 use commonware_consensus::{simplex::types::Finalization, types::Epoch};
 use commonware_cryptography::bls12381;
-use commonware_cryptography::bls12381::primitives::variant::{MinSig, Variant};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::Set;
 use eyre::{bail, Result};
 
 use crate::digest::Digest;
 use crate::hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider};
-use crate::network_identity::NetworkIdentity;
 
 mod driver;
+mod epocher;
 mod resolver;
 mod stubs;
 pub mod engine;
 pub mod upstream;
 
 pub use engine::{run_follow_engine, FollowEngineConfig};
+pub use epocher::FollowerEpocher;
 pub use upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource};
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
-/// blocks, anchored on a trusted [`NetworkIdentity`]. Verifiers are kept in a
+/// blocks, anchored on the trusted genesis committee. Verifiers are kept in a
 /// [`HybridSchemeProvider`] keyed by epoch — the same provider type the live
 /// stack uses — so cert verification is byte-identical to the validator path.
+///
+/// **Trust root.** Consensus finality is a multisig over the committee's
+/// individual MinPk keys (the MinSig VRF group key is an optional seed sidecar,
+/// NOT the consensus authenticator). So the anchor is the **genesis validator
+/// MinPk set**, read from the follower's OWN genesis state — not a VRF group
+/// key, and nothing the operator has to provide. The start epoch's committee
+/// (`output.players()`) must equal this set; each later epoch's committee is
+/// trusted via the finalized-boundary chain.
 pub struct CommitteeChain {
-    anchor: NetworkIdentity,
+    /// The start epoch the anchor is rooted at (genesis = 0).
+    anchor_epoch: Epoch,
+    /// The trusted start-epoch committee: the genesis validator MinPk keys.
+    anchor_participants: Set<bls12381::PublicKey>,
     scheme_provider: HybridSchemeProvider<MinSig>,
     /// Highest epoch whose committee verifier has been registered.
     highest_registered: Option<Epoch>,
 }
 
 impl CommitteeChain {
-    /// Create a chain anchored on `anchor` (the trusted group key + start epoch).
-    pub fn new(anchor: NetworkIdentity) -> Self {
+    /// Create a chain anchored on the trusted genesis committee
+    /// (`anchor_participants` = the genesis validator MinPk set, read from the
+    /// follower's genesis state) at `anchor_epoch` (0 for a genesis anchor).
+    pub fn new(anchor_epoch: Epoch, anchor_participants: Set<bls12381::PublicKey>) -> Self {
         Self {
-            anchor,
+            anchor_epoch,
+            anchor_participants,
             scheme_provider: HybridSchemeProvider::new(),
             highest_registered: None,
         }
@@ -62,7 +77,7 @@ impl CommitteeChain {
 
     /// The epoch the anchor is rooted at (the first epoch the follower can verify).
     pub fn anchor_epoch(&self) -> u64 {
-        self.anchor.from_epoch
+        self.anchor_epoch.get()
     }
 
     /// The per-epoch verifier provider, ready to hand to cert-verification paths.
@@ -96,18 +111,18 @@ impl CommitteeChain {
         let participants = output.players().clone();
         let polynomial = output.public().clone();
 
-        // Trust root: the anchor epoch's committee must hash to the trusted key.
-        if epoch.get() == self.anchor.from_epoch {
-            let group_key: &<MinSig as Variant>::Public = polynomial.public();
-            if group_key != &self.anchor.identity {
-                bail!(
-                    "anchor mismatch: start-epoch {} committee group key {} does not match \
-                     trusted network identity {}",
-                    epoch.get(),
-                    hex::encode(commonware_codec::Encode::encode(group_key)),
-                    hex::encode(commonware_codec::Encode::encode(&self.anchor.identity)),
-                );
-            }
+        // Trust root: the anchor epoch's committee MUST be the trusted genesis
+        // validator set. Consensus finality is a multisig over these MinPk keys,
+        // so matching the participant set (NOT the VRF group key) authenticates
+        // the committee. Compare as ordered sets (both pubkey-sorted).
+        if epoch == self.anchor_epoch && participants != self.anchor_participants {
+            bail!(
+                "anchor mismatch: start-epoch {} committee ({} validators) does not match the \
+                 trusted genesis validator set ({} validators)",
+                epoch.get(),
+                participants.len(),
+                self.anchor_participants.len(),
+            );
         }
 
         let verifier = HybridScheme::<MinSig>::verifier(
@@ -209,10 +224,6 @@ mod tests {
     }
 
     impl Committee {
-        fn group_key(&self) -> <MinSig as Variant>::Public {
-            self.dkg.polynomial.public().clone()
-        }
-
         /// The public boundary `outcome` bytes (the ODKO DKG output).
         fn outcome(&self, epoch: Epoch) -> Vec<u8> {
             crate::dkg_manager::encode_outcome(epoch, &self.dkg.output, false).to_vec()
@@ -302,10 +313,7 @@ mod tests {
         let (e5, e6) = (Epoch::new(5), Epoch::new(6));
         let c5 = committee(10);
         let c6 = committee(50);
-        let mut chain = CommitteeChain::new(NetworkIdentity {
-            from_epoch: 5,
-            identity: c5.group_key(),
-        });
+        let mut chain = CommitteeChain::new(e5, c5.participants.clone());
 
         chain.register_epoch_from_outcome(e5, &c5.outcome(e5)).unwrap();
         chain.verify_finalization(e5, &c5.finalization(e5)).unwrap();
@@ -326,10 +334,7 @@ mod tests {
         let e5 = Epoch::new(5);
         let c5 = committee(10);
         let wrong = committee(99);
-        let mut chain = CommitteeChain::new(NetworkIdentity {
-            from_epoch: 5,
-            identity: wrong.group_key(),
-        });
+        let mut chain = CommitteeChain::new(e5, wrong.participants.clone());
         let err = chain
             .register_epoch_from_outcome(e5, &c5.outcome(e5))
             .unwrap_err()
@@ -342,10 +347,7 @@ mod tests {
         let e6 = Epoch::new(6);
         let c6 = committee(70);
         // Anchor on epoch 6 — the boundary block we process announces it.
-        let mut chain = CommitteeChain::new(NetworkIdentity {
-            from_epoch: 6,
-            identity: c6.group_key(),
-        });
+        let mut chain = CommitteeChain::new(e6, c6.participants.clone());
         // Feeding the boundary block's extra_data registers epoch 6's committee.
         let extra = c6.boundary_block_extra_data(e6);
         assert_eq!(chain.advance_from_block_extra_data(&extra).unwrap(), Some(e6));
@@ -447,10 +449,7 @@ mod tests {
 
         // Anchor a chain on this committee and register epoch 4 from its boundary
         // block — exactly what the follower does on the fetch path.
-        let mut chain = CommitteeChain::new(NetworkIdentity {
-            from_epoch: 4,
-            identity: c.group_key(),
-        });
+        let mut chain = CommitteeChain::new(epoch, c.participants.clone());
         let boundary_extra = c.boundary_block_extra_data(epoch);
         assert_eq!(
             chain.advance_from_block_extra_data(&boundary_extra).unwrap(),

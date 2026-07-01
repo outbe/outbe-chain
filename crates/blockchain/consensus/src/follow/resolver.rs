@@ -34,6 +34,7 @@ use alloy_consensus::BlockHeader as _;
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Key};
+use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381;
 use commonware_resolver::{Consumer as _, Delivery, Fetch, Resolver, TargetedResolver};
 use commonware_runtime::{Clock, Metrics, Spawner};
@@ -139,14 +140,42 @@ async fn resolve_one<F, L>(
     L: LocalBlockSource,
 {
     let Fetch { key, subscriber } = fetch;
+    debug!(%key, "resolver received fetch");
     let value = match &key {
-        Key::Block(commitment) => match local.get_block_by_digest(*commitment).await {
-            Some(block) => block.encode(),
-            None => {
-                debug!(%key, "local EL did not have requested block; dropping fetch");
+        Key::Block(commitment) => {
+            // First try the local EL (a block the follower already imported).
+            if let Some(block) = local.get_block_by_digest(*commitment).await {
+                block.encode()
+            } else if let Some(height) = block_request_height(&subscriber) {
+                // The follower has no block P2P, so a parent/ancestor block the
+                // marshal needs for chain repair must come from the UPSTREAM.
+                // The annotation carries the block's height; fetch that height's
+                // finalized block and verify its digest matches the requested
+                // commitment (the marshal re-checks too).
+                match upstream.get_finalization(height).await {
+                    Some(CertifiedFinalizedBlock { block, .. })
+                        if block.digest() == *commitment =>
+                    {
+                        block.encode()
+                    }
+                    Some(_) => {
+                        debug!(%key, %height, "upstream block at height did not match requested commitment; dropping fetch");
+                        return;
+                    }
+                    None => {
+                        debug!(%key, %height, "upstream did not have requested block; dropping fetch");
+                        return;
+                    }
+                }
+            } else {
+                // A round-bound (`ByRound`/`Notarization`) block request has no
+                // height; the follower cannot map it to an upstream height. The
+                // marshal re-requests finalized-chain blocks by height, so this
+                // is a benign drop.
+                debug!(%key, "block request without a height annotation; dropping fetch");
                 return;
             }
-        },
+        }
         Key::Finalized { height } => match upstream.get_finalization(*height).await {
             Some(CertifiedFinalizedBlock {
                 finalization,
@@ -162,13 +191,12 @@ async fn resolve_one<F, L>(
                 // (trusted) committee's chain leads to. A non-boundary block
                 // registers nothing (returns Ok(None)).
                 let extra = block.header().extra_data().clone();
-                if let Err(error) = chain
-                    .lock()
-                    .expect("committee chain mutex poisoned")
-                    .advance_from_block_extra_data(extra.as_ref())
                 {
-                    warn!(%key, %error, "failed to register committee from fetched boundary block; dropping fetch");
-                    return;
+                    let mut guard = chain.lock().expect("committee chain mutex poisoned");
+                    if let Err(error) = guard.advance_from_block_extra_data(extra.as_ref()) {
+                        warn!(%key, %error, "failed to register committee from fetched boundary block; dropping fetch");
+                        return;
+                    }
                 }
                 // Wire format the marshal expects for a `Finalized` delivery: the
                 // finalization certificate immediately followed by the block.
@@ -188,13 +216,35 @@ async fn resolve_one<F, L>(
     };
 
     let delivery = Delivery {
-        key,
+        key: key.clone(),
         subscribers: NonEmptyVec::new(subscriber),
     };
-    // The returned receiver resolves to whether the marshal accepted the value;
-    // we do not retry on rejection (a rejected value means the upstream served
-    // something inconsistent — the marshal re-requests if it still needs it).
-    let _accepted = handler.deliver(delivery, value);
+    // AWAIT the marshal's validation response. Dropping the returned receiver is
+    // the resolver-protocol CANCELLATION signal: the marshal checks
+    // `response.is_closed()` at dequeue and silently skips a delivery whose
+    // receiver is gone (see `handler::Message::response_closed`). Since this
+    // fetch runs on its own spawned task, holding the receiver open until the
+    // marshal answers costs nothing — and the answer tells us whether the value
+    // was accepted. We do not retry on rejection (the marshal re-requests if it
+    // still needs the height).
+    match handler.deliver(delivery, value).await {
+        Ok(true) => debug!(%key, "delivery accepted by marshal"),
+        Ok(false) => warn!(%key, "delivery rejected by marshal"),
+        Err(_) => debug!(%key, "marshal dropped delivery response (shutdown or batch prune)"),
+    }
+}
+
+/// The block height a `Request::Block` annotation pins, if any. Height-bound
+/// annotations (`Certified { height }`, `Finalized(ByHeight { height })`) map a
+/// block-commitment request to an upstream `getFinalization(height)`. Round-bound
+/// annotations carry no height and return `None`.
+fn block_request_height(annotation: &Annotation) -> Option<Height> {
+    match annotation {
+        Annotation::Certified { height } => Some(*height),
+        Annotation::Finalized(handler::Finalized::ByHeight { height }) => Some(*height),
+        Annotation::Finalized(handler::Finalized::ByRound { .. })
+        | Annotation::Notarization { .. } => None,
+    }
 }
 
 impl FollowResolver {

@@ -1806,8 +1806,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
         upstream: None,
-        network_identity: None,
-        network_identity_from_epoch: 0,
         upstream_nocertify: false,
     };
 
@@ -2763,8 +2761,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
         upstream: None,
-        network_identity: None,
-        network_identity_from_epoch: 0,
         upstream_nocertify: false,
     };
 
@@ -3185,8 +3181,6 @@ mod restart_recovery {
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
             upstream: None,
-            network_identity: None,
-            network_identity_from_epoch: 0,
             upstream_nocertify: false,
         };
         let signer_address = validate_validator_evm_signer(
