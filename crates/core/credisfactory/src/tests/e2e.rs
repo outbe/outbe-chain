@@ -28,7 +28,6 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
-use crate::runtime::RequestArgs;
 use crate::tests::common::*;
 
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
@@ -141,7 +140,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
 
         // 2) Request credis: Alice is also the bundleAccount. The binding nonce
         //    slot is zero now that reclaim is supplied per installment.
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(pledge_null).unwrap(),
             denom_id,
@@ -243,6 +242,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(RESERVE_VAULT, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis10;
         let denom_id = denom.id();
@@ -255,13 +255,14 @@ fn anadosis_inserts_per_installment_reclaim_note() {
             .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_reserve_vault(storage.clone());
 
         let pledge_commitment =
             commitment_hash(U256::from(0x51u64), U256::from(0x52u64), denom).unwrap();
         let (pledge_root, _, _) =
             gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_commitment).unwrap();
 
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(0x52u64)).unwrap(),
             denom_id,
@@ -274,7 +275,6 @@ fn anadosis_inserts_per_installment_reclaim_note() {
                 storage.clone(),
                 alice(),
                 asset(),
-                vault(),
                 alice(),
                 args,
                 CREATED_AT,
@@ -353,7 +353,7 @@ fn request_credis_rejects_overdue_anadosis() {
 
         // First pledge + request.
         let (root1, _, _) = gf::pledge_gratis(storage.clone(), alice(), denom_id, c1).unwrap();
-        let args1 = RequestArgs {
+        let args1 = SpendArgs {
             merkle_root: root1,
             nullifier_hash: nullifier_hash(U256::from(2u64)).unwrap(),
             denom_id,
@@ -377,7 +377,7 @@ fn request_credis_rejects_overdue_anadosis() {
         // Second pledge — then attempt a second request once anadosis-1 is
         // overdue on the first position.
         let (root2, _, _) = gf::pledge_gratis(storage.clone(), alice(), denom_id, c2).unwrap();
-        let args2 = RequestArgs {
+        let args2 = SpendArgs {
             merkle_root: root2,
             nullifier_hash: nullifier_hash(U256::from(4u64)).unwrap(),
             denom_id,
@@ -410,7 +410,7 @@ fn request_credis_rejects_zero_asset() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: U256::ZERO,
             nullifier_hash: U256::ZERO,
             denom_id: DenomAmount::Gratis1.id(),
@@ -436,7 +436,7 @@ fn request_credis_rejects_zero_bundle_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: U256::ZERO,
             nullifier_hash: U256::ZERO,
             denom_id: DenomAmount::Gratis1.id(),
@@ -477,7 +477,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let (pledge_root, _, _) =
             gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
 
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(12u64)).unwrap(),
             denom_id,
@@ -532,11 +532,12 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
         Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        seed_reserve_vault(storage.clone());
 
         let pledge_c = commitment_hash(U256::from(21u64), U256::from(22u64), denom).unwrap();
         let (pledge_root, _, _) =
             gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
-        let args = RequestArgs {
+        let args = SpendArgs {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(22u64)).unwrap(),
             denom_id,

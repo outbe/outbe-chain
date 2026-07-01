@@ -9,13 +9,13 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
+use outbe_gratispool::SpendArgs;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
-use crate::runtime::RequestArgs;
 
 sol!("../../../contracts/precompiles/src/ICredisFactory.sol");
 
@@ -35,7 +35,7 @@ pub fn dispatch(
                 requestCredis(c) => mutate(c, caller, |sender, c| {
                     let timestamp = read_timestamp(&storage)?;
                     let block_number = storage.block_number()?;
-                    let args = RequestArgs {
+                    let args = SpendArgs {
                         merkle_root: c.args.merkleRoot,
                         nullifier_hash: c.args.nullifierHash,
                         denom_id: c.args.denomId,
