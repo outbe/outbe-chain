@@ -34,6 +34,10 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.ERC7786MessengerBase")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0x6702aa1076aac9174f7ad82f658a24b43715e5376566adbcf76ac99f64da8e00;
 
+    /// @dev ERC-7786 attribute selector for a per-message destination gas limit. Matches the crosschain hub's
+    ///      `GasLimitAttribute.SELECTOR`; redeclared here (not imported) to keep the intex build hub-decoupled.
+    bytes4 private constant _GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
+
     event RemoteMessengerRegistered(uint32 indexed chainId, bytes interop);
 
     error InvalidBridge();
@@ -88,11 +92,12 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     ///          so an entry caller's buffer never silently seeds (or drains) the relay float.
     /// @param dstChainId Destination EVM chainId.
     /// @param payload Encoded message body delivered verbatim to the remote messenger.
-    /// @param attributes ERC-7786 attributes (empty today; per-message gas is added later).
+    /// @param gasLimit Destination execution gas for the message (0 = let the active gateway use its default).
     /// @return sendId The bridge's send identifier.
-    function _send(uint32 dstChainId, bytes memory payload, bytes[] memory attributes) internal returns (bytes32) {
+    function _send(uint32 dstChainId, bytes memory payload, uint256 gasLimit) internal returns (bytes32) {
         bytes memory recipient = _remoteMessenger(dstChainId);
-        uint256 fee = IGatewayQuote(address(BRIDGE)).quote(recipient, payload);
+        bytes[] memory attributes = _gasAttributes(gasLimit);
+        uint256 fee = IGatewayQuote(address(BRIDGE)).quote(recipient, payload, attributes);
 
         if (msg.value == 0) {
             if (address(this).balance < fee) revert NotEnoughNative(address(this).balance);
@@ -109,9 +114,16 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         return BRIDGE.sendMessage{value: fee}(recipient, payload, attributes);
     }
 
-    /// @dev Native fee the bridge needs to deliver `payload` to the matching messenger on `dstChainId`.
-    function _quoteFee(uint32 dstChainId, bytes memory payload) internal view returns (uint256) {
-        return IGatewayQuote(address(BRIDGE)).quote(_remoteMessenger(dstChainId), payload);
+    /// @dev Native fee to deliver `payload` to the matching messenger on `dstChainId` with `gasLimit` destination gas.
+    function _quoteFee(uint32 dstChainId, bytes memory payload, uint256 gasLimit) internal view returns (uint256) {
+        return IGatewayQuote(address(BRIDGE)).quote(_remoteMessenger(dstChainId), payload, _gasAttributes(gasLimit));
+    }
+
+    /// @dev Wraps `gasLimit` as the single executionGasLimit ERC-7786 attribute (empty array when 0).
+    function _gasAttributes(uint256 gasLimit) private pure returns (bytes[] memory attrs) {
+        if (gasLimit == 0) return new bytes[](0);
+        attrs = new bytes[](1);
+        attrs[0] = abi.encodeWithSelector(_GAS_LIMIT_SELECTOR, gasLimit);
     }
 
     // --- Inbound ---

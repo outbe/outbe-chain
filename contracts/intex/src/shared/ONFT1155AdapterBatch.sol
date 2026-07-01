@@ -9,6 +9,7 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {IONFT1155AdapterBatch, BatchSendParam, MultiRecipientSendParam} from "./interfaces/IONFT1155AdapterBatch.sol";
 import {ONFT1155BatchMsgCodec} from "./libs/ONFT1155BatchMsgCodec.sol";
 import {ERC7786MessengerBase} from "./ERC7786MessengerBase.sol";
+import {IntexGas} from "./libs/IntexGas.sol";
 
 /// @title ONFT1155AdapterBatch
 /// @author Outbe
@@ -101,7 +102,8 @@ contract ONFT1155AdapterBatch is
     // --- Single-recipient batch ---
     /// @inheritdoc IONFT1155AdapterBatch
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256) {
-        return _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam));
+        return
+            _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.onftMint(_sendParam.tokenIds.length));
     }
 
     /// @inheritdoc IONFT1155AdapterBatch
@@ -115,7 +117,7 @@ contract ONFT1155AdapterBatch is
             token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
-        sendId = _send(_sendParam.dstChainId, message, _noAttrs());
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.tokenIds.length));
         emit ONFTBatchSent(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.amounts);
     }
 
@@ -134,7 +136,10 @@ contract ONFT1155AdapterBatch is
     // --- Multi-recipient batch ---
     /// @inheritdoc IONFT1155AdapterBatch
     function quoteMultiSend(MultiRecipientSendParam calldata _sendParam) external view returns (uint256) {
-        return _quoteFee(_sendParam.dstChainId, _buildMultiMsg(_sendParam));
+        return
+            _quoteFee(
+                _sendParam.dstChainId, _buildMultiMsg(_sendParam), IntexGas.onftMint(_sendParam.recipients.length)
+            );
     }
 
     /// @inheritdoc IONFT1155AdapterBatch
@@ -154,7 +159,7 @@ contract ONFT1155AdapterBatch is
             token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
-        sendId = _send(_sendParam.dstChainId, message, _noAttrs());
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.recipients.length));
         emit ONFTMultiSent(
             sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.amounts
         );
@@ -179,7 +184,7 @@ contract ONFT1155AdapterBatch is
         uint256[] calldata amounts,
         uint32 dstChainId
     ) external view returns (uint256) {
-        return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts));
+        return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts), IntexGas.onftMint(holders.length));
     }
 
     /// @inheritdoc IONFT1155AdapterBatch
@@ -199,7 +204,7 @@ contract ONFT1155AdapterBatch is
         }
 
         // Relay-funded: msg.value is 0, so `_send` draws the fee from the pre-funded float.
-        sendId = _send(dstChainId, message, _noAttrs());
+        sendId = _send(dstChainId, message, IntexGas.onftMint(len));
         emit SystemMultiSent(sendId, dstChainId, tokenId, len);
     }
 
@@ -318,11 +323,6 @@ contract ONFT1155AdapterBatch is
         delete $.failedCrosschainMints[receiveId][idx];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(receiveId, idx);
-    }
-
-    // --- Internal helpers ---
-    function _noAttrs() private pure returns (bytes[] memory) {
-        return new bytes[](0);
     }
 
     /// @inheritdoc IONFT1155AdapterBatch

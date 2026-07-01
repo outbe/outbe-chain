@@ -9,4 +9,11 @@ pragma solidity 0.8.30;
 interface IGatewayQuote {
     /// @dev Native fee required to deliver `payload` to `recipient` (an ERC-7930 interoperable address).
     function quote(bytes calldata recipient, bytes calldata payload) external view returns (uint256 nativeFee);
+
+    /// @dev As above, but honoring `attributes` (e.g. a per-message execution gas limit) so the estimate matches
+    /// {IERC7786GatewaySource-sendMessage}.
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        view
+        returns (uint256 nativeFee);
 }

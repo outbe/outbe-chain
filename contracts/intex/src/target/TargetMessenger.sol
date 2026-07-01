@@ -12,6 +12,7 @@ import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {ITargetMessenger} from "./interfaces/ITargetMessenger.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.sol";
 
 /// @title TargetMessenger
@@ -191,7 +192,8 @@ contract TargetMessenger is
                 params.intexQuantities,
                 params.intexBidRates,
                 params.timestamps
-            )
+            ),
+            IntexGas.bidsBatch(params.bidderAddresses.length)
         );
     }
 
@@ -396,7 +398,7 @@ contract TargetMessenger is
             intexBidRates,
             timestamps
         );
-        sendId = _send(OUTBE_CHAIN_ID, message, _noAttrs());
+        sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, seriesId, bidderAddresses.length);
     }
 
@@ -528,11 +530,6 @@ contract TargetMessenger is
         // informational and intentionally discarded.
         // slither-disable-next-line unused-return
         _ts().onftBatchAdapter.systemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
-    }
-
-    // --- Internal helpers ---
-    function _noAttrs() private pure returns (bytes[] memory) {
-        return new bytes[](0);
     }
 
     /// @inheritdoc ITargetMessenger

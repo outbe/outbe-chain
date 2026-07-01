@@ -53,6 +53,11 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
         return fee;
     }
 
+    /// @inheritdoc IGatewayQuote
+    function quote(bytes calldata, bytes calldata, bytes[] calldata) external view returns (uint256) {
+        return fee;
+    }
+
     /// @inheritdoc IERC7786GatewaySource
     function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         external

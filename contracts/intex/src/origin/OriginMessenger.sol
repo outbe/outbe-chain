@@ -10,6 +10,7 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginMessenger} from "./interfaces/IOriginMessenger.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "../shared/libs/IntexGas.sol";
 
 /// @title OriginMessenger
 /// @author Outbe
@@ -123,17 +124,22 @@ contract OriginMessenger is
     // --- Quote ---
     /// @inheritdoc IOriginMessenger
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, _encodeAuctionStageStart(params));
+        return _quoteFee(BNB_CHAIN_ID, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
     }
 
     /// @inheritdoc IOriginMessenger
     function quoteSendAuctionStageReveal(uint32 seriesId, bool isGreenDay) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay));
+        return _quoteFee(
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+        );
     }
 
     /// @inheritdoc IOriginMessenger
     function quoteSendAuctionStageClearing(uint32 seriesId) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId));
+        return
+            _quoteFee(
+                BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), IntexGas.AUCTION_STAGE_CLEARING
+            );
     }
 
     /// @inheritdoc IOriginMessenger
@@ -145,13 +151,18 @@ contract OriginMessenger is
     ) external view returns (uint256) {
         return _quoteFee(
             BNB_CHAIN_ID,
-            BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount)
+            BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount),
+            IntexGas.AUCTION_RESULT
         );
     }
 
     /// @inheritdoc IOriginMessenger
     function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)));
+        return _quoteFee(
+            BNB_CHAIN_ID,
+            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)),
+            IntexGas.issuance(params.recipients.length)
+        );
     }
 
     /// @inheritdoc IOriginMessenger
@@ -162,18 +173,20 @@ contract OriginMessenger is
         uint128[] calldata paidAmounts
     ) external view returns (uint256) {
         return _quoteFee(
-            BNB_CHAIN_ID, BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts)
+            BNB_CHAIN_ID,
+            BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts),
+            IntexGas.refund(bidders.length)
         );
     }
 
     /// @inheritdoc IOriginMessenger
     function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId));
+        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
     }
 
     /// @inheritdoc IOriginMessenger
     function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256) {
-        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId));
+        return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED);
     }
 
     // --- Send ---
@@ -184,7 +197,7 @@ contract OriginMessenger is
         onlyRole(DESIS_ROLE)
         returns (bytes32 sendId)
     {
-        sendId = _send(BNB_CHAIN_ID, _encodeAuctionStageStart(params), _noAttrs());
+        sendId = _send(BNB_CHAIN_ID, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
         emit AuctionStageSent(sendId, params.seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }
 
@@ -195,13 +208,16 @@ contract OriginMessenger is
         onlyRole(DESIS_ROLE)
         returns (bytes32 sendId)
     {
-        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), _noAttrs());
+        sendId = _send(
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+        );
         emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
     /// @inheritdoc IOriginMessenger
     function sendAuctionStageClearing(uint32 seriesId) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
-        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), _noAttrs());
+        sendId =
+            _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), IntexGas.AUCTION_STAGE_CLEARING);
         emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
@@ -215,7 +231,7 @@ contract OriginMessenger is
         sendId = _send(
             BNB_CHAIN_ID,
             BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount),
-            _noAttrs()
+            IntexGas.AUCTION_RESULT
         );
         emit AuctionResultSent(sendId, seriesId, issuedIntexCount, auctionClearingRate);
     }
@@ -231,7 +247,9 @@ contract OriginMessenger is
         if (len == 0) revert EmptyArray();
         if (len != params.quantities.length) revert ArrayLengthMismatch();
 
-        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)), _noAttrs());
+        sendId = _send(
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)), IntexGas.issuance(len)
+        );
         emit IssuanceInstructionsSent(sendId, params.seriesId, len);
     }
 
@@ -249,20 +267,20 @@ contract OriginMessenger is
         sendId = _send(
             BNB_CHAIN_ID,
             BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts),
-            _noAttrs()
+            IntexGas.refund(len)
         );
         emit RefundInstructionsSent(sendId, seriesId, len);
     }
 
     /// @inheritdoc IOriginMessenger
     function sendMarkCalled(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
-        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId), _noAttrs());
+        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
         emit MarkCalledSent(sendId, seriesId);
     }
 
     /// @inheritdoc IOriginMessenger
     function sendMarkQualified(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
-        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId), _noAttrs());
+        sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED);
         emit MarkQualifiedSent(sendId, seriesId);
     }
 
@@ -388,10 +406,6 @@ contract OriginMessenger is
         payload.callPriceMinor = p.callPriceMinor;
         payload.recipients = p.recipients;
         payload.quantities = p.quantities;
-    }
-
-    function _noAttrs() private pure returns (bytes[] memory) {
-        return new bytes[](0);
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.
