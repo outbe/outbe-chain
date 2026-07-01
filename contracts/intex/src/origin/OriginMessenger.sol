@@ -281,7 +281,15 @@ contract OriginMessenger is
 
     /// @dev Decodes an authenticated inbound message and dispatches by msgType. Only BIDS_BATCH is inbound here; a
     ///      premature message reverts and is redelivered by the transport once its prerequisite has landed.
-    function _dispatch(uint32 srcChainId, bytes calldata payload) internal override {
+    function _dispatch(
+        uint32 srcChainId,
+        bytes32,
+        /*receiveId*/
+        bytes calldata payload
+    )
+        internal
+        override
+    {
         uint8 msgType = BridgeMsgCodec.readHeader(payload);
         BridgeMsgCodec.assertMinLength(payload, msgType);
 
@@ -293,14 +301,17 @@ contract OriginMessenger is
     }
 
     /// @dev Decode a BIDS_BATCH, forward it to Desis, and auto-fire clearing when the series is ready. The body
-    ///      carries its own `srcChainId`; it is cross-checked against the authenticated source. A clearing-side
-    ///      revert is caught locally and surfaced without rolling back the bid intake.
+    ///      carries its own `srcChainId`; it is cross-checked against the authenticated source. Desis tracks
+    ///      per-(series, generation) completeness from `batchIndex`/`totalBatches`, so batches of one flush may
+    ///      arrive in any order over the unordered bridge. A clearing-side revert is caught locally and surfaced
+    ///      without rolling back the bid intake.
     function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
         (
             uint32 seriesId,
             uint32 bodySrcChainId,
-            bool isLast,
             uint32 relayGeneration,
+            uint16 batchIndex,
+            uint16 totalBatches,
             address[] memory bidderAddresses,
             uint16[] memory intexQuantities,
             uint32[] memory intexBidRates,
@@ -314,8 +325,9 @@ contract OriginMessenger is
             .processBidsBatch(
                 seriesId,
                 srcChainId,
-                isLast,
                 relayGeneration,
+                batchIndex,
+                totalBatches,
                 bidderAddresses,
                 intexQuantities,
                 intexBidRates,

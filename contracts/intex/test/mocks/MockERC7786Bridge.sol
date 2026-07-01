@@ -83,7 +83,10 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
 
     function _deliver(bytes memory sender, bytes memory recipient, bytes memory payload) internal {
         (, address target) = recipient.parseEvmV1();
-        bytes4 result = IERC7786Recipient(target).receiveMessage(bytes32(0), sender, payload);
+        // Mirror the hub's receiveId (binds source + payload) so recipients that key per-message work off it (e.g. the
+        // ONFT adapters' failed-mint parking) see a stable, unique id; a `deliverLast` replay reuses the same id.
+        bytes32 receiveId = keccak256(abi.encode(sender, payload));
+        bytes4 result = IERC7786Recipient(target).receiveMessage(receiveId, sender, payload);
         if (result != IERC7786Recipient.receiveMessage.selector) revert DeliveryReturnedInvalidValue(result);
     }
 }

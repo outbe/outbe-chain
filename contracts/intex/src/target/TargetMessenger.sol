@@ -4,35 +4,27 @@ pragma solidity 0.8.30;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {
-    OAppUpgradeable,
-    Origin,
-    MessagingFee,
-    MessagingReceipt
-} from "@layerzerolabs/oapp-evm-upgradeable/oapp/OAppUpgradeable.sol";
-import {
-    OAppOptionsType3Upgradeable
-} from "@layerzerolabs/oapp-evm-upgradeable/oapp/libs/OAppOptionsType3Upgradeable.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {ITargetMessenger} from "./interfaces/ITargetMessenger.sol";
+import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
-import {LzGasEstimator} from "../shared/libs/LzGasEstimator.sol";
 import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.sol";
 
 /// @title TargetMessenger
 /// @author Outbe
-/// @notice LayerZero bridge adapter for BNB Chain.
-/// @dev UUPS upgradeable: deployed behind an ERC1967 proxy; the LayerZero endpoint stays an
-///      implementation immutable, so every upgrade must pass the same endpoint to the constructor.
-///      Sends messages to Outbe, receives messages from Outbe. All auction/series
+/// @notice BNB-side messenger: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe, over the
+///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The transport (LayerZero, Hyperlane, ...) is
+///         selected on the bridge, not here.
+/// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
+///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
 contract TargetMessenger is
     ITargetMessenger,
-    OAppUpgradeable,
-    OAppOptionsType3Upgradeable,
+    ERC7786MessengerBase,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
@@ -40,33 +32,19 @@ contract TargetMessenger is
     /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @notice Destination gas for inbound BIDS_BATCH: covers processBidsBatch dispatch +
-    ///         auto-fired clearAuction (sort + 3 outbound LZ sends).
-    /// @dev Calibrated via GasCalibration.t.sol (factory mocked, so per-item is a lower bound + headroom).
-    uint128 internal constant BIDS_BASE_GAS = 1_300_000;
+    /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
+    uint32 public immutable OUTBE_CHAIN_ID;
 
-    /// @notice Marginal destination gas per bid (sort, storage, refund-payload slot).
-    uint128 internal constant BIDS_PER_ITEM_GAS = 160_000;
-
-    /// @notice LayerZero endpoint id of the Outbe chain that is the counterparty for every send.
-    uint32 public immutable OUTBE_EID;
-
-    /// @notice Deferred BIDS_BATCH relay enqueued because the outbound `_lzSend` from inside
-    ///         `_lzReceive` reverted (typically: pre-funded native balance too low for the LZ fee).
-    /// @dev Pattern A `_handleAuctionStageClearing` runs the inbound stage transition,
-    ///      then attempts to relay revealed bids to Outbe; a failure parks the seriesId here so
-    ///      `flushPendingBidsRelay` can retry once the operator tops up balance. Bids themselves
-    ///      stay in auction state — no need to snapshot them.
+    /// @notice A bids relay parked because its outbound send reverted (e.g. relay float too low); retried via
+    ///         `flushPendingBidsRelay`. Bids stay in auction state, so only the seriesId is snapshotted.
     struct PendingBidsRelay {
         uint32 seriesId;
         bool exists;
         bool done;
     }
 
-    /// @notice Deferred holders bridge enqueued because the inbound `_handleMarkCalled` could not
-    ///         forward all holders+amounts via `onftBatchAdapter.systemMultiSend`.
-    /// @dev Snapshot `tokenId`, `holders[]` and `amounts[]` at `_lzReceive` time — markCalled does
-    ///      not change balances afterwards, so the snapshot remains the canonical work to be done.
+    /// @notice A holders bridge parked because `systemMultiSend` reverted; retried via `flushPendingHoldersRelay`.
+    ///         markCalled does not change balances, so the snapshot stays the canonical work.
     struct PendingHoldersRelay {
         uint256 tokenId;
         address[] holders;
@@ -85,9 +63,6 @@ contract TargetMessenger is
         IEscrowAdapter escrowAdapter;
         /// @dev ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
         IONFT1155AdapterBatch onftBatchAdapter;
-        /// @dev Last inbound LayerZero nonce successfully processed for each `(srcEid, sender)` pair.
-        ///      Backs the `nextNonce` override that switches this OApp into ORDERED-delivery mode.
-        mapping(uint32 srcEid => mapping(bytes32 sender => uint64 nonce)) inboundNonce;
         /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
         mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
         /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
@@ -105,7 +80,7 @@ contract TargetMessenger is
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0xd3ea7ae85c719490ab42a52fee1d0107cffc5c368e656979e152d5c5183d9400;
 
-    function _s() private pure returns (TargetMessengerStorage storage $) {
+    function _ts() private pure returns (TargetMessengerStorage storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
@@ -113,91 +88,64 @@ contract TargetMessenger is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _lzEndpoint, uint32 _outbeEid) OAppUpgradeable(_lzEndpoint) {
-        OUTBE_EID = _outbeEid;
+    constructor(address bridge_, uint32 outbeChainId_) ERC7786MessengerBase(bridge_) {
+        OUTBE_CHAIN_ID = outbeChainId_;
         _disableInitializers();
     }
 
-    /// @notice Initializes the proxy: LayerZero delegate, contract owner, and admin role holder.
-    /// @param _delegate Owner, endpoint delegate, and receiver of `DEFAULT_ADMIN_ROLE`.
+    /// @notice Initializes the proxy: contract admin.
+    /// @param _delegate Receiver of `DEFAULT_ADMIN_ROLE`.
     function initialize(address _delegate) external initializer {
         if (_delegate == address(0)) revert ZeroAddress("delegate");
-
-        __Ownable_init(_delegate);
-        __OApp_init(_delegate);
         __AccessControl_init();
-
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
     }
 
     /// @dev Upgrades are gated by the admin role.
-    /// @param newImplementation Address of the implementation the proxy switches to.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---
     /// @notice Auction contract that originates outbound bids and receives inbound stage transitions.
-    /// @return The wired auction contract.
     function auction() external view returns (IIntexAuction) {
-        return _s().auction;
+        return _ts().auction;
     }
 
     /// @notice IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
-    /// @return The wired NFT contract.
     function intex() external view returns (IIntexNFT1155) {
-        return _s().intex;
+        return _ts().intex;
     }
 
     /// @notice EscrowAdapter contract that refund instructions are forwarded to for finalization.
-    /// @return The wired escrow adapter.
     function escrowAdapter() external view returns (IEscrowAdapter) {
-        return _s().escrowAdapter;
+        return _ts().escrowAdapter;
     }
 
     /// @notice ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
-    /// @return The wired batch adapter.
     function onftBatchAdapter() external view returns (IONFT1155AdapterBatch) {
-        return _s().onftBatchAdapter;
-    }
-
-    /// @notice Last inbound LayerZero nonce successfully processed for a `(srcEid, sender)` pair.
-    /// @param srcEid LayerZero source endpoint id of the channel.
-    /// @param sender Bytes32-encoded peer address on the source chain.
-    /// @return The last processed inbound nonce.
-    function inboundNonce(uint32 srcEid, bytes32 sender) external view returns (uint64) {
-        return _s().inboundNonce[srcEid][sender];
+        return _ts().onftBatchAdapter;
     }
 
     /// @notice Parked BIDS_BATCH relay by enqueue index.
-    /// @param idx Enqueue index.
-    /// @return seriesId Series whose bids relay was deferred.
-    /// @return exists True when the index holds a parked relay.
-    /// @return done True when the relay was already flushed.
     function pendingBidsRelays(uint256 idx) external view returns (uint32 seriesId, bool exists, bool done) {
-        PendingBidsRelay storage p = _s().pendingBidsRelays[idx];
+        PendingBidsRelay storage p = _ts().pendingBidsRelays[idx];
         return (p.seriesId, p.exists, p.done);
     }
 
     /// @notice Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-    /// @return The next enqueue index.
     function nextPendingBidsRelayIdx() external view returns (uint256) {
-        return _s().nextPendingBidsRelayIdx;
+        return _ts().nextPendingBidsRelayIdx;
     }
 
     /// @notice Parked holders bridge by enqueue index (scalar fields; arrays stay internal).
-    /// @param idx Enqueue index.
-    /// @return tokenId Token id whose holders bridge was deferred.
-    /// @return exists True when the index holds a parked bridge.
-    /// @return done True when the bridge was already flushed.
     function pendingHoldersRelays(uint256 idx) external view returns (uint256 tokenId, bool exists, bool done) {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
+        PendingHoldersRelay storage p = _ts().pendingHoldersRelays[idx];
         return (p.tokenId, p.exists, p.done);
     }
 
     /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-    /// @return The next enqueue index.
     function nextPendingHoldersRelayIdx() external view returns (uint256) {
-        return _s().nextPendingHoldersRelayIdx;
+        return _ts().nextPendingHoldersRelayIdx;
     }
 
     // --- Admin ---
@@ -211,7 +159,7 @@ contract TargetMessenger is
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
         if (_onftBatchAdapter == address(0)) revert ZeroAddress("onftBatchAdapter");
 
-        TargetMessengerStorage storage $ = _s();
+        TargetMessengerStorage storage $ = _ts();
         if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
 
         $.auction = IIntexAuction(_auction);
@@ -222,26 +170,38 @@ contract TargetMessenger is
         _grantRole(AUCTION_ROLE, _auction);
     }
 
-    // --- Quote Functions ---
     /// @inheritdoc ITargetMessenger
-    function quoteSendBidsBatch(BidsBatchParams calldata params, bool payInLzToken)
-        external
-        view
-        returns (MessagingFee memory fee)
-    {
-        // Mirror `sendBidsBatch`'s message + dynamic gas sizing so the quoted fee matches the send.
-        (bytes memory message, bytes memory options) =
-            _buildBidsBatch(params, _s().bidsRelayGeneration[params.seriesId]);
-        return _quote(OUTBE_EID, message, options, payInLzToken);
+    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setRemoteMessenger(chainId, interop);
     }
 
-    // --- Send Functions ---
+    // --- Quote ---
     /// @inheritdoc ITargetMessenger
-    function sendBidsBatch(BidsBatchParams calldata params, MessagingFee calldata fee)
+    function quoteSendBidsBatch(BidsBatchParams calldata params) external view returns (uint256) {
+        // Mirror `sendBidsBatch`'s single-batch encoding so the quoted fee matches the send.
+        return _quoteFee(
+            OUTBE_CHAIN_ID,
+            BridgeMsgCodec.encodeBidsBatch(
+                params.seriesId,
+                uint32(block.chainid),
+                _ts().bidsRelayGeneration[params.seriesId],
+                0,
+                1,
+                params.bidderAddresses,
+                params.intexQuantities,
+                params.intexBidRates,
+                params.timestamps
+            )
+        );
+    }
+
+    // --- Send ---
+    /// @inheritdoc ITargetMessenger
+    function sendBidsBatch(BidsBatchParams calldata params)
         external
         payable
         onlyRole(AUCTION_ROLE)
-        returns (MessagingReceipt memory receipt)
+        returns (bytes32 sendId)
     {
         uint256 len = params.bidderAddresses.length;
         if (len == 0) revert EmptyArray();
@@ -252,135 +212,83 @@ contract TargetMessenger is
             revert ArrayLengthMismatch();
         }
 
-        // One generation per send so a re-send replaces rather than double-counts on the receiver.
-        // Gas option scales with bid count; the contract owns liveness sizing so the caller's
-        // `params.extraOptions` is superseded for the gas dimension.
-        uint32 gen = ++_s().bidsRelayGeneration[params.seriesId];
-        (bytes memory message, bytes memory options) = _buildBidsBatch(params, gen);
-
-        receipt = _lzSend(OUTBE_EID, message, options, fee, params.refundAddress);
-        emit BidsBatchSent(receipt.guid, params.seriesId, len);
-    }
-
-    /// @dev Encode a single-chunk BIDS_BATCH (`isLast = true`) for the direct send/quote path and
-    ///      size its gas option to the bid count, so the quote matches the actual send byte-for-byte.
-    function _buildBidsBatch(BidsBatchParams calldata params, uint32 gen)
-        private
-        view
-        returns (bytes memory message, bytes memory options)
-    {
-        message = BridgeMsgCodec.encodeBidsBatch(
+        // One generation per send so a re-send replaces rather than double-counts on the receiver. A caller-supplied
+        // set is a single-batch flush (index 0 of 1); the codec caps its size at `MAX_PAYLOAD_ARRAY_LEN`.
+        uint32 gen = ++_ts().bidsRelayGeneration[params.seriesId];
+        sendId = _sendOneBidsBatch(
             params.seriesId,
-            endpoint.eid(),
-            true,
             gen,
+            0,
+            1,
             params.bidderAddresses,
             params.intexQuantities,
             params.intexBidRates,
             params.timestamps
         );
-        options = _bidsReceiveOption(params.bidderAddresses.length);
     }
 
     // --- Receive ---
-    /// @notice LayerZero entry point for inbound messages from Outbe; advances the ORDERED nonce
-    ///         and dispatches the payload, dropping a failed dispatch instead of wedging the lane.
-    /// @dev Validation order: header length → per-type minimum length → dispatch. All field
-    ///      slicing happens inside the per-msgType decoder where the length is already vetted.
-    ///      `nonReentrant` protects against re-entry through downstream `auction` /
-    ///      `escrowAdapter` / `intex` calls (e.g. a hostile NFT-receiver hook).
-    /// @param _origin Source chain origin data (srcEid, sender, nonce)
-    /// @param _guid Unique message identifier
-    /// @param _message Encoded bridge payload
-    function _lzReceive(
-        Origin calldata _origin,
-        bytes32 _guid,
-        bytes calldata _message,
-        address,
-        /*_executor*/
-        bytes calldata /*_extraData*/
-    )
-        internal
+    /// @inheritdoc ERC7786MessengerBase
+    /// @dev nonReentrant guards against re-entry through downstream `auction`/`escrowAdapter`/`intex` calls.
+    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
+        public
+        payable
         override
         nonReentrant
+        returns (bytes4)
     {
-        // Record this packet's nonce so `nextNonce` advances by exactly one. Endpoint already
-        // verified `_origin.nonce == inboundNonce + 1` before calling us; bumping here keeps the
-        // invariant for the next delivery on this `(srcEid, sender)` channel.
-        _s().inboundNonce[_origin.srcEid][_origin.sender] = _origin.nonce;
-
-        // Drop-don't-block: the nonce is already advanced, so a deterministic revert in decode or any
-        // downstream transition must not escape `_lzReceive` and wedge the ORDERED lane.
-        try this.dispatchInbound(_guid, _origin.srcEid, _message) {}
-        catch (bytes memory reason) {
-            emit InboundMessageDropped(_guid, _origin.srcEid, reason);
-        }
+        return super.receiveMessage(receiveId, sender, payload);
     }
 
-    /// @notice Self-call shim that decodes and dispatches an inbound message by msgType. Self-only so a
-    ///         revert is caught in `_lzReceive` and the message dropped without wedging the ORDERED lane.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded bridge payload
-    function dispatchInbound(bytes32 _guid, uint32 _srcEid, bytes calldata _message) external {
-        if (msg.sender != address(this)) revert NotSelf();
-
-        uint8 msgType = BridgeMsgCodec.readHeader(_message);
-        BridgeMsgCodec.assertMinLength(_message, msgType);
+    /// @dev Dispatch by msgType. A premature message (prerequisite stage not applied) reverts; the bridge rolls
+    ///      back and the transport redelivers once the prerequisite lands.
+    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
+        uint8 msgType = BridgeMsgCodec.readHeader(message);
+        BridgeMsgCodec.assertMinLength(message, msgType);
 
         if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_START) {
-            _handleAuctionStageStart(_guid, _srcEid, _message);
+            _handleAuctionStageStart(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL) {
-            _handleAuctionStageReveal(_guid, _srcEid, _message);
+            _handleAuctionStageReveal(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING) {
-            _handleAuctionStageClearing(_guid, _srcEid, _message);
+            _handleAuctionStageClearing(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_RESULT) {
-            _handleAuctionResult(_guid, _srcEid, _message);
+            _handleAuctionResult(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS) {
-            _handleIssuanceInstructions(_guid, _srcEid, _message);
+            _handleIssuanceInstructions(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS) {
-            _handleRefundInstructions(_guid, _srcEid, _message);
+            _handleRefundInstructions(srcChainId, receiveId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
-            _handleMarkCalled(_guid, _srcEid, _message);
+            _handleMarkCalled(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            _handleMarkQualified(_guid, _srcEid, _message);
+            _handleMarkQualified(srcChainId, message);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
     }
 
     /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded auction start payload
-    function _handleAuctionStageStart(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+    function _handleAuctionStageStart(uint32 _srcChainId, bytes calldata _message) internal {
         (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(_message);
-        _s().auction.auctionStart(seriesId, schedule, params);
+        _ts().auction.auctionStart(seriesId, schedule, params);
 
-        emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+        emit AuctionStageReceived(_srcChainId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }
 
     /// @notice Decode AUCTION_STAGE_REVEAL and start the revealing-bids stage on the Auction contract.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded reveal stage payload
-    function _handleAuctionStageReveal(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+    function _handleAuctionStageReveal(uint32 _srcChainId, bytes calldata _message) internal {
         (uint32 seriesId, bool isGreenDay) = BridgeMsgCodec.decodeAuctionStageReveal(_message);
-        _s().auction.startRevealingBidsStage(seriesId, isGreenDay);
+        _ts().auction.startRevealingBidsStage(seriesId, isGreenDay);
 
-        emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
+        emit AuctionStageReceived(_srcChainId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
     /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
-    /// @dev Inbound stage transition runs first and is required to succeed; the bids relay is
-    ///      attempted in a try/catch shim — if `_lzSend` reverts (e.g. low pre-funded balance),
-    ///      the seriesId is parked for permissionless retry via `flushPendingBidsRelay`.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded clearing stage payload
-    function _handleAuctionStageClearing(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _s();
+    /// @dev Only the outbound relay is caught (parked on failure); a failing inbound transition propagates so the
+    ///      bridge redelivers.
+    function _handleAuctionStageClearing(uint32 _srcChainId, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _ts();
         uint32 seriesId = BridgeMsgCodec.decodeAuctionStageClearing(_message);
         $.auction.startClearingStage(seriesId);
 
@@ -393,7 +301,7 @@ contract TargetMessenger is
             emit BidsRelayDeferred(idx, seriesId, reason);
         }
 
-        emit AuctionStageReceived(_guid, _srcEid, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+        emit AuctionStageReceived(_srcChainId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
     /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself —
@@ -408,7 +316,7 @@ contract TargetMessenger is
     /// @notice Permissionless retry of a previously deferred bids relay.
     /// @param idx Index of the parked relay to flush.
     function flushPendingBidsRelay(uint256 idx) external nonReentrant {
-        PendingBidsRelay storage p = _s().pendingBidsRelays[idx];
+        PendingBidsRelay storage p = _ts().pendingBidsRelays[idx];
         if (!p.exists) revert NoSuchPendingBidsRelay(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
@@ -417,36 +325,28 @@ contract TargetMessenger is
     }
 
     /// @notice Fetch revealed bids from Auction and relay them to Outbe in chunked BIDS_BATCH sends.
-    /// @dev Fetch revealed bids from Auction and relay them to Outbe, chunked into
-    ///      `MAX_PAYLOAD_ARRAY_LEN`-item batches (single-chain throughput: the inbound codec caps
-    ///      each batch at the same number). The final chunk is flagged `isLast`; when there are no
-    ///      bids at all, one empty `isLast` batch is still sent so the receiver gets the completion
-    ///      signal (the no-bid path). Uses pre-funded balance and enforcedOptions for LZ fees.
-    ///
-    ///      The ORDERED lane delivers chunks in send order, so the `isLast` chunk is processed last.
-    ///      Every chunk's `_lzSend` runs in this one call: if any reverts (e.g. low pre-funded
-    ///      balance), the whole call reverts and unwinds the earlier sends, so a retry via
-    ///      `flushPendingBidsRelay` re-sends the full set without duplicating any chunk.
-    /// @param seriesId Series identifier
+    /// @dev Chunks of `MAX_PAYLOAD_ARRAY_LEN` share one `generation` and carry `batchIndex`/`totalBatches`, so the
+    ///      unordered bridge can deliver them in any order and the receiver collects the whole generation before
+    ///      finalizing. No bids → one empty batch (0 of 1) as the completion signal. Any chunk reverting reverts the
+    ///      whole call, so a `flushPendingBidsRelay` retry re-sends the full set under a fresh generation.
     function _doSendBidsToOutbe(uint32 seriesId) internal {
-        TargetMessengerStorage storage $ = _s();
+        TargetMessengerStorage storage $ = _ts();
         // First tuple component (AuctionData) is unused here; tuple destructure intentionally drops it.
         // slither-disable-next-line unused-return
         (, IIntexAuction.SubmittedBidData[] memory bids) = $.auction.getAuctionDetails(seriesId);
         uint256 bidsCount = bids.length;
-        uint32 srcEid = endpoint.eid();
         // One generation per flush; every chunk of this flush carries it so the receiver can replace
         // a prior (partial or complete) relay rather than appending to it.
         uint32 gen = ++$.bidsRelayGeneration[seriesId];
 
         if (bidsCount == 0) {
-            _sendOneBidsBatch(
-                seriesId, srcEid, true, gen, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-            );
+            _sendOneBidsBatch(seriesId, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0));
             return;
         }
 
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        uint16 totalBatches = SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
+        uint16 batchIndex = 0;
         for (uint256 start = 0; start < bidsCount; start += maxChunk) {
             uint256 end = start + maxChunk;
             if (end > bidsCount) end = bidsCount;
@@ -466,59 +366,53 @@ contract TargetMessenger is
             }
 
             _sendOneBidsBatch(
-                seriesId, srcEid, end == bidsCount, gen, bidderAddresses, intexQuantities, intexBidRates, timestamps
+                seriesId, gen, batchIndex, totalBatches, bidderAddresses, intexQuantities, intexBidRates, timestamps
             );
+            batchIndex++;
         }
     }
 
-    /// @dev Encode and `_lzSend` a single BIDS_BATCH chunk to Outbe. The gas option scales with the
-    ///      chunk's bid count (the destination iterates over it) so a large chunk does not OOM the
-    ///      inbound handler.
+    /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId as its source
+    ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float on the
+    ///      relay path (`msg.value == 0`) or from `msg.value` on the direct `sendBidsBatch` entry.
     function _sendOneBidsBatch(
         uint32 seriesId,
-        uint32 srcEid,
-        bool isLast,
         uint32 relayGeneration,
+        uint16 batchIndex,
+        uint16 totalBatches,
         address[] memory bidderAddresses,
         uint16[] memory intexQuantities,
         uint32[] memory intexBidRates,
         uint32[] memory timestamps
-    ) internal {
+    ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcEid, isLast, relayGeneration, bidderAddresses, intexQuantities, intexBidRates, timestamps
+            seriesId,
+            uint32(block.chainid),
+            relayGeneration,
+            batchIndex,
+            totalBatches,
+            bidderAddresses,
+            intexQuantities,
+            intexBidRates,
+            timestamps
         );
-        bytes memory options = _bidsReceiveOption(bidderAddresses.length);
-
-        MessagingFee memory fee = _quote(OUTBE_EID, message, options, false);
-        MessagingReceipt memory receipt = _lzSend(OUTBE_EID, message, options, fee, address(this));
-        emit BidsBatchSent(receipt.guid, seriesId, bidderAddresses.length);
-    }
-
-    /// @dev Build the destination `lzReceiveOption` sized for an inbound BIDS_BATCH of `bidCount`
-    ///      bids.
-    function _bidsReceiveOption(uint256 bidCount) internal pure returns (bytes memory) {
-        return LzGasEstimator.receiveOption(BIDS_BASE_GAS, BIDS_PER_ITEM_GAS, bidCount);
+        sendId = _send(OUTBE_CHAIN_ID, message, _noAttrs());
+        emit BidsBatchSent(sendId, seriesId, bidderAddresses.length);
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded auction result payload
-    function _handleAuctionResult(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+    function _handleAuctionResult(uint32 _srcChainId, bytes calldata _message) internal {
         (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(_message);
 
-        _s().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount);
+        _ts().auction.executeAuctionClearing(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount);
 
-        emit AuctionResultReceived(_guid, _srcEid, seriesId, issuedIntexCount, auctionClearingRate);
+        emit AuctionResultReceived(_srcChainId, seriesId, issuedIntexCount, auctionClearingRate);
     }
 
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded issuance payload (series params + recipients + quantities)
-    function _handleIssuanceInstructions(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _s();
+    function _handleIssuanceInstructions(uint32 _srcChainId, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _ts();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
         $.intex
@@ -541,14 +435,13 @@ contract TargetMessenger is
             );
         $.intex.mintBatch(payload.recipients, payload.quantities, payload.seriesId);
 
-        emit IssuanceInstructionsReceived(_guid, _srcEid, payload.seriesId, payload.recipients.length);
+        emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, payload.recipients.length);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded refund payload (bidders + refund/paid amounts)
-    function _handleRefundInstructions(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+    /// @dev The bridge `receiveId` (unique per message, stable across transport redeliveries) is the escrow
+    ///      adapter's idempotency/retry key — the ERC-7786 analog of the former LayerZero message GUID.
+    function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
         (uint32 seriesId, address[] memory bidders, uint128[] memory refundedAmounts, uint128[] memory paidAmounts) =
             BridgeMsgCodec.decodeRefundInstructions(_message);
 
@@ -561,19 +454,16 @@ contract TargetMessenger is
             });
         }
 
-        _s().escrowAdapter.finalizeAuction(seriesId, _guid, instructions);
+        _ts().escrowAdapter.finalizeAuction(seriesId, _receiveId, instructions);
 
-        emit RefundInstructionsReceived(_guid, _srcEid, seriesId, bidders.length);
+        emit RefundInstructionsReceived(_srcChainId, seriesId, bidders.length);
     }
 
     /// @notice Decode MARK_CALLED, apply it to IntexNFT1155, then bridge all series holders to Outbe.
     /// @dev On bridge failure the holders+amounts snapshot is parked for retry via
     ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded mark-called payload (seriesId only)
-    function _handleMarkCalled(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _s();
+    function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
+        TargetMessengerStorage storage $ = _ts();
         uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
@@ -594,21 +484,18 @@ contract TargetMessenger is
             }
         }
 
-        emit MarkCalledReceived(_guid, _srcEid, seriesId);
+        emit MarkCalledReceived(_srcChainId, seriesId);
     }
 
     /// @notice Decode MARK_QUALIFIED and apply it to IntexNFT1155.
     /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
     ///      migration, so there is nothing to bridge back to Outbe.
-    /// @param _guid Unique message identifier
-    /// @param _srcEid Source endpoint id from `_origin`
-    /// @param _message Encoded mark-qualified payload (seriesId only)
-    function _handleMarkQualified(bytes32 _guid, uint32 _srcEid, bytes calldata _message) internal {
+    function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
         uint32 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
 
-        _s().intex.markQualified(seriesId);
+        _ts().intex.markQualified(seriesId);
 
-        emit MarkQualifiedReceived(_guid, _srcEid, seriesId);
+        emit MarkQualifiedReceived(_srcChainId, seriesId);
     }
 
     /// @notice Self-call shim around `_doBridgeSeriesHolders`. Only callable by this contract itself.
@@ -623,7 +510,7 @@ contract TargetMessenger is
     /// @notice Permissionless retry of a previously deferred holders bridge.
     /// @param idx Index of the parked relay to flush.
     function flushPendingHoldersRelay(uint256 idx) external nonReentrant {
-        PendingHoldersRelay storage p = _s().pendingHoldersRelays[idx];
+        PendingHoldersRelay storage p = _ts().pendingHoldersRelays[idx];
         if (!p.exists) revert NoSuchPendingHoldersRelay(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
@@ -631,53 +518,21 @@ contract TargetMessenger is
         emit HoldersRelayFlushed(idx, p.tokenId);
     }
 
-    /// @notice Quote and execute systemMultiSend via ONFT1155AdapterBatch to bridge series holders.
-    /// @dev Uses the pre-funded balance of `onftBatchAdapter` for LZ fees.
-    /// @param tokenId Token ID (series) to bridge
-    /// @param holders Source chain holder addresses
-    /// @param amounts Corresponding balances for each holder
+    /// @notice Bridge series holders to Outbe via the ONFT batch adapter's system holder migration.
+    /// @dev The adapter self-funds the bridge fee from its own relay float, so no value is forwarded here.
+    /// @param tokenId Token ID (series) to bridge.
+    /// @param holders Source chain holder addresses.
+    /// @param amounts Corresponding balances for each holder.
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        TargetMessengerStorage storage $ = _s();
-        bytes memory empty = "";
-        MessagingFee memory fee =
-            $.onftBatchAdapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_EID, empty, false);
-        // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the LayerZero
-        // MessagingReceipt return value is informational and intentionally discarded.
-        // slither-disable-next-line arbitrary-send-eth,unused-return
-        $.onftBatchAdapter.systemMultiSend{value: fee.nativeFee}(tokenId, holders, amounts, OUTBE_EID, empty, fee);
+        // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the returned sendId is
+        // informational and intentionally discarded.
+        // slither-disable-next-line unused-return
+        _ts().onftBatchAdapter.systemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
     }
 
     // --- Internal helpers ---
-    /// @notice Pay the native LZ fee, drawing from `msg.value` on entry calls or the pre-funded
-    ///         balance on relay calls, and refunding any excess to the entry caller.
-    /// @dev Split entry-funded vs relay-funded native-fee accounting.
-    ///      External `sendBidsBatch` callers supply the quoted fee via `msg.value`; the relay
-    ///      paths (`_doSendBidsToOutbe` / `_doBridgeSeriesHolders` invoked from inside `_lzReceive`)
-    ///      run with `msg.value == 0` and must draw from the operator-managed pre-funded balance.
-    ///      Conflating the two would let an entry caller's `msg.value` silently seed future relay
-    ///      sends with no refund, or let an entry caller silently drain the relay budget.
-    /// @param _nativeFee Required native fee amount.
-    /// @return nativeFee Actual fee paid (always `_nativeFee` — the caller-supplied value if any
-    ///         is forwarded to the endpoint; excess is refunded to `msg.sender`).
-    function _payNative(uint256 _nativeFee) internal override returns (uint256 nativeFee) {
-        if (msg.value == 0) {
-            // Relay path: this call originated inside `_lzReceive` (or one of the flush*
-            // helpers) — there's no caller-supplied value. Pay from the pre-funded balance.
-            if (address(this).balance < _nativeFee) revert NotEnoughNative(address(this).balance);
-            return _nativeFee;
-        }
-
-        // Entry path: caller supplied `msg.value` against a quoted fee.
-        if (msg.value < _nativeFee) revert MsgValueBelowFee(msg.value, _nativeFee);
-
-        uint256 refund = msg.value - _nativeFee;
-        if (refund > 0) {
-            // Refund excess back to the entry caller so it does not silently seed the relay budget.
-            // slither-disable-next-line arbitrary-send-eth
-            (bool ok,) = msg.sender.call{value: refund}("");
-            if (!ok) revert RefundFailed();
-        }
-        return _nativeFee;
+    function _noAttrs() private pure returns (bytes[] memory) {
+        return new bytes[](0);
     }
 
     /// @inheritdoc ITargetMessenger
@@ -686,30 +541,13 @@ contract TargetMessenger is
         uint256 balance = address(this).balance;
         if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
 
-        // `to` is admin-supplied; the function is gated by DEFAULT_ADMIN_ROLE so the
-        // arbitrary-destination warning is by design (admin recovery).
+        // admin-only native recovery; arbitrary destination is intentional
         // slither-disable-next-line arbitrary-send-eth
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NativeSweepFailed();
     }
 
-    /// @notice Accept native tokens for LayerZero fees (pre-funding)
-    receive() external payable {}
-
-    /// @notice Next expected inbound nonce for ORDERED LayerZero delivery on a `(srcEid, sender)` channel.
-    /// @dev Override returns `inboundNonce + 1`. The endpoint refuses to route any packet whose
-    ///      `_origin.nonce` does not equal this value, so duplicates and out-of-order deliveries are
-    ///      rejected at the transport layer before `_lzReceive` runs.
-    /// @param _srcEid LayerZero source endpoint id of the channel.
-    /// @param _sender Source sender (bytes32-encoded address) of the channel.
-    /// @return The next inbound nonce the endpoint must deliver for this channel.
-    function nextNonce(uint32 _srcEid, bytes32 _sender) public view override returns (uint64) {
-        return _s().inboundNonce[_srcEid][_sender] + 1;
-    }
-
-    /// @notice Check whether the contract supports a given interface (ERC-165).
-    /// @param interfaceId Interface ID to check
-    /// @return True if the interface is supported
+    /// @notice ERC-165 support check, resolving the AccessControl interface ids.
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }

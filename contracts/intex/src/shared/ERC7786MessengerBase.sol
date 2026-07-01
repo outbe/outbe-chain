@@ -121,12 +121,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     ///      caller (the bridge) and the inner `sender` (the registered peer for its chainId) before dispatching. The
     ///      bridge already deduplicates and rolls back on revert, so a premature message simply reverts here and is
     ///      redelivered by the transport once its prerequisite has landed.
-    function receiveMessage(
-        bytes32,
-        /*receiveId*/
-        bytes calldata sender,
-        bytes calldata payload
-    )
+    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         public
         payable
         virtual
@@ -144,12 +139,16 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
             UnauthorizedSourceMessenger(chainId, sender)
         );
 
-        _dispatch(chainId, payload);
+        _dispatch(chainId, receiveId, payload);
         return IERC7786Recipient.receiveMessage.selector;
     }
 
     /// @dev Handles an authenticated inbound `payload` from the matching messenger on `srcChainId`.
-    function _dispatch(uint32 srcChainId, bytes calldata payload) internal virtual;
+    /// @param srcChainId Source EVM chainId the message was authenticated against.
+    /// @param receiveId Bridge-assigned unique message id (binds source bridge + nonce-bearing payload); usable as an
+    ///        idempotency/parking key by clients that isolate per-item work (e.g. the ONFT adapters).
+    /// @param payload Encoded message body delivered verbatim from the remote messenger.
+    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal virtual;
 
     /// @notice Accept native to pre-fund the relay float (and receive any bridge fee refunds).
     receive() external payable {}
