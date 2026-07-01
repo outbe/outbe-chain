@@ -216,7 +216,7 @@ pub fn pay_anadosis(
     //    1/10 of the collateral immediately.
     let factory = CredisFactoryContract::new(storage.clone());
     let credis_denom = factory.position_denom.read(&position_id)?;
-    let denom = DenomAmount::try_from(credis_denom as u8)?;
+    let denom = DenomAmount::try_from(credis_denom)?;
     let anadosis_denom = denom
         .anadosis_denomination()
         .ok_or(CredisFactoryError::DenomNotCredisEligible)?;

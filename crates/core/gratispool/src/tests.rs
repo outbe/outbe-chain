@@ -500,6 +500,24 @@ fn denom_amount_id_roundtrips_and_rejects_out_of_range() {
 }
 
 #[test]
+fn denom_amount_try_from_u32_roundtrips_and_rejects_out_of_range() {
+    // `position_denom` persists the id at `u32` width; `TryFrom<u32>` lets
+    // callers resolve it without an `as u8` narrowing cast.
+    for d in DenomAmount::ALL {
+        assert_eq!(DenomAmount::try_from(u32::from(d.id())).unwrap(), d);
+    }
+    // Id 0, ids past the ladder, and any value that overflows `u8` are all
+    // unknown and must reject with the same `DenomUnknown` revert string.
+    for bad in [0u32, DenomAmount::ALL.len() as u32 + 1, 256, u32::MAX] {
+        let err = DenomAmount::try_from(bad).unwrap_err();
+        assert!(
+            err.to_string().contains("denomination id out of range"),
+            "try_from({bad}) should reject with the denom-range message, got: {err}"
+        );
+    }
+}
+
+#[test]
 fn anadosis_denomination_maps_one_decade_down() {
     // Every pledgeable rung maps to the denom one decade down, whose amount is
     // exactly one tenth (no truncation): ten installments reconstitute the full

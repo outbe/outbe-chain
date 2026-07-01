@@ -99,6 +99,15 @@ impl TryFrom<u8> for DenomAmount {
     }
 }
 
+impl TryFrom<u32> for DenomAmount {
+    type Error = GratisPoolError;
+
+    fn try_from(denom_id: u32) -> Result<Self, Self::Error> {
+        let denom_id = u8::try_from(denom_id).map_err(|_| GratisPoolError::DenomUnknown)?;
+        Self::try_from(denom_id)
+    }
+}
+
 /// Number of leaves the per-denomination Merkle tree can hold.
 ///
 /// Depth 20 → 2^20 ≈ 1.05M commitments per pool. Plenty of headroom for the
