@@ -12,10 +12,7 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 
 use outbe_primitives::error::Result;
 
-use crate::constants::{
-    MERKLE_DEPTH, ROOT_WINDOW, TAG_MERKLE_GRATIS
-    , ZERO_LEAF,
-};
+use crate::constants::{MERKLE_DEPTH, ROOT_WINDOW, TAG_MERKLE_GRATIS, ZERO_LEAF};
 use crate::errors::GratisPoolError;
 use crate::schema::GratisPoolContract;
 use crate::zkp_utils::{fr_to_u256, poseidon, u256_to_fr, u64_to_fr};

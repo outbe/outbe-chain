@@ -144,20 +144,18 @@ fn full_request_pay_reclaim_unpledge_flow() {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(pledge_null).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0x00; 32],
         };
 
         let (position_id, amount_stables) = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args,
-            )
-            .unwrap()
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
         });
 
         // amount_stables = pledge_amount * 2e18 / (1e12 * 1e18) for rate 2.0.
@@ -186,17 +184,16 @@ fn full_request_pay_reclaim_unpledge_flow() {
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(
-                storage.clone(),
-                alice(),
-                position_id,
-                reclaim_commitment,
-            )
-            .unwrap();
+            runtime::pay_anadosis(storage.clone(), alice(), position_id, reclaim_commitment)
+                .unwrap();
             let post = GratisPoolContract::new(storage.clone())
                 .leaf_count(anadosis_denom_id)
                 .unwrap();
-            assert_eq!(post, pre + 1, "installment {n} inserts exactly one reclaim note");
+            assert_eq!(
+                post,
+                pre + 1,
+                "installment {n} inserts exactly one reclaim note"
+            );
 
             // Unlock this installment's share right away.
             let unpledge_args = build_spend_args(
@@ -221,7 +218,10 @@ fn full_request_pay_reclaim_unpledge_flow() {
             let gratis = Gratis::new(storage.clone());
             let unlocked = U256::from(n) * installment_amount;
             assert_eq!(gratis.balance_of(alice()).unwrap(), unlocked);
-            assert_eq!(gratis.pledged_of(alice()).unwrap(), pledge_amount - unlocked);
+            assert_eq!(
+                gratis.pledged_of(alice()).unwrap(),
+                pledge_amount - unlocked
+            );
         }
 
         // Final: escrow fully drained, Alice holds the whole pledge again.
@@ -265,19 +265,17 @@ fn anadosis_inserts_per_installment_reclaim_note() {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(0x52u64)).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0x00; 32],
         };
         let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args,
-            )
-            .unwrap()
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
         });
 
         // Pay one installment carrying a reclaim note in the anadosis pool.
@@ -290,13 +288,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
             .unwrap();
-        runtime::pay_anadosis(
-            storage.clone(),
-            alice(),
-            position_id,
-            reclaim_commitment,
-        )
-        .unwrap();
+        runtime::pay_anadosis(storage.clone(), alice(), position_id, reclaim_commitment).unwrap();
         let post = GratisPoolContract::new(storage.clone())
             .leaf_count(anadosis_denom.id())
             .unwrap();
@@ -355,19 +347,17 @@ fn request_credis_rejects_overdue_anadosis() {
             merkle_root: root1,
             nullifier_hash: nullifier_hash(U256::from(2u64)).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0u8; 32],
         };
         with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args1,
-            )
-            .unwrap();
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args1).unwrap();
         });
 
         // Second pledge — then attempt a second request once anadosis-1 is
@@ -377,22 +367,20 @@ fn request_credis_rejects_overdue_anadosis() {
             merkle_root: root2,
             nullifier_hash: nullifier_hash(U256::from(4u64)).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0u8; 32],
         };
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
             .unwrap();
         let err = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args2,
-            )
-            .unwrap_err()
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args2).unwrap_err()
         });
         assert!(err.to_string().contains("overdue"));
     });
@@ -414,14 +402,8 @@ fn request_credis_rejects_zero_asset() {
             receiver_binding: U256::ZERO,
             proof: vec![],
         };
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            Address::ZERO,
-            alice(),
-            args,
-        )
-        .unwrap_err();
+        let err = runtime::request_credis(storage.clone(), alice(), Address::ZERO, alice(), args)
+            .unwrap_err();
         assert!(err.to_string().contains("asset"));
     });
 }
@@ -438,14 +420,8 @@ fn request_credis_rejects_zero_bundle_account() {
             receiver_binding: U256::ZERO,
             proof: vec![],
         };
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            Address::ZERO,
-            args,
-        )
-        .unwrap_err();
+        let err = runtime::request_credis(storage.clone(), alice(), asset(), Address::ZERO, args)
+            .unwrap_err();
         assert!(err.to_string().contains("bundle account"));
     });
 }
@@ -474,32 +450,25 @@ fn pay_anadosis_rejects_non_owner_caller() {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(12u64)).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0u8; 32],
         };
         let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args,
-            )
-            .unwrap()
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
         });
 
         // bob is not the bundleAccount on this position. The non-zero reclaim
         // commitment must not matter: the caller-authorization check fires
         // first.
         let dummy_reclaim = U256::from(0xDEADu64);
-        let err = runtime::pay_anadosis(
-            storage.clone(),
-            bob(),
-            position_id,
-            dummy_reclaim,
-        )
-        .unwrap_err();
+        let err =
+            runtime::pay_anadosis(storage.clone(), bob(), position_id, dummy_reclaim).unwrap_err();
         assert!(
             err.to_string().contains("bundleAccount"),
             "expected bundleAccount-mismatch error, got: {err}",
@@ -530,31 +499,25 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
             merkle_root: pledge_root,
             nullifier_hash: nullifier_hash(U256::from(22u64)).unwrap(),
             denom_id,
-            receiver_binding: receiver_binding(ACTION_REQUEST_CREDIS, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
+            receiver_binding: receiver_binding(
+                ACTION_REQUEST_CREDIS,
+                alice(),
+                CHAIN_ID,
+                U256::ZERO,
+            )
+            .unwrap(),
             proof: vec![0u8; 32],
         };
         let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(
-                storage.clone(),
-                alice(),
-                asset(),
-                alice(),
-                args,
-            )
-            .unwrap()
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
         });
 
         // The owner pays, but supplies a zero reclaim commitment.
-        let err = runtime::pay_anadosis(
-            storage.clone(),
-            alice(),
-            position_id,
-            U256::ZERO,
-        )
-        .unwrap_err();
+        let err =
+            runtime::pay_anadosis(storage.clone(), alice(), position_id, U256::ZERO).unwrap_err();
         assert!(
-            err.to_string().contains("reclaim commitment must be non-zero"),
+            err.to_string()
+                .contains("reclaim commitment must be non-zero"),
             "expected zero-reclaim rejection, got: {err}",
         );
     });

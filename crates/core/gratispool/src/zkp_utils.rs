@@ -2,18 +2,22 @@
 // Field-element conversion
 // ---------------------------------------------------------------------------
 
+use crate::constants::{DenomAmount, TAG_BINDING, TAG_COMMIT_GRATIS, TAG_NULLIFIER_GRATIS};
 use crate::GratisPoolError;
 use alloy_primitives::{Address, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
-use crate::constants::{DenomAmount, TAG_BINDING, TAG_COMMIT_GRATIS, TAG_NULLIFIER_GRATIS};
 // ---------------------------------------------------------------------------
 // Public helpers — formulas exposed to runtime / tests
 // ---------------------------------------------------------------------------
 
 /// `commitment = poseidon(TAG_COMMIT_GRATIS, secret, nullifier_secret, denom_id)`.
-pub fn commitment_hash(secret: U256, nullifier_secret: U256, denom: DenomAmount) -> outbe_primitives::error::Result<U256> {
+pub fn commitment_hash(
+    secret: U256,
+    nullifier_secret: U256,
+    denom: DenomAmount,
+) -> outbe_primitives::error::Result<U256> {
     let secret_fr = u256_to_fr(secret)
         .ok_or_else(|| GratisPoolError::NonCanonicalFieldInput("secret".to_string()))?;
     let nullifier_secret_fr = u256_to_fr(nullifier_secret)

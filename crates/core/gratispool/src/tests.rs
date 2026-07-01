@@ -22,9 +22,9 @@ use crate::api;
 use crate::constants::{DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE, TAG_MERKLE_GRATIS};
 use crate::runtime::SpendArgs;
 use crate::schema::GratisPoolContract;
-use crate::state::{merkle_node};
-use crate::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
+use crate::state::merkle_node;
 use crate::verifier::{build_combined, with_verifier_outcome, NUM_PUBLIC_INPUTS};
+use crate::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
 
 const CHAIN_ID: u64 = 1;
 
@@ -543,7 +543,10 @@ fn anadosis_denomination_maps_one_decade_down() {
     );
     assert_eq!(DenomAmount::Gratis0_1.anadosis_denomination(), None);
     // 0.1 GRATIS == 10^17 base units.
-    assert_eq!(DenomAmount::Gratis0_1.amount(), ONE_COEN / U256::from(10u64));
+    assert_eq!(
+        DenomAmount::Gratis0_1.amount(),
+        ONE_COEN / U256::from(10u64)
+    );
 }
 
 #[test]
