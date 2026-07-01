@@ -161,8 +161,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error SeriesNotYetExpired(uint32 deadline, uint32 nowTs);
     /// @notice `expireSeries` has nothing to expire — the series supply is already zero (swept).
     error NothingToExpire();
-    /// @notice Provided call period is invalid (zero or out of allowed range).
-    error InvalidCallPeriod(uint32 intexCallPeriod);
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
     /// @notice Input array lengths do not match.
@@ -268,11 +266,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
 
     // --- Reads ---
-
-    /// @notice Upper bound on a series call period, in seconds. Implemented by the
-    ///         `MAX_INTEX_CALL_PERIOD` public constant on the implementation.
-    /// @return The maximum allowed call period in seconds.
-    function MAX_INTEX_CALL_PERIOD() external view returns (uint32);
 
     /// @notice Issued token id for a series (= `uint256(seriesId)`). Pure helper.
     /// @param seriesId Series identifier.

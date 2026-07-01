@@ -128,7 +128,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, uint32(21 days)));
     }
 
     // ============================================================
@@ -189,7 +189,7 @@ contract IntexCallFlowTest is TestHelperOz5 {
         assertEq(intexOutbe.balanceOf(holder3, TOKEN_ID), 20, "holder3 Outbe balance should be 20");
         assertEq(intexOutbe.totalSupply(TOKEN_ID), 100, "Outbe total supply should be 100");
 
-        // BSC series state is Called and deadline is derived from calledAt + default callPeriod
+        // BSC series state is Called and deadline is derived from calledAt + the series callPeriod
         IIntexNFT1155.SeriesData memory dataBnb = intexBnb.readData(SERIES_ID);
         assertEq(uint8(dataBnb.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(dataBnb.calledAt, calledAt);

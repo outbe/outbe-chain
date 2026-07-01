@@ -88,8 +88,9 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_CreateSeries() public {
+        uint32 callPeriod = uint32(30 days);
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, callPeriod));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -98,26 +99,8 @@ contract IntexNFT1155Test is Test {
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
-        // Default callPeriod (21 days) is applied when 0 is passed at creation.
-        assertEq(data.callTrigger.intexCallPeriod, uint32(21 days));
-    }
-
-    function test_CreateSeries_RevertsCallPeriodAboveMax() public {
-        uint32 overMax = nft.MAX_INTEX_CALL_PERIOD() + 1;
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, overMax));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, overMax));
-    }
-
-    function test_CreateSeries_AcceptsCallPeriodAtMax() public {
-        uint32 atMax = nft.MAX_INTEX_CALL_PERIOD();
-        vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, atMax));
-        assertEq(nft.readData(SERIES_ID_1).callTrigger.intexCallPeriod, atMax);
-    }
-
-    function test_MaxIntexCallPeriod_IsOneYear() public view {
-        assertEq(nft.MAX_INTEX_CALL_PERIOD(), uint32(365 days));
+        // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
+        assertEq(data.callTrigger.intexCallPeriod, callPeriod);
     }
 
     function test_OnlyBridgeCanCreateSeries() public {
@@ -345,16 +328,6 @@ contract IntexNFT1155Test is Test {
         );
         nft.markQualified(SERIES_ID_1);
         vm.stopPrank();
-    }
-
-    function test_CreateSeriesRejectsInvalidCallPeriod() public {
-        // The settlement deadline is derived from calledAt + callPeriod; the legacy
-        // "invalid deadline" failure mode is captured at series creation by enforcing
-        // an upper bound on the requested callPeriod.
-        uint32 tooLong = uint32(366 days);
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, tooLong));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, tooLong));
     }
 
     function test_CrosschainBurnNonexistentToken() public {
