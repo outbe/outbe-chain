@@ -572,12 +572,25 @@ fn read_startup_dkg_snapshot(
         last_consensus_finalized_height,
         args.trust_el_head,
     )?;
+    // NORMALIZE the tuple height to the ACTIVATION ANCHOR. The header scan
+    // returns the height of the block CARRYING the boundary artifact, but that
+    // artifact always rides the FIRST block of the new epoch — one block ABOVE
+    // the activation height the committee anchored its rotation schedule on
+    // (genesis: activation 0, committed in block 1; a reshare activated at H is
+    // committed in block H+1). A restarted node that anchors on the commit
+    // height runs its whole freeze/activation schedule one block LATE: it waits
+    // for activation H+1 while the live committee restarts its engine at H. With
+    // one such node the committee still has quorum and the laggard self-heals
+    // one block later; with two of five (e.g. a restarted validator plus a
+    // freshly promoted one) the new epoch is 3-of-5 < quorum and the chain
+    // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
     let mut recovered_boundary = recover_latest_boundary_artifact(
         &node.provider,
         boundary_recovery_height,
         dkg_rotation_params,
     )
-    .wrap_err("failed to recover latest DKG boundary artifact")?;
+    .wrap_err("failed to recover latest DKG boundary artifact")?
+    .map(|(commit_height, artifact)| (commit_height.saturating_sub(1), artifact));
     let mut recovered_boundary_finalized = recovered_boundary.is_some();
 
     if let Some(keys_dir) = args.keys_dir.as_ref().filter(|_| !args.force_dkg) {
@@ -1874,20 +1887,29 @@ where
 
     // ── 4. Executor (REUSED verbatim) — drives the EL via FCU+newPayload ──
     let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
+    let (execution_finalized_height_tx, mut execution_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
     let (executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle,
         genesis_hash,
         last_execution_height,
         last_execution_hash,
-        None,
+        Some(execution_finalized_height_tx),
     );
     let _executor_handle =
         executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
-    // ── 4b. Serve `outbe_getFinalization` so this follower can itself be an
-    //        upstream for other followers. ────────────────────────────────
-    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge);
+    // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
+    //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
+    //        so this follower can itself be an UPSTREAM for other followers
+    //        (their tip discovery polls that status field). ────────────────
+    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    ctx.child("follower_tip_publisher").spawn(move |_| async move {
+        while let Some(height) = execution_finalized_height_rx.recv().await {
+            bridge.set_last_finalized_block_number(height);
+        }
+    });
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
     run_follow_engine(
@@ -2885,27 +2907,18 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    // The boundary tuple height is the ACTIVATION ANCHOR (the height the live
+    // committee anchored its rotation schedule on), NOT the commit height of the
+    // artifact-carrying block: every producer normalizes commit → anchor
+    // (commit - 1, since the artifact rides the FIRST new-epoch block), and the
+    // pending-snapshot restore stores the anchor directly. Anchoring on the
+    // commit height instead shifts a restarted node's freeze/activation schedule
+    // one block late vs the committee — fatal when several committee members
+    // restart within one epoch (the new epoch loses quorum waiting for an
+    // activation height that can never be produced).
     let mut last_dkg_activation_height = active_boundary
         .as_ref()
-        .map(|(height, artifact)| {
-            // The genesis epoch's DKG activated at height 0, but its mandatory
-            // BoundaryOutcome is committed in block 1. A never-restarted committee node
-            // has no recovered boundary at startup, so it keeps `last_dkg_activation_height
-            // = 0` for the genesis epoch — and from that derives `planned_activation_height`
-            // for the FIRST reshare. A node that recovers the genesis boundary on restart
-            // must use the SAME 0, not the boundary's commit height (1): otherwise its
-            // freeze/activation schedule is one block AHEAD of the committee's, it waits
-            // for an activation height the committee already passed, and (on a
-            // membership-changing first reshare) it can never verify the first new-epoch
-            // block with its old scheme — it deadlocks one block before activation. Only
-            // the genesis boundary (epoch 0) needs this; a recovered reshare boundary's
-            // commit height IS its activation height.
-            if artifact.epoch == 0 {
-                0
-            } else {
-                *height
-            }
-        })
+        .map(|(height, _)| *height)
         .unwrap_or(last_execution_height);
     let mut dkg_cycle = recovered_boundary_artifact
         .map(|artifact| artifact.dkg_cycle.saturating_add(1))
@@ -5706,7 +5719,11 @@ where
                     vrf_group_public_key = %expected_vrf_group_public_key,
                     "startup live-join boundary finalized; threshold material is current"
                 );
-                break (height, boundary);
+                // Same activation-anchor normalization as `read_startup_dkg_snapshot`:
+                // the artifact rides the FIRST new-epoch block (activation + 1), so
+                // anchoring on the commit height would shift this node's whole
+                // rotation schedule one block late vs the live committee.
+                break (height.saturating_sub(1), boundary);
             }
         }
 
