@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {console} from "forge-std/console.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {BaseScript} from "./BaseScript.s.sol";
 import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -15,8 +16,8 @@ import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 /// @author Outbe
 /// @notice Deploy the BNB-side intex contracts as UUPS proxies through the CREATE3 factory.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to), OUTBE_CHAIN_ID
-///      (Outbe's EVM chainId). The deployer is the admin (DEFAULT_ADMIN_ROLE) and delegate. Wiring (remote
-///      messengers, escrow/compact/vault, roles) is a separate step.
+///      (Outbe's EVM chainId). The deployer is the admin (DEFAULT_ADMIN_ROLE) and delegate. Registers the
+///      Outbe-side peers on each client; app wiring (escrow/compact/vault, roles) is a separate step.
 contract DeployBsc is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -73,6 +74,24 @@ contract DeployBsc is BaseScript {
             address(new TargetMessenger(bridge, outbeChainId)),
             abi.encodeCall(TargetMessenger.initialize, (delegate))
         );
+
+        // Register the Outbe-side peers. Proxy addresses are CREATE3-deterministic across chains, so the
+        // Outbe clients are predictable from the same (factory, deployer, salt) before that chain is deployed.
+        TargetMessenger(payable(messenger))
+            .setRemoteMessenger(
+                outbeChainId,
+                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "OriginMessenger"))
+            );
+        ONFT1155Adapter(payable(onft))
+            .setRemoteMessenger(
+                outbeChainId,
+                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "ONFT1155Adapter"))
+            );
+        ONFT1155AdapterBatch(payable(onftBatch))
+            .setRemoteMessenger(
+                outbeChainId,
+                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "ONFT1155AdapterBatch"))
+            );
 
         vm.stopBroadcast();
 
