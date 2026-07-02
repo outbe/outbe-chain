@@ -4,69 +4,53 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
-import {WCOENOFT} from "../../src/WCOENOFT.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {SendParam, OFTReceipt} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
-import {
-    MessagingFee,
-    MessagingReceipt
-} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 /// @title SendTargetToSource
-/// @notice Burn WCOENOFT on BSC and unlock WCOEN on Outbe.
+/// @notice Burn WCOEN on BNB and unlock WCOEN on Outbe through ERC-7786.
 contract SendTargetToSource is Script {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
     error InsufficientNativeBalance(address signer, uint256 balance, uint256 required);
+    error BridgeTokenMismatch(address configuredToken, address bridgeToken);
+    error DomainTooLarge(uint256 chainId);
 
     function _getPrivateKey() internal view returns (uint256) {
-        string memory key = vm.envString("PRIVATE_KEY");
-        return vm.parseUint(key);
+        return vm.parseUint(vm.envString("PRIVATE_KEY"));
     }
 
-    function _toBytes32(address addr) internal pure returns (bytes32) {
-        return bytes32(uint256(uint160(addr)));
+    function _toDomain(uint256 chainId) internal pure returns (uint32) {
+        if (chainId > type(uint32).max) revert DomainTooLarge(chainId);
+        return uint32(chainId);
     }
 
-    /// @notice Send WCOENOFT from BSC to Outbe.
-    function run() external returns (bytes32 guid, uint64 nonce, uint256 nativeFee) {
+    function run() external returns (bytes32 sendId, uint256 nativeFee) {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
-        address deployer = vm.envAddress("DEPLOYER_ADDRESS");
+        uint32 destinationChainId = _toDomain(vm.envUint("OUTBE_CHAIN_ID"));
         address recipient = vm.envAddress("RECIPIENT");
-        address oftToken = vm.envAddress("WCOEN_OFT_TOKEN");
+        address configuredToken = vm.envAddress("BSC_WCOEN_TOKEN");
+        address tokenBridge = vm.envAddress("BSC_WCOEN_BRIDGE");
         uint256 amount = vm.envUint("SEND_AMOUNT_LD");
-        uint256 minAmount = vm.envOr("SEND_MIN_AMOUNT_LD", amount);
 
-        SendParam memory sp = SendParam({
-            dstEid: outbeEid,
-            to: _toBytes32(recipient),
-            amountLD: amount,
-            minAmountLD: minAmount,
-            extraOptions: bytes(""),
-            composeMsg: bytes(""),
-            oftCmd: bytes("")
-        });
+        ERC7786TokenBridge bridge = ERC7786TokenBridge(tokenBridge);
+        address bridgeToken = address(bridge.token());
+        if (configuredToken != bridgeToken) revert BridgeTokenMismatch(configuredToken, bridgeToken);
 
-        MessagingFee memory fee = WCOENOFT(oftToken).quoteSend(sp, false);
+        nativeFee = bridge.quoteSendFrom(signer, destinationChainId, recipient, amount);
 
-        require(WCOENOFT(oftToken).balanceOf(signer) >= amount, "insufficient token balance");
-        require(signer.balance >= fee.nativeFee, "insufficient native balance");
+        uint256 tokenBalance = IERC20(configuredToken).balanceOf(signer);
+        if (tokenBalance < amount) revert InsufficientTokenBalance(signer, tokenBalance, amount);
+        if (signer.balance < nativeFee) revert InsufficientNativeBalance(signer, signer.balance, nativeFee);
 
         vm.startBroadcast(pk);
-        (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) = WCOENOFT(oftToken).send{value: fee.nativeFee}(
-            sp, MessagingFee({nativeFee: fee.nativeFee, lzTokenFee: 0}), deployer
-        );
+        sendId = bridge.send{value: nativeFee}(destinationChainId, recipient, amount);
         vm.stopBroadcast();
 
-        guid = receipt.guid;
-        nonce = receipt.nonce;
-        nativeFee = fee.nativeFee;
-
-        console2.log("Sent from BSC to Outbe:");
-        console2.logBytes32(guid);
-        console2.log("  Nonce:", nonce);
-        console2.log("  Amount sent:", oftReceipt.amountSentLD);
-        console2.log("  Amount received:", oftReceipt.amountReceivedLD);
+        console2.log("Sent WCOEN from BNB to Outbe:");
+        console2.logBytes32(sendId);
+        console2.log("  Native fee:", nativeFee);
+        console2.log("  Amount:", amount);
     }
 }

@@ -4,119 +4,146 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {WCOEN} from "../../src/WCOEN.sol";
-import {OFTAdapter} from "../../src/OFTAdapter.sol";
 import {WCOENOFT} from "../../src/WCOENOFT.sol";
 
-import {EnforcedOptionParam} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/interfaces/IOAppOptionsType3.sol";
-import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
-
 /// @title OFTDeploy
-/// @notice LayerZero OFT deployment and configuration script
+/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
 contract OFTDeploy is Script {
-    using OptionsBuilder for bytes;
-
-    uint8 private constant WCOEN_DECIMALS = 18;
-
     struct SourceDeployment {
         address token;
-        bytes32 tokenSalt;
-        bytes tokenCreationCode;
+        address tokenBridge;
         bool tokenFromEnv;
-        address adapter;
-        bytes32 adapterSalt;
-        bytes adapterCreationCode;
+        bytes32 tokenSalt;
+        bytes32 bridgeSalt;
+        bytes tokenCreationCode;
+        bytes bridgeCreationCode;
+    }
+
+    struct TargetDeployment {
+        address token;
+        address tokenBridge;
+        bytes32 tokenSalt;
+        bytes32 bridgeSalt;
+        bytes tokenCreationCode;
+        bytes bridgeCreationCode;
     }
 
     error MissingCode(address target);
     error UnauthorizedSigner(address signer, address expectedOwner);
-    error InvalidOftDecimals(uint256 decimals_);
+    error InvalidDecimals(uint256 decimals_);
+    error DomainTooLarge(uint256 chainId);
+    error TokenBridgeMismatch(address currentBridge, address expectedBridge);
+    error InvalidRemoteTokenBridge();
     error Create2FactoryDeploymentFailed(bytes32 salt, address expected);
 
-    // ============ Helpers ============
-
     function _getPrivateKey() internal view returns (uint256) {
-        string memory key = vm.envString("PRIVATE_KEY");
-        return vm.parseUint(key);
-    }
-
-    function _toBytes32(address addr) internal pure returns (bytes32) {
-        return bytes32(uint256(uint160(addr)));
+        return vm.parseUint(vm.envString("PRIVATE_KEY"));
     }
 
     function _requireCode(address target) internal view {
         if (target.code.length == 0) revert MissingCode(target);
     }
 
-    function _getOftDecimals() internal view returns (uint8) {
-        uint256 decimals_ = vm.envOr("OFT_DECIMALS", uint256(18));
-        if (decimals_ != WCOEN_DECIMALS) revert InvalidOftDecimals(decimals_);
-        return WCOEN_DECIMALS;
+    function _requireOwner(address signer, address expectedOwner) internal pure {
+        if (signer != expectedOwner) revert UnauthorizedSigner(signer, expectedOwner);
     }
 
-    function _validateOftDecimals(uint8 decimals_) internal pure {
-        if (decimals_ != WCOEN_DECIMALS) revert InvalidOftDecimals(decimals_);
+    function _toDomain(uint256 chainId) internal pure returns (uint32) {
+        if (chainId > type(uint32).max) revert DomainTooLarge(chainId);
+        return uint32(chainId);
     }
 
-    function _getOftCreate2Salt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("OFT_CREATE2_SALT", string("WCOENOFT"))));
+    function _getDecimals() internal view returns (uint8) {
+        uint256 decimals_ = vm.envOr("TOKEN_DECIMALS", uint256(18));
+        if (decimals_ != 18) revert InvalidDecimals(decimals_);
+        return 18;
     }
 
-    function _getWcoenCreate2Salt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("WCOEN_CREATE2_SALT", string("WCOEN"))));
+    function _getSourceTokenSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("WCOEN_TOKEN_CREATE2_SALT", string("OUTBE_WCOEN_TOKEN"))));
     }
 
-    function _getAdapterCreate2Salt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("WCOEN_ADAPTER_CREATE2_SALT", string("WCOEN_OFT_ADAPTER"))));
+    function _getSourceBridgeSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("WCOEN_BRIDGE_CREATE2_SALT", string("OUTBE_WCOEN_BRIDGE"))));
     }
 
-    function _getWcoenCreationCode() internal returns (bytes memory) {
-        return type(WCOEN).creationCode;
+    function _getTargetTokenSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("TOKEN_CREATE2_SALT", string("BSC_WCOEN_TOKEN"))));
     }
 
-    function _getAdapterCreationCode(address token) internal returns (bytes memory) {
-        address owner = vm.envAddress("DEPLOYER_ADDRESS");
-        address endpoint = vm.envAddress("LZ_ENDPOINT");
-        return abi.encodePacked(type(OFTAdapter).creationCode, abi.encode(token, endpoint, owner));
+    function _getTargetBridgeSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("TOKEN_BRIDGE_CREATE2_SALT", string("BSC_WCOEN_BRIDGE"))));
     }
 
-    function _getOftCreationCode(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
+    function _getSourceBridgeCreationCode(address token_) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            type(ERC7786TokenBridge).creationCode,
+            abi.encode(
+                token_,
+                vm.envAddress("BRIDGE_ADDRESS"),
+                vm.envAddress("DEPLOYER_ADDRESS"),
+                ERC7786TokenBridge.TokenBridgeMode.LockUnlock
+            )
+        );
+    }
+
+    function _getTargetTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
         internal
+        view
         returns (bytes memory)
     {
-        address owner = vm.envAddress("DEPLOYER_ADDRESS");
-        address endpoint = vm.envAddress("LZ_ENDPOINT");
-        return
-            abi.encodePacked(type(WCOENOFT).creationCode, abi.encode(oftName, oftSymbol, oftDecimals, endpoint, owner));
+        return abi.encodePacked(type(WCOENOFT).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
     }
 
-    function _predictOutbe(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
-        internal
-        returns (address predicted, bytes32 salt, bytes memory creationCode)
-    {
-        salt = _getOftCreate2Salt();
-        creationCode = _getOftCreationCode(oftName, oftSymbol, oftDecimals);
-        predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
+    function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            type(ERC7786TokenBridge).creationCode,
+            abi.encode(
+                token_,
+                vm.envAddress("BRIDGE_ADDRESS"),
+                vm.envAddress("DEPLOYER_ADDRESS"),
+                ERC7786TokenBridge.TokenBridgeMode.BurnMint
+            )
+        );
     }
 
-    function _predictSource() internal returns (SourceDeployment memory source) {
-        address configuredToken = vm.envOr("WCOEN_TOKEN", address(0));
-        if (configuredToken == address(0)) {
-            source.tokenSalt = _getWcoenCreate2Salt();
-            source.tokenCreationCode = _getWcoenCreationCode();
-            source.token =
-                Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
-        } else {
+    function _predictSource() internal view returns (SourceDeployment memory source) {
+        address configuredToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));
+        source.tokenFromEnv = configuredToken != address(0);
+
+        if (source.tokenFromEnv) {
             source.token = configuredToken;
-            source.tokenFromEnv = true;
+        } else {
+            source.tokenSalt = _getSourceTokenSalt();
+            source.tokenCreationCode = type(WCOEN).creationCode;
+            source.token = Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
         }
 
-        source.adapterSalt = _getAdapterCreate2Salt();
-        source.adapterCreationCode = _getAdapterCreationCode(source.token);
-        source.adapter =
-            Create2.computeAddress(source.adapterSalt, keccak256(source.adapterCreationCode), CREATE2_FACTORY);
+        source.bridgeSalt = _getSourceBridgeSalt();
+        source.bridgeCreationCode = _getSourceBridgeCreationCode(source.token);
+        source.tokenBridge =
+            Create2.computeAddress(source.bridgeSalt, keccak256(source.bridgeCreationCode), CREATE2_FACTORY);
+    }
+
+    function _predictTarget(string memory name_, string memory symbol_, uint8 decimals_)
+        internal
+        view
+        returns (TargetDeployment memory target)
+    {
+        target.tokenSalt = _getTargetTokenSalt();
+        target.tokenCreationCode = _getTargetTokenCreationCode(name_, symbol_, decimals_);
+        target.token = Create2.computeAddress(target.tokenSalt, keccak256(target.tokenCreationCode), CREATE2_FACTORY);
+
+        target.bridgeSalt = _getTargetBridgeSalt();
+        target.bridgeCreationCode = _getTargetBridgeCreationCode(target.token);
+        target.tokenBridge =
+            Create2.computeAddress(target.bridgeSalt, keccak256(target.bridgeCreationCode), CREATE2_FACTORY);
     }
 
     function _deployCreate2(bytes32 salt, bytes memory creationCode, address expected) internal {
@@ -126,204 +153,136 @@ contract OFTDeploy is Script {
         if (!success || expected.code.length == 0) revert Create2FactoryDeploymentFailed(salt, expected);
     }
 
+    function predictSource() external view returns (address sourceToken, address tokenBridge) {
+        SourceDeployment memory source = _predictSource();
+        _logSource(source);
+        return (source.token, source.tokenBridge);
+    }
+
+    function deploySource() external returns (address sourceToken, address tokenBridge) {
+        uint256 pk = _getPrivateKey();
+        SourceDeployment memory source = _predictSource();
+
+        _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
+
+        vm.startBroadcast(pk);
+        if (!source.tokenFromEnv) _deployCreate2(source.tokenSalt, source.tokenCreationCode, source.token);
+        _deployCreate2(source.bridgeSalt, source.bridgeCreationCode, source.tokenBridge);
+        vm.stopBroadcast();
+
+        _requireCode(source.token);
+        _requireCode(source.tokenBridge);
+        _logSource(source);
+        return (source.token, source.tokenBridge);
+    }
+
+    function predictTarget() external view returns (address token, address tokenBridge) {
+        TargetDeployment memory target =
+            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
+        _logTarget(target);
+        return (target.token, target.tokenBridge);
+    }
+
+    function deployTarget() external returns (address token, address tokenBridge) {
+        uint256 pk = _getPrivateKey();
+        address signer = vm.addr(pk);
+        TargetDeployment memory target =
+            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
+
+        _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
+
+        vm.startBroadcast(pk);
+        _deployCreate2(target.tokenSalt, target.tokenCreationCode, target.token);
+        _deployCreate2(target.bridgeSalt, target.bridgeCreationCode, target.tokenBridge);
+        vm.stopBroadcast();
+
+        _setTokenBridge(pk, signer, target.token, target.tokenBridge);
+        _logTarget(target);
+        return (target.token, target.tokenBridge);
+    }
+
+    function setTargetTokenBridge() external {
+        uint256 pk = _getPrivateKey();
+        address signer = vm.addr(pk);
+        _setTokenBridge(pk, signer, vm.envAddress("BSC_WCOEN_TOKEN"), vm.envAddress("BSC_WCOEN_BRIDGE"));
+    }
+
+    function configureSourceRemote() external {
+        _configureRemote(
+            vm.envAddress("OUTBE_WCOEN_BRIDGE"),
+            vm.envUint("BSC_CHAIN_ID"),
+            vm.envAddress("BSC_WCOEN_BRIDGE")
+        );
+    }
+
+    function configureTargetRemote() external {
+        _configureRemote(
+            vm.envAddress("BSC_WCOEN_BRIDGE"),
+            vm.envUint("OUTBE_CHAIN_ID"),
+            vm.envAddress("OUTBE_WCOEN_BRIDGE")
+        );
+    }
+
+    function _setTokenBridge(uint256 pk, address signer, address token, address tokenBridge) internal {
+        _requireCode(token);
+        _requireCode(tokenBridge);
+
+        WCOENOFT bridgeableToken = WCOENOFT(token);
+        address currentBridge = bridgeableToken.tokenBridge();
+        if (currentBridge == tokenBridge) return;
+        if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);
+
+        _requireOwner(signer, bridgeableToken.owner());
+
+        vm.startBroadcast(pk);
+        bridgeableToken.setTokenBridge(tokenBridge);
+        vm.stopBroadcast();
+
+        console2.log("WCOEN token bridge set:", tokenBridge);
+    }
+
+    function _configureRemote(address localTokenBridge, uint256 remoteChainId, address remoteTokenBridge) internal {
+        uint256 pk = _getPrivateKey();
+        address signer = vm.addr(pk);
+
+        _requireCode(localTokenBridge);
+        if (remoteTokenBridge == address(0)) revert InvalidRemoteTokenBridge();
+        _requireOwner(signer, Ownable(localTokenBridge).owner());
+
+        uint32 remoteDomain = _toDomain(remoteChainId);
+        bytes memory remoteInterop = InteroperableAddress.formatEvmV1(remoteChainId, remoteTokenBridge);
+
+        vm.startBroadcast(pk);
+        ERC7786TokenBridge(localTokenBridge).setRemoteBridge(remoteDomain, remoteInterop);
+        vm.stopBroadcast();
+
+        console2.log("Remote bridge configured:");
+        console2.log("  local=", localTokenBridge);
+        console2.log("  remote chainId=", remoteChainId);
+        console2.log("  remote bridge=", remoteTokenBridge);
+    }
+
     function _logSource(SourceDeployment memory source) internal pure {
-        console2.log("WCOEN_TOKEN=", source.token);
-        console2.log("OUTBE_OFT_ADAPTER=", source.adapter);
+        console2.log("OUTBE_WCOEN_TOKEN=", source.token);
+        console2.log("OUTBE_WCOEN_BRIDGE=", source.tokenBridge);
         console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
         if (source.tokenFromEnv) {
-            console2.log("WCOEN_TOKEN provided by env; WCOEN CREATE2 salt not used");
+            console2.log("OUTBE_WCOEN_TOKEN provided by env; token salt not used");
         } else {
-            console2.log("WCOEN_CREATE2_SALT=");
+            console2.log("WCOEN_TOKEN_CREATE2_SALT=");
             console2.logBytes32(source.tokenSalt);
         }
-        console2.log("WCOEN_ADAPTER_CREATE2_SALT=");
-        console2.logBytes32(source.adapterSalt);
+        console2.log("WCOEN_BRIDGE_CREATE2_SALT=");
+        console2.logBytes32(source.bridgeSalt);
     }
 
-    // ============ Deployment ============
-
-    /// @notice Deploy or reuse source-side WCOEN and Outbe OFTAdapter at CREATE2 addresses.
-    function deploySource() external returns (address sourceToken, address adapter) {
-        uint256 pk = _getPrivateKey();
-        address endpoint = vm.envAddress("LZ_ENDPOINT");
-        SourceDeployment memory source = _predictSource();
-
-        _requireCode(endpoint);
-        if (source.tokenFromEnv) {
-            _requireCode(source.token);
-        }
-
-        if (!source.tokenFromEnv && source.token.code.length == 0) {
-            vm.startBroadcast(pk);
-            _deployCreate2(source.tokenSalt, source.tokenCreationCode, source.token);
-            vm.stopBroadcast();
-        } else if (!source.tokenFromEnv) {
-            console2.log("WCOEN already deployed at predicted address");
-        }
-
-        if (source.adapter.code.length == 0) {
-            vm.startBroadcast(pk);
-            _deployCreate2(source.adapterSalt, source.adapterCreationCode, source.adapter);
-            vm.stopBroadcast();
-        } else {
-            console2.log("OFTAdapter already deployed at predicted address");
-        }
-
-        sourceToken = source.token;
-        adapter = source.adapter;
-
-        _logSource(source);
-    }
-
-    /// @notice Predict CREATE2 addresses for source-side WCOEN and Outbe OFTAdapter.
-    function predictSource() external returns (address sourceToken, address adapter) {
-        SourceDeployment memory source = _predictSource();
-        sourceToken = source.token;
-        adapter = source.adapter;
-
-        _logSource(source);
-    }
-
-    /// @notice Deploy WCOENOFT on BSC using OFT_NAME/OFT_SYMBOL/OFT_DECIMALS env vars.
-    function deployTarget() external returns (address oftToken) {
-        string memory oftName = vm.envOr("OFT_NAME", string("WCOEN"));
-        string memory oftSymbol = vm.envOr("OFT_SYMBOL", string("WCOEN"));
-        uint8 oftDecimals = _getOftDecimals();
-
-        oftToken = _deployTarget(oftName, oftSymbol, oftDecimals);
-    }
-
-    /// @notice Predict the CREATE2 address for WCOENOFT on BSC using env metadata.
-    function predictOutbe() external returns (address oftToken) {
-        string memory oftName = vm.envOr("OFT_NAME", string("WCOEN"));
-        string memory oftSymbol = vm.envOr("OFT_SYMBOL", string("WCOEN"));
-        uint8 oftDecimals = _getOftDecimals();
-
-        oftToken = _predictOutbeAndLog(oftName, oftSymbol, oftDecimals);
-    }
-
-    function _deployTarget(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
-        internal
-        returns (address oftToken)
-    {
-        uint256 pk = _getPrivateKey();
-        address endpoint = vm.envAddress("LZ_ENDPOINT");
-
-        _requireCode(endpoint);
-
-        (address predicted, bytes32 salt, bytes memory creationCode) = _predictOutbe(oftName, oftSymbol, oftDecimals);
-        oftToken = predicted;
-
-        if (oftToken.code.length == 0) {
-            vm.startBroadcast(pk);
-            (bool success,) = CREATE2_FACTORY.call(abi.encodePacked(salt, creationCode));
-            vm.stopBroadcast();
-
-            if (!success || oftToken.code.length == 0) revert Create2FactoryDeploymentFailed(salt, oftToken);
-        } else {
-            console2.log("WCOENOFT already deployed at predicted address");
-        }
-
-        console2.log("WCOEN_OFT_TOKEN=", oftToken);
+    function _logTarget(TargetDeployment memory target) internal pure {
+        console2.log("BSC_WCOEN_TOKEN=", target.token);
+        console2.log("BSC_WCOEN_BRIDGE=", target.tokenBridge);
         console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
-        console2.logBytes32(salt);
-        console2.log("OFT_NAME=", oftName);
-        console2.log("OFT_SYMBOL=", oftSymbol);
-        console2.log("OFT_DECIMALS=", oftDecimals);
-    }
-
-    function _predictOutbeAndLog(string memory oftName, string memory oftSymbol, uint8 oftDecimals)
-        internal
-        returns (address oftToken)
-    {
-        bytes32 salt;
-        (oftToken, salt,) = _predictOutbe(oftName, oftSymbol, oftDecimals);
-        console2.log("WCOEN_OFT_TOKEN=", oftToken);
-        console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
-        console2.logBytes32(salt);
-    }
-
-    // ============ Peer Configuration ============
-
-    /// @notice Set peer on adapter to point to WCOENOFT on Outbe
-    function configureSourcePeer() external {
-        uint256 pk = _getPrivateKey();
-        uint32 bscEid = uint32(vm.envUint("BSC_EID"));
-        address adapter = vm.envAddress("OUTBE_OFT_ADAPTER");
-        address oftToken = vm.envAddress("WCOEN_OFT_TOKEN");
-
-        _requireCode(adapter);
-
-        vm.startBroadcast(pk);
-        OFTAdapter(adapter).setPeer(bscEid, _toBytes32(oftToken));
-        vm.stopBroadcast();
-
-        console2.log("Source peer configured for EID", bscEid);
-    }
-
-    /// @notice Set peer on WCOENOFT to point to adapter on source chain
-    function configureTargetPeer() external {
-        uint256 pk = _getPrivateKey();
-        uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
-        address adapter = vm.envAddress("OUTBE_OFT_ADAPTER");
-        address oftToken = vm.envAddress("WCOEN_OFT_TOKEN");
-
-        _requireCode(oftToken);
-
-        address signer = vm.addr(pk);
-        address owner = WCOENOFT(oftToken).owner();
-        if (signer != owner) revert UnauthorizedSigner(signer, owner);
-
-        bytes32 desiredPeer = _toBytes32(adapter);
-        if (WCOENOFT(oftToken).peers(outbeEid) == desiredPeer) {
-            console2.log("Target peer already configured for EID", outbeEid);
-            return;
-        }
-
-        vm.startBroadcast(pk);
-        WCOENOFT(oftToken).setPeer(outbeEid, desiredPeer);
-        vm.stopBroadcast();
-
-        console2.log("Target peer configured for EID", outbeEid);
-    }
-
-    // ============ Enforced Options ============
-
-    /// @notice Configure enforced options on adapter (source chain)
-    function setSourceOptions() external {
-        uint256 pk = _getPrivateKey();
-        uint32 bscEid = uint32(vm.envUint("BSC_EID"));
-        address adapter = vm.envAddress("OUTBE_OFT_ADAPTER");
-
-        _requireCode(adapter);
-
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200_000, 0);
-        EnforcedOptionParam[] memory params = new EnforcedOptionParam[](1);
-        params[0] = EnforcedOptionParam({eid: bscEid, msgType: 1, options: options});
-
-        vm.startBroadcast(pk);
-        OFTAdapter(adapter).setEnforcedOptions(params);
-        vm.stopBroadcast();
-
-        console2.log("Source options configured for EID", bscEid);
-    }
-
-    /// @notice Configure enforced options on WCOENOFT (BSC chain)
-    function setTargetOptions() external {
-        uint256 pk = _getPrivateKey();
-        uint32 outbeEid = uint32(vm.envUint("OUTBE_EID"));
-        address oftToken = vm.envAddress("WCOEN_OFT_TOKEN");
-
-        _requireCode(oftToken);
-
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200_000, 0);
-        EnforcedOptionParam[] memory params = new EnforcedOptionParam[](1);
-        params[0] = EnforcedOptionParam({eid: outbeEid, msgType: 1, options: options});
-
-        vm.startBroadcast(pk);
-        WCOENOFT(oftToken).setEnforcedOptions(params);
-        vm.stopBroadcast();
-
-        console2.log("Target options configured for EID", outbeEid);
+        console2.log("TOKEN_CREATE2_SALT=");
+        console2.logBytes32(target.tokenSalt);
+        console2.log("TOKEN_BRIDGE_CREATE2_SALT=");
+        console2.logBytes32(target.bridgeSalt);
     }
 }

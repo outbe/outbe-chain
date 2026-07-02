@@ -15,11 +15,7 @@ via_ir = true
 
 remappings = [
     "forge-std/=dependencies/forge-std-1.16.1/src/",
-    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/",
-    "@layerzerolabs/lz-evm-protocol-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/protocol/",
-    "@layerzerolabs/lz-evm-oapp-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/oapp/",
-    "@layerzerolabs/lz-evm-messagelib-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/messagelib/",
-    "solidity-bytes-utils/=dependencies/solidity-bytes-utils-0.8.4/"
+    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/"
 ]
 
 gas_reports = ["*"]
@@ -62,5 +58,3 @@ remappings_generate = false
 [dependencies]
 forge-std = { version = "1.16.1", git = "https://github.com/foundry-rs/forge-std", rev = "b3bc8b154382a75d0b0ef22d7fd4a0a5f0feee0e" }
 openzeppelin-contracts = { version = "5.6.1", git = "https://github.com/OpenZeppelin/openzeppelin-contracts", rev = "5a3b28fc5bd3976da5ea38d90d88ba26f1e0a335" }
-solidity-bytes-utils = { version = "0.8.4", git = "https://github.com/GNSPS/solidity-bytes-utils", rev = "fc502455bb2a7e26a743378df042612dd50d1eb9" }
-LayerZero-v2 = { version = "3.0.0", git = "https://github.com/LayerZero-Labs/LayerZero-v2", rev = "9c741e7f9790639537b1710a203bcdfd73b0b9ac" }

@@ -1,23 +1,34 @@
-# Foundry artifacts
-out/
-cache/
+# directories
+cache
+cache_hardhat
+artifacts
+types
+coverage
+node_modules
+out
 
-# soldeer dependencies (restored from soldeer.lock; lockfile IS committed)
+# IDE
+.idea
+.vscode
+
+# Package managers
+.yarn
+
+# soldeer (deps are restored from soldeer.lock; lockfile IS committed)
 /dependencies
 
-# Deploy broadcast logs
-broadcast/
-
-# Docs
-docs/
-
-# Env / secrets
-.env
+# files
 *.env
-
-# OS / editor / tooling
+*.env.testnet
+*.log
 .DS_Store
-.idea/
-.vscode/
-.claude/
-.junie/
+.pnp.*
+lcov.info
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# broadcasts
+!broadcast
+broadcast/*
+broadcast/*/31337/

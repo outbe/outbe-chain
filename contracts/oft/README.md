@@ -1,211 +1,200 @@
-# Outbe OFT Stablecoin Integration
+# Outbe ERC-7786 Token Bridge
 
-This repository implements the Outbe stablecoin bridge flow using LayerZero OFT v2.
+This package bridges the project token pairs through the ERC-7786 bridge hub and ERC-7802 mint/burn tokens.
 
-Primary design record:
+## Model
 
-- [0002-stablecoins-oft-impl.md](https://github.com/outbe/outbe-chain/blob/main/adrs/0002-stablecoins-oft-impl.md)
+- `ERC7786TokenBridge` is the local bridge endpoint used by users.
+- Canonical-token sides use `LockUnlock`: `send()` pulls ERC20 tokens into bridge custody and inbound messages release them.
+- Synthetic-token sides use `BurnMint`: `send()` calls ERC-7802 `crosschainBurn`, and inbound messages call `crosschainMint`.
+- Remote bridge contracts are configured with ERC-7930 interoperable addresses via `setRemoteBridge`.
 
-## Scope
+## Routes
 
-The ADR defines:
+- USDT: BNB canonical `USDT` + BNB lock bridge ↔ Outbe `USDT0OFT` ERC-7802 token + Outbe mint/burn bridge.
+- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ BNB `WCOENOFT` ERC-7802 token + BNB mint/burn bridge.
+- `USDT0OFT` and `WCOENOFT` keep their legacy names for compatibility, but they are ERC-7802 bridgeable ERC20s.
 
-- Generic ERC20 -> OFT integration pattern (`OFTAdapter` on source chain, `OFT` on Outbe)
-- Mainnet coordination model for `USDT0` and `USDe`
-- Testnet architecture for BSC Testnet <-> Outbe using mock USDT
-- Step-by-step deployment and verification flow
+## Scripts
 
-## OFT Model (LayerZero v2)
+Use `script/usdt0/OFTDeploy.s.sol` for USDT and `script/wcoen/OFTDeploy.s.sol` for WCOEN.
 
-- Source chain: `OFTAdapter` locks/unlocks the canonical ERC20.
-- Outbe chain: `OFT` mints on inbound messages and burns on outbound messages.
-- Messaging path: LayerZero Endpoint + DVN verification + Executor delivery.
-
-This is a lock-and-mint / burn-and-unlock topology (no liquidity pool bridge required).
-
-## Networks and EIDs
-
-Devnet
-
-```
-SRC_EID=40102
-OUTBE_EID=40512
-OUTBE_DEV_EID=40712
-```
-
-Testnet
-
-```
-SRC_EID=40102
-OUTBE_EID=40812
-OUTBE_DEV_EID=40712
-```
-
-## Shared Outbe LayerZero Addresses
-
-These addresses are documented in the ADR as deployed on Outbe networks and BSC Testnet:
-
-- `EndpointV2`: `0x2915f5C5835576CC6E4bFBc002519E2B37cCABe2`
-
-## Testnet Target Topology
-
-Recommended path in ADR: use BSC Testnet as source side (already configured in `outbe-layerzero`).
-
-- BSC Testnet (source/lock chain):
-  - Deploy `USDT` (mintable ERC20 test token)
-  - Deploy `OFTAdapter` wrapping source-side `USDT`
-- Outbe Testnet (destination/mint chain):
-  - Deploy `USDT0` OFT contract
-
-## Current Contract Logic
-
-- `USDT` (`src/USDT.sol`)
-  - ERC20 with fixed `6` decimals
-  - Permissionless `mint` function for testnet and local testing
-- `WCOEN` (`src/WCOEN.sol`)
-  - Wrapped-native style token with `deposit` and `withdraw`
-  - No `mint` function; WCOEN supply is created only by wrapping native COEN through `deposit()` and burned only by `withdraw()`
-- `OFTAdapter` (`src/OFTAdapter.sol`)
-  - Inherits LayerZero `OFTAdapter` without extra restrictions
-  - Handles lock/unlock semantics for the source ERC20
-- `USDT0OFT` (`src/USDT0OFT.sol`)
-  - Implements the default LayerZero OFT mint/burn behavior with constructor-configured name, symbol, and local decimals
-  - Handles mint on receive and burn on send on Outbe side
-
-## Deployment and Testing
-
-### Main Script
-
-Use `script/usdt0/OFTDeploy.s.sol` for the USDT0 flow and `script/wcoen/OFTDeploy.s.sol` for the WCOEN flow. Each directory also contains matching send scripts.
-
-USDT0 script functions:
-
-- `deploySource()` — Deploy the source-side OFTAdapter
-- `predictOutbe()` — Predict the CREATE2 USDT0OFT address using `OFT_NAME`, `OFT_SYMBOL`, `OFT_DECIMALS`, and `OFT_CREATE2_SALT`
-- `deployTarget()` — Deploy or reuse USDT0OFT at its CREATE2 address on Outbe using `OFT_NAME`, `OFT_SYMBOL`, and `OFT_DECIMALS`
-- `configureSourcePeer()` — Set adapter peer
-- `configureTargetPeer()` — Set OFT peer
-- `setSourceOptions()` — Configure source enforced options
-- `setTargetOptions()` — Configure Outbe enforced options
-- `SendSourceToTarget.s.sol` — Send source-chain tokens from BSC to Outbe
-- `SendTargetToSource.s.sol` — Send Outbe OFT tokens back to BSC
-
-WCOEN script functions:
-
-- `predictSource()` — Predict the CREATE2 source-side WCOEN + Outbe OFTAdapter addresses
-- `deploySource()` — Deploy or reuse source-side WCOEN + Outbe OFTAdapter at their CREATE2 addresses
-- `predictOutbe()` — Predict the CREATE2 WCOENOFT address using `OFT_NAME`, `OFT_SYMBOL`, `OFT_DECIMALS`, and `OFT_CREATE2_SALT`
-- `deployTarget()` — Deploy or reuse WCOENOFT at its CREATE2 address
-- `configureSourcePeer()` — Set adapter peer
-- `configureTargetPeer()` — Set OFT peer
-- `setSourceOptions()` — Configure source enforced options
-- `setTargetOptions()` — Configure OFT enforced options
-
-Single-step example:
-
-```bash
-export OFT_NAME=USDT0
-export OFT_SYMBOL=USDT0
-export OFT_DECIMALS=6
-
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
-  --sig "deployTarget()" \
-  --rpc-url "$OUTBE_RPC" \
-  --broadcast
-```
-
-Predict the CREATE2 address before broadcasting:
-
-```bash
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
-  --sig "predictOutbe()" \
-  --rpc-url "$OUTBE_RPC"
-```
-
-### Environment Variables
-
-Required for deploy + configure:
+Common required environment:
 
 - `PRIVATE_KEY`
 - `DEPLOYER_ADDRESS`
-- `SRC_RPC`
-- `OUTBE_RPC`
-- `SRC_EID`
-- `OUTBE_EID`
-- `LZ_ENDPOINT`
+- `BRIDGE_ADDRESS` — local ERC-7786 bridge hub facade
+- `BSC_CHAIN_ID`
+- `OUTBE_CHAIN_ID`
 
-Required for configure + send (after deployment):
+USDT route outputs/inputs:
 
-- `SOURCE_TOKEN`
-- `OFT_ADAPTER`
-- `OFT_TOKEN`
-- `RECIPIENT`
+- `BSC_USDT_TOKEN`
+- `BSC_USDT_BRIDGE`
+- `OUTBE_USDT0_TOKEN`
+- `OUTBE_USDT0_BRIDGE`
 
-Optional:
+WCOEN route outputs/inputs:
 
-- `OFT_NAME` (default: `USDT0`)
-- `OFT_SYMBOL` (default: `USDT0`)
-- `OFT_DECIMALS` (default: `6` for USDT0 and fixed `18` for WCOEN; WCOEN deploy scripts reject any other value)
-- `OFT_CREATE2_SALT` (default: `USDT0OFT` for USDT0 scripts and `WCOENOFT` for WCOEN scripts)
-- `WCOEN_CREATE2_SALT` (default: `WCOEN`; WCOEN source script only)
-- `WCOEN_ADAPTER_CREATE2_SALT` (default: `WCOEN_OFT_ADAPTER`; WCOEN source script only)
-- `INITIAL_MINT_AMOUNT` (default: `1_000_000_000e6`; USDT0 source mock only)
-- `SEND_AMOUNT_LD` (default: `1_000_000`)
-- `SEND_MIN_AMOUNT_LD` (default: `0`)
-- `SEND_BACK_AMOUNT_LD` (default: `1_000_000`)
-- `SEND_BACK_MIN_AMOUNT_LD` (default: `0`)
-- `RECEIVER_PRIVATE_KEY` (used by the flow scripts for the outbe -> source send step)
+- `OUTBE_WCOEN_TOKEN`
+- `OUTBE_WCOEN_BRIDGE`
+- `BSC_WCOEN_TOKEN`
+- `BSC_WCOEN_BRIDGE`
 
-### End-to-End Flow (Manual)
+Optional deployment inputs:
+
+- `TOKEN_NAME`, `TOKEN_SYMBOL`, `TOKEN_DECIMALS`
+- `TOKEN_CREATE2_SALT`
+- `TOKEN_BRIDGE_CREATE2_SALT`
+- `INITIAL_MINT_AMOUNT` for the USDT dev token
+- `WCOEN_TOKEN_CREATE2_SALT`
+- `WCOEN_BRIDGE_CREATE2_SALT`
+
+### Pure Forge USDT0 Flow
+
+Start from `contracts/oft` and load the shared environment. The deploy scripts
+expect `PRIVATE_KEY`; this repo's `.env` may use `DEPLOYER_PK`, so export both.
+If `BSC_RPC` points to BSC testnet (`prebsc`), use `BSC_CHAIN_ID=97`.
 
 ```bash
-# 1) Deploy source contracts (USDT + OFT adapter)
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "deploySource()" --rpc-url "$SRC_RPC" --broadcast
+cd /c/Users/USER/Desktop/projects/outbe-chain/contracts/oft
 
-# 2) Deploy Outbe OFT
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "deployTarget()" --rpc-url "$OUTBE_RPC" --broadcast
+set -a
+source .env
+set +a
 
-# 3) Configure peers
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "configureSourcePeer()" --rpc-url "$SRC_RPC" --broadcast
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "configureTargetPeer()" --rpc-url "$OUTBE_RPC" --broadcast
-
-# 4) Configure enforced options
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "setSourceOptions()" --rpc-url "$SRC_RPC" --broadcast
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "setTargetOptions()" --rpc-url "$OUTBE_RPC" --broadcast
-
-# 5) Send source -> Outbe
-forge script script/usdt0/SendSourceToTarget.s.sol --rpc-url "$SRC_RPC" --broadcast
-
-# 6) Send Outbe -> source
-forge script script/usdt0/SendTargetToSource.s.sol --rpc-url "$OUTBE_RPC" --broadcast
+export PRIVATE_KEY="$DEPLOYER_PK"
+export DEPLOYER_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY")"
+export BSC_CHAIN_ID=97
 ```
 
-### GitHub Actions
+Deploy source-side BSC testnet contracts. If `BSC_USDT_TOKEN` is not set, this
+deploys the mintable mock `USDT`; it also deploys the source `ERC7786TokenBridge`
+in `LockUnlock` mode. Copy the printed `BSC_USDT_TOKEN` and `BSC_USDT_BRIDGE`
+values into `deployments/usdt0.env`.
 
-`deploy-usdt-oft.yml` executes deployment + peer/options configuration (steps 1 to 4) with:
+```bash
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+  --sig "deploySource()" \
+  --rpc-url "$BSC_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
+```
 
-- `LZ_ENDPOINT` (single endpoint address for both chains)
-- `SRC_RPC` and `OUTBE_RPC`
-- `SRC_EID` and `OUTBE_EID`
+Deploy target-side Outbe contracts. This deploys `USDT0OFT` and the target
+`ERC7786TokenBridge` in `BurnMint` mode. Copy the printed `OUTBE_USDT0_TOKEN`
+and `OUTBE_USDT0_BRIDGE` values into `deployments/usdt0.env`.
 
-## Deployment Notes
+```bash
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+  --sig "deployTarget()" \
+  --rpc-url "$OUTBE_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
+```
 
-The USDT0 flow deploys a mock source token plus adapter on BSC and a mint/burn OFT on Outbe. The WCOEN flow is reversed: canonical WCOEN lives on Outbe, the Outbe adapter locks WCOEN, and BSC WCOENOFT mints/burns via LayerZero.
+Reload the deployed addresses:
 
-WCOEN source deployment is deterministic. If `WCOEN_TOKEN` is unset, `deploySource()` deploys or reuses WCOEN through the canonical CREATE2 factory using `WCOEN_CREATE2_SALT`. The Outbe `OFTAdapter` is also deployed or reused through CREATE2 using `WCOEN_ADAPTER_CREATE2_SALT`; its address stays stable as long as the token address, LayerZero endpoint, owner, adapter salt, adapter bytecode, and CREATE2 factory stay the same. Use `predictSource()` before broadcasting to print both source addresses.
+```bash
+set -a
+source deployments/usdt0.env
+set +a
+```
 
-If `WCOEN_TOKEN` is set, the script treats that address as the canonical WCOEN and only the adapter is CREATE2-deployed from that configured token. `deploySource()` does not wrap native COEN; fund WCOEN balances separately with `deposit()` when needed.
+Configure both remotes. The source bridge stores the Outbe remote under
+`OUTBE_CHAIN_ID`; the target bridge stores the BSC testnet remote under
+`BSC_CHAIN_ID`.
 
-Target-side `WCOENOFT` is CREATE2-deployed with `OFT_CREATE2_SALT` and is reused when code already exists at the predicted address. Changing salts, constructor inputs, bytecode, or factory changes the predicted address and requires updating `.env` plus peer configuration.
+```bash
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+  --sig "configureSourceRemote()" \
+  --rpc-url "$BSC_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
 
-## Decimal Notes
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+  --sig "configureTargetRemote()" \
+  --rpc-url "$OUTBE_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
+```
 
-OFT uses shared decimals (default `6`) for cross-chain normalization. `OFT_DECIMALS` controls the local ERC20 decimals exposed by USDT0OFT. WCOENOFT is deployed with fixed local decimals `18` to match WCOEN. If you must preserve `18` shared decimals across chains, override `sharedDecimals()` in your OFT implementation.
+Verify configuration:
+
+```bash
+cast call $BSC_USDT_BRIDGE "remoteBridges(uint32)(bytes)" $OUTBE_CHAIN_ID --rpc-url "$BSC_RPC"
+cast call $OUTBE_USDT0_BRIDGE "remoteBridges(uint32)(bytes)" $BSC_CHAIN_ID --rpc-url "$OUTBE_RPC"
+```
+
+Mint test source USDT on BSC testnet if needed:
+
+```bash
+cast send $BSC_USDT_TOKEN "mint(address,uint256)" $DEPLOYER_ADDRESS 100000000 \
+  --private-key "$PRIVATE_KEY" \
+  --rpc-url "$BSC_RPC" \
+  --priority-gas-price 100000000
+```
+
+Send from BSC testnet to Outbe. `SEND_AMOUNT_LD` uses local decimals; USDT uses
+6 decimals, so `1000000` is `1 USDT`.
+
+```bash
+export RECIPIENT="$DEPLOYER_ADDRESS"
+export SEND_AMOUNT_LD=1000000
+
+forge script script/usdt0/SendSourceToTarget.s.sol \
+  --rpc-url "$BSC_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
+```
+
+Check the Outbe USDT0 balance:
+
+```bash
+cast call $OUTBE_USDT0_TOKEN "balanceOf(address)(uint256)" $DEPLOYER_ADDRESS --rpc-url "$OUTBE_RPC"
+```
+
+Send back from Outbe to BSC testnet:
+
+```bash
+forge script script/usdt0/SendTargetToSource.s.sol \
+  --rpc-url "$OUTBE_RPC" \
+  --broadcast \
+  --priority-gas-price 100000000
+```
+
+### Short Command Reference
+
+USDT0:
+
+```bash
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "deploySource()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "deployTarget()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "configureSourceRemote()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy --sig "configureTargetRemote()" --rpc-url "$OUTBE_RPC" --broadcast
+```
+
+WCOEN:
+
+```bash
+forge script script/wcoen/OFTDeploy.s.sol:OFTDeploy --sig "deploySource()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/OFTDeploy.s.sol:OFTDeploy --sig "deployTarget()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/wcoen/OFTDeploy.s.sol:OFTDeploy --sig "configureSourceRemote()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/OFTDeploy.s.sol:OFTDeploy --sig "configureTargetRemote()" --rpc-url "$BSC_RPC" --broadcast
+```
+
+Send examples:
+
+```bash
+forge script script/usdt0/SendSourceToTarget.s.sol --rpc-url "$BSC_RPC" --broadcast
+forge script script/usdt0/SendTargetToSource.s.sol --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/SendSourceToTarget.s.sol --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/SendTargetToSource.s.sol --rpc-url "$BSC_RPC" --broadcast
+```
+
+Lock/unlock sends approve the local bridge first. Burn/mint sends do not require token approval because the local bridge is the authorized ERC-7802 token bridge.
 
 ## References
 
-- Outbe LayerZero Infrastructure: https://github.com/outbe/outbe-layerzero
-- USDT0 Documentation: https://docs.usdt0.to/
-- USDT0 Deployments: https://docs.usdt0.to/technical-documentation/deployments
-- LayerZero OFT Metadata: https://metadata.layerzero-api.com/v1/metadata/experiment/ofts/list
-- LayerZero V2 OFT Standard: https://docs.layerzero.network/v2/home/protocol/contract-standards
+- EIP-7802: https://eips.ethereum.org/EIPS/eip-7802
+- ERC-7786 / ERC-7930 interfaces are provided by OpenZeppelin Contracts.
