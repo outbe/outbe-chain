@@ -53,7 +53,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 windowDays;
         /// @notice Call-trigger threshold in days.
         uint16 thresholdDays;
-        /// @notice Called->deadline window in seconds (0 = default).
+        /// @notice Called->deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
         uint32 intexCallPeriod;
     }
 
