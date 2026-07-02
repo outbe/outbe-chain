@@ -143,6 +143,8 @@ interface IIntexAuction {
     /// @param seriesId Auction series id.
     /// @param bidder Bidder address.
     event CommitCancelled(uint32 indexed seriesId, address indexed bidder);
+    /// @notice A terminal auction's stored revealed-bid records were reclaimed; `remaining` still to reap.
+    event AuctionReaped(uint32 indexed seriesId, uint256 remaining);
 
     /// @notice Emitted on `wire` after the escrow contract address is set.
     /// @param previous Escrow contract address before the update.
@@ -159,6 +161,8 @@ interface IIntexAuction {
     error ZeroValue(string f);
     /// @notice Operation requires a different stage.
     error StageRequired(AuctionStage requiredStage, AuctionStage currentStage);
+    /// @notice `reapAuction` was called before the auction passed its issuance deadline.
+    error TooEarlyToReap();
     /// @notice Commit already registered for this bidder in this auction.
     error BidAlreadyCommitted();
     /// @notice Commit not found for this bidder in this auction.
@@ -251,6 +255,11 @@ interface IIntexAuction {
     ///      be cancelled or revealed — an unrevealed commit is permanently forfeited.
     /// @param seriesId Auction series id.
     function cancelCommit(uint32 seriesId) external;
+
+    /// @notice Reclaim a terminal, past-issuance auction's stored revealed-bid records.
+    /// @param seriesId Series identifier.
+    /// @param limit Maximum records to delete this call; paginate large sets across calls.
+    function reapAuction(uint32 seriesId, uint256 limit) external;
 
     /// @notice Reveal a bid.
     /// @param seriesId Auction series id.

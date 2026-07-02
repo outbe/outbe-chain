@@ -333,6 +333,27 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
+    function reapAuction(uint32 seriesId, uint256 limit) external override {
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
+        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
+
+        IIntexAuction.AuctionStage stage = _getAuctionStage(seriesId);
+        if (stage != IIntexAuction.AuctionStage.Completed && stage != IIntexAuction.AuctionStage.Cancelled) {
+            revert StageRequired(IIntexAuction.AuctionStage.Completed, stage);
+        }
+        if (uint32(block.timestamp) <= a.schedule.issuanceEnd) revert TooEarlyToReap();
+
+        IIntexAuction.SubmittedBidData[] storage bids = $.revealedBids[seriesId];
+        uint256 remaining = bids.length;
+        uint256 toPop = remaining < limit ? remaining : limit;
+        for (uint256 i = 0; i < toPop; i++) {
+            bids.pop();
+        }
+        emit AuctionReaped(seriesId, remaining - toPop);
+    }
+
+    /// @inheritdoc IIntexAuction
     function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
         external
         override

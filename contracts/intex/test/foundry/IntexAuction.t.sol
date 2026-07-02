@@ -492,6 +492,57 @@ contract AuctionTest is Test {
         auction.cancelCommit(seriesId);
     }
 
+    function test_ReapAuction_ClearsRevealedBidsInPages() public {
+        uint32 seriesId = 20250220;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+
+        vm.prank(bridger);
+        auction.startRevealingBidsStage(seriesId, true);
+        vm.warp(uint256(sched.commitEnd) + 1);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+
+        vm.warp(uint256(sched.revealEnd) + 1);
+        vm.startPrank(bridger);
+        auction.startClearingStage(seriesId);
+        auction.executeAuctionClearing(seriesId, 100, 75, 2);
+        vm.stopPrank();
+
+        vm.expectRevert(IIntexAuction.TooEarlyToReap.selector);
+        auction.reapAuction(seriesId, 10);
+
+        vm.warp(uint256(sched.issuanceEnd) + 1);
+        auction.reapAuction(seriesId, 1);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(seriesId);
+        assertEq(afterPage1.length, 1);
+        auction.reapAuction(seriesId, 10);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(seriesId);
+        assertEq(afterPage2.length, 0);
+    }
+
+    function test_ReapAuction_RevertsBeforeTerminal() public {
+        uint32 seriesId = 20250221;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+        vm.prank(bridger);
+        auction.startRevealingBidsStage(seriesId, true);
+        vm.warp(uint256(sched.issuanceEnd) + 1);
+
+        // Green, past revealEnd, never cleared -> Issuance stage, not terminal.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.Completed,
+                IIntexAuction.AuctionStage.Issuance
+            )
+        );
+        auction.reapAuction(seriesId, 10);
+    }
+
     function test_AccessControl_AuctionStart() public {
         uint32 seriesId = 20250123;
 
