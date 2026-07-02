@@ -437,6 +437,35 @@ contract AuctionTest is Test {
         auction.wire(address(0xBEEF));
     }
 
+    function test_Wire_RevertsWhileLocksOutstanding() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250201;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
+        vm.prank(admin);
+        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
+        auction.wire(address(escrow2));
+    }
+
+    function test_Wire_SucceedsAfterLocksCleared() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250202;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        escrow.releaseAllLocks();
+        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
+        vm.prank(admin);
+        auction.wire(address(escrow2));
+        assertEq(address(auction.escrowContract()), address(escrow2));
+    }
+
     function test_AccessControl_AuctionStart() public {
         uint32 seriesId = 20250123;
 
@@ -521,13 +550,11 @@ contract AuctionTest is Test {
         uint32 seriesId = 20250199;
         uint32 floor = 50;
 
-        // promisLoadMinor at the uint128 ceiling so issuedIntexCount * promisLoadMinor overflows uint128.
         IIntexAuction.AuctionParams memory params = _params(floor, 1);
-        params.promisLoadMinor = type(uint128).max;
+        params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
         vm.prank(bridger);
         auction.auctionStart(seriesId, _schedule(), params);
 
-        // No commits/reveals needed: transition to clearing and clear with a large issued count.
         _enterRevealStage(seriesId, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);

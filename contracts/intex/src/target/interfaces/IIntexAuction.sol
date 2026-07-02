@@ -177,6 +177,8 @@ interface IIntexAuction {
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedIntexCount * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedIntexCount, uint128 promisLoadMinor);
+    /// @notice `wire` called while the current escrow still holds live locks.
+    error EscrowHasLiveLocks();
     /// @notice Auction does not exist.
     error AuctionNotFound();
     /// @notice Auction already exists.

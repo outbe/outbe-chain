@@ -500,6 +500,13 @@ contract EscrowAdapter is
         return (state.lockCount > 0, state.finalized, state.totalLocked);
     }
 
+    /// @inheritdoc IEscrowAdapter
+    function hasOutstandingLocks() external view override returns (bool) {
+        EscrowAdapterStorage storage $ = _s();
+        if ($.lockId == 0) return false;
+        return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
+    }
+
     // --- Internal helpers ---
     /// @notice Validate lock inputs before any state write.
     /// @dev Rejects a zero `seriesId`, zero `bidder`, zero `amount`, and a bidder that already

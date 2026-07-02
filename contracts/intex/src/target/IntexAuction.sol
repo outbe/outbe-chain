@@ -151,10 +151,12 @@ contract IntexAuction is
         if (_escrow == address(0)) revert ZeroAddress("escrowContract");
 
         IntexAuctionStorage storage $ = _s();
-        address previousEscrow = address($.escrowContract);
-        $.escrowContract = IEscrowAdapter(_escrow);
+        IEscrowAdapter current = $.escrowContract;
+        // Don't rotate away from an escrow that still holds live locks.
+        if (address(current) != address(0) && current.hasOutstandingLocks()) revert EscrowHasLiveLocks();
 
-        emit EscrowWired(previousEscrow, _escrow);
+        $.escrowContract = IEscrowAdapter(_escrow);
+        emit EscrowWired(address(current), _escrow);
     }
 
     // --- Lifecycle ---
@@ -268,7 +270,7 @@ contract IntexAuction is
         a.result.issuedIntexCount = issuedIntexCount;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
-        // 256-bit product so an over-range value reverts typed, not via a bare Panic(0x11) (mirrors revealBid).
+        // 256-bit product: over-range reverts typed, not Panic(0x11).
         uint256 loadedPromis = uint256(issuedIntexCount) * a.params.promisLoadMinor;
         if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedIntexCount, a.params.promisLoadMinor);
         a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
