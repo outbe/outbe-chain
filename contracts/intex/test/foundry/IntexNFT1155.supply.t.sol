@@ -38,7 +38,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID, cap, CALL_PERIOD));
     }
 
-    // --- Supply cap: createSeries / mint / mintBatch ---
+    // --- Supply cap: createSeries / mint ---
 
     function test_CreateSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
@@ -77,71 +77,6 @@ contract IntexNFT1155SupplyTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
         nft.mint(holderA, 41, SERIES_ID);
         vm.stopPrank();
-    }
-
-    function test_MintBatch_SumAtCap_Succeeds() public {
-        uint32 cap = 9;
-        _createSeries(cap);
-
-        address[] memory recipients = new address[](3);
-        uint256[] memory quantities = new uint256[](3);
-        recipients[0] = holderA;
-        recipients[1] = holderB;
-        recipients[2] = address(0xC);
-        quantities[0] = 4;
-        quantities[1] = 3;
-        quantities[2] = 2;
-
-        vm.prank(bridger);
-        nft.mintBatch(recipients, quantities, SERIES_ID);
-
-        assertEq(nft.totalSupply(TOKEN_ID), cap);
-        assertEq(nft.balanceOf(holderA, TOKEN_ID), 4);
-        assertEq(nft.balanceOf(holderB, TOKEN_ID), 3);
-        assertEq(nft.balanceOf(address(0xC), TOKEN_ID), 2);
-    }
-
-    function test_MintBatch_SumOverCap_RevertsAllOrNothing() public {
-        uint32 cap = 5;
-        _createSeries(cap);
-
-        address[] memory recipients = new address[](2);
-        uint256[] memory quantities = new uint256[](2);
-        recipients[0] = holderA;
-        recipients[1] = holderB;
-        quantities[0] = 3;
-        quantities[1] = 3;
-
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, 6, cap));
-        nft.mintBatch(recipients, quantities, SERIES_ID);
-
-        // No balances minted — the cap revert fires before any _mint.
-        assertEq(nft.totalSupply(TOKEN_ID), 0);
-        assertEq(nft.balanceOf(holderA, TOKEN_ID), 0);
-        assertEq(nft.balanceOf(holderB, TOKEN_ID), 0);
-    }
-
-    function test_MintBatch_RespectsResidualCapacity() public {
-        uint32 cap = 10;
-        _createSeries(cap);
-
-        vm.startPrank(bridger);
-        nft.mint(holderA, 6, SERIES_ID);
-
-        address[] memory recipients = new address[](1);
-        uint256[] memory quantities = new uint256[](1);
-        recipients[0] = holderB;
-        quantities[0] = 5; // 6 + 5 = 11 > 10
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, 11, cap));
-        nft.mintBatch(recipients, quantities, SERIES_ID);
-
-        // Fits exactly.
-        quantities[0] = 4;
-        nft.mintBatch(recipients, quantities, SERIES_ID);
-        vm.stopPrank();
-
-        assertEq(nft.totalSupply(TOKEN_ID), cap);
     }
 
     // --- burnSettled state gate (state ∈ {Qualified, Called}) ---
@@ -206,7 +141,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(10);
         vm.prank(bridger);
         nft.mint(holderA, 5, SERIES_ID);
-        // amount == 0 is rejected before any series-state work; distinct from EmptyArray (mintBatch).
+        // amount == 0 is rejected before any series-state work.
         vm.prank(settler);
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
         nft.settle(SERIES_ID, holderA, holderA, 0);
@@ -498,16 +433,6 @@ contract IntexNFT1155SupplyTest is Test {
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))
         );
         nft.mint(holderB, 1, SERIES_ID);
-
-        // mintBatch overshoot — typed revert, not panic, and now uses uint256 cap math
-        address[] memory recipients = new address[](1);
-        uint256[] memory quantities = new uint256[](1);
-        recipients[0] = holderB;
-        quantities[0] = 5;
-        vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 5, uint256(cap))
-        );
-        nft.mintBatch(recipients, quantities, SERIES_ID);
 
         // crosschainMint overshoot — typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
         nft.markQualified(SERIES_ID);
