@@ -11,7 +11,8 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::precompile::{dispatch, IVaultProvider};
+use crate::api::IVaultProvider;
+use crate::precompile::dispatch;
 use crate::runtime;
 use crate::schema::VaultProviderContract;
 

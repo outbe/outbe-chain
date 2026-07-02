@@ -15,6 +15,7 @@ use outbe_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
+use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
@@ -143,13 +144,18 @@ pub fn mine_gratis(
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
-        // 3) Vault pulls and deposits into the vault.
-        outbe_vaultprovider::api::deposit_liquidity(
-            storage.clone(),
-            NOD_FACTORY_ADDRESS,
-            asset,
-            cost,
-            outbe_vaultprovider::api::LiquiditySource::NodCostPrice,
+        // 3) Vault pulls and deposits into the reserve vault via its Solidity
+        //    ABI. The provider resolves this factory's liquidity source from its
+        //    genesis-seeded registry (keyed on msg.sender).
+        storage.call(
+            VAULT_PROVIDER_ADDRESS,
+            U256::ZERO,
+            IVaultProvider::depositLiquidityCall {
+                asset,
+                assetsAmount: cost,
+            }
+            .abi_encode()
+            .into(),
         )?;
     }
 

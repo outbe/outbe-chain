@@ -13,11 +13,11 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::api::IVaultProvider;
 use crate::errors::VaultProviderError;
-use crate::precompile::IVaultProvider;
 use crate::schema::{VaultProviderContract, UNKNOWN};
 use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
 
@@ -211,7 +211,7 @@ pub fn registered_liquidity_target(
 
 /// `depositLiquidity`: pulls `amount` of `asset` from the caller and deposits it
 /// into the asset's vault, returning the minted shares.
-pub fn deposit_liquidity(
+pub(crate) fn deposit_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
@@ -241,7 +241,7 @@ pub fn deposit_liquidity(
 
 /// `withdrawLiquidity`: redeems `amount` of `asset` from the vault and tops it
 /// up into `receiver` (a token bundle), returning the burned shares.
-pub fn withdraw_liquidity(
+pub(crate) fn withdraw_liquidity(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
@@ -293,17 +293,6 @@ pub fn withdraw_liquidity(
 /// `sharesBalance`: vault shares currently held by this provider.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
-}
-
-/// `assetAt`: bounds-checked read of the registered reserve-asset set, reverting
-/// (like OZ `EnumerableSet.at`) when `index` is out of range. Shared by the
-/// precompile dispatch and the in-process [`crate::api`] surface.
-pub fn asset_at(storage: StorageHandle<'_>, index: u32) -> Result<Address> {
-    let contract = VaultProviderContract::new(storage);
-    contract
-        .assets
-        .at(index)?
-        .ok_or_else(|| PrecompileError::Revert("index out of bounds".into()))
 }
 
 // ---------------------------------------------------------------------------

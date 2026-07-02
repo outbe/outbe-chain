@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
@@ -39,16 +39,6 @@ fn sample_params() -> NodIssueParams {
 
 /// Dummy asset address for payment-path tests.
 const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
-const PAY_VAULT: Address = address!("0x0000000000000000000000000000000000000777");
-
-/// Seeds a vault for `PAY_ASSET` so nodfactory's in-process `deposit_liquidity`
-/// resolves a configured vault. This ran through the sub-call stub before the
-/// vaultprovider was called directly.
-fn seed_reserve_vault(storage: &StorageHandle<'_>) {
-    let vp = outbe_vaultprovider::VaultProviderContract::new(storage.clone());
-    vp.assets.insert(PAY_ASSET).unwrap();
-    vp.asset_vault_set(PAY_ASSET).insert(PAY_VAULT).unwrap();
-}
 
 fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {
     let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
@@ -481,13 +471,14 @@ fn test_mine_gratis_pays_cost_amount() {
     let nonce = find_valid_nonce(nod_id);
 
     let mut storage = HashMapStorageProvider::new(1);
+    // The vault-provider deposit is now an EVM sub-call to VAULT_PROVIDER_ADDRESS;
+    // enable_sub_call_stub covers it (transferFrom/approve/depositLiquidity all
+    // succeed with empty returndata, and nodfactory ignores the shares return).
     storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(PAY_VAULT, Bytes::from(vec![0u8; 32]));
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         factory_api::issue_nod(&s, &params).unwrap();
         qualify_params(&s, &params);
-        seed_reserve_vault(&s);
     });
 
     storage.set_timestamp(U256::from(T_AFTER_UNLOCK));

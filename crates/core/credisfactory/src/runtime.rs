@@ -12,6 +12,7 @@ use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
+use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
@@ -110,14 +111,18 @@ pub fn request_credis(
     }
 
     // Withdraw the matching stablecoin from the vault to the borrower's smart
-    // account via the vaultprovider's.
-    outbe_vaultprovider::api::withdraw_liquidity(
-        storage.clone(),
-        CREDIS_FACTORY_ADDRESS,
-        asset,
-        amount_stables,
-        bundle_account,
-        outbe_vaultprovider::api::LiquidityTarget::Credis,
+    // account via the vault provider's Solidity ABI. The provider resolves this
+    // factory's liquidity target from its genesis-seeded registry (msg.sender).
+    storage.call(
+        VAULT_PROVIDER_ADDRESS,
+        U256::ZERO,
+        IVaultProvider::withdrawLiquidityCall {
+            asset,
+            amount: amount_stables,
+            receiver: bundle_account,
+        }
+        .abi_encode()
+        .into(),
     )?;
 
     storage.emit_event(
@@ -203,13 +208,18 @@ pub fn pay_anadosis(
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // 3) Vault pulls and deposits into the reserve vault.
-    outbe_vaultprovider::api::deposit_liquidity(
-        storage.clone(),
-        CREDIS_FACTORY_ADDRESS,
-        asset,
-        amount,
-        outbe_vaultprovider::api::LiquiditySource::CredisAnadosis,
+    // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI;
+    //    the provider resolves this factory's liquidity source from its
+    //    genesis-seeded registry (keyed on msg.sender).
+    storage.call(
+        VAULT_PROVIDER_ADDRESS,
+        U256::ZERO,
+        IVaultProvider::depositLiquidityCall {
+            asset,
+            assetsAmount: amount,
+        }
+        .abi_encode()
+        .into(),
     )?;
 
     // 4) Append this installment's reclaim note so the pledger can unpledge
