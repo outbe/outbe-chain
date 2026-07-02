@@ -466,6 +466,32 @@ contract AuctionTest is Test {
         assertEq(address(auction.escrowContract()), address(escrow2));
     }
 
+    function test_CancelCommit_AllowedWhenSignalNeverArrives() public {
+        uint32 seriesId = 20250210;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        // No green-day signal ever arrives; past issuanceEnd the stranded commit is reclaimable.
+        vm.warp(auction.getAuctionInfo(seriesId).schedule.issuanceEnd + 1);
+        vm.prank(iba1);
+        auction.cancelCommit(seriesId);
+
+        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+    }
+
+    function test_CancelCommit_BlockedAfterCommitEndBeforeIssuanceEnd() public {
+        uint32 seriesId = 20250211;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        // Past commitEnd but before issuanceEnd, signal still pending: cancel stays blocked.
+        uint32 commitEnd = auction.getAuctionInfo(seriesId).schedule.commitEnd;
+        vm.warp(commitEnd + 1);
+        vm.prank(iba1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.CommitWindowClosed.selector, commitEnd, commitEnd + 1));
+        auction.cancelCommit(seriesId);
+    }
+
     function test_AccessControl_AuctionStart() public {
         uint32 seriesId = 20250123;
 

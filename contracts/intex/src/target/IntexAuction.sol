@@ -318,7 +318,10 @@ contract IntexAuction is
         // Mirror of `commitBid`: a sealed commit must not be withdrawable after `commitEnd`,
         // otherwise a bidder could cancel post-deadline once conditions are observed — defeating
         // the commit-reveal seal. Window is `[start, commitEnd)`.
-        if (uint32(block.timestamp) >= a.schedule.commitEnd) {
+        // Exception: a never-signalled auction pins CommittingBids forever, so stay cancellable once dead.
+        bool stuck = a.worldwideDayState == IIntexAuction.WorldwideDayState.Unknown
+            && uint32(block.timestamp) > a.schedule.issuanceEnd;
+        if (!stuck && uint32(block.timestamp) >= a.schedule.commitEnd) {
             revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
         if ($.committedBidsByHash[seriesId][msg.sender] == bytes32(0)) revert BidNotFound();
