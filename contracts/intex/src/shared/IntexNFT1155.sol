@@ -890,11 +890,53 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return (ownedTokenIds, balances);
     }
 
+    /// @inheritdoc IIntexNFT1155
+    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total)
+    {
+        uint256[] storage owned = _s().ownedSeries[owner];
+        total = owned.length;
+        if (offset >= total) return (new uint256[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        ownedTokenIds = new uint256[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 tokenId = owned[offset + i];
+            ownedTokenIds[i] = tokenId;
+            balances[i] = balanceOf(owner, tokenId);
+        }
+    }
+
     // --- Series holder enumeration (tokenId → holders[]) ---
 
     /// @inheritdoc IIntexNFT1155
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory) {
         return _s().seriesHolders[tokenId];
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        holders = new address[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            holders[i - offset] = all[i];
+        }
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -908,6 +950,29 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         for (uint256 i = 0; i < holders.length; i++) {
             balances[i] = balanceOf(holders[i], tokenId);
+        }
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory balances, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        holders = new address[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            address holder = all[offset + i];
+            holders[i] = holder;
+            balances[i] = balanceOf(holder, tokenId);
         }
     }
 

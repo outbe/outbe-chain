@@ -1318,6 +1318,47 @@ contract IntexNFT1155Test is Test {
         assertEq(balances[1], 5);
     }
 
+    function test_PaginatedGetters_WindowClipAndTotal() public {
+        _createSeries(SERIES_ID_1, 0);
+        address h3 = address(7);
+        address h4 = address(8);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.mint(user2, 20, SERIES_ID_1);
+        nft.mint(h3, 30, SERIES_ID_1);
+        nft.mint(h4, 40, SERIES_ID_1);
+        vm.stopPrank();
+
+        (address[] memory hp, uint256 total) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 1, 2);
+        assertEq(total, 4);
+        assertEq(hp.length, 2);
+        assertEq(hp[0], user2);
+        assertEq(hp[1], h3);
+
+        (address[] memory hb, uint256[] memory bal, uint256 total2) =
+            nft.getSeriesHoldersWithBalancesPaginated(TOKEN_ID_1, 1, 2);
+        assertEq(total2, 4);
+        assertEq(hb[0], user2);
+        assertEq(bal[0], 20);
+        assertEq(hb[1], h3);
+        assertEq(bal[1], 30);
+
+        (address[] memory tail,) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 3, 100);
+        assertEq(tail.length, 1);
+        assertEq(tail[0], h4);
+
+        (address[] memory none, uint256 total3) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 10, 5);
+        assertEq(none.length, 0);
+        assertEq(total3, 4);
+
+        (uint256[] memory ids, uint256[] memory obal, uint256 ototal) =
+            nft.getOwnedSeriesWithBalancesPaginated(user, 0, 10);
+        assertEq(ototal, 1);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], TOKEN_ID_1);
+        assertEq(obal[0], 10);
+    }
+
     function test_SeriesHolders_NoDuplicateOnDoubleMint() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);

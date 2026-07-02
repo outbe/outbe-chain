@@ -394,10 +394,33 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         view
         returns (uint256[] memory ownedTokenIds, uint256[] memory balances);
 
+    /// @notice Paginated owned series with balances for an address.
+    /// @param owner Owner address to read.
+    /// @param offset Start index into the owned-series set.
+    /// @param limit Maximum number of entries to return.
+    /// @return ownedTokenIds The token ids in the `[offset, offset+limit)` window.
+    /// @return balances Balances parallel to `ownedTokenIds`.
+    /// @return total Total number of owned series (for computing further pages).
+    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total);
+
     /// @notice All holder addresses for a given series token id.
     /// @param tokenId Series token id to read.
     /// @return holders The holder addresses for that token id.
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory holders);
+
+    /// @notice Paginated holder addresses for a given series token id.
+    /// @param tokenId Series token id to read.
+    /// @param offset Start index into the holder set.
+    /// @param limit Maximum number of entries to return.
+    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
+    /// @return total Total number of holders (for computing further pages).
+    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256 total);
 
     /// @notice All holders and their balances for a given series token id.
     /// @param tokenId Series token id to read.
@@ -407,6 +430,18 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         external
         view
         returns (address[] memory holders, uint256[] memory balances);
+
+    /// @notice Paginated holders and their balances for a given series token id.
+    /// @param tokenId Series token id to read.
+    /// @param offset Start index into the holder set.
+    /// @param limit Maximum number of entries to return.
+    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
+    /// @return balances Balances parallel to `holders`.
+    /// @return total Total number of holders (for computing further pages).
+    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory balances, uint256 total);
 
     /// @notice Number of unique holders for a given series token id.
     /// @param tokenId Series token id to read.
