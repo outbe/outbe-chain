@@ -1359,6 +1359,31 @@ contract IntexNFT1155Test is Test {
         assertEq(obal[0], 10);
     }
 
+    function test_PaginatedGetters_ZeroLimitAndExactBoundary() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.mint(user2, 20, SERIES_ID_1);
+        vm.stopPrank();
+
+        // limit == 0 -> empty window, real total.
+        (address[] memory h0, uint256 t0) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 0, 0);
+        assertEq(h0.length, 0);
+        assertEq(t0, 2);
+
+        // offset == total -> empty window, real total.
+        (address[] memory hEnd, uint256 tEnd) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 2, 5);
+        assertEq(hEnd.length, 0);
+        assertEq(tEnd, 2);
+
+        // WithBalances variant, limit == 0.
+        (address[] memory hb, uint256[] memory bb, uint256 t2) =
+            nft.getSeriesHoldersWithBalancesPaginated(TOKEN_ID_1, 0, 0);
+        assertEq(hb.length, 0);
+        assertEq(bb.length, 0);
+        assertEq(t2, 2);
+    }
+
     function test_SeriesHolders_NoDuplicateOnDoubleMint() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);

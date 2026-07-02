@@ -112,6 +112,23 @@ contract EscrowAdapterTest is Test {
         assertTrue(escrow.lockTag() != lockTagBefore);
     }
 
+    function test_HasOutstandingLocks_ReflectsLockState() public {
+        assertFalse(escrow.hasOutstandingLocks());
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        assertTrue(escrow.hasOutstandingLocks());
+    }
+
+    function test_Wire_RevertsRotatingCompactWithLiveLocks() public {
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+
+        MockTheCompact compact2 = new MockTheCompact();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
+        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+    }
+
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
