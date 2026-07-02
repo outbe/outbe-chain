@@ -21,6 +21,12 @@ wait_lockstep(){ local port="$1" tries="${2:-30}" i; for i in $(seq 1 "$tries");
 
 launch_follower(){ # $1=dir $2=http $3=p2p $4=disc5 $5=auth $6=upstream_url
   local fd="$1"; mkdir -p "$fd/data" "$fd/logs"
+  # On a TEE chain a full-execution follower re-runs offer + registerEnclave txs
+  # through the enclave (both land in the receipts root), so it needs an enclave
+  # holding the (lifetime-constant) offer key — the node's startup guardrail
+  # enforces this. Here we share validator-0's enclave (:7000, mock, thread-per-
+  # connection) which already holds the offer key; a real follower gets its own
+  # via `outbe-cli tee join` before sync.
   RUST_MIN_STACK=16777216 RUST_LOG="info,outbe_consensus::follow=debug" \
   setsid nohup env "PATH=$PATH" "$BIN" node \
     --chain "$E2E_DIR/genesis.json" --datadir "$fd/data" \
@@ -28,6 +34,7 @@ launch_follower(){ # $1=dir $2=http $3=p2p $4=disc5 $5=auth $6=upstream_url
     --port "$3" --discovery.port "$3" --discovery.v5.addr 127.0.0.1 --discovery.v5.port "$4" \
     --p2p-secret-key-hex "$(openssl rand -hex 32)" --authrpc.port "$5" \
     --ipcpath "$fd/data/reth.ipc" --log.file.directory "$fd/logs" \
+    --tee-enclave-socket 127.0.0.1:7000 \
     --upstream "$6" >> "$fd/node.log" 2>&1 < /dev/null &
   echo "  follower @$1 pid $!"
 }
