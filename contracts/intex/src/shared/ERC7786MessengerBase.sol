@@ -31,7 +31,8 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.ERC7786MessengerBase")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0x6702aa1076aac9174f7ad82f658a24b43715e5376566adbcf76ac99f64da8e00;
+    bytes32 private constant _MESSENGER_STORAGE_SLOT =
+        0x6702aa1076aac9174f7ad82f658a24b43715e5376566adbcf76ac99f64da8e00;
 
     /// @dev ERC-7786 attribute selector for a per-message destination gas limit. Matches the crosschain hub's
     ///      `GasLimitAttribute.SELECTOR`; redeclared here (not imported) to keep the intex build hub-decoupled.
@@ -57,7 +58,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     function _s() private pure returns (MessengerStorage storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
-            $.slot := _STORAGE_SLOT
+            $.slot := _MESSENGER_STORAGE_SLOT
         }
     }
 
