@@ -370,8 +370,10 @@ contract IntexAuction is
         }
 
         bytes32 committedHash = $.committedBidsByHash[seriesId][msg.sender];
-        if (committedHash == bytes32(0)) revert BidNotFound();
+        // Order matters: a re-reveal must report BidAlreadyRevealed, not BidNotFound, now that
+        // the commit slot is freed on first reveal.
         if ($.revealedBidsByBidder[seriesId][msg.sender]) revert BidAlreadyRevealed();
+        if (committedHash == bytes32(0)) revert BidNotFound();
         if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
@@ -389,6 +391,8 @@ contract IntexAuction is
         // Effects: record the reveal before the external lockFunds call (CEI).
         // If lockFunds reverts the whole tx is rolled back, so atomicity is preserved.
         $.revealedBidsByBidder[seriesId][msg.sender] = true;
+        // Free the consumed commit slot; commitBid already rejects any commit past commitEnd.
+        delete $.committedBidsByHash[seriesId][msg.sender];
 
         $.revealedBids[seriesId].push(
             IIntexAuction.SubmittedBidData({

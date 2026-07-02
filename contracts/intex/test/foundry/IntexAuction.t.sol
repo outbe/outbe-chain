@@ -543,6 +543,19 @@ contract AuctionTest is Test {
         auction.reapAuction(seriesId, 10);
     }
 
+    function test_RevealBid_FreesCommitSlot() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250230;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+    }
+
     function test_AccessControl_AuctionStart() public {
         uint32 seriesId = 20250123;
 
