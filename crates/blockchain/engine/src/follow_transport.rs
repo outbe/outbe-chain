@@ -135,6 +135,33 @@ impl UpstreamRpcClient {
             url: normalized,
         })
     }
+
+    /// Query the upstream's on-chain tribute offer public key
+    /// (`TeeRegistry.tributeOfferPublicKey()`, selector `0x1b640a92`). A non-zero
+    /// value means the chain is TEE-bootstrapped, so a follower re-executing
+    /// offer / enclave-registration txs needs a local enclave holding the offer
+    /// key. Read from the UPSTREAM, not the follower's local state: the follower
+    /// starts at genesis, where the bootstrap tx that sets this key has not run
+    /// yet, so a local read would spuriously report a non-TEE chain.
+    pub async fn tribute_offer_public_key(&self) -> eyre::Result<alloy_primitives::B256> {
+        let call = serde_json::json!({
+            "to": "0x000000000000000000000000000000000000ee0a",
+            "data": "0x1b640a92",
+        });
+        let result: String = self
+            .client
+            .request("eth_call", rpc_params![call, "latest"])
+            .await
+            .map_err(|e| eyre::eyre!("upstream eth_call tributeOfferPublicKey failed: {e}"))?;
+        let bytes = alloy_primitives::hex::decode(result.trim_start_matches("0x"))
+            .map_err(|e| eyre::eyre!("malformed eth_call result from upstream: {e}"))?;
+        // A `uint256` return is a single 32-byte word; anything shorter is treated
+        // as zero (non-TEE chain / method absent).
+        if bytes.len() < 32 {
+            return Ok(alloy_primitives::B256::ZERO);
+        }
+        Ok(alloy_primitives::B256::from_slice(&bytes[..32]))
+    }
 }
 
 /// Decode an `outbe_getFinalization` proof into a `CertifiedFinalizedBlock`.

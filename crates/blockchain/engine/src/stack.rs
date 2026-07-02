@@ -1669,6 +1669,34 @@ where
                 eyre::eyre!("genesis validator set is not a valid participant set: {e:?}")
             })?;
 
+    // TEE-chain guardrail. Full execution re-runs offer txs (decrypt in the
+    // enclave) and enclave-registration txs (`registerEnclave` seals the
+    // resident offer key to the joiner and emits `OfferKeySealed`) — BOTH route
+    // through the local enclave, and BOTH land in the block's receipts root. A
+    // follower without an enclave silently omits the seal / cannot decrypt, so
+    // its receipts root diverges and reth rejects the block (a cryptic
+    // "receipt root mismatch" at the first such height). Fail fast here with an
+    // actionable message instead. The offer key is a lifetime constant, so it is
+    // installed ONCE, before sync, via `outbe-cli tee join`. The TEE-chain probe
+    // reads the UPSTREAM's state, not the follower's: the follower is at genesis,
+    // where the bootstrap tx that sets the offer key has not run yet.
+    let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    let tee_offer_public = tee_probe
+        .tribute_offer_public_key()
+        .await
+        .wrap_err("failed to probe the upstream for TEE-chain status (follower prerequisites)")?;
+    if !tee_offer_public.is_zero() && args.tee_enclave_socket.is_none() {
+        return Err(eyre::eyre!(
+            "this is a TEE chain (a tribute offer key is set on-chain) but the follower was \
+             started WITHOUT --tee-enclave-socket. A full-execution follower re-runs offer and \
+             enclave-registration transactions through the enclave, so it needs an attested \
+             enclave that holds the (lifetime-constant) offer key. Install the key once, before \
+             syncing:\n  1. start the enclave sidecar,\n  2. `outbe-cli tee join --enclave-socket \
+             <socket> --rpc-url {upstream}` (registers + waits for the sealed offer key),\n  3. \
+             start the node with `--tee-enclave-socket <socket> --upstream {upstream}`."
+        ));
+    }
+
     info!(
         %upstream,
         anchor_validators = anchor_participants.len(),
