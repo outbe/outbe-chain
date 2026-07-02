@@ -12,18 +12,17 @@ import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 /// @title DeployOutbe
 /// @author Outbe
 /// @notice Deploy the Outbe-side intex contracts as UUPS proxies through the CREATE3 factory.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, LZ_ENDPOINT, BNB_EID (the remote endpoint id for the Outbe-side
-///      LayerZero contracts). The deployer is the admin (DEFAULT_ADMIN_ROLE) and the owner / LZ
-///      delegate. Wiring is separate.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to), BNB_CHAIN_ID
+///      (BNB's EVM chainId). The deployer is the admin (DEFAULT_ADMIN_ROLE) and delegate. Wiring is separate.
 contract DeployOutbe is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
-        // The deployer is admin and owner/LZ delegate.
+        // The deployer is admin and delegate.
         address admin = deployer;
         address delegate = deployer;
-        address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
-        uint32 bnbEid = uint32(vm.envUint("BNB_EID"));
+        address bridge = vm.envAddress("BRIDGE_ADDRESS");
+        uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         vm.startBroadcast(pk);
 
@@ -40,21 +39,21 @@ contract DeployOutbe is BaseScript {
             factory,
             deployer,
             "ONFT1155Adapter",
-            address(new ONFT1155Adapter(nft, lzEndpoint)),
+            address(new ONFT1155Adapter(nft, bridge)),
             abi.encodeCall(ONFT1155Adapter.initialize, (delegate))
         );
         address onftBatch = deployProxy(
             factory,
             deployer,
             "ONFT1155AdapterBatch",
-            address(new ONFT1155AdapterBatch(nft, lzEndpoint)),
+            address(new ONFT1155AdapterBatch(nft, bridge)),
             abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate))
         );
         address messenger = deployProxy(
             factory,
             deployer,
             "OriginMessenger",
-            address(new OriginMessenger(lzEndpoint, bnbEid)),
+            address(new OriginMessenger(bridge, bnbChainId)),
             abi.encodeCall(OriginMessenger.initialize, (delegate))
         );
 

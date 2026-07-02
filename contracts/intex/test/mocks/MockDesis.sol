@@ -20,9 +20,10 @@ contract MockDesis {
     ///      pulling in the full Desis dependency graph.
     function processBidsBatch(
         uint32, /* seriesId */
-        uint32, /* srcEid */
-        bool, /* isLast */
+        uint32, /* srcChainId */
         uint32, /* relayGeneration */
+        uint16, /* batchIndex */
+        uint16, /* totalBatches */
         address[] calldata, /* bidderAddresses */
         uint16[] calldata, /* intexQuantities */
         uint32[] calldata, /* intexBidRates */
