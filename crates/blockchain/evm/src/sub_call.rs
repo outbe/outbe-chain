@@ -9,10 +9,7 @@
 //!
 //! Child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`], so both
 //! the Ethereum precompiles `0x01..0x0a` AND the outbe stateful precompiles are
-//! reachable from the child frame — a sub-call to an outbe address dispatches
-//! exactly like a top-level call. Nested outbe dispatch is bounded by the
-//! per-address reentrancy guard (`ReentrancyStack`, see
-//! `storage/ctx_provider.rs`) and the journal depth check below.
+//! reachable from the child frame.
 //!
 //! Atomicity is provided by the OUTER caller wrapping
 //! `storage.call(...)` / `storage.staticcall(...)` in `StorageHandle::with_checkpoint`.

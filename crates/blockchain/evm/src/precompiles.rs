@@ -448,14 +448,6 @@ where
 /// precompiles dispatch through [`outbe_ctx_dispatch`], and everything else
 /// (Ethereum precompiles `0x01..0x0a`, ordinary contract calls) falls back to
 /// the standard [`EthPrecompiles`].
-///
-/// `PrecompilesMap` itself cannot be reused here: its `PrecompileProvider`
-/// impl is bound to the *owned* `EthEvmContext<DB>`, and its dispatch hook
-/// casts `context as *mut _ as *mut c_void` assuming that layout — with the
-/// borrow-mode context (`&mut &mut EthEvmContext<DB>`) that cast would be
-/// wrong. Because this provider is a concrete `DB`-parameterized type (not an
-/// `Arc<dyn Fn>` closure), it calls [`outbe_ctx_dispatch`] with a plain
-/// `&mut EthEvmContext<DB>` — no closures, no raw pointers, no `unsafe`.
 pub(crate) struct OutbeSubCallPrecompiles<DB> {
     /// Fallback provider for the Ethereum precompiles `0x01..0x0a`.
     eth: EthPrecompiles,
@@ -507,9 +499,6 @@ where
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        // Mirror `PrecompilesMap`: outbe addresses are dispatched in `run` but
-        // are NOT pre-warmed / not reported by `contains`, matching the
-        // top-level access-list behavior.
         self.eth.warm_addresses()
     }
 
