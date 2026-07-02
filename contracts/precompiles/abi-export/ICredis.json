@@ -34,11 +34,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "asset",
             "type": "address",
             "internalType": "address"
@@ -151,11 +146,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "asset",
             "type": "address",
             "internalType": "address"
@@ -266,11 +256,6 @@
             "name": "positionId",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
           },
           {
             "name": "asset",

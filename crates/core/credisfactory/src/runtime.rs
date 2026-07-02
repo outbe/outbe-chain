@@ -92,7 +92,6 @@ pub fn request_credis(
     let position_id = credis.create_position(
         args.nullifier_hash,
         bundle_account,
-        VAULT_PROVIDER_ADDRESS,
         asset,
         amount_stables,
         gratis_amount,
@@ -152,9 +151,6 @@ pub fn pay_anadosis(
         if position.asset.is_zero() {
             return Err(CredisFactoryError::InvalidAsset.into());
         }
-        if position.vault_provider.is_zero() {
-            return Err(CredisFactoryError::InvalidVaultProvider.into());
-        }
         if next.anadosis_amount.is_zero() {
             return Err(CredisFactoryError::InvalidAmount.into());
         }
@@ -176,7 +172,6 @@ pub fn pay_anadosis(
     // bookkeeping via the surrounding precompile frame.
     let amount = result.anadosis_amount;
     let asset = result.asset;
-    let vault = result.vault_provider;
 
     // 1) Pull stablecoin from caller into the credisfactory precompile address.
     let transfer = IERC20::transferFromCall {
@@ -189,7 +184,7 @@ pub fn pay_anadosis(
 
     // 2) Approve the vault to spend that exact amount.
     let approve = IERC20::approveCall {
-        spender: vault,
+        spender: VAULT_PROVIDER_ADDRESS,
         amount,
     }
     .abi_encode();

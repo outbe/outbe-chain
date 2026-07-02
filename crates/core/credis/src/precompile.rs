@@ -75,7 +75,6 @@ pub fn dispatch(
 fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
     ICredis::Position {
         positionId: p.position_id,
-        vaultProvider: p.vault_provider,
         asset: p.asset,
         bundleAccount: p.bundle_account,
         totalAnadosisAmount: p.total_anadosis_amount,

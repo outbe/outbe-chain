@@ -6,8 +6,6 @@ use thiserror::Error;
 pub enum CredisFactoryError {
     #[error("invalid asset address")]
     InvalidAsset,
-    #[error("invalid vault provider address")]
-    InvalidVaultProvider,
     #[error("invalid bundle account address")]
     InvalidBundleAccount,
     #[error("anadosis amount is zero")]

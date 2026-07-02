@@ -1,11 +1,5 @@
 //! Public Solidity ABI of the vaultprovider precompile, plus thin typed helpers
 //! that hide the EVM sub-call to `VAULT_PROVIDER_ADDRESS`.
-//!
-//! Other precompiles move reserve liquidity through [`deposit_liquidity`] /
-//! [`withdraw_liquidity`], which wrap the encode → sub-call → decode boilerplate
-//! around the generated [`IVaultProvider`] call types. The Solidity interface
-//! file is the single source of truth; [`crate::precompile`] dispatches the same
-//! generated types on the inbound side.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
@@ -18,11 +12,6 @@ sol!("../../../contracts/precompiles/src/IVaultProvider.sol");
 
 /// `depositLiquidity`: deposit `amount` of `asset` into its reserve vault via an
 /// EVM sub-call to the vault provider, returning the minted shares.
-///
-/// The provider classifies the calling precompile (its `msg.sender`) from the
-/// genesis-seeded liquidity-source registry, so the caller must be a registered
-/// source and must have approved `VAULT_PROVIDER_ADDRESS` to pull `amount` of
-/// `asset` beforehand.
 pub fn deposit_liquidity(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -45,10 +34,6 @@ pub fn deposit_liquidity(
 /// `withdrawLiquidity`: redeem `amount` of `asset` from its reserve vault and top
 /// it up into `receiver` via an EVM sub-call to the vault provider, returning the
 /// burned shares.
-///
-/// The provider classifies the calling precompile (its `msg.sender`) from the
-/// genesis-seeded liquidity-target registry, so the caller must be a registered
-/// target.
 pub fn withdraw_liquidity(
     storage: &StorageHandle<'_>,
     asset: Address,
