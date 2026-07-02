@@ -233,7 +233,16 @@ pub fn process_bids_batch(
         );
     }
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, series_id, AuctionStage::Revealing)?;
+
+    // Intake is open only while Revealing. Past intake a late/re-flushed batch is redundant → no-op (else the
+    // transport redelivers forever); before intake it's premature → revert so it redelivers after reveal.
+    let stage = contract.read_stage(series_id)?;
+    if stage != AuctionStage::Revealing {
+        return match stage {
+            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
+            _ => Err(DesisError::InvalidStageTransition.into()),
+        };
+    }
 
     let last_gen = contract.read_last_generation(series_id)?;
     if generation < last_gen {
@@ -252,6 +261,16 @@ pub fn process_bids_batch(
             .bids_total_batches
             .write(&series_id, u32::from(total_batches))?;
         contract.bids_arrived_mask.write(&series_id, U256::ZERO)?;
+    }
+
+    // All batches of a generation must agree on total_batches and stay in range, else a bad peer could set an
+    // out-of-range bit and false-complete the set with a real batch missing.
+    let stored_total = contract.bids_total_batches.read(&series_id)?;
+    if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
+        return Err(PrecompileError::Revert(
+            "processBidsBatch: batch total/index mismatch for generation".into(),
+        )
+        .into());
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);

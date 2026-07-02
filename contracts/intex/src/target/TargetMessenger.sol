@@ -17,9 +17,8 @@ import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.
 
 /// @title TargetMessenger
 /// @author Outbe
-/// @notice BNB-side messenger: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe, over the
-///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The transport (LayerZero, Hyperlane, ...) is
-///         selected on the bridge, not here.
+/// @notice BNB-side messenger: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe over the
+///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
@@ -441,8 +440,7 @@ contract TargetMessenger is
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
-    /// @dev The bridge `receiveId` (unique per message, stable across transport redeliveries) is the escrow
-    ///      adapter's idempotency/retry key — the ERC-7786 analog of the former LayerZero message GUID.
+    /// @dev `receiveId` is the escrow finalization tag; escrow dedups on the series' own `finalized` flag.
     function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
         (uint32 seriesId, address[] memory bidders, uint128[] memory refundedAmounts, uint128[] memory paidAmounts) =
             BridgeMsgCodec.decodeRefundInstructions(_message);
@@ -542,6 +540,8 @@ contract TargetMessenger is
         // slither-disable-next-line arbitrary-send-eth
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NativeSweepFailed();
+
+        emit NativeSwept(to, amount);
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

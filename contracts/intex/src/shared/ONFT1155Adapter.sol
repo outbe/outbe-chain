@@ -152,7 +152,10 @@ contract ONFT1155Adapter is
         if ($.processed[receiveId]) revert AlreadyProcessed(receiveId);
         $.processed[receiveId] = true;
 
-        ONFT1155MsgCodec.assertMinLength(message);
+        // A valid transfer is exactly MIN_LEN_TRANSFER bytes; reject any other length.
+        if (message.length != ONFT1155MsgCodec.MIN_LEN_TRANSFER) {
+            revert ONFT1155MsgCodec.InvalidPayloadLength(message.length, ONFT1155MsgCodec.MIN_LEN_TRANSFER);
+        }
         bytes32 sendToRaw = message.sendTo();
         ONFT1155MsgCodec.assertAddress(sendToRaw);
         address toAddress = ONFT1155MsgCodec.bytes32ToAddress(sendToRaw);

@@ -9,8 +9,7 @@ import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 /// @title ERC7786MessengerBase
 /// @author Outbe
 /// @notice Shared base for intex cross-chain clients that speak to the protocol-agnostic ERC-7786 bridge (the
-///         `crosschain` hub's `ERC7786Bridge`) instead of embedding a transport. The active transport (LayerZero,
-///         Hyperlane, ...) is selected on the bridge ({setGateway} there); these clients never change.
+///         `crosschain` hub's `ERC7786Bridge`). The active transport is selected on the bridge ({setGateway} there).
 /// @dev Provides the immutable bridge reference, an ERC-7930 remote-messenger registry keyed by chainId, a
 ///      relay-float-aware {_send}, a fee {_quoteFee}, and an authenticated {receiveMessage} that dispatches to the
 ///      abstract {_dispatch}. A base (rather than inlining like intent's single-client Router) avoids duplicating
@@ -44,6 +43,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     error UnauthorizedBridge(address caller);
     error UnauthorizedSourceMessenger(uint32 chainId, bytes sender);
     error RemoteMessengerNotSet(uint32 chainId);
+    error RemoteMessengerChainMismatch(uint32 chainId, uint256 embeddedChainId);
     error NotEnoughNative(uint256 balance);
     error MsgValueBelowFee(uint256 provided, uint256 required);
     error RefundFailed();
@@ -73,6 +73,12 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     /// @dev Registers (or clears, with empty bytes) the matching messenger on `chainId`. Auth is the concrete's
     ///      responsibility (AccessControl lives there).
     function _setRemoteMessenger(uint32 chainId, bytes calldata interop) internal {
+        // Inbound auth derives the key from the sender's own bytes, so the interop must embed the same chainId as
+        // the key — a mismatch would silently blackhole every message from that chain.
+        if (interop.length != 0) {
+            (uint256 embedded,) = interop.parseEvmV1Calldata();
+            require(embedded == chainId, RemoteMessengerChainMismatch(chainId, embedded));
+        }
         _s().remoteMessenger[chainId] = interop;
         emit RemoteMessengerRegistered(chainId, interop);
     }

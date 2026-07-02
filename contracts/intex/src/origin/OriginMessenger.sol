@@ -14,9 +14,8 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 
 /// @title OriginMessenger
 /// @author Outbe
-/// @notice Outbe-side messenger: sends auction/series messages to BNB and receives BIDS_BATCH from BNB, over the
-///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The transport (LayerZero, Hyperlane, ...) is
-///         selected on the bridge, not here.
+/// @notice Outbe-side messenger: sends auction/series messages to BNB and receives BIDS_BATCH from BNB over the
+///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
 ///      messages are keyed by `seriesId` (uint32).

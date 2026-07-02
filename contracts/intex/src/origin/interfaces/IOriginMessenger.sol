@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 /// @title IOriginMessenger
 /// @author Outbe
 /// @notice Interface for the Outbe-side messenger. Sends auction/series messages to BNB and receives BIDS_BATCH
-///         from BNB, speaking to the protocol-agnostic ERC-7786 bridge instead of a specific transport.
+///         from BNB over the protocol-agnostic ERC-7786 bridge.
 /// @dev All auction/series messages are keyed by `seriesId` (uint32). Outbound `send*` return the bridge `sendId`
 ///      and are funded either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quote*`
 ///      return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.

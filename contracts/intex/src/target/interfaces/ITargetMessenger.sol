@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 /// @title ITargetMessenger
 /// @author Outbe
 /// @notice Interface for the BNB-side messenger. Sends BIDS_BATCH to Outbe and receives auction/series messages from
-///         Outbe, speaking to the protocol-agnostic ERC-7786 bridge instead of a specific transport.
+///         Outbe over the protocol-agnostic ERC-7786 bridge.
 /// @dev Deployed on BNB Chain behind a UUPS proxy. Inbound delivery arrives via
 ///      {ERC7786MessengerBase-receiveMessage}. Outbound `sendBidsBatch` returns the bridge `sendId` and is funded
 ///      either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quoteSendBidsBatch`
@@ -78,6 +78,11 @@ interface ITargetMessenger {
     /// @param idx Index of the parked relay slot that was flushed.
     /// @param tokenId Token id whose holders were bridged.
     event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
+
+    /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
+    /// @param to Recipient of the swept native balance.
+    /// @param amount Amount of native tokens (wei) swept.
+    event NativeSwept(address indexed to, uint256 amount);
 
     // --- Types ---
     /// @notice Parameters for sending a bids batch to Outbe.
