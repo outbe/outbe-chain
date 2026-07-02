@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
@@ -11,21 +13,15 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
-import {MessagingFee, MessagingReceipt, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-
 /**
  * @title OriginMessengerTest
  * @notice Foundry tests for OriginMessenger
  * @dev Tests message encoding/decoding and access control.
  *      All auction/series messages are keyed by `seriesId` (uint32).
  */
-contract OriginMessengerTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
-
-    uint32 private bnbEid = 1;
-    uint32 private outbeEid = 2;
+contract OriginMessengerTest is CrossChainTest {
+    uint32 private constant BNB_CHAIN_ID = 1;
+    uint32 private constant OUTBE_CHAIN_ID = 2;
 
     OriginMessenger private outbeAdapter;
     TargetMessenger private bnbAdapter;
@@ -46,14 +42,15 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     uint32 private constant SERIES_ID = 20250115; // yyyymmdd format
 
-    function setUp() public virtual override {
+    function setUp() public {
+        _setUpBridge();
+        // Positive quote tests assert a non-zero fee; give the loopback bridge a fixed fee to return.
+        bridge.setFee(0.001 ether);
+
         vm.deal(admin, 1000 ether);
         vm.deal(user, 1000 ether);
 
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
-
-        // Stand-in Desis recipient — declared after super.setUp() so vm.deal targets a real address.
+        // Stand-in Desis recipient.
         desis = address(new MockDesis());
         vm.deal(desis, 1000 ether);
         intexFactory = makeAddr("factory");
@@ -64,19 +61,17 @@ contract OriginMessengerTest is TestHelperOz5 {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy BNB adapter (for cross-chain testing)
-        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
+        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
 
-        // Wire adapters (set peers)
-        address[] memory oapps = new address[](2);
-        oapps[0] = address(bnbAdapter);
-        oapps[1] = address(outbeAdapter);
-        this.wireOApps(oapps);
+        // Wire adapters (register remote messengers)
+        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
+        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
 
         // Wire Outbe adapter
         outbeAdapter.wire(desis, intexFactory);
@@ -131,7 +126,7 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     // --- Constructor Tests ---
     function test_constructor() public view {
-        assertEq(outbeAdapter.BNB_EID(), bnbEid);
+        assertEq(outbeAdapter.BNB_CHAIN_ID(), BNB_CHAIN_ID);
         assertTrue(outbeAdapter.hasRole(outbeAdapter.DEFAULT_ADMIN_ROLE(), admin));
     }
 
@@ -141,7 +136,7 @@ contract OriginMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginMessenger newAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        OriginMessenger newAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);
@@ -149,48 +144,33 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     // --- Access Control Tests ---
     function test_sendAuctionStageStart_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams(), options, fee, user);
+        outbeAdapter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams());
     }
 
     function test_sendAuctionStageReveal_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageReveal{value: 0.1 ether}(SERIES_ID, true, options, fee, user);
+        outbeAdapter.sendAuctionStageReveal{value: 0.1 ether}(SERIES_ID, true);
     }
 
     function test_sendMarkCalled_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendMarkCalled{value: 0.1 ether}(SERIES_ID, options, fee, user);
+        outbeAdapter.sendMarkCalled{value: 0.1 ether}(SERIES_ID);
     }
 
     function test_sendAuctionStageClearing_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageClearing{value: 0.1 ether}(SERIES_ID, options, fee, user);
+        outbeAdapter.sendAuctionStageClearing{value: 0.1 ether}(SERIES_ID);
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionResult{value: 0.1 ether}(SERIES_ID, 10_000, 100e6, 50, options, fee, user);
+        outbeAdapter.sendAuctionResult{value: 0.1 ether}(SERIES_ID, 10_000, 100e6, 50);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
@@ -199,14 +179,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         uint256[] memory quantities = new uint256[](1);
         quantities[0] = 1;
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(
-            _baseIssuanceParams(recipients, quantities), options, fee, user
-        );
+        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
@@ -217,23 +192,15 @@ contract OriginMessengerTest is TestHelperOz5 {
         uint128[] memory paidAmounts = new uint128[](1);
         paidAmounts[0] = 50e6;
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(
-            SERIES_ID, bidders, refundedAmounts, paidAmounts, options, fee, user
-        );
+        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendMarkQualified_revert_unauthorized() public {
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendMarkQualified{value: 0.1 ether}(SERIES_ID, options, fee, user);
+        outbeAdapter.sendMarkQualified{value: 0.1 ether}(SERIES_ID);
     }
 
     // --- Validation Tests ---
@@ -241,14 +208,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         address[] memory recipients = new address[](0);
         uint256[] memory quantities = new uint256[](0);
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(intexFactory);
         vm.expectRevert(IOriginMessenger.EmptyArray.selector);
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(
-            _baseIssuanceParams(recipients, quantities), options, fee, intexFactory
-        );
+        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendIssuanceInstructions_revert_array_length_mismatch() public {
@@ -259,14 +221,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         recipients[1] = address(0x2);
         quantities[0] = 10;
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(intexFactory);
         vm.expectRevert(IOriginMessenger.ArrayLengthMismatch.selector);
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(
-            _baseIssuanceParams(recipients, quantities), options, fee, intexFactory
-        );
+        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendRefundInstructions_revert_empty_array() public {
@@ -274,14 +231,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         uint128[] memory refundedAmounts = new uint128[](0);
         uint128[] memory paidAmounts = new uint128[](0);
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(desis);
         vm.expectRevert(IOriginMessenger.EmptyArray.selector);
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(
-            SERIES_ID, bidders, refundedAmounts, paidAmounts, options, fee, desis
-        );
+        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
@@ -295,14 +247,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         refundedAmounts[1] = 200e6;
         paidAmounts[0] = 50e6;
 
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-
         vm.prank(desis);
         vm.expectRevert(IOriginMessenger.ArrayLengthMismatch.selector);
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(
-            SERIES_ID, bidders, refundedAmounts, paidAmounts, options, fee, desis
-        );
+        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     // --- Role Constants Tests ---
@@ -312,36 +259,28 @@ contract OriginMessengerTest is TestHelperOz5 {
 
     // --- Quote Tests ---
     function test_quoteSendAuctionStageStart() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendAuctionStageStart(_baseStageStartParams());
 
-        MessagingFee memory fee = outbeAdapter.quoteSendAuctionStageStart(_baseStageStartParams(), options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionStageReveal() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendAuctionStageReveal(SERIES_ID, true);
 
-        MessagingFee memory fee = outbeAdapter.quoteSendAuctionStageReveal(SERIES_ID, true, options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionStageClearing() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendAuctionStageClearing(SERIES_ID);
 
-        MessagingFee memory fee = outbeAdapter.quoteSendAuctionStageClearing(SERIES_ID, options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionResult() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount)
+        uint256 fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42);
 
-        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount, ...)
-        MessagingFee memory fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42, options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendIssuanceInstructions() public view {
@@ -353,12 +292,9 @@ contract OriginMessengerTest is TestHelperOz5 {
         quantities[0] = 10;
         quantities[1] = 20;
 
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
 
-        MessagingFee memory fee =
-            outbeAdapter.quoteSendIssuanceInstructions(_baseIssuanceParams(recipients, quantities), options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendRefundInstructions() public view {
@@ -373,20 +309,15 @@ contract OriginMessengerTest is TestHelperOz5 {
         paidAmounts[0] = 50e6;
         paidAmounts[1] = 75e6;
 
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);
 
-        MessagingFee memory fee =
-            outbeAdapter.quoteSendRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts, options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendMarkCalled() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        uint256 fee = outbeAdapter.quoteSendMarkCalled(SERIES_ID);
 
-        MessagingFee memory fee = outbeAdapter.quoteSendMarkCalled(SERIES_ID, options, false);
-
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     // --- ERC165 Tests ---

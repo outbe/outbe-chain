@@ -8,6 +8,19 @@
     },
     {
       "type": "function",
+      "name": "ABANDON_DELAY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "AUCTION_ROLE",
       "inputs": [],
       "outputs": [

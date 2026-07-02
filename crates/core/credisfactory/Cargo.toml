@@ -11,6 +11,7 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-credis.workspace = true
 outbe-gratis.workspace = true
 outbe-gratispool.workspace = true
+outbe-vaultprovider.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

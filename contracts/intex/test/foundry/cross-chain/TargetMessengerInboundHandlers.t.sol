@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-import {Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
@@ -27,10 +26,9 @@ import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 ///      drives `lzReceive` from the endpoint address, then asserts the downstream side-effect on
 ///      the wired contract — proving the full _lzReceive -> dispatchInbound -> _handleX -> X path
 ///      under the current fail-don't-drop model.
-contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
-    uint32 internal constant BNB_EID = 1;
-    uint32 internal constant OUTBE_EID = 2;
-    bytes32 internal constant GUID = bytes32(uint256(0xCAFE));
+contract TargetMessengerInboundHandlersTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     uint32 internal constant SERIES_ID = 20250101;
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
@@ -53,18 +51,15 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     address internal admin = address(this);
     address internal bidder = address(0xB1);
 
-    uint64 internal nonce = 1;
-
-    function setUp() public override {
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+    function setUp() public {
+        _setUpBridge();
 
         intex = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
-        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
@@ -76,10 +71,8 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
         escrow.wire(admin, address(compact), address(provider), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        address[] memory bridge = new address[](2);
-        bridge[0] = address(bnbMessenger);
-        bridge[1] = address(outbeMessenger);
-        this.wireOApps(bridge);
+        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
+        outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
 
         bnbMessenger.wire(address(auction), address(intex), address(escrow), address(onftBatch));
 
@@ -223,10 +216,6 @@ contract TargetMessengerInboundHandlersTest is TestHelperOz5 {
     }
 
     function _deliver(bytes memory packet) internal {
-        Origin memory origin =
-            Origin({srcEid: OUTBE_EID, sender: bytes32(uint256(uint160(address(outbeMessenger)))), nonce: nonce});
-        nonce++;
-        vm.prank(address(endpoints[BNB_EID]));
-        bnbMessenger.lzReceive(origin, GUID, packet, address(0), "");
+        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
     }
 }

@@ -39,10 +39,10 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: returns MessagingFee { nativeFee: 0, lzTokenFee: 0 } (64 bytes).
+    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_MESSENGER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, f)
 }
@@ -170,9 +170,10 @@ fn settle_rejects_expired_deadline() {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
+    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_MESSENGER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();

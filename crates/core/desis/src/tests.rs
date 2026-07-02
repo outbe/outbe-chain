@@ -21,8 +21,8 @@ fn bidder(n: u8) -> Address {
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(1_700_000_000u64));
-    // Stub OriginMessenger: returns MessagingFee { nativeFee: 0, lzTokenFee: 0 } (64 zero bytes).
-    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 64]));
+    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 32]));
     // Stub IntexNFT1155: createSeries/settle/burnSettled are void; balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
@@ -117,7 +117,8 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             (0..100u8)
                 .map(|i| BidData {
@@ -152,7 +153,8 @@ fn process_bids_in_non_revealing_stage_fails() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            false,
+            1,
+            0,
             1,
             bids(2, 200)
         )
@@ -174,7 +176,8 @@ fn process_bids_rejects_non_origin_caller() {
             attacker,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             bids(3, 200)
         )
@@ -194,7 +197,8 @@ fn clear_auction_rejects_non_origin_caller() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             bids(3, 200),
         )
@@ -229,14 +233,16 @@ fn process_bids_accumulate_then_finalize() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
-        // Two partial batches; only last=true finalizes.
+        // Two batches of generation 1 (total_batches=2); the stage advances only once
+        // both batch_index 0 and 1 have arrived.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            false,
             1,
+            0,
+            2,
             bids(3, 200),
         )
         .unwrap();
@@ -245,8 +251,9 @@ fn process_bids_accumulate_then_finalize() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
             1,
+            1,
+            2,
             bids(2, 150),
         )
         .unwrap();
@@ -266,24 +273,27 @@ fn higher_generation_replaces_bids() {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
+        // Gen 1 arrives incomplete (batch 0 of 2), so it never finalizes.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            false,
             1,
+            0,
+            2,
             bids(5, 200),
         )
         .unwrap();
-        // Gen 2 replaces.
+        // Gen 2 supersedes with its own single completing batch.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
             2,
+            0,
+            1,
             bids(2, 150),
         )
         .unwrap();
@@ -304,7 +314,8 @@ fn stale_generation_is_rejected() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            false,
+            2,
+            0,
             2,
             bids(1, 200),
         )
@@ -314,7 +325,8 @@ fn stale_generation_is_rejected() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            false,
+            1,
+            0,
             1,
             bids(1, 200)
         )
@@ -323,25 +335,38 @@ fn stale_generation_is_rejected() {
 }
 
 #[test]
-fn no_bids_last_batch_cancels() {
+fn no_bids_last_batch_clears_as_no_sale() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR).unwrap();
+        // A single empty batch (batch 0 of 1) completes the generation and advances to
+        // BidsReceived (not Cancelled), so clearing auto-fires.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             vec![],
         )
         .unwrap();
-
-        let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
-            AuctionStage::Cancelled
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::BidsReceived
+        );
+
+        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
+        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_MESSENGER_ADDRESS, SERIES_ID).unwrap();
+        assert_eq!(result.issued_intex_count, 0);
+        assert!(result.winners.is_empty());
+        assert_eq!(
+            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            AuctionStage::Cleared
         );
     });
 }
@@ -361,7 +386,8 @@ fn clear_auction_allocates_up_to_supply() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             bids(5, 200),
         )
@@ -384,7 +410,8 @@ fn clear_auction_transitions_to_cleared() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             bids(1, 200),
         )
@@ -422,7 +449,8 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             bids(3, 200),
         )
@@ -477,7 +505,8 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             three_bids,
         )
@@ -515,7 +544,8 @@ fn clear_bids_below_min_price_skipped() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             low_bids,
         )
@@ -554,7 +584,8 @@ fn clear_refunds_equal_locked_minus_paid() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             two_bids,
         )
@@ -628,7 +659,8 @@ fn clear_rate_escrow_scales_by_basis() {
             ORIGIN_MESSENGER_ADDRESS,
             SERIES_ID,
             1,
-            true,
+            1,
+            0,
             1,
             rate_bids,
         )
@@ -726,7 +758,7 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(1_700_000_000u64));
-    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 64]));
+    storage.stub_sub_call_at(ORIGIN_MESSENGER_ADDRESS, Bytes::from(vec![0u8; 32]));
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),

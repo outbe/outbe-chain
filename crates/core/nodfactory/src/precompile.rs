@@ -25,7 +25,7 @@ pub fn dispatch(
         use INodFactory::INodFactoryCalls::*;
         match call {
             mineGratis(c) => mutate(c, caller, |sender, c| {
-                runtime::mine_gratis(&storage, sender, c.nodId, c.nonce, c.asset, c.vaultProvider)
+                runtime::mine_gratis(&storage, sender, c.nodId, c.nonce, c.asset)
             }),
         }
     })

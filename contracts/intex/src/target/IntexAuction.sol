@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -20,7 +20,7 @@ import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 ///      cross-chain and cross-instance replay.
 contract IntexAuction is
     AccessControlUpgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuardTransient,
     EIP712Upgradeable,
     UUPSUpgradeable,
     IIntexAuction
@@ -74,9 +74,7 @@ contract IntexAuction is
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
 
         __AccessControl_init();
-        __ReentrancyGuard_init();
         __EIP712_init("IntexAuction", "1");
-        __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
     }
