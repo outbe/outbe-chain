@@ -7,9 +7,12 @@
 //! [`Handler::run_exec_loop`](https://docs.rs/revm-handler/18.1.0/src/revm_handler/handler.rs.html)
 //! pattern until the child terminates.
 //!
-//! Child frame uses plain `EthPrecompiles::new(spec)` — Ethereum precompiles
-//! `0x01..0x0a` work; outbe stateful precompiles are intentionally NOT visible
-//! from the child frame.
+//! Child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`], so both
+//! the Ethereum precompiles `0x01..0x0a` AND the outbe stateful precompiles are
+//! reachable from the child frame — a sub-call to an outbe address dispatches
+//! exactly like a top-level call. Nested outbe dispatch is bounded by the
+//! per-address reentrancy guard (`ReentrancyStack`, see
+//! `storage/ctx_provider.rs`) and the journal depth check below.
 //!
 //! Atomicity is provided by the OUTER caller wrapping
 //! `storage.call(...)` / `storage.staticcall(...)` in `StorageHandle::with_checkpoint`.
@@ -23,9 +26,7 @@ use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCa
 use revm::{
     context::Evm,
     context_interface::{journaled_state::account::JournaledAccountTr, ContextTr, JournalTr},
-    handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameResult, ItemOrResult,
-    },
+    handler::{instructions::EthInstructions, EthFrame, EvmTr, FrameResult, ItemOrResult},
     interpreter::{
         interpreter::EthInterpreter,
         interpreter_action::{CallInputs, FrameInit, FrameInput},
@@ -96,13 +97,13 @@ where
     // on the trait.
     let instructions =
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
-    let precompiles = EthPrecompiles::new(spec);
+    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(spec);
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,
         (),
         EthInstructions<EthInterpreter, &mut EthEvmContext<DB>>,
-        EthPrecompiles,
+        crate::precompiles::OutbeSubCallPrecompiles<DB>,
         EthFrame<EthInterpreter>,
     > = Evm::new(ctx, instructions, precompiles);
 
