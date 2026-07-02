@@ -13,7 +13,7 @@
 //! sit in front of the verifier (root window, nullifier set, receiver
 //! binding) still execute against real on-chain state.
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_gratis::Gratis;
@@ -24,6 +24,7 @@ use outbe_gratispool::verifier::with_verifier_outcome;
 use outbe_gratispool::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
 use outbe_gratispool::SpendArgs;
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -59,6 +60,13 @@ fn one_e18() -> U256 {
     U256::from(10u64).pow(U256::from(18u64))
 }
 
+/// 32-byte zero word — the stubbed `uint256` return for the vault provider's
+/// `withdrawLiquidity` / `depositLiquidity` sub-calls (decodes to 0; the burn /
+/// share amounts are unused by credisfactory).
+fn zero_word() -> Bytes {
+    Bytes::from(vec![0u8; 32])
+}
+
 fn build_spend_args(
     storage: StorageHandle<'_>,
     nullifier_secret: U256,
@@ -83,6 +91,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -217,6 +226,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis10;
         let denom_id = denom.id();
@@ -300,6 +310,7 @@ fn request_credis_rejects_overdue_anadosis() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -404,6 +415,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -452,6 +464,7 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();

@@ -41,7 +41,7 @@
 //!   - Reth payload building, state-root computation, and txpool admission
 //!     (we drive only the pre-execution hook phase, not the full executor).
 
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_gratis::Gratis;
@@ -63,6 +63,7 @@ use outbe_oracle::{
     contract::OracleContract,
     logic::{init_from_genesis, OracleGenesisConfig},
 };
+use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::units::Units;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -290,10 +291,11 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
 #[test]
 fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    // The NOD-cost payment branch now deposits into the vault provider via an
-    // EVM sub-call to VAULT_PROVIDER_ADDRESS; enable_sub_call_stub covers it
-    // (nodfactory ignores the returned shares).
+    // The NOD-cost payment branch deposits into the vault provider via an EVM
+    // sub-call to VAULT_PROVIDER_ADDRESS. enable_sub_call_stub covers the ERC-20
+    // legs; the provider is stubbed to return a decodable uint256 (shares).
     provider.enable_sub_call_stub();
+    provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
     StorageHandle::enter(&mut provider, |storage| {
         // Pick non-adjacent WWDs so each day's full ~24-day lifecycle does not
         // accidentally interleave with the other's.

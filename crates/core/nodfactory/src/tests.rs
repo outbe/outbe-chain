@@ -1,8 +1,9 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
 use outbe_nod::{NodContract, NodIssueParams};
+use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -471,10 +472,11 @@ fn test_mine_gratis_pays_cost_amount() {
     let nonce = find_valid_nonce(nod_id);
 
     let mut storage = HashMapStorageProvider::new(1);
-    // The vault-provider deposit is now an EVM sub-call to VAULT_PROVIDER_ADDRESS;
-    // enable_sub_call_stub covers it (transferFrom/approve/depositLiquidity all
-    // succeed with empty returndata, and nodfactory ignores the shares return).
+    // The vault-provider deposit is an EVM sub-call to VAULT_PROVIDER_ADDRESS.
+    // enable_sub_call_stub covers the ERC-20 legs; the provider is stubbed to
+    // return a decodable uint256 (shares) so api::deposit_liquidity decodes.
     storage.enable_sub_call_stub();
+    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         factory_api::issue_nod(&s, &params).unwrap();

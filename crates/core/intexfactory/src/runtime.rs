@@ -257,20 +257,8 @@ pub fn settle(
         .into(),
     )?;
 
-    // Deposit into the reserve vault via the provider's Solidity ABI; it
-    // resolves this factory's liquidity source from its genesis-seeded registry.
-    let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
-        U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
-            asset: payment_token,
-            assetsAmount: received,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let shares = IVaultProvider::depositLiquidityCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("depositLiquidity undecodable".into()))?;
+    // Deposit into the reserve vault via the provider's Solidity ABI.
+    let shares = outbe_vaultprovider::api::deposit_liquidity(storage, payment_token, received)?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }

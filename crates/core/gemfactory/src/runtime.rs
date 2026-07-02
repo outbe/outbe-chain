@@ -130,18 +130,8 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // Deposit into the reserve vault via the provider's Solidity ABI; it
-    // resolves this factory's liquidity source from its genesis-seeded registry.
-    storage.call(
-        VAULT_PROVIDER_ADDRESS,
-        U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
-            asset,
-            assetsAmount: amount,
-        }
-        .abi_encode()
-        .into(),
-    )?;
+    // Deposit into the reserve vault via the provider's Solidity ABI.
+    outbe_vaultprovider::api::deposit_liquidity(storage, asset, amount)?;
 
     Ok(())
 }
