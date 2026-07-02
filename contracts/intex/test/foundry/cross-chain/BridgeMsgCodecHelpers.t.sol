@@ -162,7 +162,7 @@ contract BridgeMsgCodecHelpersTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(uint32(42), uint32(1), true, uint32(1), bidders, quantities, rates, timestamps)
+            abi.encode(uint32(42), uint32(1), uint32(1), uint16(0), uint16(1), bidders, quantities, rates, timestamps)
         );
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)

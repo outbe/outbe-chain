@@ -8,8 +8,17 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {ERC7786RecipientMock} from "@openzeppelin/contracts/mocks/crosschain/ERC7786RecipientMock.sol";
-import {IERC7786GatewaySource} from "src/interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "src/interfaces/IERC7786.sol";
+import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+/// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the recorded options.
+contract PermissiveRecipient is IERC7786Recipient {
+    function receiveMessage(bytes32, bytes calldata, bytes calldata) external payable returns (bytes4) {
+        return IERC7786Recipient.receiveMessage.selector;
+    }
+}
 
 /// @dev Full-stack test: facade (ERC7786Bridge) -> LayerZeroGatewayAdapter -> mock endpoint, both sides on
 /// `block.chainid` but distinguished by LayerZero eid (the intent E2E simulation pattern).
@@ -119,5 +128,55 @@ contract LayerZeroGatewayAdapterTest is Test {
         // App asks the facade; facade wraps and delegates to the active gateway (the LZ adapter) -> endpoint.
         uint256 fee = facadeA.quote(_interop(address(recipient)), abi.encode("settle"));
         assertEq(fee, 100, "facade quote routes through the active LZ adapter");
+    }
+
+    // ------------------------------------------------ gas attribute ------------------------------------------------
+
+    function _gasAttrs(uint256 gasLimit) internal pure returns (bytes[] memory attrs) {
+        attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encode(gasLimit);
+    }
+
+    function test_SupportsExecutionGasLimitAttribute() public view {
+        assertTrue(adapterA.supportsAttribute(GasLimitAttribute.SELECTOR), "executionGasLimit supported");
+        assertFalse(adapterA.supportsAttribute(bytes4(0x12345678)), "other attribute unsupported");
+    }
+
+    function test_ExecutionGasLimit_FlowsIntoOptions() public {
+        PermissiveRecipient r = new PermissiveRecipient();
+        bytes memory recipientAddr = _interop(address(r));
+        vm.deal(app, 1000);
+
+        vm.prank(app);
+        adapterA.sendMessage{value: 100}(recipientAddr, "p", _noAttrs());
+        bytes32 defaultOpts = keccak256(endpointA.lastOptions());
+
+        vm.prank(app);
+        adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(999_999));
+        assertTrue(keccak256(endpointA.lastOptions()) != defaultOpts, "executionGasLimit must change the LZ options");
+
+        // A gas value equal to the adapter default produces the same options as the no-attribute path.
+        vm.prank(app);
+        adapterA.sendMessage{value: 100}(recipientAddr, "p", _gasAttrs(adapterA.defaultGasLimit()));
+        assertEq(keccak256(endpointA.lastOptions()), defaultOpts, "gas equal to default yields default options");
+    }
+
+    function test_Quote_WithGasAttribute() public view {
+        uint256 fee = adapterA.quote(_interop(address(facadeB)), abi.encode("x"), _gasAttrs(500_000));
+        assertEq(fee, 100, "quote-with-attributes delegates to the endpoint");
+    }
+
+    function test_RevertWhen_QuoteUnsupportedAttribute() public {
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = hex"12345678";
+        vm.expectRevert(abi.encodeWithSelector(IERC7786GatewaySource.UnsupportedAttribute.selector, bytes4(0x12345678)));
+        adapterA.quote(_interop(address(facadeB)), "x", attrs);
+    }
+
+    function test_RevertWhen_GasLimitExceedsUint128() public {
+        uint256 tooBig = uint256(type(uint128).max) + 1;
+        vm.prank(app);
+        vm.expectRevert(abi.encodeWithSelector(SafeCast.SafeCastOverflowedUintDowncast.selector, uint8(128), tooBig));
+        adapterA.sendMessage(_interop(address(facadeB)), "x", _gasAttrs(tooBig));
     }
 }
