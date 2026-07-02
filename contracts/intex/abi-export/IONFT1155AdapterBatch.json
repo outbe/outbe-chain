@@ -11,7 +11,7 @@
           "internalType": "struct BatchSendParam",
           "components": [
             {
-              "name": "dstEid",
+              "name": "dstChainId",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -29,71 +29,15 @@
               "name": "amounts",
               "type": "uint256[]",
               "internalType": "uint256[]"
-            },
-            {
-              "name": "extraOptions",
-              "type": "bytes",
-              "internalType": "bytes"
             }
           ]
-        },
-        {
-          "name": "_fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "_refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "msgReceipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -108,7 +52,7 @@
           "internalType": "struct MultiRecipientSendParam",
           "components": [
             {
-              "name": "dstEid",
+              "name": "dstChainId",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -126,71 +70,15 @@
               "name": "amounts",
               "type": "uint256[]",
               "internalType": "uint256[]"
-            },
-            {
-              "name": "extraOptions",
-              "type": "bytes",
-              "internalType": "bytes"
             }
           ]
-        },
-        {
-          "name": "_fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "_refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "msgReceipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -205,7 +93,7 @@
           "internalType": "struct BatchSendParam",
           "components": [
             {
-              "name": "dstEid",
+              "name": "dstChainId",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -223,37 +111,15 @@
               "name": "amounts",
               "type": "uint256[]",
               "internalType": "uint256[]"
-            },
-            {
-              "name": "extraOptions",
-              "type": "bytes",
-              "internalType": "bytes"
             }
           ]
-        },
-        {
-          "name": "_payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -268,7 +134,7 @@
           "internalType": "struct MultiRecipientSendParam",
           "components": [
             {
-              "name": "dstEid",
+              "name": "dstChainId",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -286,37 +152,15 @@
               "name": "amounts",
               "type": "uint256[]",
               "internalType": "uint256[]"
-            },
-            {
-              "name": "extraOptions",
-              "type": "bytes",
-              "internalType": "bytes"
             }
           ]
-        },
-        {
-          "name": "_payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -341,41 +185,37 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "dstEid",
+          "name": "dstChainId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setRemoteMessenger",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "interop",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -415,83 +255,32 @@
           "internalType": "uint256[]"
         },
         {
-          "name": "dstEid",
+          "name": "dstChainId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
         }
       ],
       "outputs": [
         {
-          "name": "msgReceipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
-      "stateMutability": "payable"
+      "stateMutability": "nonpayable"
     },
     {
       "type": "event",
       "name": "CrosschainMintFailed",
       "inputs": [
         {
-          "name": "srcEid",
+          "name": "srcChainId",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
         },
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -534,7 +323,7 @@
       "name": "CrosschainMintRetried",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -572,13 +361,13 @@
       "name": "ONFTBatchReceived",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
         },
         {
-          "name": "srcEid",
+          "name": "srcChainId",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -609,13 +398,13 @@
       "name": "ONFTBatchSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
         },
         {
-          "name": "dstEid",
+          "name": "dstChainId",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -646,13 +435,13 @@
       "name": "ONFTMultiReceived",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
         },
         {
-          "name": "srcEid",
+          "name": "srcChainId",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -683,13 +472,13 @@
       "name": "ONFTMultiSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
         },
         {
-          "name": "dstEid",
+          "name": "dstChainId",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -726,13 +515,13 @@
       "name": "SystemMultiSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
         },
         {
-          "name": "dstEid",
+          "name": "dstChainId",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -757,12 +546,7 @@
       "name": "AlreadyProcessed",
       "inputs": [
         {
-          "name": "srcEid",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "internalType": "bytes32"
         }
@@ -782,22 +566,6 @@
       "type": "error",
       "name": "InvalidReceiver",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "MsgValueBelowFee",
-      "inputs": [
-        {
-          "name": "msgValue",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "nativeFee",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
     },
     {
       "type": "error",
@@ -825,7 +593,7 @@
       "name": "NoSuchFailedCrosschainMint",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "internalType": "bytes32"
         },
@@ -839,11 +607,6 @@
     {
       "type": "error",
       "name": "NotSelf",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "RefundFailed",
       "inputs": []
     },
     {

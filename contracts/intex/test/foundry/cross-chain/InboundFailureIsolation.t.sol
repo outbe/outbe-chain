@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-import {Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
@@ -17,9 +16,9 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///         a `FailedCrosschainMint` snapshot, `CrosschainMintFailed` is emitted, and `retryCrosschainMint` re-attempts
 ///         the crosschainMint after the upstream issue is fixed. This is the Critical funds-lock fix
 ///         from the contract review (R-04).
-contract InboundFailureIsolationTest is TestHelperOz5 {
-    uint32 internal constant BNB_EID = 1;
-    uint32 internal constant OUTBE_EID = 2;
+contract InboundFailureIsolationTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     ONFT1155AdapterBatch internal onftBatchBnb;
     ONFT1155AdapterBatch internal onftBatchOutbe;
@@ -32,18 +31,15 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
     uint256 internal constant TOKEN_GOOD = uint256(SERIES_GOOD);
     uint256 internal constant TOKEN_BAD = uint256(SERIES_BAD);
 
-    function setUp() public override {
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+    function setUp() public {
+        _setUpBridge();
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
-        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[OUTBE_EID]), admin);
+        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
 
-        address[] memory batches = new address[](2);
-        batches[0] = address(onftBatchBnb);
-        batches[1] = address(onftBatchOutbe);
-        this.wireOApps(batches);
+        onftBatchBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
+        onftBatchOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(onftBatchBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD, 10_000, 0));
@@ -53,25 +49,16 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         intex.grantRole(intex.RELAYER_ROLE(), address(onftBatchBnb));
     }
 
-    function _deliver(uint32 srcEid, address peer, uint64 nonce, bytes32 guid, bytes memory message) internal {
-        Origin memory origin = Origin({srcEid: srcEid, sender: bytes32(uint256(uint160(peer))), nonce: nonce});
-        vm.prank(address(endpoints[BNB_EID]));
-        (bool ok, bytes memory data) = address(onftBatchBnb)
-            .call(
-                abi.encodeWithSignature(
-                    "lzReceive((uint32,bytes32,uint64),bytes32,bytes,address,bytes)",
-                    origin,
-                    guid,
-                    message,
-                    address(0),
-                    ""
-                )
-            );
-        if (!ok) {
-            assembly {
-                revert(add(data, 32), mload(data))
-            }
-        }
+    /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.
+    function _deliverInbound(bytes memory message) internal {
+        _deliver(OUTBE_CHAIN_ID, address(onftBatchOutbe), address(onftBatchBnb), message);
+    }
+
+    /// @dev Recompute the bridge's `receiveId` for a message delivered from the OUTBE peer, matching
+    ///      `MockERC7786Bridge._deliver`: `keccak256(abi.encode(sender, payload))`.
+    function _receiveId(bytes memory message) internal view returns (bytes32) {
+        bytes memory sender = _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe));
+        return keccak256(abi.encode(sender, message));
     }
 
     /// @dev SEND batch (V2 abi.encode): 2 items. Item 0 targets SERIES_GOOD, item 1 SERIES_BAD.
@@ -111,33 +98,35 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
 
     function test_BatchReceive_BadItemDoesNotRevertWholeBatch() public {
         address recipient = address(0xCAFE);
-        bytes32 guid = bytes32(uint256(0xAABB));
+        bytes memory packet = _batchPacket(recipient);
+        bytes32 receiveId = _receiveId(packet);
 
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
+        _deliverInbound(packet);
 
         // Good item minted.
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
         // Bad item recorded in failedCrosschainMints, NOT minted.
-        (address to, uint256 tokenId, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        (address to, uint256 tokenId, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
         assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail — no entry for idx=0.
-        (,,,, bool existsZero) = onftBatchBnb.failedCrosschainMints(guid, 0);
+        (,,,, bool existsZero) = onftBatchBnb.failedCrosschainMints(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
     function test_BatchReceive_RetryCrosschainMintSucceedsAfterUpstreamFix() public {
         address recipient = address(0xCAFE);
-        bytes32 guid = bytes32(uint256(0xAACC));
+        bytes memory packet = _batchPacket(recipient);
+        bytes32 receiveId = _receiveId(packet);
 
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
+        _deliverInbound(packet);
 
         // Initially the bad item is parked.
-        (,,,, bool existsBefore) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        (,,,, bool existsBefore) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
@@ -146,36 +135,37 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
 
         // Anyone can retry — no auth gate.
         vm.prank(address(0xDEAD));
-        onftBatchBnb.retryCrosschainMint(guid, 1);
+        onftBatchBnb.retryCrosschainMint(receiveId, 1);
 
         // Now minted.
         assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
     function test_BatchReceive_RetryCrosschainMintTwiceRevertsNoSuchFailedCrosschainMint() public {
         address recipient = address(0xCAFE);
-        bytes32 guid = bytes32(uint256(0xAADD));
+        bytes memory packet = _batchPacket(recipient);
+        bytes32 receiveId = _receiveId(packet);
 
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _batchPacket(recipient));
+        _deliverInbound(packet);
 
         // Fix upstream + retry once.
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
         intex.markQualified(SERIES_BAD);
-        onftBatchBnb.retryCrosschainMint(guid, 1);
+        onftBatchBnb.retryCrosschainMint(receiveId, 1);
 
         // Second retry must revert — slot has been deleted.
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 1));
-        onftBatchBnb.retryCrosschainMint(guid, 1);
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 1));
+        onftBatchBnb.retryCrosschainMint(receiveId, 1);
     }
 
     function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
-        bytes32 guid = bytes32(uint256(0xAAEE));
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, guid, 0));
-        onftBatchBnb.retryCrosschainMint(guid, 0);
+        bytes32 receiveId = bytes32(uint256(0xAAEE));
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        onftBatchBnb.retryCrosschainMint(receiveId, 0);
     }
 
     // ---------------------------------------------------------------
@@ -185,15 +175,16 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
     function test_MultiReceive_BadItemDoesNotRevertWholeBatch() public {
         address goodRecipient = address(0x1111);
         address badRecipient = address(0x2222);
-        bytes32 guid = bytes32(uint256(0xBB11));
+        bytes memory packet = _multiPacket(goodRecipient, badRecipient);
+        bytes32 receiveId = _receiveId(packet);
 
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, guid, _multiPacket(goodRecipient, badRecipient));
+        _deliverInbound(packet);
 
         // Good recipient minted.
         assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(guid, 1);
+        (address to,, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);
@@ -219,9 +210,9 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
         address recipient = address(0xCAFE);
 
         // First batch: one bad item parked.
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 1, bytes32(uint256(0xCC01)), _batchPacket(recipient));
+        _deliverInbound(_batchPacket(recipient));
 
-        // Second batch: same recipient, different guid, one item targeting SERIES_GOOD.
+        // Second batch: same recipient, distinct payload (single good item) → distinct receiveId.
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = TOKEN_GOOD;
         uint256[] memory amounts = new uint256[](1);
@@ -231,7 +222,7 @@ contract InboundFailureIsolationTest is TestHelperOz5 {
                 to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, amounts: amounts
             })
         );
-        _deliver(OUTBE_EID, address(onftBatchOutbe), 2, bytes32(uint256(0xCC02)), packet);
+        _deliverInbound(packet);
 
         // First batch minted 50 + Second batch minted 100 = 150 of TOKEN_GOOD.
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 150, "second batch crosschainMint landed");

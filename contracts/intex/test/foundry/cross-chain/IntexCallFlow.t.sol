@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
@@ -12,26 +14,24 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
-import {MessagingFee} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {EnforcedOptionParam} from "@layerzerolabs/oapp-evm/oapp/interfaces/IOAppOptionsType3.sol";
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-
 /**
  * @title IntexCallFlowTest
- * @notice End-to-end Intex call flow: markCalled → system bridge → holders migrated to Outbe.
+ * @notice End-to-end Intex call flow: markCalled → system bridge → holders migrated to Outbe, over the ERC-7786
+ *         loopback bridge.
  * @dev When Desis calls a series, the full cross-chain flow is:
- *      1. OriginMessenger sends markCalled via LZ to BSC
- *      2. TargetMessenger marks series as Called (transfers blocked)
- *      3. TargetMessenger reads all holders and triggers systemMultiSend
- *      4. ONFT1155AdapterBatch burns Intex on BSC, mints on Outbe
- *      After this flow, all Intex holders are on Outbe and ready to settle.
+ *      1. OriginMessenger sends MARK_CALLED to BSC.
+ *      2. TargetMessenger marks the series as Called (transfers blocked).
+ *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (self-funded from its adapter's float).
+ *      4. ONFT1155AdapterBatch burns Intex on BSC and, once delivered, mints on Outbe.
+ *      Delivery is manual: each `sendMessage` records the payload on the loopback bridge, which we then hand-deliver
+ *      to the destination as the authenticated peer.
  */
-contract IntexCallFlowTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
+contract IntexCallFlowTest is CrossChainTest {
+    uint32 private constant BNB_CHAIN_ID = 1;
+    uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    uint32 private bnbEid = 1;
-    uint32 private outbeEid = 2;
+    /// @dev Fee the loopback bridge charges; the relay-funded holders bridge draws it from the adapter float.
+    uint256 private constant BRIDGE_FEE = 0.001 ether;
 
     // --- BSC contracts ---
     IntexNFT1155 private intexBnb;
@@ -59,11 +59,11 @@ contract IntexCallFlowTest is TestHelperOz5 {
     uint256 private constant TOKEN_ID = uint256(SERIES_ID);
     uint32 private constant ISSUED_INTEX_COUNT = 10_000;
 
-    function setUp() public virtual override {
-        vm.deal(admin, 1000 ether);
+    function setUp() public {
+        _setUpBridge();
+        bridge.setFee(BRIDGE_FEE);
 
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+        vm.deal(admin, 1000 ether);
 
         // Stand-in Desis recipient that advertises IDesis via ERC-165 so OriginMessenger.wire accepts it.
         desis = address(new MockDesis());
@@ -74,28 +74,19 @@ contract IntexCallFlowTest is TestHelperOz5 {
         // ---- Deploy BSC contracts ----
         intexBnb = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
-
-        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
-
-        batchAdapterBnb = DeployProxy.onftAdapterBatch(address(intexBnb), address(endpoints[bnbEid]), admin);
+        bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        batchAdapterBnb = DeployProxy.onftAdapterBatch(address(intexBnb), address(bridge), admin);
 
         // ---- Deploy Outbe contracts ----
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
+        outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        batchAdapterOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
 
-        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
-
-        batchAdapterOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(endpoints[outbeEid]), admin);
-
-        // ---- Wire LZ peers ----
-        address[] memory bridgeOapps = new address[](2);
-        bridgeOapps[0] = address(bnbAdapter);
-        bridgeOapps[1] = address(outbeAdapter);
-        this.wireOApps(bridgeOapps);
-
-        address[] memory batchOapps = new address[](2);
-        batchOapps[0] = address(batchAdapterBnb);
-        batchOapps[1] = address(batchAdapterOutbe);
-        this.wireOApps(batchOapps);
+        // ---- Register remote messengers ----
+        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
+        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
+        batchAdapterBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(batchAdapterOutbe)));
+        batchAdapterOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(batchAdapterBnb)));
 
         // ---- Wire contract dependencies ----
         bnbAdapter.wire(address(auction), address(intexBnb), admin, address(batchAdapterBnb));
@@ -105,25 +96,15 @@ contract IntexCallFlowTest is TestHelperOz5 {
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbAdapter));
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(bnbAdapter));
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(batchAdapterBnb));
-        // The system bridge runs while the series is Called; both batch adapters need
-        // SYSTEM_RELAYER_ROLE on their local Intex to crosschainBurn/crosschainMint during that window.
+        // The system bridge runs while the series is Called; both batch adapters need SYSTEM_RELAYER_ROLE on their
+        // local Intex to crosschainBurn/crosschainMint during that window.
         intexBnb.grantRole(intexBnb.SYSTEM_RELAYER_ROLE(), address(batchAdapterBnb));
         batchAdapterBnb.grantRole(batchAdapterBnb.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
         intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(batchAdapterOutbe));
 
-        // ---- Fund adapters for LZ fees ----
-        vm.deal(address(bnbAdapter), 100 ether);
+        // ---- Pre-fund the BSC batch adapter float: systemMultiSend self-funds the bridge fee from it ----
         vm.deal(address(batchAdapterBnb), 100 ether);
-
-        // ---- Enforced options: SEND_MULTI from BSC → Outbe ----
-        EnforcedOptionParam[] memory params = new EnforcedOptionParam[](1);
-        params[0] = EnforcedOptionParam({
-            eid: outbeEid,
-            msgType: batchAdapterBnb.SEND_MULTI(),
-            options: OptionsBuilder.newOptions().addExecutorLzReceiveOption(2_000_000, 0)
-        });
-        batchAdapterBnb.setEnforcedOptions(params);
     }
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
@@ -135,26 +116,28 @@ contract IntexCallFlowTest is TestHelperOz5 {
     // Phase 1: Call — pre-settlement bridge (BSC → Outbe)
     // ============================================================
 
-    /// @notice Helper: triggers markCalled from Desis and delivers both LZ messages.
+    /// @notice Helper: triggers markCalled from the intexFactory and hand-delivers both bridge messages.
     function _triggerCallAndBridge(uint32 seriesId, bool hasHolders) internal {
-        // Desis applies markCalled locally on Outbe before sending the LZ notice to BSC.
+        // Desis applies markCalled locally on Outbe before sending the notice to BSC.
         // Without it, the system bridge crosschainMint on Outbe would land in `Issued` and revert.
         if (hasHolders) {
             intexOutbe.markCalled(seriesId);
         }
 
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(2_000_000, 0);
-        MessagingFee memory fee = outbeAdapter.quoteSendMarkCalled(seriesId, options, false);
-
+        // 1. OriginMessenger sends MARK_CALLED → BSC. Record the payload for hand-delivery.
+        uint256 fee = outbeAdapter.quoteSendMarkCalled(seriesId);
         vm.prank(intexFactory);
-        outbeAdapter.sendMarkCalled{value: fee.nativeFee}(seriesId, options, fee, intexFactory);
+        outbeAdapter.sendMarkCalled{value: fee}(seriesId);
+        bytes memory markCalledPayload = bridge.lastPayload();
 
-        // LZ delivers MSG_MARK_CALLED → TargetMessenger._handleMarkCalled
-        verifyPackets(bnbEid, addressToBytes32(address(bnbAdapter)));
+        // 2. Deliver MARK_CALLED → TargetMessenger._handleMarkCalled. If holders exist, this fires the
+        //    systemMultiSend, whose SEND_MULTI payload the bridge records last.
+        _deliver(OUTBE_CHAIN_ID, address(outbeAdapter), address(bnbAdapter), markCalledPayload);
 
-        // LZ delivers SEND_MULTI → Outbe batch adapter (only if holders exist)
+        // 3. Deliver SEND_MULTI → Outbe batch adapter (only if holders exist).
         if (hasHolders) {
-            verifyPackets(outbeEid, addressToBytes32(address(batchAdapterOutbe)));
+            bytes memory sendMultiPayload = bridge.lastPayload();
+            _deliver(BNB_CHAIN_ID, address(batchAdapterBnb), address(batchAdapterOutbe), sendMultiPayload);
         }
     }
 

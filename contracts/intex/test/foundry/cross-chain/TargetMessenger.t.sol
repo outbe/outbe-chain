@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
@@ -13,21 +15,15 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
-import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-
 /**
  * @title TargetMessengerTest
  * @notice Foundry tests for TargetMessenger
  * @dev Tests message encoding/decoding and cross-chain communication.
  *      All auction/series messages are keyed by `seriesId` (uint32).
  */
-contract TargetMessengerTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
-
-    uint32 private bnbEid = 1;
-    uint32 private outbeEid = 2;
+contract TargetMessengerTest is CrossChainTest {
+    uint32 private constant BNB_CHAIN_ID = 1;
+    uint32 private constant OUTBE_CHAIN_ID = 2;
 
     TargetMessenger private bnbAdapter;
     OriginMessenger private outbeAdapter;
@@ -45,14 +41,15 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     uint32 private constant SERIES_ID = 20250115; // yyyymmdd format
 
-    function setUp() public virtual override {
+    function setUp() public {
+        _setUpBridge();
+        // The quote test asserts a non-zero fee; give the loopback bridge a fixed fee to return.
+        bridge.setFee(0.001 ether);
+
         vm.deal(admin, 1000 ether);
         vm.deal(user, 1000 ether);
 
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
-
-        // Stand-in Desis recipient — declared after super.setUp() so vm.deal targets a real address.
+        // Stand-in Desis recipient.
         desis = address(new MockDesis());
         vm.deal(desis, 1000 ether);
 
@@ -61,19 +58,17 @@ contract TargetMessengerTest is TestHelperOz5 {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy BNB adapter
-        bnbAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy Outbe adapter (for cross-chain testing)
-        outbeAdapter = DeployProxy.originMessenger(address(endpoints[outbeEid]), admin, bnbEid);
+        outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[bnbEid]), admin);
+        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
 
-        // Wire adapters (set peers)
-        address[] memory oapps = new address[](2);
-        oapps[0] = address(bnbAdapter);
-        oapps[1] = address(outbeAdapter);
-        this.wireOApps(oapps);
+        // Wire adapters (register remote messengers)
+        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
+        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
 
         // Wire BNB adapter dependencies
         bnbAdapter.wire(address(auction), address(intex), admin, address(batchAdapter));
@@ -94,11 +89,7 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     // --- Helpers ---
     /// @dev Build a single-bid BidsBatchParams payload keyed by SERIES_ID.
-    function _bidsBatchParams(uint256 count, bytes memory options)
-        internal
-        view
-        returns (ITargetMessenger.BidsBatchParams memory)
-    {
+    function _bidsBatchParams(uint256 count) internal view returns (ITargetMessenger.BidsBatchParams memory) {
         address[] memory bidderAddresses = new address[](count);
         uint16[] memory intexQuantities = new uint16[](count);
         uint32[] memory intexBidRates = new uint32[](count);
@@ -116,9 +107,7 @@ contract TargetMessengerTest is TestHelperOz5 {
             bidderAddresses: bidderAddresses,
             intexQuantities: intexQuantities,
             intexBidRates: intexBidRates,
-            timestamps: timestamps,
-            extraOptions: options,
-            refundAddress: user
+            timestamps: timestamps
         });
     }
 
@@ -134,28 +123,28 @@ contract TargetMessengerTest is TestHelperOz5 {
     }
 
     function test_wire_revert_zero_address() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "auction"));
         newAdapter.wire(address(0), address(intex), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "intex"));
         newAdapter.wire(address(auction), address(0), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "escrowAdapter"));
         newAdapter.wire(address(auction), address(intex), address(0), address(batchAdapter));
     }
 
     function test_wire_revert_zero_onftBatchAdapter() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(endpoints[bnbEid]), admin, outbeEid);
+        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "onftBatchAdapter"));
         newAdapter.wire(address(auction), address(intex), admin, address(0));
@@ -163,14 +152,11 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     // --- Access Control Tests ---
     function test_sendBidsBatch_revert_unauthorized() public {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(1, options);
-
-        MessagingFee memory fee = MessagingFee({nativeFee: 0.1 ether, lzTokenFee: 0});
+        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(1);
 
         vm.prank(user);
         vm.expectRevert();
-        bnbAdapter.sendBidsBatch{value: 0.1 ether}(params, fee);
+        bnbAdapter.sendBidsBatch{value: 0.1 ether}(params);
     }
 
     // --- Role Constants Tests ---
@@ -180,13 +166,12 @@ contract TargetMessengerTest is TestHelperOz5 {
 
     // --- Quote Tests ---
     function test_quoteSendBidsBatch() public view {
-        bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(2, options);
+        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(2);
 
-        MessagingFee memory fee = bnbAdapter.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbAdapter.quoteSendBidsBatch(params);
 
         // Fee should be non-zero
-        assertTrue(fee.nativeFee > 0);
+        assertEq(fee, 0.001 ether);
     }
 
     // --- ERC165 Tests ---

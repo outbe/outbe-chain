@@ -1,14 +1,11 @@
-//! External contract ABIs invoked via `storage.call` / `staticcall`.
+//! External contract ABIs invoked via `storage.call`.
+//!
+//! `OriginMessenger` sends are relay-float-funded: called with value 0, the messenger quotes and
+//! pays the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
 
 use alloy_sol_types::sol;
 
 sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    struct MessagingFee {
-        uint256 nativeFee;
-        uint256 lzTokenFee;
-    }
-
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IOriginMessenger {
         struct AuctionStageStartParams {
@@ -29,83 +26,26 @@ sol! {
             uint16 minIntexBidQuantity;
         }
 
-        function quoteSendAuctionStageStart(
-            AuctionStageStartParams calldata params,
-            bytes calldata extraOptions,
-            bool payInLzToken
-        ) external view returns (MessagingFee memory fee);
+        function sendAuctionStageStart(AuctionStageStartParams calldata params)
+            external payable returns (bytes32 sendId);
 
-        function sendAuctionStageStart(
-            AuctionStageStartParams calldata params,
-            bytes calldata extraOptions,
-            MessagingFee calldata fee,
-            address refundAddress
-        ) external payable returns (bytes32 guid);
+        function sendAuctionStageReveal(uint32 seriesId, bool isGreenDay)
+            external payable returns (bytes32 sendId);
 
-        function quoteSendAuctionStageReveal(
-            uint32 seriesId,
-            bool isGreenDay,
-            bytes calldata extraOptions,
-            bool payInLzToken
-        ) external view returns (MessagingFee memory fee);
-
-        function sendAuctionStageReveal(
-            uint32 seriesId,
-            bool isGreenDay,
-            bytes calldata extraOptions,
-            MessagingFee calldata fee,
-            address refundAddress
-        ) external payable returns (bytes32 guid);
-
-        function quoteSendAuctionStageClearing(
-            uint32 seriesId,
-            bytes calldata extraOptions,
-            bool payInLzToken
-        ) external view returns (MessagingFee memory fee);
-
-        function sendAuctionStageClearing(
-            uint32 seriesId,
-            bytes calldata extraOptions,
-            MessagingFee calldata fee,
-            address refundAddress
-        ) external payable returns (bytes32 guid);
-
-        function quoteSendAuctionResult(
-            uint32 seriesId,
-            uint32 issuedIntexCount,
-            uint64 auctionClearingRate,
-            uint32 wonBidsCount,
-            bytes calldata extraOptions,
-            bool payInLzToken
-        ) external view returns (MessagingFee memory fee);
+        function sendAuctionStageClearing(uint32 seriesId) external payable returns (bytes32 sendId);
 
         function sendAuctionResult(
             uint32 seriesId,
             uint32 issuedIntexCount,
             uint64 auctionClearingRate,
-            uint32 wonBidsCount,
-            bytes calldata extraOptions,
-            MessagingFee calldata fee,
-            address refundAddress
-        ) external payable returns (bytes32 guid);
-
-        function quoteSendRefundInstructions(
-            uint32 seriesId,
-            address[] calldata bidders,
-            uint128[] calldata refundedAmounts,
-            uint128[] calldata paidAmounts,
-            bytes calldata extraOptions,
-            bool payInLzToken
-        ) external view returns (MessagingFee memory fee);
+            uint32 wonBidsCount
+        ) external payable returns (bytes32 sendId);
 
         function sendRefundInstructions(
             uint32 seriesId,
             address[] calldata bidders,
             uint128[] calldata refundedAmounts,
-            uint128[] calldata paidAmounts,
-            bytes calldata extraOptions,
-            MessagingFee calldata fee,
-            address refundAddress
-        ) external payable returns (bytes32 guid);
+            uint128[] calldata paidAmounts
+        ) external payable returns (bytes32 sendId);
     }
 }
