@@ -40,10 +40,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         Settled
     }
 
-    /// @notice Per-holder, per-series balance pair.
+    /// @notice Per-holder, per-series balance pair. Widths match the `uint32` supply cap so a
+    ///         balance accumulated above `type(uint16).max` is reported without truncation.
     struct HolderBalances {
-        uint16 issued;
-        uint16 settled;
+        uint32 issued;
+        uint32 settled;
     }
 
     /// @notice Forced-call trigger parameters (window/threshold/period).

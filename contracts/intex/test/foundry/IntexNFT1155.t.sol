@@ -691,6 +691,21 @@ contract IntexNFT1155Test is Test {
         assertEq(bals.settled, 4);
     }
 
+    function test_HolderBalances_AboveUint16NoTruncation() public {
+        // Drive a single holder above type(uint16).max via two sub-cap mints (each <= 65_535).
+        uint32 bigCap = 100_000;
+        vm.startPrank(bridger);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, bigCap, uint32(21 days)));
+        nft.mint(user, 40_000, SERIES_ID_1);
+        nft.mint(user, 40_000, SERIES_ID_1);
+        vm.stopPrank();
+
+        // 80_000 would wrap to 14_464 under the old uint16 field; the widened field must not truncate.
+        IIntexNFT1155.HolderBalances memory bals = nft.holderBalances(SERIES_ID_1, user);
+        assertEq(bals.issued, 80_000);
+        assertEq(bals.settled, 0);
+    }
+
     function test_Settle_RevertsInIssued() public {
         _createSeries(SERIES_ID_1, 0);
         _grantSettlementRole(address(this));

@@ -625,7 +625,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 iTok = uint256(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
         return IIntexNFT1155.HolderBalances({
-            issued: uint16(balanceOf(holder, iTok)), settled: uint16(balanceOf(holder, sTok))
+            issued: uint32(balanceOf(holder, iTok)), settled: uint32(balanceOf(holder, sTok))
         });
     }
 
