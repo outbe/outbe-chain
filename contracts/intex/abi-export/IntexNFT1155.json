@@ -21,19 +21,6 @@
     },
     {
       "type": "function",
-      "name": "MAX_INTEX_CALL_PERIOD",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "PROMIS_ROLE",
       "inputs": [],
       "outputs": [
@@ -506,6 +493,45 @@
     },
     {
       "type": "function",
+      "name": "getOwnedSeriesWithBalancesPaginated",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "offset",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ownedTokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "balances",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "total",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "getRoleAdmin",
       "inputs": [
         {
@@ -544,6 +570,40 @@
     },
     {
       "type": "function",
+      "name": "getSeriesHoldersPaginated",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "offset",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "holders",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "total",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "getSeriesHoldersWithBalances",
       "inputs": [
         {
@@ -562,6 +622,45 @@
           "name": "balances",
           "type": "uint256[]",
           "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getSeriesHoldersWithBalancesPaginated",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "offset",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "holders",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "balances",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "total",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -660,13 +759,13 @@
           "components": [
             {
               "name": "issued",
-              "type": "uint16",
-              "internalType": "uint16"
+              "type": "uint32",
+              "internalType": "uint32"
             },
             {
               "name": "settled",
-              "type": "uint16",
-              "internalType": "uint16"
+              "type": "uint32",
+              "internalType": "uint32"
             }
           ]
         }
@@ -2011,17 +2110,6 @@
       "type": "error",
       "name": "FailedCall",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "InvalidCallPeriod",
-      "inputs": [
-        {
-          "name": "intexCallPeriod",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
     },
     {
       "type": "error",

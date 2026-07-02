@@ -500,6 +500,24 @@
     },
     {
       "type": "function",
+      "name": "reapAuction",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "revealBid",
       "inputs": [
         {
@@ -596,6 +614,25 @@
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "AuctionReaped",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "remaining",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -821,6 +858,11 @@
     },
     {
       "type": "error",
+      "name": "EscrowHasLiveLocks",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "InvalidCommitHash",
       "inputs": []
     },
@@ -828,6 +870,22 @@
       "type": "error",
       "name": "InvalidSchedule",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "IssuedPromisOverflow",
+      "inputs": [
+        {
+          "name": "issuedIntexCount",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "promisLoadMinor",
+          "type": "uint128",
+          "internalType": "uint128"
+        }
+      ]
     },
     {
       "type": "error",
@@ -849,6 +907,11 @@
           "internalType": "enum IIntexAuction.AuctionStage"
         }
       ]
+    },
+    {
+      "type": "error",
+      "name": "TooEarlyToReap",
+      "inputs": []
     },
     {
       "type": "error",
