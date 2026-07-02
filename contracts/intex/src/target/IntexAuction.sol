@@ -268,7 +268,10 @@ contract IntexAuction is
         a.result.issuedIntexCount = issuedIntexCount;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
-        a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
+        // 256-bit product so an over-range value reverts typed, not via a bare Panic(0x11) (mirrors revealBid).
+        uint256 loadedPromis = uint256(issuedIntexCount) * a.params.promisLoadMinor;
+        if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedIntexCount, a.params.promisLoadMinor);
+        a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
         $.cleared[seriesId] = true;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");

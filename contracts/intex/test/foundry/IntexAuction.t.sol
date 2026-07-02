@@ -516,6 +516,30 @@ contract AuctionTest is Test {
         auction.executeAuctionClearing(seriesId, 100, 75, 3);
     }
 
+    function test_ExecuteAuctionClearing_RevertsPromisOverflow() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250199;
+        uint32 floor = 50;
+
+        // promisLoadMinor at the uint128 ceiling so issuedIntexCount * promisLoadMinor overflows uint128.
+        IIntexAuction.AuctionParams memory params = _params(floor, 1);
+        params.promisLoadMinor = type(uint128).max;
+        vm.prank(bridger);
+        auction.auctionStart(seriesId, _schedule(), params);
+
+        // No commits/reveals needed: transition to clearing and clear with a large issued count.
+        _enterRevealStage(seriesId, startTs);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.prank(bridger);
+        auction.startClearingStage(seriesId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
+        );
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, type(uint32).max, floor, 0);
+    }
+
     function test_ExecuteAuctionClearing_RevertsClearingRateBelowMin() public {
         uint256 startTs = block.timestamp;
         uint32 seriesId = 20250128;

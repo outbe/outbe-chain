@@ -175,6 +175,8 @@ interface IIntexAuction {
     error BidBelowMinIntexBidQuantity();
     /// @notice `quantity * escrowBasis * bidRate / RATE_SCALE` exceeds the uint128 lock-amount range.
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
+    /// @notice `issuedIntexCount * promisLoadMinor` exceeds the uint128 loaded-Promis range.
+    error IssuedPromisOverflow(uint32 issuedIntexCount, uint128 promisLoadMinor);
     /// @notice Auction does not exist.
     error AuctionNotFound();
     /// @notice Auction already exists.
