@@ -279,7 +279,6 @@ async function main() {
   console.log("\nSending requestCredis tx...");
   const tx = await credisFactory.requestCredis(
     erc20Address,
-    vaultProviderAddress,
     smartAccountAddr,
     {
       merkleRoot: merkle.root,
