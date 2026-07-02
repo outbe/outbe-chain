@@ -45,7 +45,7 @@ impl CredisContract<'_> {
     #[allow(clippy::too_many_arguments)]
     pub fn create_position(
         &mut self,
-        commitment: U256,
+        nullifier_hash: U256,
         bundle_account: Address,
         vault_provider: Address,
         asset: Address,
@@ -57,7 +57,7 @@ impl CredisContract<'_> {
             return Err(CredisError::InvalidAmount.into());
         }
 
-        let position_id = CredisContract::position_id(commitment, bundle_account);
+        let position_id = CredisContract::position_id(nullifier_hash, bundle_account);
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }

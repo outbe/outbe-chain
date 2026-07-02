@@ -8,11 +8,12 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::addresses::GRATIS_POOL_ADDRESS;
-use outbe_primitives::dispatch::{dispatch_call, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::constants::DenomAmount;
 use crate::schema::GratisPoolContract;
 
 sol!("../../../contracts/precompiles/src/IGratisPool.sol");
@@ -39,6 +40,12 @@ pub fn dispatch(
             isSpent(c) => view(c, |c| {
                 let pool = GratisPoolContract::new(storage.clone());
                 pool.nullifier_spent.contains(&c.nullifierHash)
+            }),
+            supportedDenoms(_) => metadata::<IGratisPool::supportedDenomsCall>(|| {
+                Ok(IGratisPool::supportedDenomsReturn {
+                    ids: DenomAmount::ALL.iter().map(|d| d.id()).collect(),
+                    amounts: DenomAmount::ALL.iter().map(|d| d.amount()).collect(),
+                })
             }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
