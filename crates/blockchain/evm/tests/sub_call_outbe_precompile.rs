@@ -59,8 +59,8 @@ fn subcall_reaches_outbe_poseidon_precompile() {
 
     // The child frame must have dispatched the outbe Poseidon precompile, so
     // the returndata is the 32-byte hash of the input (not an empty payload).
-    let expected =
-        outbe_zkproof::poseidon::poseidon_hash(&input).expect("poseidon hash over one field element");
+    let expected = outbe_zkproof::poseidon::poseidon_hash(&input)
+        .expect("poseidon hash over one field element");
     assert_eq!(
         result.returndata.as_ref(),
         expected.as_slice(),

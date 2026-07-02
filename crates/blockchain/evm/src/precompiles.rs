@@ -475,7 +475,10 @@ where
 
     fn set_spec(&mut self, spec: SpecId) -> bool {
         self.spec = spec;
-        <EthPrecompiles as PrecompileProvider<&mut EthEvmContext<DB>>>::set_spec(&mut self.eth, spec)
+        <EthPrecompiles as PrecompileProvider<&mut EthEvmContext<DB>>>::set_spec(
+            &mut self.eth,
+            spec,
+        )
     }
 
     fn run(
