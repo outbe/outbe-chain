@@ -198,6 +198,11 @@ contract EscrowAdapter is
             if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
             // Reset lockId so the first deposit under the new token/Compact re-bootstraps the lock.
             $.lockId = 0;
+            // A new Compact needs its own allocator registration; drop the stale allocatorId/lockTag.
+            if (rotatingCompact) {
+                $.allocatorId = 0;
+                $.lockTag = bytes12(0);
+            }
         }
 
         // Revoke role from the previous auction if rewiring.
