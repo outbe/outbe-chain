@@ -17,7 +17,7 @@ use crate::constants::{
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -88,9 +88,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .into(),
     )?;
 
-    // Send ISSUANCE_INSTRUCTIONS to BNB via LayerZero.
-    // OriginMessenger._payNative pays from its relay float when msg.value == 0;
-    // we still quote so the fee struct carries the correct nativeFee for _lzSend.
+    // Send ISSUANCE_INSTRUCTIONS to BNB over the bridge (relay-float-funded, see below).
     let floor_price_minor_u64 = u64::try_from(floor_price_minor)
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
@@ -110,31 +108,12 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         recipients: params.recipients,
         quantities: params.quantities,
     };
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendIssuanceInstructionsCall {
-            params: messenger_params.clone(),
-            extraOptions: alloy_primitives::Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let fee = IOriginMessenger::quoteSendIssuanceInstructionsCall::abi_decode_returns(&quote_ret)
-        .map_err(|_| {
-        PrecompileError::Revert("quoteSendIssuanceInstructions undecodable".into())
-    })?;
+    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendIssuanceInstructionsCall {
             params: messenger_params,
-            extraOptions: alloy_primitives::Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: fee.nativeFee,
-                lzTokenFee: fee.lzTokenFee,
-            },
-            refundAddress: INTEX_FACTORY_ADDRESS,
         }
         .abi_encode()
         .into(),

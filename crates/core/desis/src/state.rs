@@ -71,14 +71,6 @@ impl DesisContract<'_> {
         Ok(index)
     }
 
-    /// Replace all bids for a series (called when a newer generation arrives).
-    pub(crate) fn replace_bids(&self, series_id: u32, bids: &[BidData]) -> Result<()> {
-        for (i, bid) in bids.iter().enumerate() {
-            self.write_bid_at(series_id, i as u32, bid)?;
-        }
-        self.bid_count.write(&series_id, bids.len() as u32)
-    }
-
     pub(crate) fn read_bid_at(&self, series_id: u32, index: u32) -> Result<BidData> {
         let key = Self::bid_key(series_id, index);
         let packed = self.bid_packed.read(&key)?;

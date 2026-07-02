@@ -24,35 +24,13 @@
           "name": "wonBidsCount",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -65,35 +43,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -111,35 +67,13 @@
           "name": "isGreenDay",
           "type": "bool",
           "internalType": "bool"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -229,35 +163,13 @@
               "internalType": "uint16"
             }
           ]
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -337,35 +249,13 @@
               "internalType": "uint256[]"
             }
           ]
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -378,35 +268,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -419,35 +287,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -475,35 +321,13 @@
           "name": "paidAmounts",
           "type": "uint128[]",
           "internalType": "uint128[]"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "payInLzToken",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
         {
           "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -531,69 +355,13 @@
           "name": "wonBidsCount",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -606,69 +374,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -686,69 +398,13 @@
           "name": "isGreenDay",
           "type": "bool",
           "internalType": "bool"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -838,69 +494,13 @@
               "internalType": "uint16"
             }
           ]
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -980,69 +580,13 @@
               "internalType": "uint256[]"
             }
           ]
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -1055,69 +599,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -1130,69 +618,13 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
@@ -1220,72 +652,34 @@
           "name": "paidAmounts",
           "type": "uint128[]",
           "internalType": "uint128[]"
-        },
-        {
-          "name": "extraOptions",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
-          "name": "fee",
-          "type": "tuple",
-          "internalType": "struct MessagingFee",
-          "components": [
-            {
-              "name": "nativeFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "lzTokenFee",
-              "type": "uint256",
-              "internalType": "uint256"
-            }
-          ]
-        },
-        {
-          "name": "refundAddress",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [
         {
-          "name": "receipt",
-          "type": "tuple",
-          "internalType": "struct MessagingReceipt",
-          "components": [
-            {
-              "name": "guid",
-              "type": "bytes32",
-              "internalType": "bytes32"
-            },
-            {
-              "name": "nonce",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "fee",
-              "type": "tuple",
-              "internalType": "struct MessagingFee",
-              "components": [
-                {
-                  "name": "nativeFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                },
-                {
-                  "name": "lzTokenFee",
-                  "type": "uint256",
-                  "internalType": "uint256"
-                }
-              ]
-            }
-          ]
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "setRemoteMessenger",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "interop",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -1328,7 +722,7 @@
       "name": "AuctionResultSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1359,7 +753,7 @@
       "name": "AuctionStageSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1384,15 +778,9 @@
       "name": "BidsBatchReceived",
       "inputs": [
         {
-          "name": "guid",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "srcEid",
+          "name": "srcChainId",
           "type": "uint32",
-          "indexed": false,
+          "indexed": true,
           "internalType": "uint32"
         },
         {
@@ -1475,35 +863,10 @@
     },
     {
       "type": "event",
-      "name": "InboundMessageDropped",
-      "inputs": [
-        {
-          "name": "guid",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "srcEid",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "IssuanceInstructionsSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1528,7 +891,7 @@
       "name": "MarkCalledSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1547,7 +910,7 @@
       "name": "MarkQualifiedSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1585,7 +948,7 @@
       "name": "RefundInstructionsSent",
       "inputs": [
         {
-          "name": "guid",
+          "name": "sendId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -1628,22 +991,6 @@
     },
     {
       "type": "error",
-      "name": "MsgValueBelowFee",
-      "inputs": [
-        {
-          "name": "msgValue",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "nativeFee",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "NativeBalanceInsufficient",
       "inputs": [
         {
@@ -1665,17 +1012,7 @@
     },
     {
       "type": "error",
-      "name": "NotSelf",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "RefundFailed",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "SrcEidBodyMismatch",
+      "name": "SrcChainIdBodyMismatch",
       "inputs": [
         {
           "name": "origin",

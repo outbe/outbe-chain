@@ -10,6 +10,9 @@ contract MockHyperlaneMailbox {
 
     mapping(uint32 => MockHyperlaneMailbox) public remoteMailboxes;
 
+    /// @dev Records the hook metadata of the most recent metadata-carrying dispatch, for inspecting per-message gas.
+    bytes public lastMetadata;
+
     error RemoteMailboxNotSet(uint32 domain);
 
     constructor(uint32 _localDomain) {
@@ -40,6 +43,40 @@ contract MockHyperlaneMailbox {
         payable
         returns (bytes32 messageId)
     {
+        MockHyperlaneMailbox dst = remoteMailboxes[destinationDomain];
+        if (address(dst) == address(0)) revert RemoteMailboxNotSet(destinationDomain);
+
+        bytes32 sender = bytes32(uint256(uint160(msg.sender)));
+        dst.deliver(localDomain, sender, recipientAddress, messageBody);
+
+        return keccak256(abi.encode(localDomain, destinationDomain, recipientAddress, messageBody));
+    }
+
+    function quoteDispatch(
+        uint32,
+        /*destinationDomain*/
+        bytes32,
+        /*recipient*/
+        bytes calldata,
+        /*body*/
+        bytes calldata /*metadata*/
+    )
+        external
+        pure
+        returns (uint256)
+    {
+        // Fixed fee of 100 wei for testing.
+        return 100;
+    }
+
+    function dispatch(
+        uint32 destinationDomain,
+        bytes32 recipientAddress,
+        bytes calldata messageBody,
+        bytes calldata metadata
+    ) external payable returns (bytes32 messageId) {
+        lastMetadata = metadata;
+
         MockHyperlaneMailbox dst = remoteMailboxes[destinationDomain];
         if (address(dst) == address(0)) revert RemoteMailboxNotSet(destinationDomain);
 

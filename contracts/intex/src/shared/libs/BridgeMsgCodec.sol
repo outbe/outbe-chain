@@ -55,13 +55,13 @@ library BridgeMsgCodec {
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
-    //   BIDS_BATCH(uint32, uint32, bool, uint32, t[]×4):
-    //     4 static head words + 4 dynamic head offsets + 4 empty length words = 12×32 = 384
+    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, t[]×4):
+    //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
     //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
     //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
     //   ISSUANCE_INSTRUCTIONS(struct with 11 static + 2 dynamic, dynamic struct):
     //     outer offset(32) + 11 static + 2 inner offsets + 2 empty length words = 16×32 = 512
-    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 384;
+    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 416;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 512;
 
@@ -150,15 +150,15 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes BIDS_BATCH message.
-    /// @dev `_isLast` marks the final chunk of a (possibly multi-chunk) bid set: the receiver
-    ///      accumulates chunks and only finalizes the auction's bid collection on the last one.
-    ///      `_relayGeneration` is stamped per flush so the receiver replaces a re-flushed set
-    ///      rather than double-counting it. Reverts `PayloadArrayTooLong` if `_bidderAddresses`
-    ///      exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches sharing one
+    ///      `_relayGeneration`; the receiver collects all `_totalBatches` (in any order) before finalizing
+    ///      and replaces a re-flushed generation rather than double-counting it. Reverts `PayloadArrayTooLong`
+    ///      if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _seriesId The auction series identifier.
-    /// @param _srcEid The LayerZero source endpoint id the bids originated from.
-    /// @param _isLast Whether this is the final chunk of the bid set.
+    /// @param _srcChainId The source chainId the bids originated from.
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
+    /// @param _batchIndex Index of this batch within the flush (0-based).
+    /// @param _totalBatches Total number of batches in this flush (the receiver waits for all of them).
     /// @param _bidderAddresses The bidder addresses (parallel with the other three arrays).
     /// @param _intexQuantities The intex quantities per bidder.
     /// @param _intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
@@ -166,16 +166,17 @@ library BridgeMsgCodec {
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
         uint32 _seriesId,
-        uint32 _srcEid,
-        bool _isLast,
+        uint32 _srcChainId,
         uint32 _relayGeneration,
+        uint16 _batchIndex,
+        uint16 _totalBatches,
         address[] memory _bidderAddresses,
         uint16[] memory _intexQuantities,
         uint32[] memory _intexBidRates,
         uint32[] memory _timestamps
     ) internal pure returns (bytes memory) {
         // Decoder rejects parallel-array mismatch with BidsArrayLengthMismatch; fail-fast at the
-        // source so a sender-side bug aborts before paying the LZ fee.
+        // source so a sender-side bug aborts before paying the bridge fee.
         if (
             _bidderAddresses.length != _intexQuantities.length || _bidderAddresses.length != _intexBidRates.length
                 || _bidderAddresses.length != _timestamps.length
@@ -190,9 +191,10 @@ library BridgeMsgCodec {
             MSG_BIDS_BATCH,
             abi.encode(
                 _seriesId,
-                _srcEid,
-                _isLast,
+                _srcChainId,
                 _relayGeneration,
+                _batchIndex,
+                _totalBatches,
                 _bidderAddresses,
                 _intexQuantities,
                 _intexBidRates,
@@ -452,9 +454,10 @@ library BridgeMsgCodec {
     ///      `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
     /// @param _msg The wire-encoded BIDS_BATCH message.
     /// @return seriesId The auction series identifier.
-    /// @return srcEid The LayerZero source endpoint id the bids originated from.
-    /// @return isLast Whether this is the final chunk of the bid set.
+    /// @return srcChainId The source chainId the bids originated from.
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
+    /// @return batchIndex Index of this batch within the flush (0-based).
+    /// @return totalBatches Total number of batches in this flush (the receiver waits for all of them).
     /// @return bidderAddresses The bidder addresses (parallel with the other three arrays).
     /// @return intexQuantities The intex quantities per bidder.
     /// @return intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
@@ -464,9 +467,10 @@ library BridgeMsgCodec {
         pure
         returns (
             uint32 seriesId,
-            uint32 srcEid,
-            bool isLast,
+            uint32 srcChainId,
             uint32 relayGeneration,
+            uint16 batchIndex,
+            uint16 totalBatches,
             address[] memory bidderAddresses,
             uint16[] memory intexQuantities,
             uint32[] memory intexBidRates,
@@ -478,8 +482,17 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (seriesId, srcEid, isLast, relayGeneration, bidderAddresses, intexQuantities, intexBidRates, timestamps) =
-            abi.decode(_msg[2:], (uint32, uint32, bool, uint32, address[], uint16[], uint32[], uint32[]));
+        (
+            seriesId,
+            srcChainId,
+            relayGeneration,
+            batchIndex,
+            totalBatches,
+            bidderAddresses,
+            intexQuantities,
+            intexBidRates,
+            timestamps
+        ) = abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint16[], uint32[], uint32[]));
         // The four arrays are indexed in lockstep downstream; unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (

@@ -18,7 +18,7 @@ contract BodyVersionTest is Test {
         bytes memory encoded;
 
         encoded = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+            1, 30101, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsBatch.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
@@ -156,7 +156,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_UnknownBodyVersion_BidsBatch_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, true, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+            1, 30101, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         packet[0] = 0x99;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x99));
@@ -239,7 +239,9 @@ contract BodyVersionTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(uint32(42), uint32(30101), true, uint32(1), bidders, quantities, rates, timestamps)
+            abi.encode(
+                uint32(42), uint32(30101), uint32(1), uint16(0), uint16(1), bidders, quantities, rates, timestamps
+            )
         );
 
         vm.expectRevert(
@@ -287,7 +289,7 @@ contract BodyVersionTest is Test {
         this.exposedDecodeIssuanceInstructions(packet);
     }
 
-    function test_BridgeCodec_BidsBatch_IsLast_RoundTrips() public view {
+    function test_BridgeCodec_BidsBatch_BatchIndexTotal_RoundTrips() public view {
         address[] memory bidders = new address[](1);
         bidders[0] = address(0xB1);
         uint16[] memory quantities = new uint16[](1);
@@ -298,15 +300,17 @@ contract BodyVersionTest is Test {
         timestamps[0] = 42;
 
         bytes memory lastPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, true, 7, bidders, quantities, rates, timestamps);
-        (,, bool isLastTrue, uint32 genTrue,,,,) = this.exposedDecodeBidsBatch(lastPacket);
-        assertTrue(isLastTrue, "isLast=true should round-trip");
-        assertEq(genTrue, 7, "relayGeneration should round-trip");
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 1, 2, bidders, quantities, rates, timestamps);
+        (,, uint32 genLast, uint16 idxLast, uint16 totalLast,,,,) = this.exposedDecodeBidsBatch(lastPacket);
+        assertEq(idxLast, 1, "batchIndex should round-trip");
+        assertEq(totalLast, 2, "totalBatches should round-trip");
+        assertEq(genLast, 7, "relayGeneration should round-trip");
 
         bytes memory midPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, false, 7, bidders, quantities, rates, timestamps);
-        (,, bool isLastFalse,,,,,) = this.exposedDecodeBidsBatch(midPacket);
-        assertFalse(isLastFalse, "isLast=false should round-trip");
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 0, 2, bidders, quantities, rates, timestamps);
+        (,,, uint16 idxMid, uint16 totalMid,,,,) = this.exposedDecodeBidsBatch(midPacket);
+        assertEq(idxMid, 0, "batchIndex=0 should round-trip");
+        assertEq(totalMid, 2, "totalBatches should round-trip");
     }
 
     // --- External wrappers so calldata-slice helpers can be invoked via vm.expectRevert ---
@@ -314,7 +318,17 @@ contract BodyVersionTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, bool, uint32, address[] memory, uint16[] memory, uint32[] memory, uint32[] memory)
+        returns (
+            uint32,
+            uint32,
+            uint32,
+            uint16,
+            uint16,
+            address[] memory,
+            uint16[] memory,
+            uint32[] memory,
+            uint32[] memory
+        )
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }

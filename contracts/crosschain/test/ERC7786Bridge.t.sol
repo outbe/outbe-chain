@@ -8,6 +8,7 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {ERC7786GatewayMock} from "@openzeppelin/contracts/mocks/crosschain/ERC7786GatewayMock.sol";
 import {ERC7786RecipientMock} from "@openzeppelin/contracts/mocks/crosschain/ERC7786RecipientMock.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "src/interfaces/IERC7786.sol";
+import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -16,6 +17,39 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 contract GatewayMock is ERC7786GatewayMock, IGatewayQuote {
     function quote(bytes calldata, bytes calldata) external pure returns (uint256) {
         return 4242;
+    }
+
+    function quote(bytes calldata, bytes calldata, bytes[] calldata) external pure returns (uint256) {
+        return 4242;
+    }
+}
+
+/// @dev Gateway that interprets the executionGasLimit attribute (and rejects others), mirroring a real adapter,
+/// so the bridge's attribute forwarding / delegation can be checked in isolation.
+contract AttrAwareGatewayMock is IERC7786GatewaySource, IGatewayQuote {
+    bool public sawGasAttribute;
+
+    function supportsAttribute(bytes4 selector) external pure returns (bool) {
+        return selector == GasLimitAttribute.SELECTOR;
+    }
+
+    function sendMessage(bytes calldata, bytes calldata, bytes[] calldata attributes)
+        external
+        payable
+        returns (bytes32)
+    {
+        (bool found,) = GasLimitAttribute.find(attributes); // reverts UnsupportedAttribute for any other attribute
+        if (found) sawGasAttribute = true;
+        return bytes32(0);
+    }
+
+    function quote(bytes calldata, bytes calldata) external pure returns (uint256) {
+        return 100;
+    }
+
+    function quote(bytes calldata, bytes calldata, bytes[] calldata attributes) external pure returns (uint256) {
+        (bool found,) = GasLimitAttribute.find(attributes);
+        return found ? 777 : 100;
     }
 }
 
@@ -126,12 +160,31 @@ contract ERC7786BridgeTest is Test {
         fresh.sendMessage(_interop(address(0xBEEF)), "x", _noAttrs());
     }
 
-    function test_RevertWhen_SendWithAttributes() public {
+    function test_RevertWhen_SendWithUnsupportedAttribute() public {
+        AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        vm.prank(owner);
+        b.registerRemoteBridge(_interop(sourceBridge));
+
         bytes[] memory attrs = new bytes[](1);
         attrs[0] = hex"12345678";
+        // The bridge forwards the attribute; the gateway rejects the unknown one.
         vm.prank(app);
         vm.expectRevert(abi.encodeWithSelector(IERC7786GatewaySource.UnsupportedAttribute.selector, bytes4(0x12345678)));
-        bridge.sendMessage(_interop(sourceBridge), "x", attrs);
+        b.sendMessage(_interop(sourceBridge), "x", attrs);
+    }
+
+    function test_SendMessage_ForwardsGasAttributeToGateway() public {
+        AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        vm.prank(owner);
+        b.registerRemoteBridge(_interop(sourceBridge));
+
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encode(500_000);
+        vm.prank(app);
+        b.sendMessage(_interop(sourceBridge), "x", attrs);
+        assertTrue(gateway.sawGasAttribute(), "bridge forwards executionGasLimit to the gateway");
     }
 
     // ============================================== quote (IGatewayQuote) ==========================================
@@ -143,6 +196,25 @@ contract ERC7786BridgeTest is Test {
         b.registerRemoteBridge(_interop(sourceBridge));
 
         assertEq(b.quote(_interop(sourceBridge), "payload"), 4242, "bridge delegates quote to the active gateway");
+    }
+
+    function test_Quote_WithAttributes_DelegatesToGateway() public {
+        AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        vm.prank(owner);
+        b.registerRemoteBridge(_interop(sourceBridge));
+
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encode(500_000);
+        assertEq(b.quote(_interop(sourceBridge), "x", attrs), 777, "3-arg quote forwards attributes to the gateway");
+        assertEq(b.quote(_interop(sourceBridge), "x", _noAttrs()), 100, "3-arg quote without attributes uses default");
+    }
+
+    function test_SupportsAttribute_DelegatesToGateway() public {
+        AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        assertTrue(b.supportsAttribute(GasLimitAttribute.SELECTOR), "delegates true for the gas attribute");
+        assertFalse(b.supportsAttribute(bytes4(0x12345678)), "delegates false for other attributes");
     }
 
     function test_RevertWhen_QuoteWithoutGateway() public {
