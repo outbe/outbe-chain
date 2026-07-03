@@ -39,9 +39,9 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_MESSENGER_ADDRESS,
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, f)
@@ -170,9 +170,9 @@ fn settle_rejects_expired_deadline() {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_MESSENGER_ADDRESS,
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
@@ -625,7 +625,7 @@ fn try_call_excludes_pre_issuance_days() {
 // ---------------------------------------------------------------------
 
 /// Seed a series directly in the registry + bin index, bypassing issue()
-/// so tests can omit the OriginMessenger stub.
+/// so tests can omit the OriginRouter stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     outbe_intex::api::create_series(
         s,
@@ -654,7 +654,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
 
 #[test]
 fn qualify_survives_lz_messenger_failure() {
-    // No OriginMessenger stub: notify_lz_qualified fails silently.
+    // No OriginRouter stub: notify_lz_qualified fails silently.
     // The Issued -> Qualified transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
@@ -687,7 +687,7 @@ fn qualify_survives_lz_messenger_failure() {
 
 #[test]
 fn call_survives_lz_messenger_failure() {
-    // No OriginMessenger stub: notify_lz_called fails silently.
+    // No OriginRouter stub: notify_lz_called fails silently.
     // The Qualified -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));

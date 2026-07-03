@@ -13,9 +13,9 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter};
 
 pub struct IntexLifecycle;
 
@@ -152,7 +152,7 @@ pub(crate) fn try_qualify(
     factory.insert_qualified(series_id, series.call_price_minor)?;
 
     // Notify the target chain of the Qualified transition via LayerZero; best-effort.
-    // OriginMessenger failure (e.g. exhausted relay float) does not revert the
+    // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
     let _ = notify_lz_qualified(storage, series_id);
 
@@ -168,9 +168,9 @@ pub(crate) fn try_qualify(
 fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
     // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendMarkQualifiedCall {
+        IOriginRouter::sendMarkQualifiedCall {
             seriesId: series_id,
         }
         .abi_encode()

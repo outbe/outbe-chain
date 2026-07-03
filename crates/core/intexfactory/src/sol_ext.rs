@@ -3,10 +3,10 @@
 use alloy_sol_types::sol;
 
 sol! {
-    // `OriginMessenger` sends are relay-float-funded: called with value 0, the messenger quotes and pays
+    // `OriginRouter` sends are relay-float-funded: called with value 0, the messenger quotes and pays
     // the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
     #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IOriginMessenger {
+    interface IOriginRouter {
         struct IssuanceInstructionsParams {
             uint32 seriesId;
             uint32 issuedIntexCount;

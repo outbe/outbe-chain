@@ -11,13 +11,13 @@ use outbe_intex::IntexState;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS,
+    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS,
     POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -93,7 +93,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
+    let messenger_params = IOriginRouter::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
@@ -110,9 +110,9 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     };
     // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendIssuanceInstructionsCall {
+        IOriginRouter::sendIssuanceInstructionsCall {
             params: messenger_params,
         }
         .abi_encode()
