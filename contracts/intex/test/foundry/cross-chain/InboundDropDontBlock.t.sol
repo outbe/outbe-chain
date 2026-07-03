@@ -79,7 +79,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));

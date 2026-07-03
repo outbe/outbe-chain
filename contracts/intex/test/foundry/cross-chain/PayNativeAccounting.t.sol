@@ -36,7 +36,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     TargetRouter internal bnbMessenger;
     OriginRouter internal outbeMessenger;
-    IntexNFT1155Bridge internal onftBatch;
+    IntexNFT1155Bridge internal nftBridge;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
@@ -54,28 +54,28 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        onftBatch = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
         outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
-        onftBatch.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatch)));
+        nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
 
         // Wire TM with a stub auction and the batch adapter; `auctionRole` gets AUCTION_ROLE so it can call
         // `sendBidsBatch` directly (that role is normally held by the auction contract).
         StubAuction stubAuction = new StubAuction();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(onftBatch));
+        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(nftBridge));
         bnbMessenger.grantRole(bnbMessenger.AUCTION_ROLE(), auctionRole);
 
         // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
         // Intex. `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
         // series is Called, so the adapter needs both roles on the token.
-        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
-        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), admin);
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(onftBatch));
-        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatch));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), admin);
+        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
+        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
 
         // Series + one holder so markCalled + holder enumeration produce a non-empty relay.
@@ -202,7 +202,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, BRIDGE_FEE - 1, BRIDGE_FEE)
         );
-        onftBatch.systemMultiSend{value: BRIDGE_FEE - 1}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+        nftBridge.systemMultiSend{value: BRIDGE_FEE - 1}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
     }
 
     function test_SystemMultiSend_CallerFundedDrawsFee() public {
@@ -210,11 +210,11 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         vm.deal(address(this), BRIDGE_FEE);
 
-        onftBatch.systemMultiSend{value: BRIDGE_FEE}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+        nftBridge.systemMultiSend{value: BRIDGE_FEE}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
 
         // The caller's value covered the fee and the universal adapter kept nothing.
         assertEq(bridge.lastValue(), BRIDGE_FEE, "bridge received the forwarded fee");
-        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
+        assertEq(address(nftBridge).balance, 0, "adapter holds no float");
     }
 
     // ---------------------------------------------------------------
@@ -245,7 +245,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         // No parked relay: TargetRouter funded the send.
         assertEq(bnbMessenger.nextPendingHoldersRelayIdx(), 0, "no holders relay deferred");
         assertEq(address(bnbMessenger).balance, floatBefore - BRIDGE_FEE, "fee drawn from messenger float");
-        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
+        assertEq(address(nftBridge).balance, 0, "adapter holds no float");
     }
 
     function _deliverMarkCalled() internal {

@@ -185,15 +185,15 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_TargetRouter() public {
-        TargetRouter target = DeployProxy.targetMessenger(address(bridge), admin, A_CHAIN_ID);
+        TargetRouter target = DeployProxy.targetRouter(address(bridge), admin, A_CHAIN_ID);
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
-        address onft = makeAddr("onft");
+        address nftBridge = makeAddr("nftBridge");
         bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);
-        target.wire(auction, intex, escrow, onft);
+        target.wire(auction, intex, escrow, nftBridge);
         target.setRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 

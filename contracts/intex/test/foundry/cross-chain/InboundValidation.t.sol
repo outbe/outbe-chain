@@ -28,8 +28,8 @@ contract InboundValidationTest is CrossChainTest {
 
     TargetRouter internal bnbMessenger;
     OriginRouter internal outbeMessenger;
-    IntexNFT1155Bridge internal onftBatchBnb;
-    IntexNFT1155Bridge internal onftBatchOutbe;
+    IntexNFT1155Bridge internal nftBridgeBnb;
+    IntexNFT1155Bridge internal nftBridgeOutbe;
 
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
@@ -45,19 +45,19 @@ contract InboundValidationTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        onftBatchBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        onftBatchOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound peer authentication passes and the payload is what fails.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
         outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
-        onftBatchBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
+        nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
-        bnbMessenger.wire(address(auction), address(intex), admin, address(onftBatchBnb));
+        bnbMessenger.wire(address(auction), address(intex), admin, address(nftBridgeBnb));
         outbeMessenger.wire(desis, intexFactory);
     }
 
@@ -426,9 +426,9 @@ contract InboundValidationTest is CrossChainTest {
 
     // --- Helpers ---
 
-    /// @dev Deliver a batch packet to `onftBatchBnb` from its wired peer on OUTBE_CHAIN_ID.
+    /// @dev Deliver a batch packet to `nftBridgeBnb` from its wired peer on OUTBE_CHAIN_ID.
     function _deliverToBatch(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, address(onftBatchOutbe), address(onftBatchBnb), packet);
+        _deliver(OUTBE_CHAIN_ID, address(nftBridgeOutbe), address(nftBridgeBnb), packet);
     }
 
     /// @dev Build a one-item V2 SEND packet for a single recipient.

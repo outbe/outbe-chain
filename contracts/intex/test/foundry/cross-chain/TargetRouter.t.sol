@@ -58,7 +58,7 @@ contract TargetRouterTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy BNB adapter
-        bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy Outbe adapter (for cross-chain testing)
         outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
@@ -123,30 +123,30 @@ contract TargetRouterTest is CrossChainTest {
     }
 
     function test_wire_revert_zero_address() public {
-        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
         newAdapter.wire(address(0), address(intex), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
         newAdapter.wire(address(auction), address(0), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
         newAdapter.wire(address(auction), address(intex), address(0), address(batchAdapter));
     }
 
-    function test_wire_revert_zero_onftBatchAdapter() public {
-        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+    function test_wire_revert_zero_nftBridge() public {
+        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "onftBatchAdapter"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "nftBridge"));
         newAdapter.wire(address(auction), address(intex), admin, address(0));
     }
 

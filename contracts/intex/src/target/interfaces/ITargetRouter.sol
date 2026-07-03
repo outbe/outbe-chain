@@ -129,8 +129,8 @@ interface ITargetRouter {
     /// @param auction Auction contract address.
     /// @param intex IntexNFT1155 contract address.
     /// @param escrowAdapter EscrowAdapter contract address.
-    /// @param onftBatchAdapter IntexNFT1155Bridge address (for system bridge on markCalled).
-    function wire(address auction, address intex, address escrowAdapter, address onftBatchAdapter) external;
+    /// @param nftBridge IntexNFT1155Bridge address (for system bridge on markCalled).
+    function wire(address auction, address intex, address escrowAdapter, address nftBridge) external;
 
     /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
     /// @param chainId Destination/source chainId.

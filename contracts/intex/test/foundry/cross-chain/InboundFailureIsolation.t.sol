@@ -20,8 +20,8 @@ contract InboundFailureIsolationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    IntexNFT1155Bridge internal onftBatchBnb;
-    IntexNFT1155Bridge internal onftBatchOutbe;
+    IntexNFT1155Bridge internal nftBridgeBnb;
+    IntexNFT1155Bridge internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
 
     address internal admin = address(this);
@@ -35,29 +35,29 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _setUpBridge();
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        onftBatchBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        onftBatchOutbe = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
-        onftBatchBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
-        onftBatchOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(onftBatchBnb)));
+        nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftBridgeOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD, 10_000, 0));
         intex.markQualified(SERIES_GOOD);
         // SERIES_BAD intentionally not created — `intex.crosschainMint` will revert on lookup.
 
-        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatchBnb));
+        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridgeBnb));
     }
 
     /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.
     function _deliverInbound(bytes memory message) internal {
-        _deliver(OUTBE_CHAIN_ID, address(onftBatchOutbe), address(onftBatchBnb), message);
+        _deliver(OUTBE_CHAIN_ID, address(nftBridgeOutbe), address(nftBridgeBnb), message);
     }
 
     /// @dev Recompute the bridge's `receiveId` for a message delivered from the OUTBE peer, matching
     ///      `MockERC7786Bridge._deliver`: `keccak256(abi.encode(sender, payload))`.
     function _receiveId(bytes memory message) internal view returns (bytes32) {
-        bytes memory sender = _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe));
+        bytes memory sender = _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe));
         return keccak256(abi.encode(sender, message));
     }
 
@@ -107,14 +107,14 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
         // Bad item recorded in failedCrosschainMints, NOT minted.
-        (address to, uint256 tokenId, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (address to, uint256 tokenId, uint256 amount,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
         assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail — no entry for idx=0.
-        (,,,, bool existsZero) = onftBatchBnb.failedCrosschainMints(receiveId, 0);
+        (,,,, bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
@@ -126,7 +126,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Initially the bad item is parked.
-        (,,,, bool existsBefore) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (,,,, bool existsBefore) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
@@ -135,13 +135,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Anyone can retry — no auth gate.
         vm.prank(address(0xDEAD));
-        onftBatchBnb.retryCrosschainMint(receiveId, 1);
+        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
         // Now minted.
         assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (,,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
@@ -155,11 +155,11 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // Fix upstream + retry once.
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
         intex.markQualified(SERIES_BAD);
-        onftBatchBnb.retryCrosschainMint(receiveId, 1);
+        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
         // Second retry must revert — slot has been deleted.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        onftBatchBnb.retryCrosschainMint(receiveId, 1);
+        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
     }
 
     function test_BatchReceive_ReclaimToSourceConsumesEntryAndSendsReverse() public {
@@ -169,13 +169,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         _deliverInbound(packet);
 
-        (,,,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (,,,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertTrue(exists, "bad item parked at idx 1");
 
         // Reclaim routes the stranded item back to its origin peer and consumes the entry.
-        onftBatchBnb.reclaimToSource(receiveId, 1);
+        nftBridgeBnb.reclaimToSource(receiveId, 1);
 
-        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (,,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertFalse(existsAfter, "entry consumed on reclaim");
 
         // The reverse packet is a one-item SEND_MULTI recorded on the bridge.
@@ -184,13 +184,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // A second reclaim reverts — the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        onftBatchBnb.reclaimToSource(receiveId, 1);
+        nftBridgeBnb.reclaimToSource(receiveId, 1);
     }
 
     function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
         bytes32 receiveId = bytes32(uint256(0xAAEE));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
-        onftBatchBnb.retryCrosschainMint(receiveId, 0);
+        nftBridgeBnb.retryCrosschainMint(receiveId, 0);
     }
 
     // ---------------------------------------------------------------
@@ -209,7 +209,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        (address to,, uint256 amount,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);
@@ -224,7 +224,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
     function test_CrosschainMintOne_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(IIntexNFT1155Bridge.NotSelf.selector);
-        onftBatchBnb.crosschainMintOne(address(0xCAFE), TOKEN_GOOD, 1);
+        nftBridgeBnb.crosschainMintOne(address(0xCAFE), TOKEN_GOOD, 1);
     }
 
     // ---------------------------------------------------------------

@@ -144,7 +144,7 @@ export interface OutbeMockInteractiveTaskArgs extends TaskArgs {
   bnbAuctionContract?: string;
   bnbEscrowAdapterContract?: string;
   bnbPaymentTokenContract?: string;
-  targetMessengerContract?: string;
+  targetRouterContract?: string;
   bnbBiddersNetwork?: string;
   quantityRange?: string;
   priceRange?: string;

@@ -74,7 +74,7 @@ contract IntexCallFlowTest is CrossChainTest {
         // ---- Deploy BSC contracts ----
         intexBnb = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
-        bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         batchAdapterBnb = DeployProxy.intexNFT1155Bridge(address(intexBnb), address(bridge), admin);
 
         // ---- Deploy Outbe contracts ----

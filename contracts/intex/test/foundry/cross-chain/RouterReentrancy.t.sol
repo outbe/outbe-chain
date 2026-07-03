@@ -119,7 +119,7 @@ contract RouterReentrancyTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
@@ -129,7 +129,7 @@ contract RouterReentrancyTest is CrossChainTest {
     function test_TM_receiveMessage_runsUnderNonReentrant() public {
         ReentrancyProbeAuction probeAuction =
             new ReentrancyProbeAuction(address(bridge), OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger));
-        // intex / escrow / onftBatch don't fire on STAGE_START, but `wire` rejects address(0). Reuse the
+        // intex / escrow / nftBridge don't fire on STAGE_START, but `wire` rejects address(0). Reuse the
         // probe so all four wires are non-zero.
         bnbMessenger.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 

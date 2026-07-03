@@ -25,14 +25,14 @@ contract GasAttributeTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         outbe = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        bnb = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
         bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
 
         desis = address(new MockDesis());
         outbe.wire(desis, makeAddr("factory"));
         // AUCTION_ROLE goes to `admin` so this test can call sendBidsBatch directly.
-        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("onft"));
+        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("nftBridge"));
     }
 
     /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.

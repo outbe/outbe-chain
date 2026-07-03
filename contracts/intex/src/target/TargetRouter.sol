@@ -72,7 +72,7 @@ contract TargetRouter is
         /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
         IEscrowAdapter escrowAdapter;
         /// @dev IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
-        IIntexNFT1155Bridge onftBatchAdapter;
+        IIntexNFT1155Bridge nftBridge;
         /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
         mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
         /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
@@ -136,8 +136,8 @@ contract TargetRouter is
     }
 
     /// @notice IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
-    function onftBatchAdapter() external view returns (IIntexNFT1155Bridge) {
-        return _ts().onftBatchAdapter;
+    function nftBridge() external view returns (IIntexNFT1155Bridge) {
+        return _ts().nftBridge;
     }
 
     /// @notice Parked BIDS_BATCH relay by enqueue index.
@@ -179,14 +179,14 @@ contract TargetRouter is
 
     // --- Admin ---
     /// @inheritdoc ITargetRouter
-    function wire(address _auction, address _intex, address _escrowAdapter, address _onftBatchAdapter)
+    function wire(address _auction, address _intex, address _escrowAdapter, address _nftBridge)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (_auction == address(0)) revert ZeroAddress("auction");
         if (_intex == address(0)) revert ZeroAddress("intex");
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
-        if (_onftBatchAdapter == address(0)) revert ZeroAddress("onftBatchAdapter");
+        if (_nftBridge == address(0)) revert ZeroAddress("nftBridge");
 
         TargetRouterStorage storage $ = _ts();
         if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
@@ -194,7 +194,7 @@ contract TargetRouter is
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
-        $.onftBatchAdapter = IIntexNFT1155Bridge(_onftBatchAdapter);
+        $.nftBridge = IIntexNFT1155Bridge(_nftBridge);
 
         _grantRole(AUCTION_ROLE, _auction);
     }
@@ -585,7 +585,7 @@ contract TargetRouter is
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
         // TargetRouter pays the bridge fee from its own relay float: quote it and forward it as value so the
         // universal adapter never needs to hold native. The returned sendId is informational.
-        IIntexNFT1155Bridge adapter = _ts().onftBatchAdapter;
+        IIntexNFT1155Bridge adapter = _ts().nftBridge;
         uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);

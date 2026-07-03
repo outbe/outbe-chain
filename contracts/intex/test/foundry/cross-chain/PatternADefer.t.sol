@@ -61,8 +61,8 @@ contract PatternADeferTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbMessenger;
-    IntexNFT1155Bridge internal onftBatch;
-    IntexNFT1155Bridge internal onftBatchOutbe;
+    IntexNFT1155Bridge internal nftBridge;
+    IntexNFT1155Bridge internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
@@ -81,22 +81,22 @@ contract PatternADeferTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
-        onftBatch = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        onftBatchOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
-        onftBatch.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
+        nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(onftBatch));
+        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(nftBridge));
 
         // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
         // Intex. crosschainBurn is gated by RELAYER_ROLE, and by SYSTEM_RELAYER_ROLE during the Called window.
-        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
-        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatch));
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(onftBatch));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
+        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
+        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
 
         // Series so markCalled + holder enumeration work.

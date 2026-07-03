@@ -62,7 +62,7 @@ interface BNBBridgeWireArgs {
   intexAuctionContract: string;
   intexContract: string;
   escrowContract: string;
-  onftBatchAdapterContract: string;
+  nftBridgeContract: string;
 }
 
 interface OutbeBridgeWireArgs {
@@ -231,13 +231,13 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   const auction = (args.intexAuctionContract ?? "").trim();
   const intex = (args.intexContract ?? "").trim();
   const escrow = (args.escrowContract ?? "").trim();
-  const onftBatch = (args.onftBatchAdapterContract ?? "").trim();
+  const nftBridge = (args.nftBridgeContract ?? "").trim();
 
   const empty: string[] = [];
   if (!auction) empty.push("--auction-contract");
   if (!intex) empty.push("--intex-contract");
   if (!escrow) empty.push("--escrow-contract");
-  if (!onftBatch) empty.push("--onft-batch-adapter-contract");
+  if (!nftBridge) empty.push("--nft-bridge-contract");
   if (empty.length > 0) {
     throw new Error(
       `TargetRouter wire requires non-empty addresses. Missing: ${empty.join(", ")}. ` +
@@ -252,7 +252,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   console.log(`  Auction: ${auction}`);
   console.log(`  Intex: ${intex}`);
   console.log(`  Escrow: ${escrow}`);
-  console.log(`  ONFTBatchAdapter: ${onftBatch}`);
+  console.log(`  NftBridge: ${nftBridge}`);
 
   const bridge = (await viem.getContractAt(
     "TargetRouter",
@@ -262,25 +262,25 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
       auction: () => Promise<`0x${string}`>;
       intex: () => Promise<`0x${string}`>;
       escrowAdapter: () => Promise<`0x${string}`>;
-      onftBatchAdapter: () => Promise<`0x${string}`>;
+      nftBridge: () => Promise<`0x${string}`>;
     };
     write: {
       wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const [currentAuction, currentIntex, currentEscrow, currentOnftBatch] = await Promise.all([
+  const [currentAuction, currentIntex, currentEscrow, currentNftBridge] = await Promise.all([
     bridge.read.auction(),
     bridge.read.intex(),
     bridge.read.escrowAdapter(),
-    bridge.read.onftBatchAdapter(),
+    bridge.read.nftBridge(),
   ]);
 
   const allMatch =
     currentAuction.toLowerCase() === auction.toLowerCase() &&
     currentIntex.toLowerCase() === intex.toLowerCase() &&
     currentEscrow.toLowerCase() === escrow.toLowerCase() &&
-    currentOnftBatch.toLowerCase() === onftBatch.toLowerCase();
+    currentNftBridge.toLowerCase() === nftBridge.toLowerCase();
 
   if (allMatch) {
     console.log(`✅ TargetRouter already wired to these contracts`);
@@ -292,7 +292,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
       currentAuction.toLowerCase() !== auction.toLowerCase() && "auction",
       currentIntex.toLowerCase() !== intex.toLowerCase() && "intex",
       currentEscrow.toLowerCase() !== escrow.toLowerCase() && "escrow",
-      currentOnftBatch.toLowerCase() !== onftBatch.toLowerCase() && "onftBatchAdapter",
+      currentNftBridge.toLowerCase() !== nftBridge.toLowerCase() && "nftBridge",
     ].filter(Boolean);
     console.log(`🔄 Rewiring TargetRouter (changed: ${changed.join(", ")})`);
   }
@@ -302,7 +302,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
       auction as `0x${string}`,
       intex as `0x${string}`,
       escrow as `0x${string}`,
-      onftBatch as `0x${string}`,
+      nftBridge as `0x${string}`,
     ]),
   );
   console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
@@ -330,7 +330,7 @@ const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Int
     defaultValue: "",
   })
   .addOption({
-    name: "onftBatchAdapterContract",
+    name: "nftBridgeContract",
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
@@ -412,17 +412,17 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + 
 // IntexNFT1155Bridge Wire (grant SYSTEM_RELAYER_ROLE)
 // ============================================================================
 
-interface ONFTBatchAdapterWireArgs {
+interface NftBridgeWireArgs {
   batchAdapterContract: string;
-  targetMessenger: string;
+  targetRouter: string;
 }
 
-const onftBatchAdapterWireAction = async (args: ONFTBatchAdapterWireArgs, hre: unknown) => {
+const nftBridgeWireAction = async (args: NftBridgeWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
   console.log(`Wiring IntexNFT1155Bridge (grant SYSTEM_RELAYER_ROLE)...`);
   console.log(`  BatchAdapter: ${args.batchAdapterContract}`);
-  console.log(`  TargetRouter: ${args.targetMessenger}`);
+  console.log(`  TargetRouter: ${args.targetRouter}`);
 
   const adapter = (await viem.getContractAt(
     "IntexNFT1155Bridge",
@@ -438,7 +438,7 @@ const onftBatchAdapterWireAction = async (args: ONFTBatchAdapterWireArgs, hre: u
   };
 
   const role = await adapter.read.SYSTEM_RELAYER_ROLE();
-  const alreadyGranted = await adapter.read.hasRole([role, args.targetMessenger as `0x${string}`]);
+  const alreadyGranted = await adapter.read.hasRole([role, args.targetRouter as `0x${string}`]);
 
   if (alreadyGranted) {
     console.log(`✅ SYSTEM_RELAYER_ROLE already granted to TargetRouter`);
@@ -446,23 +446,23 @@ const onftBatchAdapterWireAction = async (args: ONFTBatchAdapterWireArgs, hre: u
   }
 
   const txHash = await sendAndWait(viem, () =>
-    adapter.write.grantRole([role, args.targetMessenger as `0x${string}`]),
+    adapter.write.grantRole([role, args.targetRouter as `0x${string}`]),
   );
   console.log(`✅ IntexNFT1155Bridge wired. Tx: ${txHash}`);
 };
 
-const onftBatchAdapterWire = task("onft-batch-adapter-wire", "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155Bridge to TargetRouter")
+const nftBridgeWire = task("nft-bridge-wire", "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155Bridge to TargetRouter")
   .addOption({
     name: "batchAdapterContract",
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
   .addOption({
-    name: "targetMessenger",
+    name: "targetRouter",
     description: "TargetRouter contract address",
     defaultValue: "",
   })
-  .setAction(lazy(onftBatchAdapterWireAction));
+  .setAction(lazy(nftBridgeWireAction));
 
 // ============================================================================
 // IntexFactory Grant Roles
@@ -652,7 +652,7 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
     };
   };
 
-  const grantOnMessenger = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
+  const grantOnRouter = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
     if (await messenger.read.hasRole([role, addr])) {
       console.log(`✅ OriginRouter: ${addr} already has ${label}`);
     } else {
@@ -677,13 +677,13 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   // Begin-block caller: auction stage sends (DESIS_ROLE), qualify/call mark
   // sends to BNB (INTEX_FACTORY_ROLE on OriginRouter), and the local NFT
   // markQualified / markCalled (RELAYER_ROLE) — all run from begin-block.
-  await grantOnMessenger("DESIS_ROLE", desisRole, systemAddress);
-  await grantOnMessenger("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
+  await grantOnRouter("DESIS_ROLE", desisRole, systemAddress);
+  await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
 
   // Desis precompile frame (inbound clearAuction): issuance-instructions
   // (INTEX_FACTORY_ROLE) + createSeries (RELAYER_ROLE) run in-process here.
-  await grantOnMessenger("INTEX_FACTORY_ROLE", intexFactoryRole, desisAddress);
+  await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, desisAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, desisAddress);
 };
 
@@ -820,7 +820,7 @@ const grantRelayerRole = task(
   "Grant RELAYER_ROLE on an app contract (IntexAuction, EscrowAdapter, IntexNFT1155) to a bridge client",
 )
   .addOption({ name: "token", description: "App contract that gates inbound calls by RELAYER_ROLE", defaultValue: "" })
-  .addOption({ name: "adapter", description: "Bridge client to grant RELAYER_ROLE to (messenger or ONFT adapter)", defaultValue: "" })
+  .addOption({ name: "adapter", description: "Bridge client to grant RELAYER_ROLE to (router or NFT bridge)", defaultValue: "" })
   .addOption({ name: "contract", description: "App contract name: IntexAuction | EscrowAdapter | IntexNFT1155 (default: IntexNFT1155)", defaultValue: "" })
   .setAction(lazy(grantRelayerRoleAction));
 
@@ -871,7 +871,7 @@ export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
   bnbBridgeWire.build(),
-  onftBatchAdapterWire.build(),
+  nftBridgeWire.build(),
   outbeBridgeWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),

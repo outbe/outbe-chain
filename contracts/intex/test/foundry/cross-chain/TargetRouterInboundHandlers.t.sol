@@ -44,7 +44,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
-    IntexNFT1155Bridge internal onftBatch;
+    IntexNFT1155Bridge internal nftBridge;
     MockTheCompact internal compact;
     MockERC20 internal paymentToken;
     MockSettlementVault internal vault;
@@ -59,9 +59,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        onftBatch = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
@@ -76,7 +76,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
         outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
 
-        bnbMessenger.wire(address(auction), address(intex), address(escrow), address(onftBatch));
+        bnbMessenger.wire(address(auction), address(intex), address(escrow), address(nftBridge));
 
         // The messenger drives auction lifecycle (RELAYER_ROLE), creates/mints IntexNFT1155
         // (RELAYER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
