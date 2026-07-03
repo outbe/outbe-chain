@@ -36,7 +36,7 @@ interface IUpgradeProbe {
 ///      implementation to a v1.1 stub that adds a new view, then assert that persisted state
 ///      survived the upgrade, the implementation pointer moved, and the new view is callable.
 ///      Covers one upgrade per impl contract. All four bridge clients (OriginRouter, TargetRouter, both
-///      ONFT adapters) run against a standalone {MockERC7786Bridge}.
+///      NFT bridge clients) run against a standalone {MockERC7786Bridge}.
 contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
     uint32 internal constant B_CHAIN_ID = 2;

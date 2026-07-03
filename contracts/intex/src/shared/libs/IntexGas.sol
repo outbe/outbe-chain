@@ -30,8 +30,8 @@ library IntexGas {
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
     /// @dev ERC-1155 crosschainMint loop (mint + enumerable holder bookkeeping + supply-cap check) per item.
-    uint256 internal constant ONFT_MINT_BASE = 150_000;
-    uint256 internal constant ONFT_MINT_PER_ITEM = 180_000;
+    uint256 internal constant NFT_MINT_BASE = 150_000;
+    uint256 internal constant NFT_MINT_PER_ITEM = 180_000;
 
     /// @notice Destination gas for a BIDS_BATCH carrying `itemCount` bids.
     function bidsBatch(uint256 itemCount) internal pure returns (uint256) {
@@ -48,8 +48,8 @@ library IntexGas {
         return REFUND_BASE + bidderCount * REFUND_PER_ITEM;
     }
 
-    /// @notice Destination gas for an ONFT batch/multi/system message crosschainMinting `itemCount` items.
-    function onftMint(uint256 itemCount) internal pure returns (uint256) {
-        return ONFT_MINT_BASE + itemCount * ONFT_MINT_PER_ITEM;
+    /// @notice Destination gas for a bridge batch/multi/system message crosschainMinting `itemCount` items.
+    function nftMint(uint256 itemCount) internal pure returns (uint256) {
+        return NFT_MINT_BASE + itemCount * NFT_MINT_PER_ITEM;
     }
 }

@@ -11,7 +11,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
-contract MessengersUupsTest is CrossChainTest {
+contract RoutersUupsTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 1;
     uint32 internal constant BNB_CHAIN_ID = 2;
 

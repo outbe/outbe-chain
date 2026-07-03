@@ -89,7 +89,7 @@ contract BridgeMsgCodecHardeningTest is Test {
 
     function test_encodeBidsBatch_arrayLengthMismatch_reverts() public {
         // Decoder rejects parallel-array mismatch; the encoder must surface the same typed error
-        // at the source so the LZ send is aborted before paying the fee.
+        // at the source so the bridge send is aborted before paying the fee.
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xB1);
         bidders[1] = address(0xB2);

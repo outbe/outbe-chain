@@ -7,7 +7,7 @@ import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 
 /// @dev Base for cross-chain protocol tests. A single loopback {MockERC7786Bridge} stands in for the hub; logical
 ///      chainIds are explicit and delivery is manual (via {_deliver}), so a send never auto-loops unless a test opts
-///      in. Replaces the LayerZero `TestHelperOz5` harness.
+///      in. Replaces the ERC-7786 `TestHelperOz5` harness.
 abstract contract CrossChainTest is Test {
     MockERC7786Bridge internal bridge;
 

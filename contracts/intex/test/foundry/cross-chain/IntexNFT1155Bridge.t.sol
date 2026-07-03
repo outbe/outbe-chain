@@ -16,7 +16,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title IntexNFT1155BridgeTest
-/// @notice direct coverage for the ONFT-Batch outbound entry points
+/// @notice direct coverage for the NFT-Batch outbound entry points
 ///         (`batchSend`, `multiSend`, `systemMultiSend`) and their `quote*` views. The inbound
 ///         `receiveMessage` validation matrix (malformed / duplicate / version / srcChainId) is covered by
 ///         the sibling cross-chain suites; this file exercises the send-side surface that had no

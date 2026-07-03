@@ -577,7 +577,7 @@ contract TargetRouter is
         emit HoldersRelayFlushed(idx, p.tokenId);
     }
 
-    /// @notice Bridge series holders to Outbe via the ONFT batch adapter's system holder migration.
+    /// @notice Bridge series holders to Outbe via the IntexNFT1155Bridge's system holder migration.
     /// @dev The adapter self-funds the bridge fee from its own relay float, so no value is forwarded here.
     /// @param tokenId Token ID (series) to bridge.
     /// @param holders Source chain holder addresses.

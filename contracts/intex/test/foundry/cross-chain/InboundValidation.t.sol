@@ -275,14 +275,14 @@ contract InboundValidationTest is CrossChainTest {
     // IntexNFT1155Bridge — V2 codec: version + length + size + msgType + address validation
     // ---------------------------------------------------------------
 
-    function test_ONFTBatch_UnknownMsgType_RevertsUnknownMsgType() public {
+    function test_NFTBatch_UnknownMsgType_RevertsUnknownMsgType() public {
         // Valid V2 version byte, unknown msgType 0x99 — routing rejects it.
         bytes memory packet = hex"0299";
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.UnknownMsgType.selector, 0x99));
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_StaleV1Version_RevertsUnsupportedBodyVersion() public {
+    function test_NFTBatch_StaleV1Version_RevertsUnsupportedBodyVersion() public {
         // A pre-migration V1 packet must fail closed rather than misdecode into a wrong crosschainMint.
         bytes memory packet = _batchV2(address(0xCAFE), 1, 100);
         packet[0] = bytes1(uint8(1)); // downgrade the version byte to stale V1
@@ -290,14 +290,14 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_ShortHeader_RevertsInvalidPayloadLength() public {
+    function test_NFTBatch_ShortHeader_RevertsInvalidPayloadLength() public {
         // A packet shorter than the [version][msgType] header cannot even be routed.
         bytes memory packet = hex"02";
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.InvalidPayloadLength.selector, 1, 2));
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_TruncatedBody_Reverts() public {
+    function test_NFTBatch_TruncatedBody_Reverts() public {
         // Valid header but the abi.encode body is truncated — abi.decode rejects it (no misread).
         bytes memory packet =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V2, IntexNFT1155BridgeCodec.SEND, hex"deadbeef");
@@ -305,7 +305,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_OverCap_RevertsBatchTooLarge() public {
+    function test_NFTBatch_OverCap_RevertsBatchTooLarge() public {
         // Inbound decoded array length is capped at MAX_BATCH_SIZE.
         uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
         uint256[] memory tokenIds = new uint256[](over);
@@ -323,7 +323,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_ZeroRecipient_RevertsInvalidReceiver() public {
+    function test_NFTBatch_ZeroRecipient_RevertsInvalidReceiver() public {
         // An all-zero recipient passes the high-bit check but is explicitly rejected.
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = bytes32(0);
@@ -338,7 +338,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_MalformedTo_RevertsMalformedAddress() public {
+    function test_NFTBatch_MalformedTo_RevertsMalformedAddress() public {
         // A `to` with non-zero high bits is rejected before any crosschainMint (empty item arrays).
         bytes32 badTo = bytes32(uint256(1) << 200);
         bytes memory packet = abi.encodePacked(
@@ -352,7 +352,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_MalformedRecipient_RevertsMalformedAddress() public {
+    function test_NFTBatch_MalformedRecipient_RevertsMalformedAddress() public {
         // SEND_MULTI with one malformed recipient (non-zero high bits).
         bytes32 badRecipient = bytes32(uint256(1) << 200);
         bytes32[] memory recipients = new bytes32[](1);
@@ -368,7 +368,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_ZeroTo_RevertsInvalidReceiver() public {
+    function test_NFTBatch_ZeroTo_RevertsInvalidReceiver() public {
         // SEND branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
         // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the crosschainMint.
         bytes memory packet = abi.encodePacked(
@@ -384,7 +384,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
+    function test_NFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
         // SEND_MULTI cap parity to the SEND OverCap test — decodeMulti rejects oversize arrays
         // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
@@ -402,7 +402,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliverToBatch(packet);
     }
 
-    function test_ONFTBatch_MultiArrayMismatch_RevertsArrayLengthMismatch() public {
+    function test_NFTBatch_MultiArrayMismatch_RevertsArrayLengthMismatch() public {
         // SEND_MULTI array-length mismatch propagates the codec revert through dispatch.
         // recipients.length != tokenIds.length is enough to trip decodeMulti's guard.
         bytes32[] memory recipients = new bytes32[](2);

@@ -9,7 +9,7 @@ import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
-/// @dev UUPS coverage for both ONFT adapters — now both are ERC-7786 clients on a {MockERC7786Bridge}.
+/// @dev UUPS coverage for both NFT bridge clients — now both are ERC-7786 clients on a {MockERC7786Bridge}.
 contract IntexNFT1155BridgeUupsTest is CrossChainTest {
     uint32 internal constant B_CHAIN_ID = 2;
 

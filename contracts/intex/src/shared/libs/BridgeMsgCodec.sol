@@ -28,7 +28,7 @@ library BridgeMsgCodec {
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
-    /// @dev One system-wide cap (unified with the ONFT `MAX_BATCH_SIZE`). Derived from the binding
+    /// @dev One system-wide cap (unified with the bridge `MAX_BATCH_SIZE`). Derived from the binding
     ///      `maxMessageSize = 10_000` byte ceiling (bids ~128 B/item caps near 78) with
     ///      destination-gas headroom. Enforced OUTBOUND inside every `encode*` function (fail-fast
     ///      at the source) AND re-checked INBOUND inside the variable-length `decode*` functions
@@ -71,7 +71,7 @@ library BridgeMsgCodec {
     /// @dev Unified with the outbound `MAX_PAYLOAD_ARRAY_LEN` so inbound and outbound
     ///      agree on one number. The earlier value of 256 was the original ticket figure and is
     ///      physically unsendable: a bids batch is ~128 B/item, so 256 items is ~32 KB — over 3×
-    ///      LayerZero's send-side `maxMessageSize = 10_000` byte cap (an over-cap send reverts on
+    ///      ERC-7786's send-side `maxMessageSize = 10_000` byte cap (an over-cap send reverts on
     ///      the source chain). The real byte ceiling lands near 78 items; 64 sits under it with gas
     ///      headroom, and the outbound encoder already rejects anything larger.
     uint256 internal constant MAX_BIDS_BATCH = MAX_PAYLOAD_ARRAY_LEN;
@@ -134,7 +134,7 @@ library BridgeMsgCodec {
     error InvalidGreenDayFlag(uint8 got);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @dev Fail-fast on the source chain so the relayer learns before any LZ fee is burned.
+    /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
     /// @param got The actual array length the encoder was given.
     /// @param max The configured `MAX_PAYLOAD_ARRAY_LEN`.
     error PayloadArrayTooLong(uint256 got, uint256 max);

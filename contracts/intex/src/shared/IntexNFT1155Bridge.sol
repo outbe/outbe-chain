@@ -108,14 +108,14 @@ contract IntexNFT1155Bridge is
     // --- Single transfer ---
     /// @inheritdoc IIntexNFT1155Bridge
     function quoteSend(SendParam calldata _sendParam) external view returns (uint256) {
-        return _quoteFee(_sendParam.dstChainId, _buildSingleMsg(_sendParam), IntexGas.onftMint(1));
+        return _quoteFee(_sendParam.dstChainId, _buildSingleMsg(_sendParam), IntexGas.nftMint(1));
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
         token.crosschainBurn(msg.sender, _sendParam.tokenId, _sendParam.amount);
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(1));
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(1));
         emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.amount);
     }
 
@@ -135,7 +135,7 @@ contract IntexNFT1155Bridge is
     /// @inheritdoc IIntexNFT1155Bridge
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256) {
         return
-            _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.onftMint(_sendParam.tokenIds.length));
+            _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.nftMint(_sendParam.tokenIds.length));
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
@@ -149,7 +149,7 @@ contract IntexNFT1155Bridge is
             token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.tokenIds.length));
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
         emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.amounts);
     }
 
@@ -169,9 +169,7 @@ contract IntexNFT1155Bridge is
     /// @inheritdoc IIntexNFT1155Bridge
     function quoteMultiSend(MultiRecipientSendParam calldata _sendParam) external view returns (uint256) {
         return
-            _quoteFee(
-                _sendParam.dstChainId, _buildMultiMsg(_sendParam), IntexGas.onftMint(_sendParam.recipients.length)
-            );
+            _quoteFee(_sendParam.dstChainId, _buildMultiMsg(_sendParam), IntexGas.nftMint(_sendParam.recipients.length));
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
@@ -191,7 +189,7 @@ contract IntexNFT1155Bridge is
             token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.recipients.length));
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));
         emit MultiBridged(
             sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.amounts
         );
@@ -216,7 +214,7 @@ contract IntexNFT1155Bridge is
         uint256[] calldata amounts,
         uint32 dstChainId
     ) external view returns (uint256) {
-        return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts), IntexGas.onftMint(holders.length));
+        return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts), IntexGas.nftMint(holders.length));
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
@@ -237,7 +235,7 @@ contract IntexNFT1155Bridge is
         }
 
         // TargetRouter forwards the exact fee as msg.value; this adapter holds no float of its own.
-        sendId = _send(dstChainId, message, IntexGas.onftMint(len));
+        sendId = _send(dstChainId, message, IntexGas.nftMint(len));
         emit SystemBridged(sendId, dstChainId, tokenId, len);
     }
 
@@ -380,7 +378,7 @@ contract IntexNFT1155Bridge is
         bytes memory message = IntexNFT1155BridgeCodec.encodeMulti(
             IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
-        sendId = _send(f.srcChainId, message, IntexGas.onftMint(1));
+        sendId = _send(f.srcChainId, message, IntexGas.nftMint(1));
         emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.amount);
     }
 

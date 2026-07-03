@@ -297,7 +297,7 @@ contract EscrowAdapter is
 
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
-    function finalizeAuction(uint32 seriesId, bytes32 guid, FinalizationInstruction[] calldata instructions)
+    function finalizeAuction(uint32 seriesId, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
         external
         override
         onlyRole(RELAYER_ROLE)
@@ -324,7 +324,7 @@ contract EscrowAdapter is
         // back its state writes) and can be recovered via retryFinalize or claimRefund.
         for (uint256 i = 0; i < instructions.length; ++i) {
             FinalizationInstruction calldata inst = instructions[i];
-            try this.processFinalizationOne(seriesId, guid, inst) {
+            try this.processFinalizationOne(seriesId, receiveId, inst) {
                 totalRefunded += inst.refundedAmount;
                 totalPaid += inst.paidAmount;
                 ++bidsSettled;
@@ -341,12 +341,12 @@ contract EscrowAdapter is
                     failed.failedRefund = inst.refundedAmount;
                     failed.splitRecorded = true;
                 }
-                emit BidderRefundFailed(guid, seriesId, inst.bidder, reason);
+                emit BidderRefundFailed(receiveId, seriesId, inst.bidder, reason);
             }
             ++bidsProcessed;
         }
 
-        emit AuctionEscrowFinalized(guid, seriesId, totalRefunded, totalPaid, bidsProcessed);
+        emit AuctionEscrowFinalized(receiveId, seriesId, totalRefunded, totalPaid, bidsProcessed);
         // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
         if (bidsSettled == 0) emit FinalizationNoOp(seriesId, bidsProcessed);
     }
@@ -355,15 +355,17 @@ contract EscrowAdapter is
     ///         non-self call. Not part of the public surface — bundled here because Solidity
     ///         `try/catch` only works on external/public function calls.
     /// @param seriesId Series identifier.
-    /// @param guid Inbound LZ packet GUID threaded into the emitted events.
+    /// @param receiveId Inbound bridge message id threaded into the emitted events.
     /// @param inst Finalization instruction for the single bidder being processed.
-    function processFinalizationOne(uint32 seriesId, bytes32 guid, FinalizationInstruction calldata inst) external {
+    function processFinalizationOne(uint32 seriesId, bytes32 receiveId, FinalizationInstruction calldata inst)
+        external
+    {
         if (msg.sender != address(this)) revert NotSelf();
-        _processFinalizationInstruction(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        _processFinalizationInstruction(receiveId, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function retryFinalize(uint32 seriesId, bytes32 guid, FinalizationInstruction calldata inst)
+    function retryFinalize(uint32 seriesId, bytes32 receiveId, FinalizationInstruction calldata inst)
         external
         override
         onlyRole(RELAYER_ROLE)
@@ -372,8 +374,8 @@ contract EscrowAdapter is
         if (!_s().auctionEscrowState[seriesId].finalized) {
             revert NotFinalizedYet(seriesId);
         }
-        _processFinalizationInstruction(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
-        emit BidderRetried(guid, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        _processFinalizationInstruction(receiveId, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        emit BidderRetried(receiveId, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -577,13 +579,13 @@ contract EscrowAdapter is
     /// @notice Process a single finalization instruction: validate the split, mark the lock
     ///         `Finalized`, refund the bidder, and route the paid portion to the vault.
     /// @dev Reverts `AmountMismatch` when `refundedAmount + paidAmount != lockedAmount`.
-    /// @param guid Inbound LZ packet GUID threaded into the emitted refund/payout events.
+    /// @param receiveId Inbound bridge message id threaded into the emitted refund/payout events.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address.
     /// @param refundedAmount Amount to refund to the bidder.
     /// @param paidAmount Amount paid out to the vault.
     function _processFinalizationInstruction(
-        bytes32 guid,
+        bytes32 receiveId,
         uint32 seriesId,
         address bidder,
         uint128 refundedAmount,
@@ -612,14 +614,14 @@ contract EscrowAdapter is
 
         if (refundedAmount > 0) {
             $.paymentToken.safeTransfer(bidder, refundedAmount);
-            emit FundsRefunded(guid, seriesId, bidder, refundedAmount);
+            emit FundsRefunded(receiveId, seriesId, bidder, refundedAmount);
         }
 
         if (paidAmount > 0) {
             // Route through outbe-vault provider; shares accrue on the provider, not here.
             $.paymentToken.forceApprove(address($.vaultProvider), paidAmount);
             $.vaultProvider.depositLiquidity(address($.paymentToken), paidAmount);
-            emit FundsClaimed(guid, seriesId, bidder, paidAmount);
+            emit FundsClaimed(receiveId, seriesId, bidder, paidAmount);
         }
     }
 

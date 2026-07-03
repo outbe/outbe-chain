@@ -101,13 +101,13 @@ contract ReentrancyProbeDesis {
     }
 }
 
-/// @title MessengerReentrancyTest
+/// @title RouterReentrancyTest
 /// @notice Behavioural test that `TargetRouter.receiveMessage` and `OriginRouter.receiveMessage` run under
 ///         OZ `nonReentrant`.
 /// @dev A downstream callee (auction/desis) tries to re-enter the messenger's inbound entry mid-dispatch, through
 ///      the loopback bridge (so the bridge gate is cleared). The re-entry reverts with `ReentrancyGuardReentrantCall`
 ///      iff the `nonReentrant` modifier is active on `receiveMessage`.
-contract MessengerReentrancyTest is CrossChainTest {
+contract RouterReentrancyTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 

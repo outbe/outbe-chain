@@ -26,7 +26,7 @@ import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
 ///      drives `lzReceive` from the endpoint address, then asserts the downstream side-effect on
-///      the wired contract — proving the full _lzReceive -> dispatchInbound -> _handleX -> X path
+///      the wired contract — proving the full receiveMessage -> dispatchInbound -> _handleX -> X path
 ///      under the current fail-don't-drop model.
 contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;

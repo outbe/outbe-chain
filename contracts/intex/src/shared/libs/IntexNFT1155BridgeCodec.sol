@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 /**
  * @title IntexNFT1155BridgeCodec
  * @author Outbe
- * @notice Encode/decode for the `IntexNFT1155Bridge` LayerZero wire body.
+ * @notice Encode/decode for the `IntexNFT1155Bridge` ERC-7786 wire body.
  * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`.
  *
  *      The body migrated from a hand-rolled `abi.encodePacked` packed concat
@@ -28,7 +28,7 @@ library IntexNFT1155BridgeCodec {
 
     /// @notice System-wide cross-chain array cap (unified with `MAX_PAYLOAD_ARRAY_LEN`).
     /// @dev Enforced on the inbound decoded array length here and on the outbound crosschainBurn loop in the
-    ///      adapter, so an over-size batch fails fast on the source chain before paying an LZ fee.
+    ///      adapter, so an over-size batch fails fast on the source chain before paying a bridge fee.
     uint256 internal constant MAX_BATCH_SIZE = 64;
 
     /// @notice Length of the `[bodyVersion(1)][msgType(1)]` header that precedes `abi.encode(body)`.

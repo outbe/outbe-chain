@@ -230,7 +230,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeRefundInstructions(overCap);
     }
 
-    // --- Real payload-length ceiling vs the LayerZero message-size cap ---
+    // --- Real payload-length ceiling vs the ERC-7786 message-size cap ---
 
     /// @notice The send-side Executor `maxMessageSize` configured for these pathways
     ///         (`scripts/shared/layerzero.ts` → `LZ_INFRA.maxMessageSize`). A send whose
@@ -257,7 +257,7 @@ contract BridgeMsgCodecValidationTest is Test {
         );
     }
 
-    /// @notice Computes the real per-message array ceiling under the LZ byte cap and proves the
+    /// @notice Computes the real per-message array ceiling under the bridge byte cap and proves the
     ///         single system-wide `MAX_PAYLOAD_ARRAY_LEN = 64` clears every one of them. Run with
     ///         `-vv` to see the derived numbers (bids is the tightest at ~128 B/item).
     function test_RealPayloadByteCeiling_ClearsTheCap() public {

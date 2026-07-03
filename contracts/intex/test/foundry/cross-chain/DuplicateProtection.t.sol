@@ -11,9 +11,9 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
-/// @notice Duplicate-execution protection on the ONFT batch adapter.
+/// @notice Duplicate-execution protection on the NFT batch adapter.
 /// @dev Under ERC-7786 the messengers have NO message-level dedup — the hub deduplicates and rolls back, so the old
-///      LayerZero ORDERED `nextNonce` premise no longer exists at the messenger. The ONFT batch adapter, which
+///      ERC-7786 ORDERED `nextNonce` premise no longer exists at the messenger. The NFT batch adapter, which
 ///      carries independent transfers, keeps its OWN defence-in-depth dedup keyed by the bridge `receiveId`
 ///      (`processed[receiveId]`), rejecting a replay of the same message with `AlreadyProcessed(receiveId)`. A
 ///      `deliverLast()` replay reuses the same `receiveId`, so it exercises exactly this guard.
@@ -77,7 +77,7 @@ contract DuplicateProtectionTest is CrossChainTest {
 
     /// @notice A genuine batch send burns on the source and mints on the destination on first delivery. Replaying
     ///         the same message (`deliverLast`, same `receiveId`) is rejected with `AlreadyProcessed(receiveId)`.
-    function test_ONFTBatch_ReplayedMessage_RevertsAlreadyProcessed() public {
+    function test_NFTBatch_ReplayedMessage_RevertsAlreadyProcessed() public {
         // First delivery: auto-delivered by the send, mints on the destination.
         vm.prank(sender);
         batchSrc.batchSend(_batchSendParam(recipient));
@@ -93,7 +93,7 @@ contract DuplicateProtectionTest is CrossChainTest {
     /// @notice Two sends carrying distinct payloads → distinct receiveIds, so both land. Proves the guard keys on
     ///         the message id, not merely on the source. (Different recipients keep the payloads distinct, which the
     ///         loopback bridge needs since it binds the receiveId to the payload bytes.)
-    function test_ONFTBatch_DistinctMessages_BothSucceed() public {
+    function test_NFTBatch_DistinctMessages_BothSucceed() public {
         address other = address(0xCAFE);
 
         vm.prank(sender);
