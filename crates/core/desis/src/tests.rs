@@ -360,8 +360,7 @@ fn no_bids_last_batch_clears_as_no_sale() {
 
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
         assert_eq!(
@@ -392,8 +391,7 @@ fn clear_auction_allocates_up_to_supply() {
             bids(5, 200),
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
@@ -455,8 +453,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
             bids(3, 200),
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
 
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
@@ -511,8 +508,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
             three_bids,
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
         // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
@@ -550,8 +546,7 @@ fn clear_bids_below_min_price_skipped() {
             low_bids,
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -590,8 +585,7 @@ fn clear_refunds_equal_locked_minus_paid() {
             two_bids,
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
         // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
@@ -665,8 +659,7 @@ fn clear_rate_escrow_scales_by_basis() {
             rate_bids,
         )
         .unwrap();
-        let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
 
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.

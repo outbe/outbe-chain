@@ -13,8 +13,7 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
 /// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
-pub const ORIGIN_ROUTER_ADDRESS: Address =
-    address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
 
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;

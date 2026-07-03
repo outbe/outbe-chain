@@ -11,8 +11,7 @@ use outbe_intex::IntexState;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS,
-    POW_DIFFICULTY,
+    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
