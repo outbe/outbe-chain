@@ -94,6 +94,41 @@ contract EscrowAdapterTest is Test {
         assertTrue(escrow.allocatorId() > 0);
     }
 
+    function test_Wire_ResetsAllocatorOnCompactRotation() public {
+        uint96 allocatorBefore = escrow.allocatorId();
+        bytes12 lockTagBefore = escrow.lockTag();
+        assertTrue(allocatorBefore > 0);
+
+        // Rotate to a new Compact (setUp opened no locks). Bump its counter so a fresh
+        // registration yields a distinct allocatorId.
+        MockTheCompact compact2 = new MockTheCompact();
+        compact2.setResetPeriodSeconds(0);
+        compact2.__registerAllocator(address(0xDEAD), "");
+
+        vm.prank(admin);
+        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+
+        assertTrue(escrow.allocatorId() != allocatorBefore);
+        assertTrue(escrow.lockTag() != lockTagBefore);
+    }
+
+    function test_HasOutstandingLocks_ReflectsLockState() public {
+        assertFalse(escrow.hasOutstandingLocks());
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        assertTrue(escrow.hasOutstandingLocks());
+    }
+
+    function test_Wire_RevertsRotatingCompactWithLiveLocks() public {
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+
+        MockTheCompact compact2 = new MockTheCompact();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
+        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+    }
+
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));

@@ -198,6 +198,11 @@ contract EscrowAdapter is
             if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
             // Reset lockId so the first deposit under the new token/Compact re-bootstraps the lock.
             $.lockId = 0;
+            // A new Compact needs its own allocator registration; drop the stale allocatorId/lockTag.
+            if (rotatingCompact) {
+                $.allocatorId = 0;
+                $.lockTag = bytes12(0);
+            }
         }
 
         // Revoke role from the previous auction if rewiring.
@@ -498,6 +503,13 @@ contract EscrowAdapter is
     {
         AuctionEscrowState memory state = _s().auctionEscrowState[seriesId];
         return (state.lockCount > 0, state.finalized, state.totalLocked);
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function hasOutstandingLocks() external view override returns (bool) {
+        EscrowAdapterStorage storage $ = _s();
+        if ($.lockId == 0) return false;
+        return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
     }
 
     // --- Internal helpers ---

@@ -34,6 +34,7 @@ contract ONFT1155Adapter is
         address to;
         uint256 tokenId;
         uint256 amount;
+        uint32 srcChainId;
         bytes reason;
         bool exists;
     }
@@ -62,6 +63,8 @@ contract ONFT1155Adapter is
     error NotSelf();
     /// @notice No failed-crosschainMint entry exists for `receiveId`.
     error NoSuchFailedCrosschainMint(bytes32 receiveId);
+    /// @notice Parked entry carries no origin chainId (pre-upgrade entry); reclaim cannot route back.
+    error NoReclaimSource(bytes32 receiveId);
 
     /// @notice Emitted when an inbound transfer's `token.crosschainMint` reverts and is parked for retry.
     event CrosschainMintFailed(
@@ -75,6 +78,11 @@ contract ONFT1155Adapter is
 
     /// @notice Emitted when `retryCrosschainMint` successfully mints a previously failed transfer.
     event CrosschainMintRetried(bytes32 indexed receiveId);
+
+    /// @notice Emitted when a terminally-failed crosschainMint is reclaimed to its origin chain for re-mint.
+    event CrosschainMintReclaimed(
+        bytes32 indexed receiveId, uint32 indexed srcChainId, address indexed to, uint256 tokenId, uint256 amount
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _token, address bridge_) ERC7786MessengerBase(bridge_) {
@@ -167,8 +175,9 @@ contract ONFT1155Adapter is
         try this.crosschainMintOne(toAddress, tokenId_, amount_) {
             emit ONFTReceived(receiveId, srcChainId, toAddress, tokenId_, amount_);
         } catch (bytes memory reason) {
-            $.failedCrosschainMints[receiveId] =
-                FailedCrosschainMint({to: toAddress, tokenId: tokenId_, amount: amount_, reason: reason, exists: true});
+            $.failedCrosschainMints[receiveId] = FailedCrosschainMint({
+                to: toAddress, tokenId: tokenId_, amount: amount_, srcChainId: srcChainId, reason: reason, exists: true
+            });
             emit CrosschainMintFailed(srcChainId, receiveId, toAddress, tokenId_, amount_, reason);
         }
     }
@@ -187,6 +196,23 @@ contract ONFT1155Adapter is
         delete $.failedCrosschainMints[receiveId];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(receiveId);
+    }
+
+    /// @notice Permissionless reclaim of a crosschainMint the destination gate rejects terminally: re-mints the
+    ///         holder on the origin chain via a reverse transfer, the only exit that does not re-hit the
+    ///         destination lifecycle gate. Caller-funded; consumes the entry once (CEI delete first).
+    /// @param receiveId Inbound message id whose crosschainMint is stranded.
+    function reclaimToSource(bytes32 receiveId) external payable nonReentrant returns (bytes32 sendId) {
+        ONFT1155AdapterStorage storage $ = _as();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId);
+        if (f.srcChainId == 0) revert NoReclaimSource(receiveId);
+        delete $.failedCrosschainMints[receiveId];
+
+        (bytes memory message,) =
+            ONFT1155MsgCodec.encode(ONFT1155MsgCodec.addressToBytes32(f.to), f.tokenId, f.amount, "");
+        sendId = _send(f.srcChainId, message, IntexGas.onftMint(1));
+        emit CrosschainMintReclaimed(receiveId, f.srcChainId, f.to, f.tokenId, f.amount);
     }
 
     /// @inheritdoc IONFT1155Adapter

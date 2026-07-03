@@ -437,6 +437,125 @@ contract AuctionTest is Test {
         auction.wire(address(0xBEEF));
     }
 
+    function test_Wire_RevertsWhileLocksOutstanding() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250201;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
+        vm.prank(admin);
+        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
+        auction.wire(address(escrow2));
+    }
+
+    function test_Wire_SucceedsAfterLocksCleared() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250202;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        escrow.releaseAllLocks();
+        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
+        vm.prank(admin);
+        auction.wire(address(escrow2));
+        assertEq(address(auction.escrowContract()), address(escrow2));
+    }
+
+    function test_CancelCommit_AllowedWhenSignalNeverArrives() public {
+        uint32 seriesId = 20250210;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        // No green-day signal ever arrives; past issuanceEnd the stranded commit is reclaimable.
+        vm.warp(auction.getAuctionInfo(seriesId).schedule.issuanceEnd + 1);
+        vm.prank(iba1);
+        auction.cancelCommit(seriesId);
+
+        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+    }
+
+    function test_CancelCommit_BlockedAfterCommitEndBeforeIssuanceEnd() public {
+        uint32 seriesId = 20250211;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        // Past commitEnd but before issuanceEnd, signal still pending: cancel stays blocked.
+        uint32 commitEnd = auction.getAuctionInfo(seriesId).schedule.commitEnd;
+        vm.warp(commitEnd + 1);
+        vm.prank(iba1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.CommitWindowClosed.selector, commitEnd, commitEnd + 1));
+        auction.cancelCommit(seriesId);
+    }
+
+    function test_ReapAuction_ClearsRevealedBidsInPages() public {
+        uint32 seriesId = 20250220;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+
+        vm.prank(bridger);
+        auction.startRevealingBidsStage(seriesId, true);
+        vm.warp(uint256(sched.commitEnd) + 1);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+
+        vm.warp(uint256(sched.revealEnd) + 1);
+        vm.startPrank(bridger);
+        auction.startClearingStage(seriesId);
+        auction.executeAuctionClearing(seriesId, 100, 75, 2);
+        vm.stopPrank();
+
+        vm.expectRevert(IIntexAuction.TooEarlyToReap.selector);
+        auction.reapAuction(seriesId, 10);
+
+        vm.warp(uint256(sched.issuanceEnd) + 1);
+        auction.reapAuction(seriesId, 1);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(seriesId);
+        assertEq(afterPage1.length, 1);
+        auction.reapAuction(seriesId, 10);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(seriesId);
+        assertEq(afterPage2.length, 0);
+    }
+
+    function test_ReapAuction_RevertsBeforeTerminal() public {
+        uint32 seriesId = 20250221;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+        vm.prank(bridger);
+        auction.startRevealingBidsStage(seriesId, true);
+        vm.warp(uint256(sched.issuanceEnd) + 1);
+
+        // Green, past revealEnd, never cleared -> Issuance stage, not terminal.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.Completed,
+                IIntexAuction.AuctionStage.Issuance
+            )
+        );
+        auction.reapAuction(seriesId, 10);
+    }
+
+    function test_RevealBid_FreesCommitSlot() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250230;
+        _start(seriesId, 50, 1);
+        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+
+        _enterRevealStage(seriesId, startTs);
+        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+
+        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+    }
+
     function test_AccessControl_AuctionStart() public {
         uint32 seriesId = 20250123;
 
@@ -514,6 +633,28 @@ contract AuctionTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, uint32(3), uint32(2)));
         vm.prank(bridger);
         auction.executeAuctionClearing(seriesId, 100, 75, 3);
+    }
+
+    function test_ExecuteAuctionClearing_RevertsPromisOverflow() public {
+        uint256 startTs = block.timestamp;
+        uint32 seriesId = 20250199;
+        uint32 floor = 50;
+
+        IIntexAuction.AuctionParams memory params = _params(floor, 1);
+        params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
+        vm.prank(bridger);
+        auction.auctionStart(seriesId, _schedule(), params);
+
+        _enterRevealStage(seriesId, startTs);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.prank(bridger);
+        auction.startClearingStage(seriesId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
+        );
+        vm.prank(bridger);
+        auction.executeAuctionClearing(seriesId, type(uint32).max, floor, 0);
     }
 
     function test_ExecuteAuctionClearing_RevertsClearingRateBelowMin() public {

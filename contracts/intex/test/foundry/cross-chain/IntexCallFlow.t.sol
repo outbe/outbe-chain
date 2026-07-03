@@ -21,7 +21,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
  * @dev When Desis calls a series, the full cross-chain flow is:
  *      1. OriginMessenger sends MARK_CALLED to BSC.
  *      2. TargetMessenger marks the series as Called (transfers blocked).
- *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (self-funded from its adapter's float).
+ *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (funded from its own relay float).
  *      4. ONFT1155AdapterBatch burns Intex on BSC and, once delivered, mints on Outbe.
  *      Delivery is manual: each `sendMessage` records the payload on the loopback bridge, which we then hand-deliver
  *      to the destination as the authenticated peer.
@@ -30,7 +30,7 @@ contract IntexCallFlowTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    /// @dev Fee the loopback bridge charges; the relay-funded holders bridge draws it from the adapter float.
+    /// @dev Fee the loopback bridge charges; TargetMessenger pays it for the holders bridge from its own float.
     uint256 private constant BRIDGE_FEE = 0.001 ether;
 
     // --- BSC contracts ---
@@ -103,13 +103,13 @@ contract IntexCallFlowTest is CrossChainTest {
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
         intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(batchAdapterOutbe));
 
-        // ---- Pre-fund the BSC batch adapter float: systemMultiSend self-funds the bridge fee from it ----
-        vm.deal(address(batchAdapterBnb), 100 ether);
+        // ---- Pre-fund TargetMessenger's float: it pays the systemMultiSend bridge fee ----
+        vm.deal(address(bnbAdapter), 100 ether);
     }
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, uint32(21 days)));
     }
 
     // ============================================================
@@ -172,7 +172,7 @@ contract IntexCallFlowTest is CrossChainTest {
         assertEq(intexOutbe.balanceOf(holder3, TOKEN_ID), 20, "holder3 Outbe balance should be 20");
         assertEq(intexOutbe.totalSupply(TOKEN_ID), 100, "Outbe total supply should be 100");
 
-        // BSC series state is Called and deadline is derived from calledAt + default callPeriod
+        // BSC series state is Called and deadline is derived from calledAt + the series callPeriod
         IIntexNFT1155.SeriesData memory dataBnb = intexBnb.readData(SERIES_ID);
         assertEq(uint8(dataBnb.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(dataBnb.calledAt, calledAt);

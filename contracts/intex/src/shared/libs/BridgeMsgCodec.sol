@@ -301,7 +301,7 @@ library BridgeMsgCodec {
     /// @notice Issuance instructions payload — grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
     /// @dev `issuedIntexCount` mirrors the auction-cleared count; the destination chain
-    ///      pins it on `SeriesData` and `IntexNFT1155.mint`/`mintBatch` reject any mint
+    ///      pins it on `SeriesData` and `IntexNFT1155.mint` rejects any mint
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
         uint32 seriesId;

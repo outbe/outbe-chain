@@ -79,6 +79,11 @@ interface ITargetMessenger {
     /// @param tokenId Token id whose holders were bridged.
     event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
 
+    /// @notice Emitted when an issuance mint is parked after a recipient's ERC-1155 hook reverts.
+    event IssuanceMintDeferred(uint256 indexed idx, uint32 indexed seriesId, address indexed recipient, bytes reason);
+    /// @notice Emitted when `flushPendingIssuanceMint` successfully retries a parked mint.
+    event IssuanceMintFlushed(uint256 indexed idx, uint32 indexed seriesId);
+
     /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
     /// @param to Recipient of the swept native balance.
     /// @param amount Amount of native tokens (wei) swept.
@@ -114,6 +119,8 @@ interface ITargetMessenger {
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
     error NoSuchPendingHoldersRelay(uint256 idx);
+    /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
+    error NoSuchPendingIssuanceMint(uint256 idx);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
     error AlreadyFlushed(uint256 idx);
 

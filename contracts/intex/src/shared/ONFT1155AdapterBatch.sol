@@ -41,6 +41,7 @@ contract ONFT1155AdapterBatch is
         address to;
         uint256 tokenId;
         uint256 amount;
+        uint32 srcChainId;
         bytes reason;
         bool exists;
     }
@@ -190,6 +191,7 @@ contract ONFT1155AdapterBatch is
     /// @inheritdoc IONFT1155AdapterBatch
     function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
         external
+        payable
         onlyRole(SYSTEM_RELAYER_ROLE)
         nonReentrant
         returns (bytes32 sendId)
@@ -203,7 +205,7 @@ contract ONFT1155AdapterBatch is
             token.crosschainBurn(holders[i], tokenId, amounts[i]);
         }
 
-        // Relay-funded: msg.value is 0, so `_send` draws the fee from the pre-funded float.
+        // TargetMessenger forwards the exact fee as msg.value; this adapter holds no float of its own.
         sendId = _send(dstChainId, message, IntexGas.onftMint(len));
         emit SystemMultiSent(sendId, dstChainId, tokenId, len);
     }
@@ -303,8 +305,9 @@ contract ONFT1155AdapterBatch is
         // ok
         }
         catch (bytes memory reason) {
-            _bs().failedCrosschainMints[receiveId][idx] =
-                FailedCrosschainMint({to: to, tokenId: tokenId, amount: amount, reason: reason, exists: true});
+            _bs().failedCrosschainMints[receiveId][idx] = FailedCrosschainMint({
+                to: to, tokenId: tokenId, amount: amount, srcChainId: srcChainId, reason: reason, exists: true
+            });
             emit CrosschainMintFailed(srcChainId, receiveId, idx, to, tokenId, amount, reason);
         }
     }
@@ -323,6 +326,31 @@ contract ONFT1155AdapterBatch is
         delete $.failedCrosschainMints[receiveId][idx];
         token.crosschainMint(f.to, f.tokenId, f.amount);
         emit CrosschainMintRetried(receiveId, idx);
+    }
+
+    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints the holder
+    ///         on the origin chain via a reverse one-item transfer, the only exit that does not re-hit the
+    ///         destination lifecycle gate. Caller-funded; consumes the entry once (CEI delete first).
+    /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
+    /// @param idx Position of the stranded item in that batch.
+    function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
+        ONFT1155AdapterBatchStorage storage $ = _bs();
+        FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
+        if (f.srcChainId == 0) revert NoReclaimSource(receiveId, idx);
+        delete $.failedCrosschainMints[receiveId][idx];
+
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = bytes32(uint256(uint160(f.to)));
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = f.tokenId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = f.amount;
+        bytes memory message = ONFT1155BatchMsgCodec.encodeMulti(
+            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        );
+        sendId = _send(f.srcChainId, message, IntexGas.onftMint(1));
+        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.amount);
     }
 
     /// @inheritdoc IONFT1155AdapterBatch

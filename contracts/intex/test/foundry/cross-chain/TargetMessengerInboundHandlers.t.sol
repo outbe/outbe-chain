@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -20,6 +21,7 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
 /// @dev End-to-end traversal of the five `TargetMessenger` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
@@ -121,7 +123,7 @@ contract TargetMessengerInboundHandlersTest is CrossChainTest {
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
-    // --- _handleIssuanceInstructions: createSeries + mintBatch on the local IntexNFT1155 ---
+    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
     function test_handleIssuanceInstructions_createsSeriesAndMints() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;
@@ -149,6 +151,76 @@ contract TargetMessengerInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "bidder crosschainMinted 5 Issued tokens");
         assertEq(intex.totalSupply(tokenId), 5, "totalSupply == minted amount");
+    }
+
+    function _issuancePacket(address[] memory recipients, uint256[] memory quantities)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return BridgeMsgCodec.encodeIssuanceInstructions(
+            BridgeMsgCodec.IssuanceInstructionsPayload({
+                seriesId: SERIES_ID,
+                issuedIntexCount: ISSUED_INTEX_COUNT,
+                promisLoadMinor: PROMIS_LOAD_MINOR,
+                entryPriceMinor: ENTRY_PRICE,
+                floorPriceMinor: FLOOR_PRICE_MINOR,
+                intexCallPeriod: 0,
+                issuanceCurrency: 840,
+                referenceCurrency: REFERENCE_CURRENCY,
+                callWindowDays: 30,
+                callThresholdDays: 5,
+                callPriceMinor: 25e6,
+                recipients: recipients,
+                quantities: quantities
+            })
+        );
+    }
+
+    function test_handleIssuanceInstructions_RevertingRecipient_OthersMinted() public {
+        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
+        address[] memory recipients = new address[](2);
+        recipients[0] = bidder;
+        recipients[1] = address(bad);
+        uint256[] memory quantities = new uint256[](2);
+        quantities[0] = 5;
+        quantities[1] = 3;
+
+        _deliver(_issuancePacket(recipients, quantities));
+
+        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
+        assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
+        assertEq(bnbMessenger.nextPendingIssuanceMintIdx(), 1, "one mint parked");
+        (uint32 s, address r, uint256 q, bool exists, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        assertEq(s, SERIES_ID);
+        assertEq(r, address(bad));
+        assertEq(q, 3);
+        assertTrue(exists);
+        assertFalse(done);
+    }
+
+    function test_flushPendingIssuanceMint_afterFix() public {
+        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
+        address[] memory recipients = new address[](2);
+        recipients[0] = bidder;
+        recipients[1] = address(bad);
+        uint256[] memory quantities = new uint256[](2);
+        quantities[0] = 5;
+        quantities[1] = 3;
+        _deliver(_issuancePacket(recipients, quantities));
+
+        // Recipient stops reverting; the parked mint is retried permissionlessly.
+        bad.setReject(false);
+        bnbMessenger.flushPendingIssuanceMint(0);
+
+        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
+        (,,,, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        assertTrue(done);
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.AlreadyFlushed.selector, uint256(0)));
+        bnbMessenger.flushPendingIssuanceMint(0);
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---

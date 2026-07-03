@@ -214,14 +214,14 @@ contract PatternADeferTest is CrossChainTest {
         return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
     }
 
-    function test_TM_HoldersRelayDeferredOnBatchAdapterFloatStarved() public {
+    function test_TM_HoldersRelayDeferredOnMessengerFloatStarved() public {
         // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
         // The inbound MARK_CALLED triggers markCalled + the holders bridge.
         intex.mint(address(0xCAFE), 1, SERIES_ID);
 
-        // The batch adapter's float is unfunded while the bridge charges a fee, so `systemMultiSend`'s
-        // `_send` reverts `NotEnoughNative` → holders relay deferred.
-        assertEq(address(onftBatch).balance, 0);
+        // TargetMessenger's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
+        // fails → holders relay deferred.
+        assertEq(address(bnbMessenger).balance, 0);
 
         _deliverBridge(_markCalledPacket());
 
@@ -232,12 +232,12 @@ contract PatternADeferTest is CrossChainTest {
         assertFalse(done);
     }
 
-    function test_TM_FlushHoldersRelaySucceedsAfterAdapterTopUp() public {
+    function test_TM_FlushHoldersRelaySucceedsAfterMessengerTopUp() public {
         intex.mint(address(0xCAFE), 1, SERIES_ID);
         _deliverBridge(_markCalledPacket());
 
-        // systemMultiSend self-funds from the adapter's float, so top up the adapter (not the messenger).
-        vm.deal(address(onftBatch), 1 ether);
+        // TargetMessenger pays the bridge fee, so top up the messenger (not the adapter).
+        vm.deal(address(bnbMessenger), 1 ether);
 
         bnbMessenger.flushPendingHoldersRelay(0);
 
