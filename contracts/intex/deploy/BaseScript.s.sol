@@ -14,7 +14,7 @@ import {Create3Deploy} from "./Create3Deploy.sol";
 ///      on every chain. Proxy addresses then depend only on `(factory, deployer, salt)`.
 abstract contract BaseScript is Script {
     /// @notice Bump to move every deployment to a fresh set of addresses.
-    string internal constant SALT_VERSION = "v1.0.0";
+    string internal constant SALT_VERSION = "v2.0.0";
 
     /// @notice Pinned salt for the CREATE3 factory itself.
     bytes32 internal constant FACTORY_SALT = keccak256("outbe-intex:Create3Factory:v1.0.0");
