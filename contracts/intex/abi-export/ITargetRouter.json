@@ -149,7 +149,7 @@
           "internalType": "address"
         },
         {
-          "name": "onftBatchAdapter",
+          "name": "nftBridge",
           "type": "address",
           "internalType": "address"
         }

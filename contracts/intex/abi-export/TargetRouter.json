@@ -325,7 +325,7 @@
     },
     {
       "type": "function",
-      "name": "onftBatchAdapter",
+      "name": "nftBridge",
       "inputs": [],
       "outputs": [
         {
@@ -728,7 +728,7 @@
           "internalType": "address"
         },
         {
-          "name": "_onftBatchAdapter",
+          "name": "_nftBridge",
           "type": "address",
           "internalType": "address"
         }
