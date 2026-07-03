@@ -271,7 +271,11 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
         series_ids.push(outbe_intex::api::active_dist_at(storage, i)?);
     }
     for series_id in series_ids {
-        pay_chunk(storage, series_id, DIST_CHUNK_LIMIT)?;
+        // Per-series isolation: Err reverts the series' checkpoint, retried next block.
+        let res = storage.with_checkpoint(|| pay_chunk(storage, series_id, DIST_CHUNK_LIMIT));
+        if let Err(e) = res {
+            tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "distribution drain: skipping series");
+        }
     }
     Ok(())
 }

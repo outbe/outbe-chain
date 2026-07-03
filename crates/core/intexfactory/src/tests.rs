@@ -1030,3 +1030,37 @@ fn begin_block_drain_completes_active_distributions() {
         assert_eq!(s.balance(contrib(6)).unwrap(), U256::from(300u64));
     });
 }
+
+#[test]
+fn begin_block_drain_isolates_failing_series() {
+    with_factory(|s| {
+        outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
+            .unwrap();
+        outbe_intex::api::start_distribution(&s, 7, U256::from(100u64), U256::from(100u64))
+            .unwrap();
+
+        // Series 9 is unfunded: its first transfer fails mid-chunk.
+        outbe_intex::api::record_contributors(
+            &s,
+            9,
+            &[
+                (contrib(2), U256::from(100u64)),
+                (contrib(3), U256::from(500u64)),
+            ],
+        )
+        .unwrap();
+        outbe_intex::api::start_distribution(&s, 9, U256::from(600u64), U256::from(600u64))
+            .unwrap();
+
+        // The drain must not error: the failing series is skipped and rolled back.
+        runtime::drain_distributions(&s).unwrap();
+
+        assert_eq!(s.balance(contrib(1)).unwrap(), U256::from(100u64));
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+        let p = outbe_intex::api::get_progress(&s, 9).unwrap().unwrap();
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.paid_so_far, U256::ZERO);
+        assert_eq!(s.balance(contrib(2)).unwrap(), U256::ZERO);
+    });
+}
