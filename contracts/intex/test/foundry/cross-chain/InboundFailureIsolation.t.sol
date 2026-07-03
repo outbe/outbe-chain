@@ -162,6 +162,31 @@ contract InboundFailureIsolationTest is CrossChainTest {
         onftBatchBnb.retryCrosschainMint(receiveId, 1);
     }
 
+    function test_BatchReceive_ReclaimToSourceConsumesEntryAndSendsReverse() public {
+        address recipient = address(0xCAFE);
+        bytes memory packet = _batchPacket(recipient);
+        bytes32 receiveId = _receiveId(packet);
+
+        _deliverInbound(packet);
+
+        (,,,, bool exists) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        assertTrue(exists, "bad item parked at idx 1");
+
+        // Reclaim routes the stranded item back to its origin peer and consumes the entry.
+        onftBatchBnb.reclaimToSource(receiveId, 1);
+
+        (,,,, bool existsAfter) = onftBatchBnb.failedCrosschainMints(receiveId, 1);
+        assertFalse(existsAfter, "entry consumed on reclaim");
+
+        // The reverse packet is a one-item SEND_MULTI recorded on the bridge.
+        bytes memory reverse = bridge.lastPayload();
+        assertEq(uint8(reverse[1]), ONFT1155BatchMsgCodec.SEND_MULTI, "reverse is SEND_MULTI");
+
+        // A second reclaim reverts — the entry is gone.
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 1));
+        onftBatchBnb.reclaimToSource(receiveId, 1);
+    }
+
     function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
         bytes32 receiveId = bytes32(uint256(0xAAEE));
         vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 0));

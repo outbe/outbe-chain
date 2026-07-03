@@ -107,6 +107,22 @@ interface IONFT1155AdapterBatch {
     /// @param idx Position of the retried item in the original batch.
     event CrosschainMintRetried(bytes32 indexed receiveId, uint256 indexed idx);
 
+    /// @notice Emitted when a terminally-failed item is reclaimed to its origin chain for re-mint.
+    /// @param receiveId Inbound bridge message id whose item was reclaimed.
+    /// @param idx Position of the reclaimed item in the original batch.
+    /// @param srcChainId Origin chainId the reverse transfer was sent to.
+    /// @param to Holder re-minted on the origin chain.
+    /// @param tokenId Token ID reclaimed.
+    /// @param amount Amount reclaimed.
+    event CrosschainMintReclaimed(
+        bytes32 indexed receiveId,
+        uint256 indexed idx,
+        uint32 indexed srcChainId,
+        address to,
+        uint256 tokenId,
+        uint256 amount
+    );
+
     // --- Errors ---
     /// @notice Receiver address is zero.
     error InvalidReceiver();
@@ -140,6 +156,10 @@ interface IONFT1155AdapterBatch {
     /// @param receiveId Inbound bridge message id being retried.
     /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
     error NoSuchFailedCrosschainMint(bytes32 receiveId, uint256 idx);
+    /// @notice Parked entry carries no origin chainId (pre-upgrade entry); reclaim cannot route back.
+    /// @param receiveId Inbound bridge message id being reclaimed.
+    /// @param idx Position in the original batch.
+    error NoReclaimSource(bytes32 receiveId, uint256 idx);
 
     /// @notice Register (or clear) the matching adapter on `chainId` as an ERC-7930 interoperable address.
     /// @param chainId Destination/source chainId.
