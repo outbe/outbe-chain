@@ -166,6 +166,10 @@ interface IEscrowAdapter {
     /// @param bidsProcessed Number of instructions processed, all of which failed.
     event FinalizationNoOp(uint32 indexed seriesId, uint32 bidsProcessed);
 
+    /// @notice Emitted when the finalized-proceeds recipient is configured.
+    /// @param recipient Address receiving each series' finalized proceeds.
+    event ProceedsRecipientSet(address recipient);
+
     // --- Errors ---
 
     /// @notice Zero address provided.
@@ -200,6 +204,8 @@ interface IEscrowAdapter {
     error LiveLocksOutstanding(uint256 outstanding);
     /// @notice Self-call helper invoked by an external caller (only `address(this)` is allowed).
     error NotSelf();
+    /// @notice Finalization produced proceeds but no recipient is configured.
+    error ProceedsRecipientNotSet();
     /// @notice `retryFinalize` invoked before the series was finalized at least once.
     /// @param seriesId Series identifier.
     error NotFinalizedYet(uint32 seriesId);
@@ -246,6 +252,14 @@ interface IEscrowAdapter {
     /// @notice Active payment token used for bid escrow (the WCOEN OFT).
     /// @return The wired payment token.
     function paymentToken() external view returns (IERC20);
+
+    /// @notice Recipient of finalized auction proceeds (the messenger routing them cross-chain).
+    /// @return The configured recipient.
+    function proceedsRecipient() external view returns (address);
+
+    /// @notice Set the recipient of finalized auction proceeds.
+    /// @param recipient Address receiving each series' finalized proceeds.
+    function setProceedsRecipient(address recipient) external;
 
     // --- Bridge Finalization ---
 

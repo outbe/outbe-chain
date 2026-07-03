@@ -70,6 +70,8 @@ contract EscrowAdapter is
         mapping(uint32 seriesId => mapping(address bidder => BidLock)) bidLocks;
         /// @dev Per-series escrow state.
         mapping(uint32 seriesId => AuctionEscrowState) auctionEscrowState;
+        /// @dev Recipient of finalized auction proceeds (the messenger routing them cross-chain).
+        address proceedsRecipient;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -127,6 +129,18 @@ contract EscrowAdapter is
     /// @return The wired payment token.
     function paymentToken() external view override returns (IERC20) {
         return _s().paymentToken;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function proceedsRecipient() external view override returns (address) {
+        return _s().proceedsRecipient;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function setProceedsRecipient(address recipient) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (recipient == address(0)) revert ZeroAddress("recipient");
+        _s().proceedsRecipient = recipient;
+        emit ProceedsRecipientSet(recipient);
     }
 
     /// @notice The Compact resource lock ID for our deposits.
@@ -343,9 +357,11 @@ contract EscrowAdapter is
         // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
         if (bidsSettled == 0) emit FinalizationNoOp(seriesId, bidsProcessed);
 
-        // Hand proceeds to the caller (TargetMessenger) for cross-chain routing to the creators.
+        // Hand proceeds to the configured recipient (the messenger) for cross-chain routing.
         if (totalPaid > 0) {
-            $.paymentToken.safeTransfer(msg.sender, totalPaid);
+            address recipient = $.proceedsRecipient;
+            if (recipient == address(0)) revert ProceedsRecipientNotSet();
+            $.paymentToken.safeTransfer(recipient, totalPaid);
         }
     }
 

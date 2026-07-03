@@ -27,6 +27,7 @@ contract EscrowAdapterTest is Test {
     address bidder1 = address(5);
     address bidder2 = address(6);
     address outsider = address(7);
+    address proceedsRecipient = address(8);
 
     uint32 seriesId1 = 1;
     uint32 seriesId2 = 2;
@@ -56,6 +57,8 @@ contract EscrowAdapterTest is Test {
         // Wire dependencies (no allow-list precondition anymore).
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        vm.prank(admin);
+        escrow.setProceedsRecipient(proceedsRecipient);
 
         // Set reset period to 0 for immediate withdrawal in tests
         compact.setResetPeriodSeconds(0);
@@ -285,7 +288,7 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
-        uint256 relayerBalanceBefore = paymentToken.balanceOf(bridger);
+        uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
 
         // Finalize with full claim (winning bid)
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
@@ -298,9 +301,10 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         uint128 routed = escrow.finalizeAuction(seriesId1, GUID, instructions);
 
-        // Proceeds handed to the caller (messenger) for cross-chain routing, not the vault.
+        // Proceeds handed to the configured recipient for cross-chain routing, not the caller.
         assertEq(routed, LOCK_AMOUNT);
-        assertEq(paymentToken.balanceOf(bridger), relayerBalanceBefore + LOCK_AMOUNT);
+        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + LOCK_AMOUNT);
+        assertEq(paymentToken.balanceOf(bridger), 0);
 
         // Check accounting cleared
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
@@ -314,7 +318,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
 
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
-        uint256 relayerBalanceBefore = paymentToken.balanceOf(bridger);
+        uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
         uint128 refundedAmount = LOCK_AMOUNT * 30 / 100; // 30% refund
         uint128 paidAmount = LOCK_AMOUNT - refundedAmount; // 70% claim
 
@@ -330,9 +334,37 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, GUID, instructions);
 
-        // Bidder refunded their portion; proceeds handed to the caller, not the vault.
+        // Bidder refunded their portion; proceeds handed to the configured recipient.
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
-        assertEq(paymentToken.balanceOf(bridger), relayerBalanceBefore + paidAmount);
+        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + paidAmount);
+    }
+
+    function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
+        EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
+        vm.prank(admin);
+        freshEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        vm.prank(bidder1);
+        paymentToken.approve(address(freshEscrow), type(uint256).max);
+        vm.prank(auction);
+        freshEscrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+
+        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
+        instructions[0] =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
+
+        vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
+        vm.prank(bridger);
+        freshEscrow.finalizeAuction(seriesId1, GUID, instructions);
+    }
+
+    function test_SetProceedsRecipient_OnlyAdmin() public {
+        vm.expectRevert();
+        vm.prank(outsider);
+        escrow.setProceedsRecipient(outsider);
+
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "recipient"));
+        vm.prank(admin);
+        escrow.setProceedsRecipient(address(0));
     }
 
     function test_FinalizeAuction_MultipleBidders() public {
