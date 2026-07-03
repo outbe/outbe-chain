@@ -6,7 +6,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {BatchSendParam} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {BatchSendParam, IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + ONFT1155AdapterBatch pair:
 ///
@@ -130,6 +130,40 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);
         assertEq(totalAfterRetry, minted, "SI-09: sum preserved after retry");
+    }
+
+    function test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply() public {
+        // A series that exists on A but not B: bridging A→B parks on B (crosschainMint reverts).
+        uint32 parkSeries = 20260601;
+        uint256 parkTokenId = uint256(parkSeries);
+        tokenA.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
+        tokenA.markQualified(parkSeries);
+
+        uint256 minted = 100;
+        tokenA.mint(user, minted, parkSeries);
+
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
+
+        (,, uint256 parkedAmount,, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertTrue(exists, "parked on B");
+        assertEq(parkedAmount, minted, "park holds the in-flight units");
+        assertEq(tokenA.totalSupply(parkTokenId), 0, "A burned the bridged units");
+
+        // Retry can never clear it while B lacks the series; reclaim to the origin is the only exit.
+        adapterB.reclaimToSource(receiveId, 0);
+
+        (,,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
+        assertFalse(stillExists, "entry consumed on reclaim");
+
+        // Deliver the reverse SEND_MULTI on A → holder re-minted, global supply conserved end-to-end.
+        _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), bridge.lastPayload());
+        assertEq(tokenA.totalSupply(parkTokenId), minted, "A restored via reclaim");
+        assertEq(tokenB.totalSupply(parkTokenId), 0, "B holds nothing");
+        assertEq(tokenA.balanceOf(user, parkTokenId), minted, "holder whole on origin");
+
+        // A second reclaim reverts — the entry is gone.
+        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        adapterB.reclaimToSource(receiveId, 0);
     }
 
     function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 mintedSeed, uint256 bridgedSeed) public {

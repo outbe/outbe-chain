@@ -359,6 +359,56 @@
     },
     {
       "type": "event",
+      "name": "IssuanceMintDeferred",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "recipient",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceMintFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "MarkCalledReceived",
       "inputs": [
         {
@@ -495,6 +545,17 @@
     {
       "type": "error",
       "name": "NoSuchPendingHoldersRelay",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoSuchPendingIssuanceMint",
       "inputs": [
         {
           "name": "idx",

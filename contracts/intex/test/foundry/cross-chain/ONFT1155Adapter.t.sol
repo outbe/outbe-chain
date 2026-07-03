@@ -305,6 +305,46 @@ contract ONFT1155AdapterTest is CrossChainTest {
         adapterB.retryCrosschainMint(receiveId);
     }
 
+    function test_inboundCrosschainMintFailure_reclaimToSourceRestoresOrigin() public {
+        // Park an inbound on B for a series that exists on A only.
+        uint32 failSeries = 20260402;
+        uint256 failTokenId = uint256(failSeries);
+        tokenA.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
+        tokenA.markQualified(failSeries);
+        tokenA.mint(user, AMOUNT, failSeries);
+
+        SendParam memory sendParam = SendParam({
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, amount: AMOUNT
+        });
+        uint256 fee = adapterA.quoteSend(sendParam);
+        vm.prank(user);
+        adapterA.send{value: fee}(sendParam);
+
+        bytes memory packet = bridge.lastPayload();
+        bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), packet));
+        _deliverAToB();
+
+        assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
+        (,,,, bool parked) = adapterB.failedCrosschainMints(receiveId);
+        assertTrue(parked, "parked on B");
+
+        // Reclaim: B sends the transfer back to its origin A — the only exit that skips B's gate.
+        vm.prank(user);
+        adapterB.reclaimToSource{value: FEE}(receiveId);
+
+        (,,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId);
+        assertFalse(stillParked, "entry consumed");
+
+        // Deliver the reverse packet on A → holder re-minted, cross-chain supply conserved.
+        _deliverBToA();
+        assertEq(tokenA.balanceOf(user, failTokenId), AMOUNT, "holder re-minted on origin");
+        assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
+
+        // A second reclaim reverts — the entry is gone.
+        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, receiveId));
+        adapterB.reclaimToSource(receiveId);
+    }
+
     function test_retryCrosschainMint_revertsForUnknownReceiveId() public {
         bytes32 unknown = bytes32(uint256(0xABCD));
         vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, unknown));
