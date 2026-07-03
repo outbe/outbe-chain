@@ -6839,6 +6839,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
 
@@ -6889,6 +6890,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-tribute",
+ "outbe-vaultprovider",
 ]
 
 [[package]]
@@ -6996,6 +6998,7 @@ dependencies = [
  "outbe-tribute",
  "outbe-tributefactory",
  "outbe-validatorset",
+ "outbe-vaultprovider",
  "outbe-zerofee",
  "outbe-zkproof",
  "proptest",
@@ -7074,6 +7077,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
+ "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
 
@@ -7140,8 +7144,10 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promisfactory",
+ "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -7280,6 +7286,7 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
+ "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",
 ]
@@ -7611,6 +7618,17 @@ dependencies = [
  "rand_chacha 0.3.1",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "outbe-vaultprovider"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

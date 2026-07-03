@@ -1,13 +1,13 @@
 import { JsonRpcProvider, Wallet, parseUnits } from 'ethers';
 import { chains, privateKey, ROUTER, INPUT_TOKEN, OUTPUT_TOKEN, FILL_DEADLINE_SECONDS } from '../config';
-import { LayerZeroRouter__factory, ERC20__factory } from '../typechain';
-import type { OnchainCrossChainOrderStruct } from '../typechain/LayerZeroRouter';
+import { Router__factory, ERC20__factory } from '../typechain';
+import type { OnchainCrossChainOrderStruct } from '../typechain/Router';
 import * as OrderEncoder from '../lib/OrderEncoder';
 import { estimateGasWithBuffer } from '../lib/gasEstimation';
 import { getTokenDecimals, getTokenSymbol, isNativeToken } from '../lib/common';
 
 /**
- * Open a LayerZeroRouter cross-chain order.
+ * Open a Router cross-chain order.
  *
  * Usage: tsx scripts/open_order.ts <origin> <dest> <amountIn> [amountOut]
  *
@@ -16,7 +16,7 @@ import { getTokenDecimals, getTokenSymbol, isNativeToken } from '../lib/common';
  *   tsx scripts/open_order.ts bsc sepolia 1 0.5
  */
 async function main() {
-  console.log('LayerZeroRouter - Open Order\n');
+  console.log('Router - Open Order\n');
 
   const [originChain = 'bsc', destChain = 'sepolia', amountIn = '1', amountOut = amountIn] =
     process.argv.slice(2);
@@ -35,7 +35,7 @@ async function main() {
   const wallet = new Wallet(privateKey!, provider);
   const userAddress = await wallet.getAddress();
 
-  const router = LayerZeroRouter__factory.connect(ROUTER, wallet);
+  const router = Router__factory.connect(ROUTER, wallet);
 
   const [inputDecimals, outputDecimals, symbol] = await Promise.all([
     getTokenDecimals(INPUT_TOKEN, provider),

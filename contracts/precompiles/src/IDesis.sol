@@ -17,12 +17,14 @@ interface IDesis {
     }
 
     // --- Bid ingestion / clearing (from OriginMessenger) ---
-    /// @notice Accept a relayed bid batch from BNB.
+    /// @notice Accept a relayed bid batch from BNB. Batches of one `relayGeneration` may arrive in any order over
+    ///         the unordered bridge; the receiver collects all `totalBatches` (by `batchIndex`) before finalizing.
     function processBidsBatch(
         uint32 seriesId,
-        uint32 srcEid,
-        bool isLast,
+        uint32 srcChainId,
         uint32 relayGeneration,
+        uint16 batchIndex,
+        uint16 totalBatches,
         address[] calldata bidderAddresses,
         uint16[] calldata intexQuantities,
         uint32[] calldata intexBidRates,
@@ -41,8 +43,7 @@ interface IDesis {
 
     // --- Events ---
     event AuctionCreated(uint32 indexed seriesId);
-    event BidsReceived(uint32 indexed seriesId, uint32 srcEid, uint256 bidsCount);
-    event AuctionCancelledNoBids(uint32 indexed seriesId);
+    event BidsReceived(uint32 indexed seriesId, uint32 srcChainId, uint256 bidsCount);
     event AuctionCancelledRedDay(uint32 indexed seriesId);
     event AuctionCleared(uint32 indexed seriesId, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed seriesId, uint64 totalDemand);

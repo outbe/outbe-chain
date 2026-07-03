@@ -1,90 +1,92 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
-import {MessagingFee, Origin} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {EnforcedOptionParam} from "@layerzerolabs/oapp-evm/oapp/interfaces/IOAppOptionsType3.sol";
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title PayNativeAccountingTest
-/// @notice Behavioural coverage for `_payNative` on both messengers ( for `TargetMessenger`,
-/// for `OriginMessenger`): each distinguishes entry-funded (`msg.value > 0`) and
-///         relay-funded (`msg.value == 0`) callers. Entry callers' excess is refunded back to them;
-///         relay sends draw from the pre-funded native float. Conflating the two would let an entry
-///         caller's `msg.value` silently seed future relay sends without refund, or let an entry
-///         caller drain the relay float. Also covers `OriginMessenger.sweepNative` float recovery.
-/// @dev TM relay-path coverage lives in `PatternADefer.t.sol::test_TM_FlushBidsRelaySucceedsAfterTopUp`
-///      — that test exercises `_payNative` with `msg.value == 0` and pre-funded balance > 0.
-contract PayNativeAccountingTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
+/// @notice Behavioural coverage for the native-fee funding logic that {ERC7786MessengerBase-_send} owns for every
+///         intex bridge client. Two calling conventions are distinguished:
+///           * entry-funded (`msg.value > 0`): the send must cover the quoted fee and refund the excess to the
+///             caller, so an entry caller's buffer never silently seeds (or drains) the contract's relay float;
+///           * relay-funded (`msg.value == 0`): a chain-native module that cannot attach value triggered the send, so
+///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
+///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
+///         an entry caller drain the relay float.
+/// @dev Entry path is driven through `TargetMessenger.sendBidsBatch` (payable, `AUCTION_ROLE`). The relay/float path
+///      is driven both directly (`ONFT1155AdapterBatch.systemMultiSend`, not payable → `msg.value == 0`) and through
+///      an inbound MARK_CALLED delivery whose `_handleMarkCalled` handler fires that same relay from inside
+///      `receiveMessage` — the canonical `msg.value == 0` relay send.
+contract PayNativeAccountingTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant BNB_EID = 1;
-    uint32 internal constant OUTBE_EID = 2;
+    /// @dev Positive fee the loopback bridge charges; every send must fund this from `msg.value` or the float.
+    uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetMessenger internal bnbMessenger;
     OriginMessenger internal outbeMessenger;
-    ONFT1155AdapterBatch internal onftBatchBnb;
+    ONFT1155AdapterBatch internal onftBatch;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
     address internal auctionRole = address(0xA11C7);
-    address internal desis;
-    address internal omRelayer = address(0x0021E1);
 
     uint32 internal constant SERIES_ID = 20260501;
+    uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
+    address internal holder = address(0xCAFE);
 
-    function setUp() public override {
-        super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+    function setUp() public {
+        _setUpBridge();
+        // A positive fee is what makes the funding branches observable: entry sends must be covered and refunded,
+        // relay sends must draw a non-zero amount from the float.
+        bridge.setFee(BRIDGE_FEE);
 
-        desis = address(new MockDesis());
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        outbeMessenger = DeployProxy.originMessenger(address(endpoints[OUTBE_EID]), admin, BNB_EID);
-        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(endpoints[BNB_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
 
-        address[] memory bridge = new address[](2);
-        bridge[0] = address(bnbMessenger);
-        bridge[1] = address(outbeMessenger);
-        this.wireOApps(bridge);
+        // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
+        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
+        outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
+        onftBatch.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatch)));
 
-        // Wire TM with stand-in dependencies; `auctionRole` is granted AUCTION_ROLE so it can
-        // call `sendBidsBatch` directly (the role is normally granted to the auction contract).
-        bnbMessenger.wire(auctionRole, address(intex), admin, address(onftBatchBnb));
-        outbeMessenger.wire(desis, makeAddr("factory"));
+        // Wire TM with a stub auction and the batch adapter; `auctionRole` gets AUCTION_ROLE so it can call
+        // `sendBidsBatch` directly (that role is normally held by the auction contract).
+        StubAuction stubAuction = new StubAuction();
+        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(onftBatch));
+        bnbMessenger.grantRole(bnbMessenger.AUCTION_ROLE(), auctionRole);
 
-        // Configure enforcedOptions so `combineOptions` returns a valid LZ options blob and the
-        // ULN doesn't reject the outbound send.
-        bytes memory bidsOptions = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-        EnforcedOptionParam[] memory params = new EnforcedOptionParam[](1);
-        params[0] = EnforcedOptionParam({eid: OUTBE_EID, msgType: BridgeMsgCodec.MSG_BIDS_BATCH, options: bidsOptions});
-        bnbMessenger.setEnforcedOptions(params);
+        // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
+        // Intex. `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
+        // series is Called, so the adapter needs both roles on the token.
+        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
+        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), admin);
+        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(onftBatch));
+        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatch));
+        intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
 
-        // OriginMessenger side: a clearing-stage send needs valid options and a
-        // DESIS_ROLE caller. `omRelayer` stands in for the chain-native module / operator.
-        EnforcedOptionParam[] memory omParams = new EnforcedOptionParam[](1);
-        omParams[0] = EnforcedOptionParam({
-            eid: BNB_EID, msgType: BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, options: bidsOptions
-        });
-        outbeMessenger.setEnforcedOptions(omParams);
-        outbeMessenger.grantRole(outbeMessenger.DESIS_ROLE(), omRelayer);
+        // Series + one holder so markCalled + holder enumeration produce a non-empty relay.
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.markQualified(SERIES_ID);
+        intex.mint(holder, 1, SERIES_ID);
     }
 
     function _bidsParams() internal view returns (ITargetMessenger.BidsBatchParams memory params) {
         address[] memory bidders = new address[](1);
-        bidders[0] = address(0xCAFE);
+        bidders[0] = address(0xB1D);
         uint16[] memory qty = new uint16[](1);
         qty[0] = 1;
         uint32[] memory rate = new uint32[](1);
@@ -93,203 +95,210 @@ contract PayNativeAccountingTest is TestHelperOz5 {
         ts[0] = uint32(block.timestamp);
 
         params = ITargetMessenger.BidsBatchParams({
-            seriesId: SERIES_ID,
-            bidderAddresses: bidders,
-            intexQuantities: qty,
-            intexBidRates: rate,
-            timestamps: ts,
-            extraOptions: "",
-            refundAddress: address(0)
+            seriesId: SERIES_ID, bidderAddresses: bidders, intexQuantities: qty, intexBidRates: rate, timestamps: ts
         });
     }
 
+    function _holderArrays() internal view returns (address[] memory holders, uint256[] memory amounts) {
+        holders = new address[](1);
+        holders[0] = holder;
+        amounts = new uint256[](1);
+        amounts[0] = 1;
+    }
+
     // ---------------------------------------------------------------
-    // Entry path — msg.value handling
+    // Entry path — msg.value handling (sendBidsBatch)
     // ---------------------------------------------------------------
 
-    function test_PayNative_EntryExactMatchSucceeds() public {
+    function test_Entry_ExactFeeLeavesNoFloat() public {
         ITargetMessenger.BidsBatchParams memory params = _bidsParams();
-        MessagingFee memory fee = bnbMessenger.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
+        assertEq(fee, BRIDGE_FEE, "fee mirrors the positive bridge fee");
 
-        vm.deal(auctionRole, fee.nativeFee);
-        uint256 contractBefore = address(bnbMessenger).balance;
+        vm.deal(auctionRole, fee);
+        uint256 floatBefore = address(bnbMessenger).balance;
 
         vm.prank(auctionRole);
-        bnbMessenger.sendBidsBatch{value: fee.nativeFee}(params, fee);
+        bnbMessenger.sendBidsBatch{value: fee}(params);
 
-        // Contract balance unchanged — `msg.value` flowed through to the endpoint exactly,
-        // no excess seeded the relay budget.
-        assertEq(address(bnbMessenger).balance, contractBefore, "no leakage on exact-match entry");
+        // `msg.value` flowed through to the bridge exactly; nothing seeded the relay float.
+        assertEq(address(bnbMessenger).balance, floatBefore, "no leakage on exact-fee entry");
         assertEq(auctionRole.balance, 0, "caller paid the full fee");
     }
 
-    function test_PayNative_EntryExcessIsRefundedToCaller() public {
+    function test_Entry_ExcessIsRefundedToCaller() public {
         ITargetMessenger.BidsBatchParams memory params = _bidsParams();
-        MessagingFee memory fee = bnbMessenger.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
         uint256 buffer = 0.5 ether;
-        vm.deal(auctionRole, fee.nativeFee + buffer);
-        uint256 contractBefore = address(bnbMessenger).balance;
+        vm.deal(auctionRole, fee + buffer);
+        uint256 floatBefore = address(bnbMessenger).balance;
 
         vm.prank(auctionRole);
-        bnbMessenger.sendBidsBatch{value: fee.nativeFee + buffer}(params, fee);
+        bnbMessenger.sendBidsBatch{value: fee + buffer}(params);
 
-        // Contract balance unchanged — excess refunded out of `_payNative`, not retained for
-        // future relay sends.
-        assertEq(address(bnbMessenger).balance, contractBefore, "excess must not seed relay budget");
+        // Excess refunded out of `_send`, not retained for future relay sends.
+        assertEq(address(bnbMessenger).balance, floatBefore, "excess must not seed the relay float");
         assertEq(auctionRole.balance, buffer, "caller refunded the excess");
     }
 
-    function test_PayNative_EntryInsufficientRevertsMsgValueBelowFee() public {
+    function test_Entry_BelowFeeRevertsMsgValueBelowFee() public {
         ITargetMessenger.BidsBatchParams memory params = _bidsParams();
-        MessagingFee memory fee = bnbMessenger.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
-        uint256 short = fee.nativeFee - 1;
-        vm.deal(auctionRole, fee.nativeFee);
+        uint256 short = fee - 1;
+        vm.deal(auctionRole, fee);
 
         vm.prank(auctionRole);
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.MsgValueBelowFee.selector, short, fee.nativeFee));
-        bnbMessenger.sendBidsBatch{value: short}(params, fee);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, short, fee));
+        bnbMessenger.sendBidsBatch{value: short}(params);
     }
 
-    /// @notice Pin the no-leakage invariant across an entry-followed-by-entry sequence: the
-    ///         second entry must not see the first's `msg.value` accumulated as balance.
-    function test_PayNative_EntryDoesNotLeakIntoRelayBudget() public {
+    /// @notice Pin the no-leakage invariant across an entry-followed-by-entry sequence: the second entry must not see
+    ///         the first's `msg.value` accumulated as float.
+    function test_Entry_DoesNotLeakIntoFloatAcrossSends() public {
         ITargetMessenger.BidsBatchParams memory params = _bidsParams();
-        MessagingFee memory fee = bnbMessenger.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
         uint256 buffer = 1 ether;
-        vm.deal(auctionRole, (fee.nativeFee + buffer) * 2);
-        uint256 contractBefore = address(bnbMessenger).balance;
+        vm.deal(auctionRole, (fee + buffer) * 2);
+        uint256 floatBefore = address(bnbMessenger).balance;
 
         vm.prank(auctionRole);
-        bnbMessenger.sendBidsBatch{value: fee.nativeFee + buffer}(params, fee);
-
-        // After the first send, contract balance must be unchanged (excess refunded).
-        assertEq(address(bnbMessenger).balance, contractBefore, "first entry: no leakage");
+        bnbMessenger.sendBidsBatch{value: fee + buffer}(params);
+        assertEq(address(bnbMessenger).balance, floatBefore, "first entry: no leakage");
 
         vm.prank(auctionRole);
-        bnbMessenger.sendBidsBatch{value: fee.nativeFee + buffer}(params, fee);
-
-        // After the second send, still unchanged.
-        assertEq(address(bnbMessenger).balance, contractBefore, "second entry: no leakage");
-        // Caller has both excess refunds.
+        bnbMessenger.sendBidsBatch{value: fee + buffer}(params);
+        assertEq(address(bnbMessenger).balance, floatBefore, "second entry: no leakage");
         assertEq(auctionRole.balance, 2 * buffer, "both excess values refunded");
     }
 
-    // ---------------------------------------------------------------
-    // OriginMessenger — relay-funded _payNative + float
-    // ---------------------------------------------------------------
-
-    function _omClearingFee() internal view returns (MessagingFee memory) {
-        return outbeMessenger.quoteSendAuctionStageClearing(SERIES_ID, "", false);
-    }
-
-    function test_OM_PayNative_RelayFundedDrawsFromFloat() public {
-        MessagingFee memory fee = _omClearingFee();
-        vm.deal(address(outbeMessenger), fee.nativeFee + 1 ether); // pre-funded relay float
-        uint256 floatBefore = address(outbeMessenger).balance;
-
-        vm.prank(omRelayer);
-        outbeMessenger.sendAuctionStageClearing{value: 0}(SERIES_ID, "", fee, omRelayer);
-
-        assertEq(address(outbeMessenger).balance, floatBefore - fee.nativeFee, "relay fee drawn from float");
-    }
-
-    function test_OM_PayNative_EntryExcessRefundedNoFloatLeak() public {
-        MessagingFee memory fee = _omClearingFee();
-        uint256 buffer = 0.5 ether;
-        vm.deal(omRelayer, fee.nativeFee + buffer);
-        uint256 floatBefore = address(outbeMessenger).balance; // 0
-
-        vm.prank(omRelayer);
-        outbeMessenger.sendAuctionStageClearing{value: fee.nativeFee + buffer}(SERIES_ID, "", fee, omRelayer);
-
-        assertEq(address(outbeMessenger).balance, floatBefore, "entry buffer must not seed the float");
-        assertEq(omRelayer.balance, buffer, "buffer refunded to the caller");
-    }
-
-    function test_OM_PayNative_EntryInsufficientRevertsMsgValueBelowFee() public {
-        MessagingFee memory fee = _omClearingFee();
-        uint256 short = fee.nativeFee - 1;
-        vm.deal(omRelayer, fee.nativeFee);
-
-        vm.prank(omRelayer);
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.MsgValueBelowFee.selector, short, fee.nativeFee));
-        outbeMessenger.sendAuctionStageClearing{value: short}(SERIES_ID, "", fee, omRelayer);
-    }
-
-    function test_OM_PayNative_RelayInsufficientFloatReverts() public {
-        MessagingFee memory fee = _omClearingFee();
-        vm.deal(address(outbeMessenger), fee.nativeFee - 1); // float below the fee
-
-        vm.prank(omRelayer);
-        vm.expectRevert(); // OAppSender.NotEnoughNative(balance) — relay path, msg.value == 0
-        outbeMessenger.sendAuctionStageClearing{value: 0}(SERIES_ID, "", fee, omRelayer);
-    }
-
-    function test_OM_SweepNative_AdminRecoversFloat() public {
-        vm.deal(address(outbeMessenger), 3 ether);
-        address payable to = payable(address(0x5EE3));
-
-        outbeMessenger.sweepNative(to, 1 ether);
-
-        assertEq(to.balance, 1 ether, "recipient received the swept amount");
-        assertEq(address(outbeMessenger).balance, 2 ether, "remainder stays as float");
-    }
-
-    function test_OM_SweepNative_NonAdminReverts() public {
-        vm.deal(address(outbeMessenger), 1 ether);
-        vm.prank(omRelayer); // DESIS_ROLE, not DEFAULT_ADMIN_ROLE
-        vm.expectRevert();
-        outbeMessenger.sweepNative(payable(omRelayer), 1 ether);
-    }
-
-    function test_OM_SweepNative_OverBalanceReverts() public {
-        vm.deal(address(outbeMessenger), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
-        outbeMessenger.sweepNative(payable(address(0xBEEF)), 2 ether);
-    }
-
-    function test_OM_SweepNative_ZeroRecipientReverts() public {
-        vm.deal(address(outbeMessenger), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "to"));
-        outbeMessenger.sweepNative(payable(address(0)), 1 ether);
-    }
-
-    function test_PayNative_EntryRefundFails_RevertsRefundFailed() public {
-        // Parallel to the OM RefundFailed pin: TM's _payNative refunds excess to msg.sender via
-        // `.call{value: refund}("")`. A caller whose receive() reverts trips the same guard.
+    function test_Entry_RefundFailsRevertsRefundFailed() public {
+        // `_send` refunds excess to msg.sender via `.call{value: refund}("")`; a caller whose receive() reverts trips
+        // the RefundFailed guard. Without it, a refactor that swallowed the .call return would silently seed the
+        // relay float with the entry caller's excess.
         BidsRefundRejector rejector = new BidsRefundRejector(address(bnbMessenger));
         bnbMessenger.grantRole(bnbMessenger.AUCTION_ROLE(), address(rejector));
 
         ITargetMessenger.BidsBatchParams memory params = _bidsParams();
-        MessagingFee memory fee = bnbMessenger.quoteSendBidsBatch(params, false);
+        uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
         uint256 buffer = 0.3 ether;
-        vm.deal(address(rejector), fee.nativeFee + buffer);
+        vm.deal(address(rejector), fee + buffer);
 
-        vm.expectRevert(ITargetMessenger.RefundFailed.selector);
-        rejector.callSendBidsBatch{value: fee.nativeFee + buffer}(params, fee);
+        vm.expectRevert(ERC7786MessengerBase.RefundFailed.selector);
+        rejector.callSendBidsBatch{value: fee + buffer}(params);
     }
 
-    function test_OM_PayNative_EntryRefundFails_RevertsRefundFailed() public {
-        // _payNative refunds excess to msg.sender via `.call{value: refund}("")`. If the caller
-        // is a contract whose receive() reverts, the refund leg fails and _payNative reverts.
-        // Without this pin, a future refactor that swallows the .call return value would seed
-        // the relay float with the entry caller's excess instead of returning RefundFailed.
-        RefundRejectingCaller rejector = new RefundRejectingCaller(address(outbeMessenger));
-        outbeMessenger.grantRole(outbeMessenger.DESIS_ROLE(), address(rejector));
+    // ---------------------------------------------------------------
+    // System bridge funding — TargetMessenger forwards the quoted fee
+    // ---------------------------------------------------------------
 
-        MessagingFee memory fee = _omClearingFee();
-        uint256 buffer = 0.3 ether;
-        vm.deal(address(rejector), fee.nativeFee + buffer);
+    function test_SystemMultiSend_UnderfundedReverts() public {
+        (address[] memory holders, uint256[] memory amounts) = _holderArrays();
+        // The caller must cover the fee; forwarding less than the quote reverts.
+        vm.deal(address(this), BRIDGE_FEE);
 
-        vm.expectRevert(IOriginMessenger.RefundFailed.selector);
-        rejector.callSendAuctionStageClearing{value: fee.nativeFee + buffer}(SERIES_ID, "", fee);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, BRIDGE_FEE - 1, BRIDGE_FEE)
+        );
+        onftBatch.systemMultiSend{value: BRIDGE_FEE - 1}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+    }
+
+    function test_SystemMultiSend_CallerFundedDrawsFee() public {
+        (address[] memory holders, uint256[] memory amounts) = _holderArrays();
+
+        vm.deal(address(this), BRIDGE_FEE);
+
+        onftBatch.systemMultiSend{value: BRIDGE_FEE}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+
+        // The caller's value covered the fee and the universal adapter kept nothing.
+        assertEq(bridge.lastValue(), BRIDGE_FEE, "bridge received the forwarded fee");
+        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
+    }
+
+    // ---------------------------------------------------------------
+    // Relay / float path — fired from inside receiveMessage (MARK_CALLED)
+    // ---------------------------------------------------------------
+
+    /// @dev The inbound MARK_CALLED handler fires the holders relay, funding it from TargetMessenger's float. With
+    ///      that float empty the forwarded-value call fails, which the handler catches and parks for later flush.
+    function test_Relay_InsideReceiveMessage_EmptyFloatDefers() public {
+        assertEq(address(bnbMessenger).balance, 0, "messenger float unfunded");
+
+        _deliverMarkCalled();
+
+        (uint256 storedTokenId, bool exists, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        assertEq(storedTokenId, TOKEN_ID, "holders relay deferred on float-starved NotEnoughNative");
+        assertTrue(exists);
+        assertFalse(done);
+    }
+
+    /// @dev With TargetMessenger's float funded, the relay fired from inside `receiveMessage` forwards the fee and
+    ///      sends cleanly — nothing is parked.
+    function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
+        vm.deal(address(bnbMessenger), 1 ether); // TargetMessenger pays the systemMultiSend fee
+        uint256 floatBefore = address(bnbMessenger).balance;
+
+        _deliverMarkCalled();
+
+        // No parked relay: TargetMessenger funded the send.
+        assertEq(bnbMessenger.nextPendingHoldersRelayIdx(), 0, "no holders relay deferred");
+        assertEq(address(bnbMessenger).balance, floatBefore - BRIDGE_FEE, "fee drawn from messenger float");
+        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
+    }
+
+    function _deliverMarkCalled() internal {
+        _deliver(
+            OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), BridgeMsgCodec.encodeMarkCalled(SERIES_ID)
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Admin float recovery (sweepNative)
+    // ---------------------------------------------------------------
+
+    function test_SweepNative_AdminRecoversFloat() public {
+        vm.deal(address(bnbMessenger), 3 ether);
+        address payable to = payable(address(0x5EE3));
+
+        bnbMessenger.sweepNative(to, 1 ether);
+
+        assertEq(to.balance, 1 ether, "recipient received the swept amount");
+        assertEq(address(bnbMessenger).balance, 2 ether, "remainder stays as float");
+    }
+
+    function test_SweepNative_NonAdminReverts() public {
+        vm.deal(address(bnbMessenger), 1 ether);
+        vm.prank(auctionRole); // AUCTION_ROLE, not DEFAULT_ADMIN_ROLE
+        vm.expectRevert();
+        bnbMessenger.sweepNative(payable(auctionRole), 1 ether);
+    }
+
+    function test_SweepNative_OverBalanceReverts() public {
+        vm.deal(address(bnbMessenger), 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITargetMessenger.NativeBalanceInsufficient.selector, uint256(1 ether), uint256(2 ether)
+            )
+        );
+        bnbMessenger.sweepNative(payable(address(0xBEEF)), 2 ether);
+    }
+
+    function test_SweepNative_ZeroRecipientReverts() public {
+        vm.deal(address(bnbMessenger), 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "to"));
+        bnbMessenger.sweepNative(payable(address(0)), 1 ether);
     }
 }
 
-/// @dev Helper whose `receive()` reverts; used to pin TM `_payNative.RefundFailed`.
+/// @dev Placeholder auction so `TargetMessenger.wire` accepts a non-zero auction address. Neither the entry path
+///      (`sendBidsBatch` encodes its params directly) nor the delivered MARK_CALLED (which only touches `intex`)
+///      calls the auction, so no interface surface is needed.
+// solhint-disable-next-line no-empty-blocks
+contract StubAuction {}
+
+/// @dev Helper whose `receive()` reverts; used to pin `_send`'s RefundFailed guard on the entry path.
 contract BidsRefundRejector {
     TargetMessenger private immutable messenger;
 
@@ -297,31 +306,8 @@ contract BidsRefundRejector {
         messenger = TargetMessenger(payable(_messenger));
     }
 
-    function callSendBidsBatch(ITargetMessenger.BidsBatchParams calldata params, MessagingFee calldata fee)
-        external
-        payable
-    {
-        messenger.sendBidsBatch{value: msg.value}(params, fee);
-    }
-
-    receive() external payable {
-        revert("refund-rejected");
-    }
-}
-
-/// @dev Helper contract whose `receive()` reverts so refunds from `_payNative` fail.
-contract RefundRejectingCaller {
-    OriginMessenger private immutable messenger;
-
-    constructor(address _messenger) {
-        messenger = OriginMessenger(payable(_messenger));
-    }
-
-    function callSendAuctionStageClearing(uint32 seriesId, bytes calldata options, MessagingFee calldata fee)
-        external
-        payable
-    {
-        messenger.sendAuctionStageClearing{value: msg.value}(seriesId, options, fee, address(this));
+    function callSendBidsBatch(ITargetMessenger.BidsBatchParams calldata params) external payable {
+        messenger.sendBidsBatch{value: msg.value}(params);
     }
 
     receive() external payable {

@@ -40,10 +40,10 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: returns MessagingFee { nativeFee: 0, lzTokenFee: 0 } (64 bytes).
+    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_MESSENGER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, f)
 }
@@ -171,9 +171,10 @@ fn settle_rejects_expired_deadline() {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
+    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
         crate::constants::ORIGIN_MESSENGER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
@@ -785,6 +786,166 @@ fn scan_and_call_force_calls_breached_series() {
                 .unwrap(),
             outbe_intex::IntexState::Called
         );
+    });
+}
+
+// ---------------------------------------------------------------------
+// begin-block / daily scan error isolation (no chain halt)
+// ---------------------------------------------------------------------
+
+#[test]
+fn scan_does_not_halt_on_overflow_rate() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        let pair_hash = B256::repeat_byte(0x11);
+        oracle
+            .settlement_iso_to_pair
+            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
+            .unwrap();
+        // Out-of-range rate: price_to_bin overflows.
+        oracle.exchange_rate.write(&pair_hash, U256::MAX).unwrap();
+
+        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+        // Must not halt: returns Ok(0) and leaves the series untouched.
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued
+        );
+    });
+}
+
+#[test]
+fn scan_isolates_bad_series() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        // A bin entry whose series record does not exist: read_series errors -> the series must be
+        // skipped (logged), not halt the block.
+        IntexFactoryContract::new(s.clone())
+            .insert_unqualified(999, U256::from(EXPECTED_FLOOR))
+            .unwrap();
+
+        let oracle = OracleContract::new(s.clone());
+        let pair_hash = B256::repeat_byte(0x11);
+        oracle
+            .settlement_iso_to_pair
+            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
+            .unwrap();
+        oracle
+            .exchange_rate
+            .write(&pair_hash, U256::from(EXPECTED_FLOOR) + U256::from(1))
+            .unwrap();
+
+        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+        // Bad series (999) skipped; healthy series (7) still qualifies.
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn call_scan_does_not_halt_on_overflow_vwap() {
+    with_factory(|s| {
+        let _f = qualify_series(&s, 7, sample(7));
+        let oracle = OracleContract::new(s.clone());
+        let pair_id = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
+        // Out-of-range VWAP for the completed day: price_to_bin overflows.
+        fill_days(&oracle, today, pair_id, 1, U256::MAX);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        // Must not halt: returns Ok(0) and leaves the series Qualified.
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, 7)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}
+
+#[test]
+fn scan_caps_work_per_block_and_resumes_via_cursor() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair_hash = B256::repeat_byte(0x11);
+        oracle
+            .settlement_iso_to_pair
+            .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
+            .unwrap();
+        // Rate well above both floors so both bins are eligible.
+        oracle
+            .exchange_rate
+            .write(&pair_hash, U256::from(EXPECTED_FLOOR) * U256::from(1000))
+            .unwrap();
+
+        // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
+        // Bogus ids (no series record) are per-series skipped but still count toward the cap.
+        let cap = qualified::MAX_SERIES_PER_BLOCK;
+        let f1 = U256::from(EXPECTED_FLOOR);
+        let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
+        {
+            let mut factory = IntexFactoryContract::new(s.clone());
+            for id in 1..=cap {
+                factory.insert_unqualified(id, f1).unwrap();
+            }
+            for id in 1001..=1005u32 {
+                factory.insert_unqualified(id, f2).unwrap();
+            }
+        }
+        let bin2 = IntexFactoryContract::price_to_bin(f2).unwrap();
+
+        let ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, ts, CHAIN_ID), s.clone());
+
+        // Block 1 caps after the first (cap-sized) bin; the second bin is deferred.
+        qualified::scan_and_qualify(&ctx).unwrap();
+        let cursor1 = IntexFactoryContract::new(s.clone())
+            .qualify_scan_cursor
+            .read()
+            .unwrap();
+        assert!(cursor1 > 0, "cursor advanced past the capped bin");
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .unqualified_bin_count
+                .read(&bin2)
+                .unwrap(),
+            5,
+            "second bin untouched in block 1"
+        );
+
+        // Block 2 resumes at the second bin and wraps the cursor to 0.
+        qualified::scan_and_qualify(&ctx).unwrap();
+        let cursor2 = IntexFactoryContract::new(s.clone())
+            .qualify_scan_cursor
+            .read()
+            .unwrap();
+        assert_eq!(cursor2, 0, "cursor wrapped after a full sweep");
     });
 }
 

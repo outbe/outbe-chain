@@ -97,6 +97,41 @@ contract EscrowAdapterTest is Test {
         assertTrue(escrow.allocatorId() > 0);
     }
 
+    function test_Wire_ResetsAllocatorOnCompactRotation() public {
+        uint96 allocatorBefore = escrow.allocatorId();
+        bytes12 lockTagBefore = escrow.lockTag();
+        assertTrue(allocatorBefore > 0);
+
+        // Rotate to a new Compact (setUp opened no locks). Bump its counter so a fresh
+        // registration yields a distinct allocatorId.
+        MockTheCompact compact2 = new MockTheCompact();
+        compact2.setResetPeriodSeconds(0);
+        compact2.__registerAllocator(address(0xDEAD), "");
+
+        vm.prank(admin);
+        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+
+        assertTrue(escrow.allocatorId() != allocatorBefore);
+        assertTrue(escrow.lockTag() != lockTagBefore);
+    }
+
+    function test_HasOutstandingLocks_ReflectsLockState() public {
+        assertFalse(escrow.hasOutstandingLocks());
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        assertTrue(escrow.hasOutstandingLocks());
+    }
+
+    function test_Wire_RevertsRotatingCompactWithLiveLocks() public {
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+
+        MockTheCompact compact2 = new MockTheCompact();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
+        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+    }
+
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
@@ -283,6 +318,61 @@ contract EscrowAdapterTest is Test {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized));
     }
 
+    // --- post-finalize abandon refund for omitted/mismatched bidders ---
+
+    // Finalize the series settling bidder2 only; bidder1 is omitted, left Locked with no split.
+    function _finalizeOmittingBidder1() internal {
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        vm.prank(auction);
+        escrow.lockFunds(seriesId1, bidder2, LOCK_AMOUNT);
+
+        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
+        instructions[0] =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        vm.prank(bridger);
+        escrow.finalizeAuction(seriesId1, GUID, instructions);
+    }
+
+    function test_OmittedBidder_RevertsBeforeAbandon() public {
+        _finalizeOmittingBidder1();
+        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, seriesId1, bidder1));
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
+    function test_OmittedBidder_RecoversAfterAbandon() public {
+        _finalizeOmittingBidder1();
+        uint256 balBefore = paymentToken.balanceOf(bidder1);
+
+        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        escrow.claimRefund(seriesId1, bidder1); // permissionless
+
+        assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
+        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId1, bidder1);
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized), "lock finalized");
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
+        assertEq(totalLocked, 0, "totalLocked cleared (bidder2 refunded at finalize, bidder1 at abandon)");
+
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
+    function test_RetryFinalizePreemptsAbandon() public {
+        _finalizeOmittingBidder1();
+
+        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
+        IEscrowAdapter.FinalizationInstruction memory inst =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        vm.prank(bridger);
+        escrow.retryFinalize(seriesId1, GUID, inst);
+
+        // bidder1 settled -> abandon path can never fire.
+        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.claimRefund(seriesId1, bidder1);
+    }
+
     function test_FinalizeAuction_FullClaim() public {
         // Lock funds
         vm.prank(auction);
@@ -337,34 +427,6 @@ contract EscrowAdapterTest is Test {
         // Bidder refunded their portion; proceeds handed to the configured recipient.
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
         assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + paidAmount);
-    }
-
-    function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
-        EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        vm.prank(admin);
-        freshEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
-        vm.prank(bidder1);
-        paymentToken.approve(address(freshEscrow), type(uint256).max);
-        vm.prank(auction);
-        freshEscrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
-
-        vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
-        vm.prank(bridger);
-        freshEscrow.finalizeAuction(seriesId1, GUID, instructions);
-    }
-
-    function test_SetProceedsRecipient_OnlyAdmin() public {
-        vm.expectRevert();
-        vm.prank(outsider);
-        escrow.setProceedsRecipient(outsider);
-
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "recipient"));
-        vm.prank(admin);
-        escrow.setProceedsRecipient(address(0));
     }
 
     function test_FinalizeAuction_MultipleBidders() public {

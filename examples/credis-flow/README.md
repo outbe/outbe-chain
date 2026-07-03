@@ -21,7 +21,7 @@ reference.
 
 Contract bindings come from this repo's own ABIs. `npm run generate-types` first
 runs `scripts/prepare-abis.mjs`, which copies the required JSONs out of
-`../../contracts/precompiles/abi-export/`, `../../contracts/vault/abi-export/`,
+`../../contracts/precompiles/abi-export/`
 and `../../contracts/account-abstraction/{abi-export,out}/` into a local
 `abi/` directory, then typechain generates ethers v6 factories into
 `src/contracts/`. Both directories are gitignored and regenerated on every build.

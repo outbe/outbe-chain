@@ -136,7 +136,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "coenPrice",
+        "name": "entryPrice",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

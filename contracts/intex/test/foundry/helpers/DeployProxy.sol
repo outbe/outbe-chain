@@ -46,29 +46,29 @@ library DeployProxy {
         return escrow;
     }
 
-    function originMessenger(address lzEndpoint, address delegate, uint32 bnbEid) internal returns (OriginMessenger) {
-        OriginMessenger impl = new OriginMessenger(lzEndpoint, bnbEid);
+    function originMessenger(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginMessenger) {
+        OriginMessenger impl = new OriginMessenger(bridge, bnbChainId);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginMessenger.initialize, (delegate)));
         return OriginMessenger(payable(address(proxy)));
     }
 
-    function targetMessenger(address lzEndpoint, address delegate, uint32 outbeEid) internal returns (TargetMessenger) {
-        TargetMessenger impl = new TargetMessenger(lzEndpoint, outbeEid);
+    function targetMessenger(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetMessenger) {
+        TargetMessenger impl = new TargetMessenger(bridge, outbeChainId);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetMessenger.initialize, (delegate)));
         return TargetMessenger(payable(address(proxy)));
     }
 
-    function onftAdapter(address tokenAddr, address lzEndpoint, address delegate) internal returns (ONFT1155Adapter) {
-        ONFT1155Adapter impl = new ONFT1155Adapter(tokenAddr, lzEndpoint);
+    function onftAdapter(address tokenAddr, address bridge, address delegate) internal returns (ONFT1155Adapter) {
+        ONFT1155Adapter impl = new ONFT1155Adapter(tokenAddr, bridge);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155Adapter.initialize, (delegate)));
         return ONFT1155Adapter(payable(address(proxy)));
     }
 
-    function onftAdapterBatch(address tokenAddr, address lzEndpoint, address delegate)
+    function onftAdapterBatch(address tokenAddr, address bridge, address delegate)
         internal
         returns (ONFT1155AdapterBatch)
     {
-        ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(tokenAddr, lzEndpoint);
+        ONFT1155AdapterBatch impl = new ONFT1155AdapterBatch(tokenAddr, bridge);
         ERC1967Proxy proxy =
             new ERC1967Proxy(address(impl), abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate)));
         return ONFT1155AdapterBatch(payable(address(proxy)));

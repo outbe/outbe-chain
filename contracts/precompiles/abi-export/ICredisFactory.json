@@ -22,11 +22,6 @@
         "internalType": "address"
       },
       {
-        "name": "vaultProvider",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "bundleAccount",
         "type": "address",
         "internalType": "address"

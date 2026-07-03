@@ -3,30 +3,29 @@ pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {LayerZeroRouter} from "../src/router/LayerZeroRouter.sol";
 import {Auction} from "../src/Auction.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
-import {TypeCasts} from "../src/libs/TypeCasts.sol";
+import {Router} from "../src/router/Router.sol";
 
-/// @dev Post-deployment wiring script.
-///
-/// Connects all deployed contracts together:
-///   - escrow.setAuthorizedCaller(router)
-///   - auction.setRouter(router)
-///   - allocator.addOperator(router)
-///   - router peers
-/// (router→auction is immutable, bound at router construction)
+/// @dev Post-deployment wiring:
+///   1. escrow.setAuthorizedCaller(router)
+///   2. auction.setRouter(router)
+///   3. allocator.addOperator(router)
+///   4. router.setRemoteRouter(chainId, ...) for each REMOTE_CHAIN_IDS (same CREATE3 address across chains)
+/// (router→auction is immutable, bound at router construction.)
+/// ConfigureRouter.s.sol remains as a standalone helper to add/update a single remote later.
 ///
 /// Required env vars:
-///   DEPLOYER_PK            — deployer private key
-///   ROUTER_ADDRESS         — deployed LayerZeroRouter address
-///   AUCTION_ADDRESS        — deployed Auction address
-///   ESCROW_ADDRESS         — deployed SolverEscrow address
-///   ALLOCATOR_ADDRESS      — deployed RouterAllocator address
-///   PEER_EIDS              — comma-separated LZ endpoint IDs
-///   PEER_DOMAINS           — comma-separated domain IDs matching the EIDs
+///   DEPLOYER_PK       — deployer private key
+///   ROUTER_ADDRESS    — deployed Router address
+///   AUCTION_ADDRESS   — deployed Auction address
+///   ESCROW_ADDRESS    — deployed SolverEscrow address
+///   ALLOCATOR_ADDRESS — deployed RouterAllocator address
+/// Optional:
+///   REMOTE_CHAIN_IDS  — csv of remote EVM chain ids to register (skipped if unset)
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -65,17 +64,15 @@ contract ConfigureAll is Script {
         }
 
         // Router → Auction binding is immutable (set at router construction); no setAuction step.
-        LayerZeroRouter router = LayerZeroRouter(routerAddress);
 
-        // 4. LayerZero peers
-        uint256[] memory peerEids = vm.envUint("PEER_EIDS", ",");
-        uint256[] memory peerDomains = vm.envUint("PEER_DOMAINS", ",");
-        require(peerEids.length == peerDomains.length, "PEER_EIDS and PEER_DOMAINS length mismatch");
-
-        bytes32 routerPeer = TypeCasts.addressToBytes32(routerAddress);
-        for (uint256 i = 0; i < peerEids.length; i++) {
-            router.setPeerWithDomain(uint32(peerEids[i]), routerPeer, uint32(peerDomains[i]));
-            console2.log("  Peer set: EID", uint32(peerEids[i]), "-> domain", uint32(peerDomains[i]));
+        // 4. Cross-chain: register the matching Router on each remote chain. The remote Router shares this Router's
+        //    CREATE3 address, so its interop address is (chainId, routerAddress).
+        uint256[] memory remoteChainIds = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
+        for (uint256 i = 0; i < remoteChainIds.length; i++) {
+            uint256 chainId = remoteChainIds[i];
+            Router(routerAddress)
+                .setRemoteRouter(uint32(chainId), InteroperableAddress.formatEvmV1(chainId, routerAddress));
+            console2.log("  remote Router set for chainId:", chainId);
         }
     }
 }

@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -20,7 +20,7 @@ import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 ///      cross-chain and cross-instance replay.
 contract IntexAuction is
     AccessControlUpgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuardTransient,
     EIP712Upgradeable,
     UUPSUpgradeable,
     IIntexAuction
@@ -74,9 +74,7 @@ contract IntexAuction is
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
 
         __AccessControl_init();
-        __ReentrancyGuard_init();
         __EIP712_init("IntexAuction", "1");
-        __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
     }
@@ -153,10 +151,12 @@ contract IntexAuction is
         if (_escrow == address(0)) revert ZeroAddress("escrowContract");
 
         IntexAuctionStorage storage $ = _s();
-        address previousEscrow = address($.escrowContract);
-        $.escrowContract = IEscrowAdapter(_escrow);
+        IEscrowAdapter current = $.escrowContract;
+        // Don't rotate away from an escrow that still holds live locks.
+        if (address(current) != address(0) && current.hasOutstandingLocks()) revert EscrowHasLiveLocks();
 
-        emit EscrowWired(previousEscrow, _escrow);
+        $.escrowContract = IEscrowAdapter(_escrow);
+        emit EscrowWired(address(current), _escrow);
     }
 
     // --- Lifecycle ---
@@ -270,7 +270,10 @@ contract IntexAuction is
         a.result.issuedIntexCount = issuedIntexCount;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
-        a.result.issuedIntexLoadedPromis = uint128(issuedIntexCount) * a.params.promisLoadMinor;
+        // 256-bit product: over-range reverts typed, not Panic(0x11).
+        uint256 loadedPromis = uint256(issuedIntexCount) * a.params.promisLoadMinor;
+        if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedIntexCount, a.params.promisLoadMinor);
+        a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
         $.cleared[seriesId] = true;
 
         emit AuctionStageUpdated(seriesId, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
@@ -315,7 +318,10 @@ contract IntexAuction is
         // Mirror of `commitBid`: a sealed commit must not be withdrawable after `commitEnd`,
         // otherwise a bidder could cancel post-deadline once conditions are observed — defeating
         // the commit-reveal seal. Window is `[start, commitEnd)`.
-        if (uint32(block.timestamp) >= a.schedule.commitEnd) {
+        // Exception: a never-signalled auction pins CommittingBids forever, so stay cancellable once dead.
+        bool stuck = a.worldwideDayState == IIntexAuction.WorldwideDayState.Unknown
+            && uint32(block.timestamp) > a.schedule.issuanceEnd;
+        if (!stuck && uint32(block.timestamp) >= a.schedule.commitEnd) {
             revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
         if ($.committedBidsByHash[seriesId][msg.sender] == bytes32(0)) revert BidNotFound();
@@ -324,6 +330,27 @@ contract IntexAuction is
         $.auctionRunningCounts[seriesId].committedBidsCount -= 1;
 
         emit CommitCancelled(seriesId, msg.sender);
+    }
+
+    /// @inheritdoc IIntexAuction
+    function reapAuction(uint32 seriesId, uint256 limit) external override {
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
+        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
+
+        IIntexAuction.AuctionStage stage = _getAuctionStage(seriesId);
+        if (stage != IIntexAuction.AuctionStage.Completed && stage != IIntexAuction.AuctionStage.Cancelled) {
+            revert StageRequired(IIntexAuction.AuctionStage.Completed, stage);
+        }
+        if (uint32(block.timestamp) <= a.schedule.issuanceEnd) revert TooEarlyToReap();
+
+        IIntexAuction.SubmittedBidData[] storage bids = $.revealedBids[seriesId];
+        uint256 remaining = bids.length;
+        uint256 toPop = remaining < limit ? remaining : limit;
+        for (uint256 i = 0; i < toPop; i++) {
+            bids.pop();
+        }
+        emit AuctionReaped(seriesId, remaining - toPop);
     }
 
     /// @inheritdoc IIntexAuction
@@ -343,8 +370,10 @@ contract IntexAuction is
         }
 
         bytes32 committedHash = $.committedBidsByHash[seriesId][msg.sender];
-        if (committedHash == bytes32(0)) revert BidNotFound();
+        // Order matters: a re-reveal must report BidAlreadyRevealed, not BidNotFound, now that
+        // the commit slot is freed on first reveal.
         if ($.revealedBidsByBidder[seriesId][msg.sender]) revert BidAlreadyRevealed();
+        if (committedHash == bytes32(0)) revert BidNotFound();
         if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
@@ -362,6 +391,8 @@ contract IntexAuction is
         // Effects: record the reveal before the external lockFunds call (CEI).
         // If lockFunds reverts the whole tx is rolled back, so atomicity is preserved.
         $.revealedBidsByBidder[seriesId][msg.sender] = true;
+        // Free the consumed commit slot; commitBid already rejects any commit past commitEnd.
+        delete $.committedBidsByHash[seriesId][msg.sender];
 
         $.revealedBids[seriesId].push(
             IIntexAuction.SubmittedBidData({

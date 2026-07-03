@@ -12,6 +12,7 @@
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
 use core::fmt::Debug;
+use core::marker::PhantomData;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
     DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
@@ -19,13 +20,13 @@ use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
     PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
     SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
-    ZKPROOF_POSEIDON_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS,
+    ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 use revm::{
-    handler::precompile_output_to_interpreter_result,
+    handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult},
     primitives::hardfork::SpecId,
@@ -111,6 +112,11 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             default_base_gas,
         ),
         a if a == DESIS_ADDRESS => ("desis", outbe_desis::precompile::dispatch, default_base_gas),
+        a if a == VAULT_PROVIDER_ADDRESS => (
+            "vaultprovider",
+            outbe_vaultprovider::precompile::dispatch,
+            default_base_gas,
+        ),
         a if a == CREDIS_ADDRESS => (
             "credis",
             outbe_credis::precompile::dispatch,
@@ -432,4 +438,74 @@ where
     };
 
     Ok(Some(interp_result))
+}
+
+/// Precompile provider for the borrow-mode sub-call `Evm`
+/// (`CTX = &mut EthEvmContext<DB>`), used by [`crate::sub_call`].
+///
+/// Mirrors the top-level [`PrecompilesMap`] semantics so a sub-call to any
+/// outbe precompile behaves exactly like a top-level call: outbe stateful
+/// precompiles dispatch through [`outbe_ctx_dispatch`], and everything else
+/// (Ethereum precompiles `0x01..0x0a`, ordinary contract calls) falls back to
+/// the standard [`EthPrecompiles`].
+pub(crate) struct OutbeSubCallPrecompiles<DB> {
+    /// Fallback provider for the Ethereum precompiles `0x01..0x0a`.
+    eth: EthPrecompiles,
+    /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
+    spec: SpecId,
+    _db: PhantomData<fn() -> DB>,
+}
+
+impl<DB> OutbeSubCallPrecompiles<DB> {
+    pub(crate) fn new(spec: SpecId) -> Self {
+        Self {
+            eth: EthPrecompiles::new(spec),
+            spec,
+            _db: PhantomData,
+        }
+    }
+}
+
+impl<DB> PrecompileProvider<&mut EthEvmContext<DB>> for OutbeSubCallPrecompiles<DB>
+where
+    DB: Database + Debug,
+    DB::Error: Debug,
+{
+    type Output = InterpreterResult;
+
+    fn set_spec(&mut self, spec: SpecId) -> bool {
+        self.spec = spec;
+        <EthPrecompiles as PrecompileProvider<&mut EthEvmContext<DB>>>::set_spec(
+            &mut self.eth,
+            spec,
+        )
+    }
+
+    fn run(
+        &mut self,
+        context: &mut &mut EthEvmContext<DB>,
+        inputs: &CallInputs,
+    ) -> Result<Option<InterpreterResult>, String> {
+        // Outbe stateful precompiles first. `outbe_ctx_dispatch` returns
+        // `Ok(None)` for any non-outbe address, so this is a cheap no-op for
+        // Ethereum precompiles and ordinary contract targets.
+        if let Some(result) = outbe_ctx_dispatch::<DB>(&mut **context, inputs, self.spec)? {
+            return Ok(Some(result));
+        }
+        // Standard Ethereum precompiles `0x01..0x0a`; `Ok(None)` here lets the
+        // caller push a real interpreter frame for ordinary contract targets.
+        <EthPrecompiles as PrecompileProvider<&mut EthEvmContext<DB>>>::run(
+            &mut self.eth,
+            context,
+            inputs,
+        )
+    }
+
+    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+        self.eth.warm_addresses()
+    }
+
+    fn contains(&self, address: &Address) -> bool {
+        self.eth.contains(address)
+    }
 }

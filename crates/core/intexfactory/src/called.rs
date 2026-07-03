@@ -8,7 +8,6 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
-    addresses::INTEX_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
@@ -19,7 +18,7 @@ use outbe_intex::IntexState;
 
 use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger};
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
@@ -43,7 +42,14 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         _ => return Ok(0),
     };
 
-    let v_bin = IntexFactoryContract::price_to_bin(vwap_today)?;
+    // Deterministic out-of-range VWAP: skip this daily scan instead of halting the block.
+    let v_bin = match IntexFactoryContract::price_to_bin(vwap_today) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(target: "outbe::intexfactory", error = ?e, "call scan: vwap out of range, skipping run");
+            return Ok(0);
+        }
+    };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
     let mut called: u32 = 0;
@@ -66,16 +72,25 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             );
         }
         for series_id in series {
-            if try_call(
-                &ctx.storage,
-                &mut factory,
-                &oracle,
-                series_id,
-                pair_id,
-                today,
-                ctx.block.timestamp,
-            )? {
-                called = called.saturating_add(1);
+            // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
+            // skipped (logged); structural reads above keep `?` so infra errors still propagate.
+            let res = ctx.storage.with_checkpoint(|| {
+                try_call(
+                    &ctx.storage,
+                    &mut factory,
+                    &oracle,
+                    series_id,
+                    pair_id,
+                    today,
+                    ctx.block.timestamp,
+                )
+            });
+            match res {
+                Ok(true) => called = called.saturating_add(1),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "call scan: skipping series");
+                }
             }
         }
 
@@ -160,29 +175,12 @@ pub(crate) fn try_call(
 }
 
 fn notify_lz_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendMarkCalledCall {
-            seriesId: series_id,
-            extraOptions: alloy_primitives::Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let fee = IOriginMessenger::quoteSendMarkCalledCall::abi_decode_returns(&quote_ret)
-        .map_err(|_| PrecompileError::Revert("quoteSendMarkCalled undecodable".into()))?;
+    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendMarkCalledCall {
             seriesId: series_id,
-            extraOptions: alloy_primitives::Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: fee.nativeFee,
-                lzTokenFee: fee.lzTokenFee,
-            },
-            refundAddress: INTEX_FACTORY_ADDRESS,
         }
         .abi_encode()
         .into(),

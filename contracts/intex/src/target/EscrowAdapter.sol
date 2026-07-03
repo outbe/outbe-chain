@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -26,7 +26,7 @@ import {IVaultProvider} from "../vendor/outbe-vault/interfaces/IVaultProvider.so
  */
 contract EscrowAdapter is
     AccessControlUpgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuardTransient,
     UUPSUpgradeable,
     IEscrowAdapter,
     IAllocator
@@ -48,6 +48,10 @@ contract EscrowAdapter is
     ///         seconds. Gives the relayer a week to call `retryFinalize` with the correct
     ///         split before the bidder can rescue their full principal via `claimRefund`.
     uint32 public constant POST_FINALIZE_REFUND_DELAY = 7 days;
+
+    /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series can
+    ///         `claimRefund` the full principal. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
+    uint32 public constant ABANDON_DELAY = 30 days;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
@@ -95,8 +99,6 @@ contract EscrowAdapter is
         if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
 
         __AccessControl_init();
-        __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
     }
@@ -210,6 +212,11 @@ contract EscrowAdapter is
             if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
             // Reset lockId so the first deposit under the new token/Compact re-bootstraps the lock.
             $.lockId = 0;
+            // A new Compact needs its own allocator registration; drop the stale allocatorId/lockTag.
+            if (rotatingCompact) {
+                $.allocatorId = 0;
+                $.lockTag = bytes12(0);
+            }
         }
 
         // Revoke role from the previous auction if rewiring.
@@ -417,7 +424,20 @@ contract EscrowAdapter is
             // split the amount is unknowable on-chain; the relayer must retryFinalize instead.
             uint32 claimableAt = state.finalizedAt + POST_FINALIZE_REFUND_DELAY;
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-            if (!lock.splitRecorded) revert SplitNotRecorded(seriesId, bidder);
+
+            if (!lock.splitRecorded) {
+                // Omitted/mismatched bidder: relayer gets the retryFinalize window; after ABANDON_DELAY
+                // the lock becomes permissionlessly terminal with a full-principal refund.
+                uint32 abandonAt = state.finalizedAt + ABANDON_DELAY;
+                if (block.timestamp < abandonAt) revert SplitNotRecorded(seriesId, bidder);
+
+                lock.status = LockStatus.Finalized;
+                state.totalLocked -= lockedAmount;
+                _withdrawFromCompact(lockedAmount);
+                $.paymentToken.safeTransfer(bidder, lockedAmount);
+                emit FundsRefunded(bytes32(0), seriesId, bidder, lockedAmount);
+                return;
+            }
 
             uint128 refundAmount = lock.failedRefund;
             uint128 vaultOwed = lockedAmount - refundAmount;
@@ -513,6 +533,13 @@ contract EscrowAdapter is
     {
         AuctionEscrowState memory state = _s().auctionEscrowState[seriesId];
         return (state.lockCount > 0, state.finalized, state.totalLocked);
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function hasOutstandingLocks() external view override returns (bool) {
+        EscrowAdapterStorage storage $ = _s();
+        if ($.lockId == 0) return false;
+        return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
     }
 
     // --- Internal helpers ---

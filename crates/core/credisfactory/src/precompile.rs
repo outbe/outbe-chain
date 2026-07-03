@@ -47,7 +47,6 @@ pub fn dispatch(
                         storage.clone(),
                         sender,
                         c.asset,
-                        c.vaultProvider,
                         c.bundleAccount,
                         args,
                         timestamp,

@@ -34,6 +34,7 @@ members = [
     "crates/core/intex",
     "crates/core/intexfactory",
     "crates/core/desis",
+    "crates/core/vaultprovider",
     "crates/core/lysis",
     "crates/core/agentreward",
     "crates/core/credis",
@@ -110,6 +111,7 @@ outbe-gemfactory = { path = "crates/core/gemfactory" }
 outbe-intex = { path = "crates/core/intex" }
 outbe-intexfactory = { path = "crates/core/intexfactory" }
 outbe-desis = { path = "crates/core/desis" }
+outbe-vaultprovider = { path = "crates/core/vaultprovider" }
 outbe-lysis = { path = "crates/core/lysis" }
 outbe-agentreward = { path = "crates/core/agentreward" }
 outbe-credis = { path = "crates/core/credis" }

@@ -1,0 +1,24 @@
+name: CI crosschain
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/crosschain/**"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/_contract-ci.yml"
+      - "contracts/crosschain/**"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_contract-ci.yml
+    with:
+      project: crosschain

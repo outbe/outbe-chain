@@ -2,12 +2,11 @@ import { task } from "hardhat/config";
 import {
   createPublicClient,
   createWalletClient,
-  encodePacked,
   getContract,
   http,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { addressToBytes32, getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
+import { getEnvRpcAndPk, makeChain } from "../../scripts/shared/layerzero.js";
 import { getNetworkName } from "../../scripts/shared/taskUtils.js";
 import { loadAbi } from "../../scripts/shared/abi.js";
 
@@ -781,100 +780,88 @@ const intexFactoryAssertRelayerRole = task(
   .setAction(lazy(intexFactoryAssertRelayerRoleAction));
 
 // ============================================================================
-// TargetMessenger Proceeds Route (BNB) — OFT-send auction proceeds to the
-// outbe OriginMessenger, with the lzCompose gas allotment.
+// Grant RELAYER_ROLE (inbound-delivery caller)
 // ============================================================================
 
-/** Destination gas for the lzCompose distribute on outbe; tune from gas reports. */
-const COMPOSE_GAS = 500_000;
-
-interface ProceedsRouteWireArgs {
-  bridgeContract: string;
-  originMessenger: string;
+interface GrantRelayerRoleArgs {
+  token: string;
+  adapter: string;
+  contract: string;
 }
 
-const bnbProceedsRouteWireAction = async (args: ProceedsRouteWireArgs, hre: unknown) => {
+const grantRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
-  const receiver = addressToBytes32(args.originMessenger as `0x${string}`);
-  // LZ type-3 options: executor (worker 1) lzCompose (type 3), index 0, gas COMPOSE_GAS, value 0.
-  const options = encodePacked(
-    ["uint16", "uint8", "uint16", "uint8", "uint16", "uint128"],
-    [3, 1, 19, 3, 0, BigInt(COMPOSE_GAS)],
-  );
+  const contractName = args.contract || "IntexNFT1155";
 
-  console.log(`Wiring TargetMessenger proceeds route...`);
-  console.log(`  TargetMessenger: ${args.bridgeContract}`);
-  console.log(`  OriginMessenger: ${args.originMessenger}`);
+  console.log(`Granting RELAYER_ROLE on ${contractName} @ ${args.token} to ${args.adapter}...`);
 
-  const bridge = (await viem.getContractAt(
-    "TargetMessenger",
-    args.bridgeContract as `0x${string}`
-  )) as {
-    read: { proceedsRoute: () => Promise<[`0x${string}`, `0x${string}`]> };
-    write: { setProceedsRoute: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`> };
+  const token = (await viem.getContractAt(contractName, args.token as `0x${string}`)) as {
+    read: {
+      RELAYER_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
   };
 
-  const [currentReceiver] = await bridge.read.proceedsRoute();
-  if (currentReceiver.toLowerCase() === receiver.toLowerCase()) {
-    console.log(`✅ TargetMessenger proceeds route already set`);
+  const role = await token.read.RELAYER_ROLE();
+  if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
+    console.log("✅ RELAYER_ROLE already granted");
     return;
   }
 
-  const txHash = await sendAndWait(viem, () => bridge.write.setProceedsRoute([receiver, options]));
-  console.log(`✅ TargetMessenger proceeds route set. Tx: ${txHash}`);
+  const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
+  console.log(`✅ RELAYER_ROLE granted. Tx: ${txHash}`);
 };
 
-const bnbProceedsRouteWire = task("bnb-proceeds-route-wire", "Set TargetMessenger's auction-proceeds OFT route to the outbe OriginMessenger")
-  .addOption({ name: "bridgeContract", description: "TargetMessenger contract address", defaultValue: "" })
-  .addOption({ name: "originMessenger", description: "outbe OriginMessenger address (proceeds receiver)", defaultValue: "" })
-  .setAction(lazy(bnbProceedsRouteWireAction));
+const grantRelayerRole = task(
+  "grant-relayer-role",
+  "Grant RELAYER_ROLE on an app contract (IntexAuction, EscrowAdapter, IntexNFT1155) to a bridge client",
+)
+  .addOption({ name: "token", description: "App contract that gates inbound calls by RELAYER_ROLE", defaultValue: "" })
+  .addOption({ name: "adapter", description: "Bridge client to grant RELAYER_ROLE to (messenger or ONFT adapter)", defaultValue: "" })
+  .addOption({ name: "contract", description: "App contract name: IntexAuction | EscrowAdapter | IntexNFT1155 (default: IntexNFT1155)", defaultValue: "" })
+  .setAction(lazy(grantRelayerRoleAction));
 
 // ============================================================================
-// OriginMessenger Compose Route (outbe) — OFT adapter + WCOEN it unwraps.
+// Grant SYSTEM_RELAYER_ROLE (holder-migration system bridge)
 // ============================================================================
 
-interface ComposeRouteWireArgs {
-  bridgeContract: string;
-  oftAdapter: string;
-  wcoen: string;
-}
-
-const outbeComposeRouteWireAction = async (args: ComposeRouteWireArgs, hre: unknown) => {
+const grantSystemRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
+  const contractName = args.contract || "IntexNFT1155";
 
-  console.log(`Wiring OriginMessenger compose route...`);
-  console.log(`  OriginMessenger: ${args.bridgeContract}`);
-  console.log(`  OFTAdapter: ${args.oftAdapter}`);
-  console.log(`  WCOEN: ${args.wcoen}`);
+  console.log(`Granting SYSTEM_RELAYER_ROLE on ${contractName} @ ${args.token} to ${args.adapter}...`);
 
-  const bridge = (await viem.getContractAt(
-    "OriginMessenger",
-    args.bridgeContract as `0x${string}`
-  )) as {
-    read: { composeRoute: () => Promise<[`0x${string}`, `0x${string}`]> };
-    write: { setComposeRoute: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`> };
+  const token = (await viem.getContractAt(contractName, args.token as `0x${string}`)) as {
+    read: {
+      SYSTEM_RELAYER_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
   };
 
-  const [currentOft, currentWcoen] = await bridge.read.composeRoute();
-  if (
-    currentOft.toLowerCase() === args.oftAdapter.toLowerCase() &&
-    currentWcoen.toLowerCase() === args.wcoen.toLowerCase()
-  ) {
-    console.log(`✅ OriginMessenger compose route already set`);
+  const role = await token.read.SYSTEM_RELAYER_ROLE();
+  if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
+    console.log("✅ SYSTEM_RELAYER_ROLE already granted");
     return;
   }
 
-  const txHash = await sendAndWait(viem, () =>
-    bridge.write.setComposeRoute([args.oftAdapter as `0x${string}`, args.wcoen as `0x${string}`]),
-  );
-  console.log(`✅ OriginMessenger compose route set. Tx: ${txHash}`);
+  const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
+  console.log(`✅ SYSTEM_RELAYER_ROLE granted. Tx: ${txHash}`);
 };
 
-const outbeComposeRouteWire = task("outbe-compose-route-wire", "Set OriginMessenger's compose route (OFT adapter + WCOEN)")
-  .addOption({ name: "bridgeContract", description: "OriginMessenger contract address", defaultValue: "" })
-  .addOption({ name: "oftAdapter", description: "outbe OFT adapter authorized to deliver proceeds via lzCompose", defaultValue: "" })
-  .addOption({ name: "wcoen", description: "WCOEN token unwrapped to native COEN", defaultValue: "" })
-  .setAction(lazy(outbeComposeRouteWireAction));
+const grantSystemRelayerRole = task(
+  "grant-system-relayer-role",
+  "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155 to the system holder-migration adapter (ONFT1155AdapterBatch)",
+)
+  .addOption({ name: "token", description: "IntexNFT1155 contract address", defaultValue: "" })
+  .addOption({ name: "adapter", description: "System bridge adapter to grant SYSTEM_RELAYER_ROLE to", defaultValue: "" })
+  .addOption({ name: "contract", description: "Contract name (default: IntexNFT1155)", defaultValue: "" })
+  .setAction(lazy(grantSystemRelayerRoleAction));
 
 // ============================================================================
 // Export
@@ -884,12 +871,12 @@ export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
   bnbBridgeWire.build(),
-  bnbProceedsRouteWire.build(),
   onftBatchAdapterWire.build(),
   outbeBridgeWire.build(),
-  outbeComposeRouteWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
+  grantRelayerRole.build(),
+  grantSystemRelayerRole.build(),
 ];
