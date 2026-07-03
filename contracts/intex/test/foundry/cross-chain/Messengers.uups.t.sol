@@ -6,8 +6,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
@@ -17,8 +17,8 @@ contract MessengersUupsTest is CrossChainTest {
 
     address internal stranger = makeAddr("stranger");
 
-    OriginMessenger internal origin;
-    TargetMessenger internal target;
+    OriginRouter internal origin;
+    TargetRouter internal target;
 
     function setUp() public {
         _setUpBridge();
@@ -40,31 +40,31 @@ contract MessengersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        OriginMessenger impl = new OriginMessenger(address(bridge), BNB_CHAIN_ID);
+        OriginRouter impl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(address(this));
 
-        TargetMessenger timpl = new TargetMessenger(address(bridge), OUTBE_CHAIN_ID);
+        TargetRouter timpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         timpl.initialize(address(this));
     }
 
     function test_RevertWhen_InitializeZeroDelegate() public {
-        OriginMessenger impl = new OriginMessenger(address(bridge), BNB_CHAIN_ID);
-        bytes memory initData = abi.encodeCall(OriginMessenger.initialize, (address(0)));
+        OriginRouter impl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
+        bytes memory initData = abi.encodeCall(OriginRouter.initialize, (address(0)));
         vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {
-        TargetMessenger newImpl = new TargetMessenger(address(bridge), OUTBE_CHAIN_ID);
+        TargetRouter newImpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID);
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
         );
         target.upgradeToAndCall(address(newImpl), "");
 
-        OriginMessenger newOriginImpl = new OriginMessenger(address(bridge), BNB_CHAIN_ID);
+        OriginRouter newOriginImpl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -79,7 +79,7 @@ contract MessengersUupsTest is CrossChainTest {
         origin.wire(address(desisMock), factory);
         origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(target)));
 
-        OriginMessenger newImpl = new OriginMessenger(address(bridge), BNB_CHAIN_ID);
+        OriginRouter newImpl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
         origin.upgradeToAndCall(address(newImpl), "");
 
         bytes32 implSlot = vm.load(address(origin), ERC1967Utils.IMPLEMENTATION_SLOT);

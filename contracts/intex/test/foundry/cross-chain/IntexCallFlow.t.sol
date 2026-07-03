@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
@@ -19,9 +19,9 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
  * @notice End-to-end Intex call flow: markCalled → system bridge → holders migrated to Outbe, over the ERC-7786
  *         loopback bridge.
  * @dev When Desis calls a series, the full cross-chain flow is:
- *      1. OriginMessenger sends MARK_CALLED to BSC.
- *      2. TargetMessenger marks the series as Called (transfers blocked).
- *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (funded from its own relay float).
+ *      1. OriginRouter sends MARK_CALLED to BSC.
+ *      2. TargetRouter marks the series as Called (transfers blocked).
+ *      3. TargetRouter reads all holders and triggers `systemMultiSend` (funded from its own relay float).
  *      4. IntexNFT1155Bridge burns Intex on BSC and, once delivered, mints on Outbe.
  *      Delivery is manual: each `sendMessage` records the payload on the loopback bridge, which we then hand-deliver
  *      to the destination as the authenticated peer.
@@ -30,18 +30,18 @@ contract IntexCallFlowTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    /// @dev Fee the loopback bridge charges; TargetMessenger pays it for the holders bridge from its own float.
+    /// @dev Fee the loopback bridge charges; TargetRouter pays it for the holders bridge from its own float.
     uint256 private constant BRIDGE_FEE = 0.001 ether;
 
     // --- BSC contracts ---
     IntexNFT1155 private intexBnb;
     IntexAuction private auction;
-    TargetMessenger private bnbAdapter;
+    TargetRouter private bnbAdapter;
     IntexNFT1155Bridge private batchAdapterBnb;
 
     // --- Outbe contracts ---
     IntexNFT1155 private intexOutbe;
-    OriginMessenger private outbeAdapter;
+    OriginRouter private outbeAdapter;
     IntexNFT1155Bridge private batchAdapterOutbe;
 
     address private admin = address(this);
@@ -65,7 +65,7 @@ contract IntexCallFlowTest is CrossChainTest {
 
         vm.deal(admin, 1000 ether);
 
-        // Stand-in Desis recipient that advertises IDesis via ERC-165 so OriginMessenger.wire accepts it.
+        // Stand-in Desis recipient that advertises IDesis via ERC-165 so OriginRouter.wire accepts it.
         desis = address(new MockDesis());
         vm.deal(desis, 1000 ether);
         intexFactory = makeAddr("factory");
@@ -103,7 +103,7 @@ contract IntexCallFlowTest is CrossChainTest {
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
         intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(batchAdapterOutbe));
 
-        // ---- Pre-fund TargetMessenger's float: it pays the systemMultiSend bridge fee ----
+        // ---- Pre-fund TargetRouter's float: it pays the systemMultiSend bridge fee ----
         vm.deal(address(bnbAdapter), 100 ether);
     }
 
@@ -124,13 +124,13 @@ contract IntexCallFlowTest is CrossChainTest {
             intexOutbe.markCalled(seriesId);
         }
 
-        // 1. OriginMessenger sends MARK_CALLED → BSC. Record the payload for hand-delivery.
+        // 1. OriginRouter sends MARK_CALLED → BSC. Record the payload for hand-delivery.
         uint256 fee = outbeAdapter.quoteSendMarkCalled(seriesId);
         vm.prank(intexFactory);
         outbeAdapter.sendMarkCalled{value: fee}(seriesId);
         bytes memory markCalledPayload = bridge.lastPayload();
 
-        // 2. Deliver MARK_CALLED → TargetMessenger._handleMarkCalled. If holders exist, this fires the
+        // 2. Deliver MARK_CALLED → TargetRouter._handleMarkCalled. If holders exist, this fires the
         //    systemMultiSend, whose SEND_MULTI payload the bridge records last.
         _deliver(OUTBE_CHAIN_ID, address(outbeAdapter), address(bnbAdapter), markCalledPayload);
 

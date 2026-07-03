@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
@@ -16,17 +16,17 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /**
- * @title TargetMessengerTest
- * @notice Foundry tests for TargetMessenger
+ * @title TargetRouterTest
+ * @notice Foundry tests for TargetRouter
  * @dev Tests message encoding/decoding and cross-chain communication.
  *      All auction/series messages are keyed by `seriesId` (uint32).
  */
-contract TargetMessengerTest is CrossChainTest {
+contract TargetRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    TargetMessenger private bnbAdapter;
-    OriginMessenger private outbeAdapter;
+    TargetRouter private bnbAdapter;
+    OriginRouter private outbeAdapter;
     IntexNFT1155Bridge private batchAdapter;
 
     // Mock contracts
@@ -80,7 +80,7 @@ contract TargetMessengerTest is CrossChainTest {
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbAdapter));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbAdapter));
 
-        // Grant SYSTEM_RELAYER_ROLE to TargetMessenger on batch adapter
+        // Grant SYSTEM_RELAYER_ROLE to TargetRouter on batch adapter
         batchAdapter.grantRole(batchAdapter.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
 
         // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
@@ -89,7 +89,7 @@ contract TargetMessengerTest is CrossChainTest {
 
     // --- Helpers ---
     /// @dev Build a single-bid BidsBatchParams payload keyed by SERIES_ID.
-    function _bidsBatchParams(uint256 count) internal view returns (ITargetMessenger.BidsBatchParams memory) {
+    function _bidsBatchParams(uint256 count) internal view returns (ITargetRouter.BidsBatchParams memory) {
         address[] memory bidderAddresses = new address[](count);
         uint16[] memory intexQuantities = new uint16[](count);
         uint32[] memory intexBidRates = new uint32[](count);
@@ -102,7 +102,7 @@ contract TargetMessengerTest is CrossChainTest {
             timestamps[i] = uint32(block.timestamp);
         }
 
-        return ITargetMessenger.BidsBatchParams({
+        return ITargetRouter.BidsBatchParams({
             seriesId: SERIES_ID,
             bidderAddresses: bidderAddresses,
             intexQuantities: intexQuantities,
@@ -123,36 +123,36 @@ contract TargetMessengerTest is CrossChainTest {
     }
 
     function test_wire_revert_zero_address() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "auction"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
         newAdapter.wire(address(0), address(intex), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "intex"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
         newAdapter.wire(address(auction), address(0), admin, address(batchAdapter));
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "escrowAdapter"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
         newAdapter.wire(address(auction), address(intex), address(0), address(batchAdapter));
     }
 
     function test_wire_revert_zero_onftBatchAdapter() public {
-        TargetMessenger newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "onftBatchAdapter"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "onftBatchAdapter"));
         newAdapter.wire(address(auction), address(intex), admin, address(0));
     }
 
     // --- Access Control Tests ---
     function test_sendBidsBatch_revert_unauthorized() public {
-        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(1);
+        ITargetRouter.BidsBatchParams memory params = _bidsBatchParams(1);
 
         vm.prank(user);
         vm.expectRevert();
@@ -166,7 +166,7 @@ contract TargetMessengerTest is CrossChainTest {
 
     // --- Quote Tests ---
     function test_quoteSendBidsBatch() public view {
-        ITargetMessenger.BidsBatchParams memory params = _bidsBatchParams(2);
+        ITargetRouter.BidsBatchParams memory params = _bidsBatchParams(2);
 
         uint256 fee = bnbAdapter.quoteSendBidsBatch(params);
 
@@ -181,7 +181,7 @@ contract TargetMessengerTest is CrossChainTest {
         assertTrue(bnbAdapter.supportsInterface(accessControlId));
     }
 
-    // --- sweepNative Tests (TargetMessenger) ---
+    // --- sweepNative Tests (TargetRouter) ---
     function test_sweepNative_bnb_success() public {
         vm.deal(address(bnbAdapter), 5 ether);
         address payable recipient = payable(address(0xBEEF));
@@ -195,20 +195,20 @@ contract TargetMessengerTest is CrossChainTest {
 
     function test_sweepNative_bnb_revert_zeroTo() public {
         vm.deal(address(bnbAdapter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "to"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "to"));
         bnbAdapter.sweepNative(payable(address(0)), 1 ether);
     }
 
     function test_sweepNative_bnb_revert_insufficientBalance() public {
         vm.deal(address(bnbAdapter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
         bnbAdapter.sweepNative(payable(address(0xBEEF)), 2 ether);
     }
 
     function test_sweepNative_bnb_revert_failedCall() public {
         vm.deal(address(bnbAdapter), 1 ether);
         RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(ITargetMessenger.NativeSweepFailed.selector);
+        vm.expectRevert(ITargetRouter.NativeSweepFailed.selector);
         bnbAdapter.sweepNative(payable(address(rejector)), 1 ether);
     }
 

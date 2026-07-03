@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -14,21 +14,21 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /**
- * @title OriginMessengerTest
- * @notice Foundry tests for OriginMessenger
+ * @title OriginRouterTest
+ * @notice Foundry tests for OriginRouter
  * @dev Tests message encoding/decoding and access control.
  *      All auction/series messages are keyed by `seriesId` (uint32).
  */
-contract OriginMessengerTest is CrossChainTest {
+contract OriginRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    OriginMessenger private outbeAdapter;
-    TargetMessenger private bnbAdapter;
+    OriginRouter private outbeAdapter;
+    TargetRouter private bnbAdapter;
     IntexNFT1155Bridge private batchAdapter;
 
     // Stand-in Desis recipient that advertises `IDesis` via ERC-165 so that
-    // `OriginMessenger.wire`'s interface probe accepts it.
+    // `OriginRouter.wire`'s interface probe accepts it.
     address private desis;
 
     address private intexFactory;
@@ -82,8 +82,8 @@ contract OriginMessengerTest is CrossChainTest {
 
     // --- Helpers ---
     /// @dev Build a baseline AuctionStageStartParams payload keyed by SERIES_ID.
-    function _baseStageStartParams() internal view returns (IOriginMessenger.AuctionStageStartParams memory) {
-        return IOriginMessenger.AuctionStageStartParams({
+    function _baseStageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory) {
+        return IOriginRouter.AuctionStageStartParams({
             seriesId: SERIES_ID,
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
@@ -105,9 +105,9 @@ contract OriginMessengerTest is CrossChainTest {
     function _baseIssuanceParams(address[] memory recipients, uint256[] memory quantities)
         internal
         pure
-        returns (IOriginMessenger.IssuanceInstructionsParams memory)
+        returns (IOriginRouter.IssuanceInstructionsParams memory)
     {
-        return IOriginMessenger.IssuanceInstructionsParams({
+        return IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             issuedIntexCount: 10_000,
             promisLoadMinor: 1000,
@@ -136,9 +136,9 @@ contract OriginMessengerTest is CrossChainTest {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginMessenger newAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter newAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.ZeroAddress.selector, "desis"));
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);
     }
 
@@ -209,7 +209,7 @@ contract OriginMessengerTest is CrossChainTest {
         uint256[] memory quantities = new uint256[](0);
 
         vm.prank(intexFactory);
-        vm.expectRevert(IOriginMessenger.EmptyArray.selector);
+        vm.expectRevert(IOriginRouter.EmptyArray.selector);
         outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
@@ -222,7 +222,7 @@ contract OriginMessengerTest is CrossChainTest {
         quantities[0] = 10;
 
         vm.prank(intexFactory);
-        vm.expectRevert(IOriginMessenger.ArrayLengthMismatch.selector);
+        vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
         outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
@@ -232,7 +232,7 @@ contract OriginMessengerTest is CrossChainTest {
         uint128[] memory paidAmounts = new uint128[](0);
 
         vm.prank(desis);
-        vm.expectRevert(IOriginMessenger.EmptyArray.selector);
+        vm.expectRevert(IOriginRouter.EmptyArray.selector);
         outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
@@ -248,7 +248,7 @@ contract OriginMessengerTest is CrossChainTest {
         paidAmounts[0] = 50e6;
 
         vm.prank(desis);
-        vm.expectRevert(IOriginMessenger.ArrayLengthMismatch.selector);
+        vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
         outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 

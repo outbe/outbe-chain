@@ -3,9 +3,9 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -23,12 +23,12 @@ import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
-/// @dev End-to-end traversal of the five `TargetMessenger` inbound handlers that previously only
+/// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
 ///      drives `lzReceive` from the endpoint address, then asserts the downstream side-effect on
 ///      the wired contract — proving the full _lzReceive -> dispatchInbound -> _handleX -> X path
 ///      under the current fail-don't-drop model.
-contract TargetMessengerInboundHandlersTest is CrossChainTest {
+contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
@@ -39,8 +39,8 @@ contract TargetMessengerInboundHandlersTest is CrossChainTest {
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant REFERENCE_CURRENCY = 840;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbMessenger;
+    OriginRouter internal outbeMessenger;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
@@ -219,7 +219,7 @@ contract TargetMessengerInboundHandlersTest is CrossChainTest {
         (,,,, bool done) = bnbMessenger.pendingIssuanceMints(0);
         assertTrue(done);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.AlreadyFlushed.selector, uint256(0)));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
         bnbMessenger.flushPendingIssuanceMint(0);
     }
 

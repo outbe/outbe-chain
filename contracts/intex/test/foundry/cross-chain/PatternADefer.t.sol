@@ -5,8 +5,8 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -49,7 +49,7 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `TargetMessenger`: the inbound clearing/mark-called handlers fire an
+/// @notice Behavioural coverage of Pattern A on `TargetRouter`: the inbound clearing/mark-called handlers fire an
 ///         outbound relay (bids batch / holders bridge) that parks on failure and is retried permissionlessly via
 ///         `flushPending*`. Failure is forced by starving the relay float — a positive bridge fee with a zero native
 ///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
@@ -60,7 +60,7 @@ contract PatternADeferTest is CrossChainTest {
     /// @dev Fee the loopback bridge charges; the relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetMessenger internal bnbMessenger;
+    TargetRouter internal bnbMessenger;
     IntexNFT1155Bridge internal onftBatch;
     IntexNFT1155Bridge internal onftBatchOutbe;
     IntexNFT1155 internal intex;
@@ -110,7 +110,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — bids relay defer + flush
+    // TargetRouter — bids relay defer + flush
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayDeferredOnInsufficientBalance() public {
@@ -144,17 +144,17 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbMessenger), 10 ether);
         bnbMessenger.flushPendingBidsRelay(0);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.AlreadyFlushed.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, 0));
         bnbMessenger.flushPendingBidsRelay(0);
     }
 
     function test_TM_FlushBidsRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchPendingBidsRelay.selector, 42));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingBidsRelay.selector, 42));
         bnbMessenger.flushPendingBidsRelay(42);
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(ITargetMessenger.NotSelf.selector);
+        vm.expectRevert(ITargetRouter.NotSelf.selector);
         bnbMessenger.relayBidsToOutbe(SERIES_ID);
     }
 
@@ -207,7 +207,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — holders relay defer + flush
+    // TargetRouter — holders relay defer + flush
     // ---------------------------------------------------------------
 
     function _markCalledPacket() internal pure returns (bytes memory) {
@@ -219,7 +219,7 @@ contract PatternADeferTest is CrossChainTest {
         // The inbound MARK_CALLED triggers markCalled + the holders bridge.
         intex.mint(address(0xCAFE), 1, SERIES_ID);
 
-        // TargetMessenger's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
+        // TargetRouter's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
         // fails → holders relay deferred.
         assertEq(address(bnbMessenger).balance, 0);
 
@@ -236,7 +236,7 @@ contract PatternADeferTest is CrossChainTest {
         intex.mint(address(0xCAFE), 1, SERIES_ID);
         _deliverBridge(_markCalledPacket());
 
-        // TargetMessenger pays the bridge fee, so top up the messenger (not the adapter).
+        // TargetRouter pays the bridge fee, so top up the messenger (not the adapter).
         vm.deal(address(bnbMessenger), 1 ether);
 
         bnbMessenger.flushPendingHoldersRelay(0);
@@ -246,14 +246,14 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchPendingHoldersRelay.selector, 99));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingHoldersRelay.selector, 99));
         bnbMessenger.flushPendingHoldersRelay(99);
     }
 
     function test_TM_BridgeSeriesHoldersExt_ExternalCallerRevertsNotSelf() public {
         address[] memory holders = new address[](0);
         uint256[] memory amounts = new uint256[](0);
-        vm.expectRevert(ITargetMessenger.NotSelf.selector);
+        vm.expectRevert(ITargetRouter.NotSelf.selector);
         bnbMessenger.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
     }
 }

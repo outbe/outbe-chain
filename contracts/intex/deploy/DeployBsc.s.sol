@@ -9,7 +9,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 
 /// @title DeployBsc
 /// @author Outbe
@@ -62,17 +62,17 @@ contract DeployBsc is BaseScript {
         address messenger = deployProxy(
             factory,
             deployer,
-            "TargetMessenger",
-            address(new TargetMessenger(bridge, outbeChainId)),
-            abi.encodeCall(TargetMessenger.initialize, (delegate))
+            "TargetRouter",
+            address(new TargetRouter(bridge, outbeChainId)),
+            abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
         // Register the Outbe-side peers. Proxy addresses are CREATE3-deterministic across chains, so the
         // Outbe clients are predictable from the same (factory, deployer, salt) before that chain is deployed.
-        TargetMessenger(payable(messenger))
+        TargetRouter(payable(messenger))
             .setRemoteMessenger(
                 outbeChainId,
-                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "OriginMessenger"))
+                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "OriginRouter"))
             );
         IntexNFT1155Bridge(payable(nftBridge))
             .setRemoteMessenger(
@@ -87,6 +87,6 @@ contract DeployBsc is BaseScript {
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
         console.log("IntexNFT1155Bridge:", nftBridge);
-        console.log("TargetMessenger:", messenger);
+        console.log("TargetRouter:", messenger);
     }
 }

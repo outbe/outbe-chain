@@ -8,8 +8,8 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -19,8 +19,8 @@ import {
     IntexNFT1155V2Reinit,
     IntexAuctionV2,
     EscrowAdapterV2,
-    OriginMessengerV2,
-    TargetMessengerV2,
+    OriginRouterV2,
+    TargetRouterV2,
     IntexNFT1155BridgeV2
 } from "./UpgradeStubs.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
@@ -35,7 +35,7 @@ interface IUpgradeProbe {
 /// @dev End-to-end upgrade rehearsal: deploy v1 behind a proxy, populate real state, upgrade the
 ///      implementation to a v1.1 stub that adds a new view, then assert that persisted state
 ///      survived the upgrade, the implementation pointer moved, and the new view is callable.
-///      Covers one upgrade per impl contract. All four bridge clients (OriginMessenger, TargetMessenger, both
+///      Covers one upgrade per impl contract. All four bridge clients (OriginRouter, TargetRouter, both
 ///      ONFT adapters) run against a standalone {MockERC7786Bridge}.
 contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
@@ -162,8 +162,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction), "auction role lost");
     }
 
-    function test_Drill_OriginMessenger() public {
-        OriginMessenger origin = DeployProxy.originMessenger(address(bridge), admin, B_CHAIN_ID);
+    function test_Drill_OriginRouter() public {
+        OriginRouter origin = DeployProxy.originMessenger(address(bridge), admin, B_CHAIN_ID);
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
@@ -173,7 +173,7 @@ contract UpgradeDrillTest is CrossChainTest {
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
         vm.stopPrank();
 
-        OriginMessengerV2 newImpl = new OriginMessengerV2(address(bridge), B_CHAIN_ID);
+        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge), B_CHAIN_ID);
         vm.prank(admin);
         origin.upgradeToAndCall(address(newImpl), "");
 
@@ -184,8 +184,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(origin.BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
     }
 
-    function test_Drill_TargetMessenger() public {
-        TargetMessenger target = DeployProxy.targetMessenger(address(bridge), admin, A_CHAIN_ID);
+    function test_Drill_TargetRouter() public {
+        TargetRouter target = DeployProxy.targetMessenger(address(bridge), admin, A_CHAIN_ID);
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
@@ -197,7 +197,7 @@ contract UpgradeDrillTest is CrossChainTest {
         target.setRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 
-        TargetMessengerV2 newImpl = new TargetMessengerV2(address(bridge), A_CHAIN_ID);
+        TargetRouterV2 newImpl = new TargetRouterV2(address(bridge), A_CHAIN_ID);
         vm.prank(admin);
         target.upgradeToAndCall(address(newImpl), "");
 

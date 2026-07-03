@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// @title ITargetMessenger
+/// @title ITargetRouter
 /// @author Outbe
 /// @notice Interface for the BNB-side messenger. Sends BIDS_BATCH to Outbe and receives auction/series messages from
 ///         Outbe over the protocol-agnostic ERC-7786 bridge.
@@ -9,7 +9,7 @@ pragma solidity 0.8.30;
 ///      {ERC7786MessengerBase-receiveMessage}. Outbound `sendBidsBatch` returns the bridge `sendId` and is funded
 ///      either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quoteSendBidsBatch`
 ///      returns the native fee. All auction/series messages are keyed by `seriesId` (uint32).
-interface ITargetMessenger {
+interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
     /// @param sendId Bridge send identifier.

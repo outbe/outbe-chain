@@ -11,7 +11,7 @@ pragma solidity 0.8.30;
 ///      the array). Sized generously — the attribute is a ceiling, so over-provisioning only costs fee, while
 ///      under-provisioning risks an out-of-gas on the destination handler.
 library IntexGas {
-    // --- Outbe -> BNB fixed-size messages (TargetMessenger handlers) ---
+    // --- Outbe -> BNB fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on BNB.
     uint256 internal constant AUCTION_STAGE_START = 500_000;
     uint256 internal constant AUCTION_STAGE_REVEAL = 200_000;

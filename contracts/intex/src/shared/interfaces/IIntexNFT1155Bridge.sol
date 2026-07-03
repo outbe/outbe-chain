@@ -234,7 +234,7 @@ interface IIntexNFT1155Bridge {
     ) external view returns (uint256 fee);
 
     /// @notice Burns tokens from all holders and sends a single SEND_MULTI message, funded by the caller's msg.value.
-    /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetMessenger), which forwards the quoted fee as value.
+    /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetRouter), which forwards the quoted fee as value.
     /// @param tokenId Token ID (series) to bridge.
     /// @param holders Holder addresses on source chain.
     /// @param amounts Corresponding balances for each holder.

@@ -7,8 +7,8 @@ import {Vm} from "forge-std/Vm.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -94,7 +94,7 @@ contract ReentrancyProbeDesis {
         guardHeld = reentryGuarded(bridge, srcChainId, peer, messenger);
     }
 
-    /// @dev OriginMessenger reads stage post-processBidsBatch to decide on auto-clear.
+    /// @dev OriginRouter reads stage post-processBidsBatch to decide on auto-clear.
     ///      Return `None` so the auto-clear branch is skipped in this probe-only test.
     function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
         return IDesis.AuctionStage.None;
@@ -102,7 +102,7 @@ contract ReentrancyProbeDesis {
 }
 
 /// @title MessengerReentrancyTest
-/// @notice Behavioural test that `TargetMessenger.receiveMessage` and `OriginMessenger.receiveMessage` run under
+/// @notice Behavioural test that `TargetRouter.receiveMessage` and `OriginRouter.receiveMessage` run under
 ///         OZ `nonReentrant`.
 /// @dev A downstream callee (auction/desis) tries to re-enter the messenger's inbound entry mid-dispatch, through
 ///      the loopback bridge (so the bridge gate is cleared). The re-entry reverts with `ReentrancyGuardReentrantCall`
@@ -111,8 +111,8 @@ contract MessengerReentrancyTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbMessenger;
+    OriginRouter internal outbeMessenger;
 
     address internal admin = address(this);
 
@@ -139,7 +139,7 @@ contract MessengerReentrancyTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
 
         assertTrue(probeAuction.observed(), "TM auction callback never ran");
-        assertTrue(probeAuction.guardHeld(), "TargetMessenger.receiveMessage missing nonReentrant");
+        assertTrue(probeAuction.guardHeld(), "TargetRouter.receiveMessage missing nonReentrant");
     }
 
     function test_OM_receiveMessage_runsUnderNonReentrant() public {
@@ -154,6 +154,6 @@ contract MessengerReentrancyTest is CrossChainTest {
         _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
 
         assertTrue(probeDesis.observed(), "OM Desis callback never ran");
-        assertTrue(probeDesis.guardHeld(), "OriginMessenger.receiveMessage missing nonReentrant");
+        assertTrue(probeDesis.guardHeld(), "OriginRouter.receiveMessage missing nonReentrant");
     }
 }

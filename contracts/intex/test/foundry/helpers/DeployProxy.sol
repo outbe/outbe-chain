@@ -5,8 +5,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {Vm} from "forge-std/Vm.sol";
 
@@ -45,16 +45,16 @@ library DeployProxy {
         return escrow;
     }
 
-    function originMessenger(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginMessenger) {
-        OriginMessenger impl = new OriginMessenger(bridge, bnbChainId);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginMessenger.initialize, (delegate)));
-        return OriginMessenger(payable(address(proxy)));
+    function originMessenger(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginRouter) {
+        OriginRouter impl = new OriginRouter(bridge, bnbChainId);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginRouter.initialize, (delegate)));
+        return OriginRouter(payable(address(proxy)));
     }
 
-    function targetMessenger(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetMessenger) {
-        TargetMessenger impl = new TargetMessenger(bridge, outbeChainId);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetMessenger.initialize, (delegate)));
-        return TargetMessenger(payable(address(proxy)));
+    function targetMessenger(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetRouter) {
+        TargetRouter impl = new TargetRouter(bridge, outbeChainId);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetRouter.initialize, (delegate)));
+        return TargetRouter(payable(address(proxy)));
     }
 
     function intexNFT1155Bridge(address tokenAddr, address bridge, address delegate)

@@ -9,21 +9,21 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
-import {ITargetMessenger} from "./interfaces/ITargetMessenger.sol";
+import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
 
-/// @title TargetMessenger
+/// @title TargetRouter
 /// @author Outbe
 /// @notice BNB-side messenger: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe over the
 ///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
-contract TargetMessenger is
-    ITargetMessenger,
+contract TargetRouter is
+    ITargetRouter,
     ERC7786MessengerBase,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
@@ -63,8 +63,8 @@ contract TargetMessenger is
         bool done;
     }
 
-    /// @custom:storage-location erc7201:outbe.intex.TargetMessenger
-    struct TargetMessengerStorage {
+    /// @custom:storage-location erc7201:outbe.intex.TargetRouter
+    struct TargetRouterStorage {
         /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
         IIntexAuction auction;
         /// @dev IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
@@ -91,10 +91,10 @@ contract TargetMessenger is
         uint256 nextPendingIssuanceMintIdx;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetMessenger")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0xd3ea7ae85c719490ab42a52fee1d0107cffc5c368e656979e152d5c5183d9400;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
 
-    function _ts() private pure returns (TargetMessengerStorage storage $) {
+    function _ts() private pure returns (TargetRouterStorage storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
@@ -178,7 +178,7 @@ contract TargetMessenger is
     }
 
     // --- Admin ---
-    /// @inheritdoc ITargetMessenger
+    /// @inheritdoc ITargetRouter
     function wire(address _auction, address _intex, address _escrowAdapter, address _onftBatchAdapter)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -188,7 +188,7 @@ contract TargetMessenger is
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
         if (_onftBatchAdapter == address(0)) revert ZeroAddress("onftBatchAdapter");
 
-        TargetMessengerStorage storage $ = _ts();
+        TargetRouterStorage storage $ = _ts();
         if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
 
         $.auction = IIntexAuction(_auction);
@@ -199,13 +199,13 @@ contract TargetMessenger is
         _grantRole(AUCTION_ROLE, _auction);
     }
 
-    /// @inheritdoc ITargetMessenger
+    /// @inheritdoc ITargetRouter
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRemoteMessenger(chainId, interop);
     }
 
     // --- Quote ---
-    /// @inheritdoc ITargetMessenger
+    /// @inheritdoc ITargetRouter
     function quoteSendBidsBatch(BidsBatchParams calldata params) external view returns (uint256) {
         // Mirror `sendBidsBatch`'s single-batch encoding so the quoted fee matches the send.
         return _quoteFee(
@@ -226,7 +226,7 @@ contract TargetMessenger is
     }
 
     // --- Send ---
-    /// @inheritdoc ITargetMessenger
+    /// @inheritdoc ITargetRouter
     function sendBidsBatch(BidsBatchParams calldata params)
         external
         payable
@@ -318,7 +318,7 @@ contract TargetMessenger is
     /// @dev Only the outbound relay is caught (parked on failure); a failing inbound transition propagates so the
     ///      bridge redelivers.
     function _handleAuctionStageClearing(uint32 _srcChainId, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _ts();
+        TargetRouterStorage storage $ = _ts();
         uint32 seriesId = BridgeMsgCodec.decodeAuctionStageClearing(_message);
         $.auction.startClearingStage(seriesId);
 
@@ -360,7 +360,7 @@ contract TargetMessenger is
     ///      finalizing. No bids → one empty batch (0 of 1) as the completion signal. Any chunk reverting reverts the
     ///      whole call, so a `flushPendingBidsRelay` retry re-sends the full set under a fresh generation.
     function _doSendBidsToOutbe(uint32 seriesId) internal {
-        TargetMessengerStorage storage $ = _ts();
+        TargetRouterStorage storage $ = _ts();
         // First tuple component (AuctionData) is unused here; tuple destructure intentionally drops it.
         // slither-disable-next-line unused-return
         (, IIntexAuction.SubmittedBidData[] memory bids) = $.auction.getAuctionDetails(seriesId);
@@ -442,7 +442,7 @@ contract TargetMessenger is
 
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
     function _handleIssuanceInstructions(uint32 _srcChainId, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _ts();
+        TargetRouterStorage storage $ = _ts();
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
         $.intex
@@ -522,7 +522,7 @@ contract TargetMessenger is
     /// @dev On bridge failure the holders+amounts snapshot is parked for retry via
     ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
     function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
-        TargetMessengerStorage storage $ = _ts();
+        TargetRouterStorage storage $ = _ts();
         uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
@@ -583,7 +583,7 @@ contract TargetMessenger is
     /// @param holders Source chain holder addresses.
     /// @param amounts Corresponding balances for each holder.
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        // TargetMessenger pays the bridge fee from its own relay float: quote it and forward it as value so the
+        // TargetRouter pays the bridge fee from its own relay float: quote it and forward it as value so the
         // universal adapter never needs to hold native. The returned sendId is informational.
         IIntexNFT1155Bridge adapter = _ts().onftBatchAdapter;
         uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
@@ -591,7 +591,7 @@ contract TargetMessenger is
         adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);
     }
 
-    /// @inheritdoc ITargetMessenger
+    /// @inheritdoc ITargetRouter
     function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (to == address(0)) revert ZeroAddress("to");
         uint256 balance = address(this).balance;

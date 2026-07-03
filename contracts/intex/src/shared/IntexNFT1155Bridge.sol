@@ -34,7 +34,7 @@ contract IntexNFT1155Bridge is
     uint8 public constant BODY_VERSION_V2 = IntexNFT1155BridgeCodec.BODY_VERSION_V2;
     uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
 
-    /// @notice Granted to TargetMessenger; gates the relay-funded `systemMultiSend` holder migration.
+    /// @notice Granted to TargetRouter; gates the relay-funded `systemMultiSend` holder migration.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
@@ -236,7 +236,7 @@ contract IntexNFT1155Bridge is
             token.crosschainBurn(holders[i], tokenId, amounts[i]);
         }
 
-        // TargetMessenger forwards the exact fee as msg.value; this adapter holds no float of its own.
+        // TargetRouter forwards the exact fee as msg.value; this adapter holds no float of its own.
         sendId = _send(dstChainId, message, IntexGas.onftMint(len));
         emit SystemBridged(sendId, dstChainId, tokenId, len);
     }

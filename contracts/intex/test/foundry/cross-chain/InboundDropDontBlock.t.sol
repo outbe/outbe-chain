@@ -4,9 +4,9 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -16,7 +16,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @notice Desis stub that reverts `NotReady` on `processBidsBatch` until `enable()` is called — a stand-in for an
-///         inbound prerequisite that has not yet landed. Advertises `IDesis` via ERC-165 so `OriginMessenger.wire`
+///         inbound prerequisite that has not yet landed. Advertises `IDesis` via ERC-165 so `OriginRouter.wire`
 ///         accepts it.
 contract GatedDesis {
     error NotReady();
@@ -63,8 +63,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
 
     uint32 internal constant SERIES_ID = 20250101;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbMessenger;
+    OriginRouter internal outbeMessenger;
     GatedDesis internal desis;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
@@ -102,7 +102,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — premature MARK_CALLED reverts, then redeliver succeeds
+    // TargetRouter — premature MARK_CALLED reverts, then redeliver succeeds
     // ---------------------------------------------------------------
 
     /// @notice MARK_CALLED for a series the BNB intex has never seen reverts deterministically
@@ -133,7 +133,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginMessenger — premature BIDS_BATCH reverts, then redeliver succeeds
+    // OriginRouter — premature BIDS_BATCH reverts, then redeliver succeeds
     // ---------------------------------------------------------------
 
     /// @notice A BIDS_BATCH whose downstream (Desis) prerequisite has not landed reverts; once Desis is ready,
@@ -152,7 +152,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
 
         // Redelivery of the identical batch now lands (BidsBatchReceived).
         vm.expectEmit(true, true, false, true, address(outbeMessenger));
-        emit IOriginMessenger.BidsBatchReceived(BNB_CHAIN_ID, 42, 0);
+        emit IOriginRouter.BidsBatchReceived(BNB_CHAIN_ID, 42, 0);
         _deliverToOM(bids);
     }
 }

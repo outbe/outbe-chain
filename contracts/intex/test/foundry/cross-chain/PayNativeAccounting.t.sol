@@ -3,9 +3,9 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -23,7 +23,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
 ///         an entry caller drain the relay float.
-/// @dev Entry path is driven through `TargetMessenger.sendBidsBatch` (payable, `AUCTION_ROLE`). The relay/float path
+/// @dev Entry path is driven through `TargetRouter.sendBidsBatch` (payable, `AUCTION_ROLE`). The relay/float path
 ///      is driven both directly (`IntexNFT1155Bridge.systemMultiSend`, not payable → `msg.value == 0`) and through
 ///      an inbound MARK_CALLED delivery whose `_handleMarkCalled` handler fires that same relay from inside
 ///      `receiveMessage` — the canonical `msg.value == 0` relay send.
@@ -34,8 +34,8 @@ contract PayNativeAccountingTest is CrossChainTest {
     /// @dev Positive fee the loopback bridge charges; every send must fund this from `msg.value` or the float.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbMessenger;
+    OriginRouter internal outbeMessenger;
     IntexNFT1155Bridge internal onftBatch;
 
     IntexNFT1155 internal intex;
@@ -84,7 +84,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.mint(holder, 1, SERIES_ID);
     }
 
-    function _bidsParams() internal view returns (ITargetMessenger.BidsBatchParams memory params) {
+    function _bidsParams() internal view returns (ITargetRouter.BidsBatchParams memory params) {
         address[] memory bidders = new address[](1);
         bidders[0] = address(0xB1D);
         uint16[] memory qty = new uint16[](1);
@@ -94,7 +94,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint32[] memory ts = new uint32[](1);
         ts[0] = uint32(block.timestamp);
 
-        params = ITargetMessenger.BidsBatchParams({
+        params = ITargetRouter.BidsBatchParams({
             seriesId: SERIES_ID, bidderAddresses: bidders, intexQuantities: qty, intexBidRates: rate, timestamps: ts
         });
     }
@@ -111,7 +111,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function test_Entry_ExactFeeLeavesNoFloat() public {
-        ITargetMessenger.BidsBatchParams memory params = _bidsParams();
+        ITargetRouter.BidsBatchParams memory params = _bidsParams();
         uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
         assertEq(fee, BRIDGE_FEE, "fee mirrors the positive bridge fee");
 
@@ -127,7 +127,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     function test_Entry_ExcessIsRefundedToCaller() public {
-        ITargetMessenger.BidsBatchParams memory params = _bidsParams();
+        ITargetRouter.BidsBatchParams memory params = _bidsParams();
         uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
         uint256 buffer = 0.5 ether;
@@ -143,7 +143,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     function test_Entry_BelowFeeRevertsMsgValueBelowFee() public {
-        ITargetMessenger.BidsBatchParams memory params = _bidsParams();
+        ITargetRouter.BidsBatchParams memory params = _bidsParams();
         uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
         uint256 short = fee - 1;
@@ -157,7 +157,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     /// @notice Pin the no-leakage invariant across an entry-followed-by-entry sequence: the second entry must not see
     ///         the first's `msg.value` accumulated as float.
     function test_Entry_DoesNotLeakIntoFloatAcrossSends() public {
-        ITargetMessenger.BidsBatchParams memory params = _bidsParams();
+        ITargetRouter.BidsBatchParams memory params = _bidsParams();
         uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
 
         uint256 buffer = 1 ether;
@@ -181,7 +181,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         BidsRefundRejector rejector = new BidsRefundRejector(address(bnbMessenger));
         bnbMessenger.grantRole(bnbMessenger.AUCTION_ROLE(), address(rejector));
 
-        ITargetMessenger.BidsBatchParams memory params = _bidsParams();
+        ITargetRouter.BidsBatchParams memory params = _bidsParams();
         uint256 fee = bnbMessenger.quoteSendBidsBatch(params);
         uint256 buffer = 0.3 ether;
         vm.deal(address(rejector), fee + buffer);
@@ -191,7 +191,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // System bridge funding — TargetMessenger forwards the quoted fee
+    // System bridge funding — TargetRouter forwards the quoted fee
     // ---------------------------------------------------------------
 
     function test_SystemMultiSend_UnderfundedReverts() public {
@@ -221,7 +221,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     // Relay / float path — fired from inside receiveMessage (MARK_CALLED)
     // ---------------------------------------------------------------
 
-    /// @dev The inbound MARK_CALLED handler fires the holders relay, funding it from TargetMessenger's float. With
+    /// @dev The inbound MARK_CALLED handler fires the holders relay, funding it from TargetRouter's float. With
     ///      that float empty the forwarded-value call fails, which the handler catches and parks for later flush.
     function test_Relay_InsideReceiveMessage_EmptyFloatDefers() public {
         assertEq(address(bnbMessenger).balance, 0, "messenger float unfunded");
@@ -234,15 +234,15 @@ contract PayNativeAccountingTest is CrossChainTest {
         assertFalse(done);
     }
 
-    /// @dev With TargetMessenger's float funded, the relay fired from inside `receiveMessage` forwards the fee and
+    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` forwards the fee and
     ///      sends cleanly — nothing is parked.
     function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
-        vm.deal(address(bnbMessenger), 1 ether); // TargetMessenger pays the systemMultiSend fee
+        vm.deal(address(bnbMessenger), 1 ether); // TargetRouter pays the systemMultiSend fee
         uint256 floatBefore = address(bnbMessenger).balance;
 
         _deliverMarkCalled();
 
-        // No parked relay: TargetMessenger funded the send.
+        // No parked relay: TargetRouter funded the send.
         assertEq(bnbMessenger.nextPendingHoldersRelayIdx(), 0, "no holders relay deferred");
         assertEq(address(bnbMessenger).balance, floatBefore - BRIDGE_FEE, "fee drawn from messenger float");
         assertEq(address(onftBatch).balance, 0, "adapter holds no float");
@@ -278,21 +278,19 @@ contract PayNativeAccountingTest is CrossChainTest {
     function test_SweepNative_OverBalanceReverts() public {
         vm.deal(address(bnbMessenger), 1 ether);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ITargetMessenger.NativeBalanceInsufficient.selector, uint256(1 ether), uint256(2 ether)
-            )
+            abi.encodeWithSelector(ITargetRouter.NativeBalanceInsufficient.selector, uint256(1 ether), uint256(2 ether))
         );
         bnbMessenger.sweepNative(payable(address(0xBEEF)), 2 ether);
     }
 
     function test_SweepNative_ZeroRecipientReverts() public {
         vm.deal(address(bnbMessenger), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.ZeroAddress.selector, "to"));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "to"));
         bnbMessenger.sweepNative(payable(address(0)), 1 ether);
     }
 }
 
-/// @dev Placeholder auction so `TargetMessenger.wire` accepts a non-zero auction address. Neither the entry path
+/// @dev Placeholder auction so `TargetRouter.wire` accepts a non-zero auction address. Neither the entry path
 ///      (`sendBidsBatch` encodes its params directly) nor the delivered MARK_CALLED (which only touches `intex`)
 ///      calls the auction, so no interface surface is needed.
 // solhint-disable-next-line no-empty-blocks
@@ -300,13 +298,13 @@ contract StubAuction {}
 
 /// @dev Helper whose `receive()` reverts; used to pin `_send`'s RefundFailed guard on the entry path.
 contract BidsRefundRejector {
-    TargetMessenger private immutable messenger;
+    TargetRouter private immutable messenger;
 
     constructor(address _messenger) {
-        messenger = TargetMessenger(payable(_messenger));
+        messenger = TargetRouter(payable(_messenger));
     }
 
-    function callSendBidsBatch(ITargetMessenger.BidsBatchParams calldata params) external payable {
+    function callSendBidsBatch(ITargetRouter.BidsBatchParams calldata params) external payable {
         messenger.sendBidsBatch{value: msg.value}(params);
     }
 

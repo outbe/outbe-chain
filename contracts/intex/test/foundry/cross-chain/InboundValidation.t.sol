@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
 import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
@@ -26,8 +26,8 @@ contract InboundValidationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbMessenger;
+    OriginRouter internal outbeMessenger;
     IntexNFT1155Bridge internal onftBatchBnb;
     IntexNFT1155Bridge internal onftBatchOutbe;
 
@@ -62,7 +62,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — BridgeMsgCodec validation
+    // TargetRouter — BridgeMsgCodec validation
     // ---------------------------------------------------------------
 
     function test_TM_TooShortPayload_RevertsInvalidPayloadLength() public {
@@ -159,7 +159,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginMessenger — body-srcChainId cross-check + msgType
+    // OriginRouter — body-srcChainId cross-check + msgType
     // ---------------------------------------------------------------
 
     function test_OM_UnknownMsgType_RevertsUnknownMsgType() public {
@@ -188,7 +188,7 @@ contract InboundValidationTest is CrossChainTest {
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
             42, 0xDEAD, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
         _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
     }
 
@@ -244,24 +244,24 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginMessenger.wire() — Desis interface probe
+    // OriginRouter.wire() — Desis interface probe
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginMessenger fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(0xBEEF)));
+        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginMessenger fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        vm.expectRevert(abi.encodeWithSelector(IOriginMessenger.InvalidDesisInterface.selector, address(auction)));
+        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginMessenger fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);

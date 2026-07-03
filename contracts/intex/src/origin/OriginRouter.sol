@@ -7,20 +7,20 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
-import {IOriginMessenger} from "./interfaces/IOriginMessenger.sol";
+import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 
-/// @title OriginMessenger
+/// @title OriginRouter
 /// @author Outbe
 /// @notice Outbe-side messenger: sends auction/series messages to BNB and receives BIDS_BATCH from BNB over the
 ///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
 ///      messages are keyed by `seriesId` (uint32).
-contract OriginMessenger is
-    IOriginMessenger,
+contract OriginRouter is
+    IOriginRouter,
     ERC7786MessengerBase,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
@@ -34,18 +34,18 @@ contract OriginMessenger is
     /// @notice Destination chainId of BNB — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable BNB_CHAIN_ID;
 
-    /// @custom:storage-location erc7201:outbe.intex.OriginMessenger
-    struct OriginMessengerStorage {
+    /// @custom:storage-location erc7201:outbe.intex.OriginRouter
+    struct OriginRouterStorage {
         /// @dev Desis recipient that processes inbound BIDS_BATCH payloads (and holds `DESIS_ROLE`).
         address desis;
         /// @dev IntexFactory authorized for the supply-side sends (holds `INTEX_FACTORY_ROLE`).
         address intexFactory;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginMessenger")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0xb52fe309ffa163cf95d112f1416b87c89560d9d1ded95f235e82ca4df07af800;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x2c9073d8b0cd30aa4aa3061d90da176c3d040651b0847724f0e9a4a76777f100;
 
-    function _os() private pure returns (OriginMessengerStorage storage $) {
+    function _os() private pure returns (OriginRouterStorage storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
@@ -82,13 +82,13 @@ contract OriginMessenger is
     }
 
     // --- Admin ---
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function wire(address _desis, address _intexFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_desis == address(0)) revert ZeroAddress("desis");
         if (_intexFactory == address(0)) revert ZeroAddress("intexFactory");
         _assertDesisInterface(_desis);
 
-        OriginMessengerStorage storage $ = _os();
+        OriginRouterStorage storage $ = _os();
         address desisOld = $.desis;
         address intexFactoryOld = $.intexFactory;
 
@@ -104,7 +104,7 @@ contract OriginMessenger is
         emit DependenciesWired(desisOld, _desis, intexFactoryOld, _intexFactory);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRemoteMessenger(chainId, interop);
     }
@@ -121,19 +121,19 @@ contract OriginMessenger is
     }
 
     // --- Quote ---
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256) {
         return _quoteFee(BNB_CHAIN_ID, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageReveal(uint32 seriesId, bool isGreenDay) external view returns (uint256) {
         return _quoteFee(
             BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
         );
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageClearing(uint32 seriesId) external view returns (uint256) {
         return
             _quoteFee(
@@ -141,7 +141,7 @@ contract OriginMessenger is
             );
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
@@ -155,7 +155,7 @@ contract OriginMessenger is
         );
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params) external view returns (uint256) {
         return _quoteFee(
             BNB_CHAIN_ID,
@@ -164,7 +164,7 @@ contract OriginMessenger is
         );
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
@@ -178,18 +178,18 @@ contract OriginMessenger is
         );
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256) {
         return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256) {
         return _quoteFee(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED);
     }
 
     // --- Send ---
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendAuctionStageStart(AuctionStageStartParams calldata params)
         external
         payable
@@ -200,7 +200,7 @@ contract OriginMessenger is
         emit AuctionStageSent(sendId, params.seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendAuctionStageReveal(uint32 seriesId, bool isGreenDay)
         external
         payable
@@ -213,14 +213,14 @@ contract OriginMessenger is
         emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendAuctionStageClearing(uint32 seriesId) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         sendId =
             _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), IntexGas.AUCTION_STAGE_CLEARING);
         emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendAuctionResult(
         uint32 seriesId,
         uint32 issuedIntexCount,
@@ -235,7 +235,7 @@ contract OriginMessenger is
         emit AuctionResultSent(sendId, seriesId, issuedIntexCount, auctionClearingRate);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
         external
         payable
@@ -252,7 +252,7 @@ contract OriginMessenger is
         emit IssuanceInstructionsSent(sendId, params.seriesId, len);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendRefundInstructions(
         uint32 seriesId,
         address[] calldata bidders,
@@ -271,13 +271,13 @@ contract OriginMessenger is
         emit RefundInstructionsSent(sendId, seriesId, len);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendMarkCalled(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
         sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
         emit MarkCalledSent(sendId, seriesId);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sendMarkQualified(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
         sendId = _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED);
         emit MarkQualifiedSent(sendId, seriesId);
@@ -412,7 +412,7 @@ contract OriginMessenger is
         return super.supportsInterface(interfaceId);
     }
 
-    /// @inheritdoc IOriginMessenger
+    /// @inheritdoc IOriginRouter
     function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (to == address(0)) revert ZeroAddress("to");
         uint256 balance = address(this).balance;

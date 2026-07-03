@@ -4,8 +4,8 @@ pragma solidity 0.8.30;
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 
 /// @dev v1.1 upgrade stubs used by the upgrade drill. Each inherits the real implementation and
@@ -31,16 +31,16 @@ contract EscrowAdapterV2 is EscrowAdapter {
     }
 }
 
-contract OriginMessengerV2 is OriginMessenger {
-    constructor(address lzEndpoint, uint32 bnbEid) OriginMessenger(lzEndpoint, bnbEid) {}
+contract OriginRouterV2 is OriginRouter {
+    constructor(address lzEndpoint, uint32 bnbEid) OriginRouter(lzEndpoint, bnbEid) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
     }
 }
 
-contract TargetMessengerV2 is TargetMessenger {
-    constructor(address lzEndpoint, uint32 outbeEid) TargetMessenger(lzEndpoint, outbeEid) {}
+contract TargetRouterV2 is TargetRouter {
+    constructor(address lzEndpoint, uint32 outbeEid) TargetRouter(lzEndpoint, outbeEid) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
