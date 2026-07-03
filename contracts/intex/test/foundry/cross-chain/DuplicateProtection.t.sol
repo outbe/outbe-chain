@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {IONFT1155AdapterBatch, BatchSendParam} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IIntexNFT1155Bridge, BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -21,8 +21,8 @@ contract DuplicateProtectionTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
 
-    ONFT1155AdapterBatch internal batchSrc;
-    ONFT1155AdapterBatch internal batchDst;
+    IntexNFT1155Bridge internal batchSrc;
+    IntexNFT1155Bridge internal batchDst;
     IntexNFT1155 internal intexSrc;
     IntexNFT1155 internal intexDst;
 
@@ -40,8 +40,8 @@ contract DuplicateProtectionTest is CrossChainTest {
 
         intexSrc = DeployProxy.intexNFT1155(admin, admin);
         intexDst = DeployProxy.intexNFT1155(admin, admin);
-        batchSrc = DeployProxy.onftAdapterBatch(address(intexSrc), address(bridge), admin);
-        batchDst = DeployProxy.onftAdapterBatch(address(intexDst), address(bridge), admin);
+        batchSrc = DeployProxy.intexNFT1155Bridge(address(intexSrc), address(bridge), admin);
+        batchDst = DeployProxy.intexNFT1155Bridge(address(intexDst), address(bridge), admin);
 
         // Outbound recipient for the send.
         batchSrc.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
@@ -86,7 +86,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         // The mock's receiveId binds (sender, payload); a `deliverLast()` replay reuses it.
         bytes32 receiveId = keccak256(abi.encode(bridge.lastSender(), bridge.lastPayload()));
 
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.AlreadyProcessed.selector, receiveId));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.AlreadyProcessed.selector, receiveId));
         bridge.deliverLast();
     }
 

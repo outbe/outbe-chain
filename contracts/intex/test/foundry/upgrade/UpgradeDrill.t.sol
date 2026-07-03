@@ -10,8 +10,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {
@@ -22,8 +21,7 @@ import {
     EscrowAdapterV2,
     OriginMessengerV2,
     TargetMessengerV2,
-    ONFT1155AdapterV2,
-    ONFT1155AdapterBatchV2
+    IntexNFT1155BridgeV2
 } from "./UpgradeStubs.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
@@ -209,27 +207,9 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(target.remoteMessenger(A_CHAIN_ID), remote, "remote messenger lost");
     }
 
-    function test_Drill_ONFT1155Adapter() public {
+    function test_Drill_IntexNFT1155Bridge() public {
         address tokenAddr = makeAddr("token");
-        ONFT1155Adapter adapter = DeployProxy.onftAdapter(tokenAddr, address(bridge), admin);
-        bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
-
-        vm.prank(admin);
-        adapter.setRemoteMessenger(B_CHAIN_ID, remote);
-
-        ONFT1155AdapterV2 newImpl = new ONFT1155AdapterV2(tokenAddr, address(bridge));
-        vm.prank(admin);
-        adapter.upgradeToAndCall(address(newImpl), "");
-
-        _assertUpgraded(address(adapter), address(newImpl));
-        assertEq(adapter.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        assertEq(address(adapter.token()), tokenAddr, "token immutable lost");
-        assertTrue(adapter.hasRole(adapter.DEFAULT_ADMIN_ROLE(), admin), "admin role lost");
-    }
-
-    function test_Drill_ONFT1155AdapterBatch() public {
-        address tokenAddr = makeAddr("token");
-        ONFT1155AdapterBatch batch = DeployProxy.onftAdapterBatch(tokenAddr, address(bridge), admin);
+        IntexNFT1155Bridge batch = DeployProxy.intexNFT1155Bridge(tokenAddr, address(bridge), admin);
         address relayer = makeAddr("relayer");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
@@ -238,7 +218,7 @@ contract UpgradeDrillTest is CrossChainTest {
         batch.grantRole(batch.SYSTEM_RELAYER_ROLE(), relayer);
         vm.stopPrank();
 
-        ONFT1155AdapterBatchV2 newImpl = new ONFT1155AdapterBatchV2(tokenAddr, address(bridge));
+        IntexNFT1155BridgeV2 newImpl = new IntexNFT1155BridgeV2(tokenAddr, address(bridge));
         vm.prank(admin);
         batch.upgradeToAndCall(address(newImpl), "");
 

@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -61,8 +61,8 @@ contract PatternADeferTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetMessenger internal bnbMessenger;
-    ONFT1155AdapterBatch internal onftBatch;
-    ONFT1155AdapterBatch internal onftBatchOutbe;
+    IntexNFT1155Bridge internal onftBatch;
+    IntexNFT1155Bridge internal onftBatchOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
@@ -82,8 +82,8 @@ contract PatternADeferTest is CrossChainTest {
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
-        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
-        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
+        onftBatch = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        onftBatchOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));

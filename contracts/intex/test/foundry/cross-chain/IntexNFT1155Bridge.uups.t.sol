@@ -5,25 +5,25 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @dev UUPS coverage for both ONFT adapters — now both are ERC-7786 clients on a {MockERC7786Bridge}.
-contract ONFTAdaptersUupsTest is CrossChainTest {
+contract IntexNFT1155BridgeUupsTest is CrossChainTest {
     uint32 internal constant B_CHAIN_ID = 2;
 
     address internal admin = makeAddr("admin");
     address internal stranger = makeAddr("stranger");
     address internal tokenA = makeAddr("tokenA");
 
-    ONFT1155Adapter internal adapter;
-    ONFT1155AdapterBatch internal batch;
+    IntexNFT1155Bridge internal adapter;
+    IntexNFT1155Bridge internal batch;
 
     function setUp() public {
         _setUpBridge();
-        adapter = DeployProxy.onftAdapter(tokenA, address(bridge), admin);
-        batch = DeployProxy.onftAdapterBatch(tokenA, address(bridge), admin);
+        adapter = DeployProxy.intexNFT1155Bridge(tokenA, address(bridge), admin);
+        batch = DeployProxy.intexNFT1155Bridge(tokenA, address(bridge), admin);
     }
 
     function test_Initialize_SetsAdmin() public view {
@@ -41,17 +41,17 @@ contract ONFTAdaptersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        ONFT1155Adapter impl = new ONFT1155Adapter(tokenA, address(bridge));
+        IntexNFT1155Bridge impl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
 
-        ONFT1155AdapterBatch batchImpl = new ONFT1155AdapterBatch(tokenA, address(bridge));
+        IntexNFT1155Bridge batchImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         batchImpl.initialize(admin);
     }
 
     function test_RevertWhen_AdapterUpgradeByNonAdmin() public {
-        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(bridge));
+        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -60,7 +60,7 @@ contract ONFTAdaptersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_BatchUpgradeByNonAdmin() public {
-        ONFT1155AdapterBatch newImpl = new ONFT1155AdapterBatch(tokenA, address(bridge));
+        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -73,7 +73,7 @@ contract ONFTAdaptersUupsTest is CrossChainTest {
         vm.prank(admin);
         adapter.setRemoteMessenger(B_CHAIN_ID, peer);
 
-        ONFT1155Adapter newImpl = new ONFT1155Adapter(tokenA, address(bridge));
+        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
         vm.prank(admin);
         adapter.upgradeToAndCall(address(newImpl), "");
 

@@ -5,11 +5,11 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {ONFT1155BatchMsgCodec} from "@contracts/shared/libs/ONFT1155BatchMsgCodec.sol";
-import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -28,8 +28,8 @@ contract InboundValidationTest is CrossChainTest {
 
     TargetMessenger internal bnbMessenger;
     OriginMessenger internal outbeMessenger;
-    ONFT1155AdapterBatch internal onftBatchBnb;
-    ONFT1155AdapterBatch internal onftBatchOutbe;
+    IntexNFT1155Bridge internal onftBatchBnb;
+    IntexNFT1155Bridge internal onftBatchOutbe;
 
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
@@ -47,10 +47,10 @@ contract InboundValidationTest is CrossChainTest {
 
         bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        onftBatchBnb = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        onftBatchBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
+        onftBatchOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound peer authentication passes and the payload is what fails.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
@@ -272,13 +272,13 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // ONFT1155AdapterBatch — V2 codec: version + length + size + msgType + address validation
+    // IntexNFT1155Bridge — V2 codec: version + length + size + msgType + address validation
     // ---------------------------------------------------------------
 
     function test_ONFTBatch_UnknownMsgType_RevertsUnknownMsgType() public {
         // Valid V2 version byte, unknown msgType 0x99 — routing rejects it.
         bytes memory packet = hex"0299";
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.UnknownMsgType.selector, 0x99));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.UnknownMsgType.selector, 0x99));
         _deliverToBatch(packet);
     }
 
@@ -286,38 +286,38 @@ contract InboundValidationTest is CrossChainTest {
         // A pre-migration V1 packet must fail closed rather than misdecode into a wrong crosschainMint.
         bytes memory packet = _batchV2(address(0xCAFE), 1, 100);
         packet[0] = bytes1(uint8(1)); // downgrade the version byte to stale V1
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.UnsupportedBodyVersion.selector, uint8(1)));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.UnsupportedBodyVersion.selector, uint8(1)));
         _deliverToBatch(packet);
     }
 
     function test_ONFTBatch_ShortHeader_RevertsInvalidPayloadLength() public {
         // A packet shorter than the [version][msgType] header cannot even be routed.
         bytes memory packet = hex"02";
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.InvalidPayloadLength.selector, 1, 2));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.InvalidPayloadLength.selector, 1, 2));
         _deliverToBatch(packet);
     }
 
     function test_ONFTBatch_TruncatedBody_Reverts() public {
         // Valid header but the abi.encode body is truncated — abi.decode rejects it (no misread).
         bytes memory packet =
-            abi.encodePacked(ONFT1155BatchMsgCodec.BODY_VERSION_V2, ONFT1155BatchMsgCodec.SEND, hex"deadbeef");
+            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V2, IntexNFT1155BridgeCodec.SEND, hex"deadbeef");
         vm.expectRevert();
         _deliverToBatch(packet);
     }
 
     function test_ONFTBatch_OverCap_RevertsBatchTooLarge() public {
         // Inbound decoded array length is capped at MAX_BATCH_SIZE.
-        uint256 over = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE + 1;
+        uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
         uint256[] memory tokenIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
-        bytes memory packet = ONFT1155BatchMsgCodec.encodeBatch(
-            ONFT1155BatchMsgCodec.BatchPayload({
+        bytes memory packet = IntexNFT1155BridgeCodec.encodeBatch(
+            IntexNFT1155BridgeCodec.BatchPayload({
                 to: bytes32(uint256(uint160(address(0xCAFE)))), tokenIds: tokenIds, amounts: amounts
             })
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                ONFT1155BatchMsgCodec.BatchTooLarge.selector, over, ONFT1155BatchMsgCodec.MAX_BATCH_SIZE
+                IntexNFT1155BridgeCodec.BatchTooLarge.selector, over, IntexNFT1155BridgeCodec.MAX_BATCH_SIZE
             )
         );
         _deliverToBatch(packet);
@@ -331,10 +331,10 @@ contract InboundValidationTest is CrossChainTest {
         tokenIds[0] = 1;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
-        bytes memory packet = ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
-        vm.expectRevert(IONFT1155AdapterBatch.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
         _deliverToBatch(packet);
     }
 
@@ -342,13 +342,13 @@ contract InboundValidationTest is CrossChainTest {
         // A `to` with non-zero high bits is rejected before any crosschainMint (empty item arrays).
         bytes32 badTo = bytes32(uint256(1) << 200);
         bytes memory packet = abi.encodePacked(
-            ONFT1155BatchMsgCodec.BODY_VERSION_V2,
-            ONFT1155BatchMsgCodec.SEND,
+            IntexNFT1155BridgeCodec.BODY_VERSION_V2,
+            IntexNFT1155BridgeCodec.SEND,
             abi.encode(
-                ONFT1155BatchMsgCodec.BatchPayload({to: badTo, tokenIds: new uint256[](0), amounts: new uint256[](0)})
+                IntexNFT1155BridgeCodec.BatchPayload({to: badTo, tokenIds: new uint256[](0), amounts: new uint256[](0)})
             )
         );
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.MalformedAddress.selector, badTo));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, badTo));
         _deliverToBatch(packet);
     }
 
@@ -361,10 +361,10 @@ contract InboundValidationTest is CrossChainTest {
         tokenIds[0] = 1;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
-        bytes memory packet = ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155BatchMsgCodec.MalformedAddress.selector, badRecipient));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, badRecipient));
         _deliverToBatch(packet);
     }
 
@@ -372,31 +372,31 @@ contract InboundValidationTest is CrossChainTest {
         // SEND branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
         // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the crosschainMint.
         bytes memory packet = abi.encodePacked(
-            ONFT1155BatchMsgCodec.BODY_VERSION_V2,
-            ONFT1155BatchMsgCodec.SEND,
+            IntexNFT1155BridgeCodec.BODY_VERSION_V2,
+            IntexNFT1155BridgeCodec.SEND,
             abi.encode(
-                ONFT1155BatchMsgCodec.BatchPayload({
+                IntexNFT1155BridgeCodec.BatchPayload({
                     to: bytes32(0), tokenIds: new uint256[](0), amounts: new uint256[](0)
                 })
             )
         );
-        vm.expectRevert(IONFT1155AdapterBatch.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
         _deliverToBatch(packet);
     }
 
     function test_ONFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
         // SEND_MULTI cap parity to the SEND OverCap test — decodeMulti rejects oversize arrays
         // before the per-item loop touches any recipient or crosschainMint.
-        uint256 over = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE + 1;
+        uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);
         uint256[] memory tokenIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
-        bytes memory packet = ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        bytes memory packet = IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                ONFT1155BatchMsgCodec.BatchTooLarge.selector, over, ONFT1155BatchMsgCodec.MAX_BATCH_SIZE
+                IntexNFT1155BridgeCodec.BatchTooLarge.selector, over, IntexNFT1155BridgeCodec.MAX_BATCH_SIZE
             )
         );
         _deliverToBatch(packet);
@@ -414,13 +414,13 @@ contract InboundValidationTest is CrossChainTest {
         amounts[0] = 10;
         amounts[1] = 20;
         bytes memory packet = abi.encodePacked(
-            ONFT1155BatchMsgCodec.BODY_VERSION_V2,
-            ONFT1155BatchMsgCodec.SEND_MULTI,
+            IntexNFT1155BridgeCodec.BODY_VERSION_V2,
+            IntexNFT1155BridgeCodec.SEND_MULTI,
             abi.encode(
-                ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+                IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
             )
         );
-        vm.expectRevert(ONFT1155BatchMsgCodec.ArrayLengthMismatch.selector);
+        vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
         _deliverToBatch(packet);
     }
 
@@ -437,8 +437,8 @@ contract InboundValidationTest is CrossChainTest {
         tokenIds[0] = tokenId_;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = amount_;
-        return ONFT1155BatchMsgCodec.encodeBatch(
-            ONFT1155BatchMsgCodec.BatchPayload({
+        return IntexNFT1155BridgeCodec.encodeBatch(
+            IntexNFT1155BridgeCodec.BatchPayload({
                 to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, amounts: amounts
             })
         );

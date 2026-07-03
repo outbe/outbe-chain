@@ -8,8 +8,7 @@ import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 
 /// @title DeployBsc
@@ -53,19 +52,12 @@ contract DeployBsc is BaseScript {
             address(new IntexAuction()),
             abi.encodeCall(IntexAuction.initialize, (admin))
         );
-        address onft = deployProxy(
+        address nftBridge = deployProxy(
             factory,
             deployer,
-            "ONFT1155Adapter",
-            address(new ONFT1155Adapter(nft, bridge)),
-            abi.encodeCall(ONFT1155Adapter.initialize, (delegate))
-        );
-        address onftBatch = deployProxy(
-            factory,
-            deployer,
-            "ONFT1155AdapterBatch",
-            address(new ONFT1155AdapterBatch(nft, bridge)),
-            abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate))
+            "IntexNFT1155Bridge",
+            address(new IntexNFT1155Bridge(nft, bridge)),
+            abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate))
         );
         address messenger = deployProxy(
             factory,
@@ -82,15 +74,10 @@ contract DeployBsc is BaseScript {
                 outbeChainId,
                 InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "OriginMessenger"))
             );
-        ONFT1155Adapter(payable(onft))
+        IntexNFT1155Bridge(payable(nftBridge))
             .setRemoteMessenger(
                 outbeChainId,
-                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "ONFT1155Adapter"))
-            );
-        ONFT1155AdapterBatch(payable(onftBatch))
-            .setRemoteMessenger(
-                outbeChainId,
-                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "ONFT1155AdapterBatch"))
+                InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "IntexNFT1155Bridge"))
             );
 
         vm.stopBroadcast();
@@ -99,8 +86,7 @@ contract DeployBsc is BaseScript {
         console.log("IntexNFT1155:", nft);
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
-        console.log("ONFT1155Adapter:", onft);
-        console.log("ONFT1155AdapterBatch:", onftBatch);
+        console.log("IntexNFT1155Bridge:", nftBridge);
         console.log("TargetMessenger:", messenger);
     }
 }

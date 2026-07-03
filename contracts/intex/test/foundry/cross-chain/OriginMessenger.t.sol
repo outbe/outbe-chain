@@ -5,7 +5,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
@@ -25,7 +25,7 @@ contract OriginMessengerTest is CrossChainTest {
 
     OriginMessenger private outbeAdapter;
     TargetMessenger private bnbAdapter;
-    ONFT1155AdapterBatch private batchAdapter;
+    IntexNFT1155Bridge private batchAdapter;
 
     // Stand-in Desis recipient that advertises `IDesis` via ERC-165 so that
     // `OriginMessenger.wire`'s interface probe accepts it.
@@ -67,7 +67,7 @@ contract OriginMessengerTest is CrossChainTest {
         bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        batchAdapter = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
         outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));

@@ -5,7 +5,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -22,7 +22,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
  *      1. OriginMessenger sends MARK_CALLED to BSC.
  *      2. TargetMessenger marks the series as Called (transfers blocked).
  *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (funded from its own relay float).
- *      4. ONFT1155AdapterBatch burns Intex on BSC and, once delivered, mints on Outbe.
+ *      4. IntexNFT1155Bridge burns Intex on BSC and, once delivered, mints on Outbe.
  *      Delivery is manual: each `sendMessage` records the payload on the loopback bridge, which we then hand-deliver
  *      to the destination as the authenticated peer.
  */
@@ -37,12 +37,12 @@ contract IntexCallFlowTest is CrossChainTest {
     IntexNFT1155 private intexBnb;
     IntexAuction private auction;
     TargetMessenger private bnbAdapter;
-    ONFT1155AdapterBatch private batchAdapterBnb;
+    IntexNFT1155Bridge private batchAdapterBnb;
 
     // --- Outbe contracts ---
     IntexNFT1155 private intexOutbe;
     OriginMessenger private outbeAdapter;
-    ONFT1155AdapterBatch private batchAdapterOutbe;
+    IntexNFT1155Bridge private batchAdapterOutbe;
 
     address private admin = address(this);
 
@@ -75,12 +75,12 @@ contract IntexCallFlowTest is CrossChainTest {
         intexBnb = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
         bnbAdapter = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
-        batchAdapterBnb = DeployProxy.onftAdapterBatch(address(intexBnb), address(bridge), admin);
+        batchAdapterBnb = DeployProxy.intexNFT1155Bridge(address(intexBnb), address(bridge), admin);
 
         // ---- Deploy Outbe contracts ----
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
         outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        batchAdapterOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
+        batchAdapterOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // ---- Register remote messengers ----
         bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));

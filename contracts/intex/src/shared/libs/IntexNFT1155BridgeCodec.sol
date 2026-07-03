@@ -2,9 +2,9 @@
 pragma solidity 0.8.30;
 
 /**
- * @title ONFT1155BatchMsgCodec
+ * @title IntexNFT1155BridgeCodec
  * @author Outbe
- * @notice Encode/decode for the `ONFT1155AdapterBatch` LayerZero wire body.
+ * @notice Encode/decode for the `IntexNFT1155Bridge` LayerZero wire body.
  * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`.
  *
  *      The body migrated from a hand-rolled `abi.encodePacked` packed concat
@@ -14,7 +14,7 @@ pragma solidity 0.8.30;
  *      of misdecoding. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
  *      the zero-recipient reject stay with the adapter (it owns the crosschainMint semantics).
  */
-library ONFT1155BatchMsgCodec {
+library IntexNFT1155BridgeCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
     /// @dev V2 marks the `abi.encodePacked` -> `abi.encode` wire change. A V1 packet now
     ///      fails closed on {UnsupportedBodyVersion} rather than misdecoding into a wrong crosschainMint.

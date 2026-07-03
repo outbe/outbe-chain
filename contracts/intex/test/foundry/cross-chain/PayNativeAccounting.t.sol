@@ -6,7 +6,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -24,7 +24,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
 ///         an entry caller drain the relay float.
 /// @dev Entry path is driven through `TargetMessenger.sendBidsBatch` (payable, `AUCTION_ROLE`). The relay/float path
-///      is driven both directly (`ONFT1155AdapterBatch.systemMultiSend`, not payable → `msg.value == 0`) and through
+///      is driven both directly (`IntexNFT1155Bridge.systemMultiSend`, not payable → `msg.value == 0`) and through
 ///      an inbound MARK_CALLED delivery whose `_handleMarkCalled` handler fires that same relay from inside
 ///      `receiveMessage` — the canonical `msg.value == 0` relay send.
 contract PayNativeAccountingTest is CrossChainTest {
@@ -36,7 +36,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     TargetMessenger internal bnbMessenger;
     OriginMessenger internal outbeMessenger;
-    ONFT1155AdapterBatch internal onftBatch;
+    IntexNFT1155Bridge internal onftBatch;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
@@ -56,7 +56,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        onftBatch = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
         bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));

@@ -3,15 +3,12 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
 
 /// @dev Exercises the body-version contract on both codecs:
 ///      - every encoder emits `bodyVersion == BODY_VERSION_V1` at offset 0;
 ///      - every decoder reverts `UnsupportedBodyVersion(got)` on any other leading byte;
 ///      - round-trip preserves the version byte alongside the payload.
 contract BodyVersionTest is Test {
-    using ONFT1155MsgCodec for bytes;
-
     // --- BridgeMsgCodec: encoder emits version byte ---
 
     function test_BridgeCodec_AllEncodersEmitVersionV1() public pure {
@@ -187,43 +184,6 @@ contract BodyVersionTest is Test {
         this.exposedDecodeIssuanceInstructions(packet);
     }
 
-    // --- ONFT1155MsgCodec: encoder + round-trip + revert ---
-
-    function test_ONFT1155Codec_EmitsVersionV1() public view {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, empty);
-        assertEq(uint8(payload[0]), ONFT1155MsgCodec.BODY_VERSION_V1);
-        assertEq(payload.length, 97); // 1 version + 32 + 32 + 32
-
-        bytes memory compose = hex"cafe";
-        (payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, compose);
-        assertEq(uint8(payload[0]), ONFT1155MsgCodec.BODY_VERSION_V1);
-        // 1 version + 32 + 32 + 32 + 32 (composer addr) + 2 (compose body)
-        assertEq(payload.length, 131);
-    }
-
-    function test_ONFT1155Codec_RoundTrip() public view {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(uint160(address(0x1234)))), 5, 100, empty);
-        assertEq(this.exposedSendTo(payload), bytes32(uint256(uint160(address(0x1234)))));
-        assertEq(this.exposedTokenId(payload), 5);
-        assertEq(this.exposedAmount(payload), 100);
-        assertFalse(this.exposedIsComposed(payload));
-    }
-
-    function test_ONFT1155Codec_UnknownBodyVersion_Reverts() public {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, empty);
-        payload[0] = 0xEE;
-
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedSendTo(payload);
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedTokenId(payload);
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedAmount(payload);
-    }
-
     // --- BridgeMsgCodec: sibling-array parity + cap on the variable-length decoders ---
 
     function test_BridgeCodec_DecodeBidsBatch_RejectsArrayLengthMismatch() public {
@@ -387,29 +347,5 @@ contract BodyVersionTest is Test {
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(p);
-    }
-
-    function exposedONFTEncode(bytes32 to, uint256 tokenId, uint256 amount, bytes calldata composeMsg)
-        external
-        view
-        returns (bytes memory payload, bool hasCompose)
-    {
-        return ONFT1155MsgCodec.encode(to, tokenId, amount, composeMsg);
-    }
-
-    function exposedSendTo(bytes calldata p) external pure returns (bytes32) {
-        return ONFT1155MsgCodec.sendTo(p);
-    }
-
-    function exposedTokenId(bytes calldata p) external pure returns (uint256) {
-        return ONFT1155MsgCodec.tokenId(p);
-    }
-
-    function exposedAmount(bytes calldata p) external pure returns (uint256) {
-        return ONFT1155MsgCodec.amount(p);
-    }
-
-    function exposedIsComposed(bytes calldata p) external pure returns (bool) {
-        return ONFT1155MsgCodec.isComposed(p);
     }
 }

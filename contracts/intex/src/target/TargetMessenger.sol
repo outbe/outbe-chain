@@ -13,7 +13,7 @@ import {ITargetMessenger} from "./interfaces/ITargetMessenger.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
-import {IONFT1155AdapterBatch} from "../shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
 
 /// @title TargetMessenger
 /// @author Outbe
@@ -71,8 +71,8 @@ contract TargetMessenger is
         IIntexNFT1155 intex;
         /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
         IEscrowAdapter escrowAdapter;
-        /// @dev ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
-        IONFT1155AdapterBatch onftBatchAdapter;
+        /// @dev IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
+        IIntexNFT1155Bridge onftBatchAdapter;
         /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
         mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
         /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
@@ -135,8 +135,8 @@ contract TargetMessenger is
         return _ts().escrowAdapter;
     }
 
-    /// @notice ONFT1155AdapterBatch used to bridge series holders to Outbe on markCalled.
-    function onftBatchAdapter() external view returns (IONFT1155AdapterBatch) {
+    /// @notice IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
+    function onftBatchAdapter() external view returns (IIntexNFT1155Bridge) {
         return _ts().onftBatchAdapter;
     }
 
@@ -194,7 +194,7 @@ contract TargetMessenger is
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
-        $.onftBatchAdapter = IONFT1155AdapterBatch(_onftBatchAdapter);
+        $.onftBatchAdapter = IIntexNFT1155Bridge(_onftBatchAdapter);
 
         _grantRole(AUCTION_ROLE, _auction);
     }
@@ -585,7 +585,7 @@ contract TargetMessenger is
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
         // TargetMessenger pays the bridge fee from its own relay float: quote it and forward it as value so the
         // universal adapter never needs to hold native. The returned sendId is informational.
-        IONFT1155AdapterBatch adapter = _ts().onftBatchAdapter;
+        IIntexNFT1155Bridge adapter = _ts().onftBatchAdapter;
         uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);

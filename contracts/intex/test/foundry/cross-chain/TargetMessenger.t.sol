@@ -5,9 +5,9 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
-import {IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
@@ -27,7 +27,7 @@ contract TargetMessengerTest is CrossChainTest {
 
     TargetMessenger private bnbAdapter;
     OriginMessenger private outbeAdapter;
-    ONFT1155AdapterBatch private batchAdapter;
+    IntexNFT1155Bridge private batchAdapter;
 
     // Mock contracts
     IntexAuction private auction;
@@ -64,7 +64,7 @@ contract TargetMessengerTest is CrossChainTest {
         outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        batchAdapter = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
         bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
@@ -219,7 +219,7 @@ contract TargetMessengerTest is CrossChainTest {
         bnbAdapter.sweepNative(payable(address(0xBEEF)), 1 ether);
     }
 
-    // --- sweepNative Tests (ONFT1155AdapterBatch) ---
+    // --- sweepNative Tests (IntexNFT1155Bridge) ---
     function test_sweepNative_batch_success() public {
         vm.deal(address(batchAdapter), 3 ether);
         address payable recipient = payable(address(0xCAFE));
@@ -233,14 +233,14 @@ contract TargetMessengerTest is CrossChainTest {
 
     function test_sweepNative_batch_revert_zeroTo() public {
         vm.deal(address(batchAdapter), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.ZeroAddress.selector, "to"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "to"));
         batchAdapter.sweepNative(payable(address(0)), 1 ether);
     }
 
     function test_sweepNative_batch_revert_insufficientBalance() public {
         vm.deal(address(batchAdapter), 1 ether);
         vm.expectRevert(
-            abi.encodeWithSelector(IONFT1155AdapterBatch.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
+            abi.encodeWithSelector(IIntexNFT1155Bridge.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
         );
         batchAdapter.sweepNative(payable(address(0xCAFE)), 2 ether);
     }
@@ -248,7 +248,7 @@ contract TargetMessengerTest is CrossChainTest {
     function test_sweepNative_batch_revert_failedCall() public {
         vm.deal(address(batchAdapter), 1 ether);
         RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(IONFT1155AdapterBatch.NativeSweepFailed.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.NativeSweepFailed.selector);
         batchAdapter.sweepNative(payable(address(rejector)), 1 ether);
     }
 

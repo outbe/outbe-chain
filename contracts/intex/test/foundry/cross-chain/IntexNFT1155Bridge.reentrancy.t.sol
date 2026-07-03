@@ -5,12 +5,12 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {
-    IONFT1155AdapterBatch,
+    IIntexNFT1155Bridge,
     BatchSendParam,
     MultiRecipientSendParam
-} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
@@ -36,7 +36,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
             dstChainId: 0, recipients: new bytes32[](0), tokenIds: new uint256[](0), amounts: new uint256[](0)
         });
 
-        try IONFT1155AdapterBatch(adapter).multiSend{value: 0}(param) {
+        try IIntexNFT1155Bridge(adapter).multiSend{value: 0}(param) {
         // unexpected: re-entrant call should always revert (either with the guard or with EmptyBatch)
         }
         catch (bytes memory err) {
@@ -65,7 +65,7 @@ contract ReentrantBatchProbe is IERC1155Receiver {
     }
 }
 
-/// @title ONFT1155AdapterBatchReentrancyTest
+/// @title IntexNFT1155BridgeReentrancyTest
 /// @notice Behavioral test that `receiveMessage` and `multiSend` are mutually `nonReentrant`-guarded.
 /// @dev Source chain (A) caller initiates a single-recipient batch transfer to the hostile probe
 ///      on the destination chain (B). On B, `receiveMessage` → `_handleBatchReceive` → `token.crosschainMint`
@@ -73,14 +73,14 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
 ///      `ReentrancyGuardReentrantCall` — proving the guard is held by `receiveMessage` AND that
 ///      `multiSend` carries the modifier.
-contract ONFT1155AdapterBatchReentrancyTest is CrossChainTest {
+contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;
     uint32 private bChainId = 2;
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
-    ONFT1155AdapterBatch private adapterA;
-    ONFT1155AdapterBatch private adapterB;
+    IntexNFT1155Bridge private adapterA;
+    IntexNFT1155Bridge private adapterB;
 
     address private user = address(0x1);
     uint32 private constant SERIES_ID = 20260401;
@@ -96,8 +96,8 @@ contract ONFT1155AdapterBatchReentrancyTest is CrossChainTest {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.onftAdapterBatch(address(tokenA), address(bridge), address(this));
-        adapterB = DeployProxy.onftAdapterBatch(address(tokenB), address(bridge), address(this));
+        adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), address(this));
+        adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));

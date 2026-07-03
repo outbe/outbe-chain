@@ -18,13 +18,21 @@ struct MultiRecipientSendParam {
     uint256[] amounts;
 }
 
-/// @title IONFT1155AdapterBatch
+/// @notice Parameters for sending a SINGLE token type to one recipient (encoded as a 1-item batch).
+struct SendParam {
+    uint32 dstChainId;
+    bytes32 to;
+    uint256 tokenId;
+    uint256 amount;
+}
+
+/// @title IIntexNFT1155Bridge
 /// @author Outbe
 /// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786 bridge.
 /// @dev Supports single-recipient batch and multi-recipient modes, plus a system bridge for automated holder
 ///      migration. Sends burn on the source and mint on the paired adapter registered as the remote messenger for a
 ///      chainId. `send*` return the bridge `sendId`; `quote*` return the native fee.
-interface IONFT1155AdapterBatch {
+interface IIntexNFT1155Bridge {
     // --- Events ---
     /// @notice Emitted when a batch of tokens is sent to one recipient.
     /// @param sendId Bridge send identifier.
@@ -32,9 +40,17 @@ interface IONFT1155AdapterBatch {
     /// @param from Sender address.
     /// @param tokenIds Array of token IDs sent.
     /// @param amounts Corresponding amounts for each token ID.
-    event ONFTBatchSent(
+    event BatchBridged(
         bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256[] tokenIds, uint256[] amounts
     );
+
+    /// @notice Emitted when a single token type is sent to one recipient.
+    /// @param sendId Bridge send identifier.
+    /// @param dstChainId Destination chainId.
+    /// @param from Sender address.
+    /// @param tokenId Token ID sent.
+    /// @param amount Amount sent.
+    event Bridged(bytes32 indexed sendId, uint32 dstChainId, address indexed from, uint256 tokenId, uint256 amount);
 
     /// @notice Emitted when tokens are sent to multiple recipients.
     /// @param sendId Bridge send identifier.
@@ -43,7 +59,7 @@ interface IONFT1155AdapterBatch {
     /// @param recipients Array of recipient addresses (bytes32-encoded).
     /// @param tokenIds Array of token IDs sent.
     /// @param amounts Corresponding amounts for each recipient.
-    event ONFTMultiSent(
+    event MultiBridged(
         bytes32 indexed sendId,
         uint32 dstChainId,
         address indexed from,
@@ -58,7 +74,7 @@ interface IONFT1155AdapterBatch {
     /// @param to Recipient address.
     /// @param tokenIds Array of token IDs received.
     /// @param amounts Corresponding amounts for each token ID.
-    event ONFTBatchReceived(
+    event BatchReceived(
         bytes32 indexed receiveId, uint32 srcChainId, address indexed to, uint256[] tokenIds, uint256[] amounts
     );
 
@@ -68,7 +84,7 @@ interface IONFT1155AdapterBatch {
     /// @param recipients Array of recipient addresses (bytes32-encoded).
     /// @param tokenIds Array of token IDs received.
     /// @param amounts Corresponding amounts for each recipient.
-    event ONFTMultiReceived(
+    event MultiReceived(
         bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] amounts
     );
 
@@ -77,7 +93,7 @@ interface IONFT1155AdapterBatch {
     /// @param dstChainId Destination chainId.
     /// @param tokenId Token ID (series) being migrated.
     /// @param holdersCount Number of holders included in the migration.
-    event SystemMultiSent(bytes32 indexed sendId, uint32 dstChainId, uint256 indexed tokenId, uint256 holdersCount);
+    event SystemBridged(bytes32 indexed sendId, uint32 dstChainId, uint256 indexed tokenId, uint256 holdersCount);
 
     /// @notice Emitted when residual pre-funded native tokens are swept to an admin recipient.
     /// @param to Recipient address the native tokens were swept to.
@@ -141,7 +157,7 @@ interface IONFT1155AdapterBatch {
     error ZeroAddress(string field);
     /// @notice Inbound `msgType` is not in the SEND / SEND_MULTI set.
     /// @dev Wire-format reverts (`UnsupportedBodyVersion`, `MalformedAddress`, `BatchTooLarge`,
-    ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `ONFT1155BatchMsgCodec`.
+    ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
     /// @notice Inbound message with this `receiveId` has already been minted.
@@ -174,6 +190,16 @@ interface IONFT1155AdapterBatch {
     // --- Single-recipient batch ---
     /// @notice Quotes the native fee for a batch cross-chain transfer.
     /// @param _sendParam Batch send parameters.
+    /// @notice Native fee to send a single token type to one recipient.
+    /// @param _sendParam Single send parameters.
+    /// @return fee Native fee the bridge requires.
+    function quoteSend(SendParam calldata _sendParam) external view returns (uint256 fee);
+
+    /// @notice Sends a single token type to one recipient on another chain. Caller funds the fee via `msg.value`.
+    /// @param _sendParam Single send parameters.
+    /// @return sendId Bridge send identifier.
+    function send(SendParam calldata _sendParam) external payable returns (bytes32 sendId);
+
     /// @return fee Native fee the bridge requires.
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256 fee);
 

@@ -6,18 +6,17 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {IONFT1155Adapter, SendParam} from "@contracts/shared/interfaces/IONFT1155Adapter.sol";
-import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 
-/// @title ONFT1155AdapterTest
-/// @notice Foundry tests for ONFT1155Adapter with IntexNFT1155 token.
+/// @title IntexNFT1155BridgeSingleTest
+/// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
 /// @dev Tests cross-chain transfers over the {MockERC7786Bridge} loopback via {CrossChainTest}. Series are keyed by
 ///      `seriesId` (uint32); the issued token id is `uint256(seriesId)`. Delivery is manual: a send records the
 ///      packet on the bridge and {_deliver} hands it to the destination adapter as the bridge.
-contract ONFT1155AdapterTest is CrossChainTest {
+contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
     uint32 private constant B_CHAIN_ID = 2;
 
@@ -25,8 +24,8 @@ contract ONFT1155AdapterTest is CrossChainTest {
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
-    ONFT1155Adapter private adapterA;
-    ONFT1155Adapter private adapterB;
+    IntexNFT1155Bridge private adapterA;
+    IntexNFT1155Bridge private adapterB;
 
     address private admin = address(this);
     address private user = address(0x1);
@@ -45,8 +44,8 @@ contract ONFT1155AdapterTest is CrossChainTest {
         tokenA = DeployProxy.intexNFT1155(admin, admin);
         tokenB = DeployProxy.intexNFT1155(admin, admin);
 
-        adapterA = DeployProxy.onftAdapter(address(tokenA), address(bridge), admin);
-        adapterB = DeployProxy.onftAdapter(address(tokenB), address(bridge), admin);
+        adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), admin);
+        adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), admin);
 
         // Grant RELAYER_ROLE to adapters
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
@@ -87,14 +86,14 @@ contract ONFT1155AdapterTest is CrossChainTest {
     ///         adapter (every `crosschainBurn`/`crosschainMint` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
         // Property of the implementation constructor — the token immutable is set there.
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "token"));
-        new ONFT1155Adapter(address(0), address(bridge));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "token"));
+        new IntexNFT1155Bridge(address(0), address(bridge));
     }
 
     /// @notice A zero bridge address is caught by the `ERC7786MessengerBase` constructor guard.
     function test_constructor_revertsZeroBridge() public {
         vm.expectRevert(ERC7786MessengerBase.InvalidBridge.selector);
-        new ONFT1155Adapter(address(tokenA), address(0));
+        new IntexNFT1155Bridge(address(tokenA), address(0));
     }
 
     function test_send() public {
@@ -182,7 +181,7 @@ contract ONFT1155AdapterTest is CrossChainTest {
         SendParam memory sendParam =
             SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), tokenId: TOKEN_ID, amount: AMOUNT});
 
-        vm.expectRevert(IONFT1155Adapter.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
         adapterA.quoteSend(sendParam);
     }
 
@@ -234,20 +233,22 @@ contract ONFT1155AdapterTest is CrossChainTest {
 
     function test_sweepNative_revert_zeroTo() public {
         vm.deal(address(adapterA), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.ZeroAddress.selector, "to"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "to"));
         adapterA.sweepNative(payable(address(0)), 1 ether);
     }
 
     function test_sweepNative_revert_insufficientBalance() public {
         vm.deal(address(adapterA), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155Adapter.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Bridge.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
+        );
         adapterA.sweepNative(payable(address(0xBEEF)), 2 ether);
     }
 
     function test_sweepNative_revert_failedCall() public {
         vm.deal(address(adapterA), 1 ether);
         RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(IONFT1155Adapter.NativeSweepFailed.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.NativeSweepFailed.selector);
         adapterA.sweepNative(payable(address(rejector)), 1 ether);
     }
 
@@ -286,7 +287,7 @@ contract ONFT1155AdapterTest is CrossChainTest {
         // Source burned; destination not minted; transfer parked under the bridge receiveId.
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "not minted yet");
-        (address to,, uint256 amount,, bool exists) = adapterB.failedCrosschainMints(receiveId);
+        (address to,, uint256 amount,, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(exists, "crosschainMint parked");
         assertEq(to, user);
         assertEq(amount, AMOUNT);
@@ -294,15 +295,15 @@ contract ONFT1155AdapterTest is CrossChainTest {
         // Fix the cause on B, then retry → minted and entry cleared.
         tokenB.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(failSeries);
-        adapterB.retryCrosschainMint(receiveId);
+        adapterB.retryCrosschainMint(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
 
-        (,,,, bool existsAfter) = adapterB.failedCrosschainMints(receiveId);
+        (,,,, bool existsAfter) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(existsAfter, "entry cleared");
 
         // A re-retry reverts.
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, receiveId));
-        adapterB.retryCrosschainMint(receiveId);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        adapterB.retryCrosschainMint(receiveId, 0);
     }
 
     function test_inboundCrosschainMintFailure_reclaimToSourceRestoresOrigin() public {
@@ -325,14 +326,14 @@ contract ONFT1155AdapterTest is CrossChainTest {
         _deliverAToB();
 
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
-        (,,,, bool parked) = adapterB.failedCrosschainMints(receiveId);
+        (,,,, bool parked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(parked, "parked on B");
 
         // Reclaim: B sends the transfer back to its origin A — the only exit that skips B's gate.
         vm.prank(user);
-        adapterB.reclaimToSource{value: FEE}(receiveId);
+        adapterB.reclaimToSource{value: FEE}(receiveId, 0);
 
-        (,,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId);
+        (,,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillParked, "entry consumed");
 
         // Deliver the reverse packet on A → holder re-minted, cross-chain supply conserved.
@@ -341,40 +342,18 @@ contract ONFT1155AdapterTest is CrossChainTest {
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
 
         // A second reclaim reverts — the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, receiveId));
-        adapterB.reclaimToSource(receiveId);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        adapterB.reclaimToSource(receiveId, 0);
     }
 
     function test_retryCrosschainMint_revertsForUnknownReceiveId() public {
         bytes32 unknown = bytes32(uint256(0xABCD));
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchFailedCrosschainMint.selector, unknown));
-        adapterB.retryCrosschainMint(unknown);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, unknown, 0));
+        adapterB.retryCrosschainMint(unknown, 0);
     }
 
     function test_crosschainMintOne_externalCallerRevertsNotSelf() public {
-        vm.expectRevert(ONFT1155Adapter.NotSelf.selector);
+        vm.expectRevert(IIntexNFT1155Bridge.NotSelf.selector);
         adapterB.crosschainMintOne(address(0xCAFE), TOKEN_ID, 1);
-    }
-
-    // Direct inbound packet: body shorter than MIN_LEN_TRANSFER (97) must revert before any field
-    // is decoded. The codec's fixed-offset slices would otherwise panic; the explicit assert
-    // surfaces a typed error instead.
-    function test_receive_ShortBody_RevertsInvalidPayloadLength() public {
-        bytes memory shortBody = new bytes(96);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(ONFT1155MsgCodec.InvalidPayloadLength.selector, uint256(96), uint256(97))
-        );
-        _deliver(A_CHAIN_ID, address(adapterA), address(adapterB), shortBody);
-    }
-
-    // Direct inbound packet: well-formed length and body version, but the sendTo bytes32 has
-    // non-zero high bits. assertAddress must reject before bytes32ToAddress silently truncates.
-    function test_receive_MalformedAddress_RevertsMalformedAddress() public {
-        bytes32 dirty = bytes32((uint256(0xFF) << 160) | uint256(uint160(user)));
-        bytes memory payload = abi.encodePacked(uint8(1), dirty, uint256(TOKEN_ID), uint256(AMOUNT));
-
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.MalformedAddress.selector, dirty));
-        _deliver(A_CHAIN_ID, address(adapterA), address(adapterB), payload);
     }
 }

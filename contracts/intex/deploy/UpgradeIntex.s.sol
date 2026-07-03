@@ -8,8 +8,7 @@ import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 
@@ -59,8 +58,7 @@ contract UpgradeBsc is UpgradeBase {
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
         upgradeProxy(factory, deployer, "EscrowAdapter", address(new EscrowAdapter()));
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
+        upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
         upgradeProxy(factory, deployer, "TargetMessenger", address(new TargetMessenger(bridge, outbeChainId)));
         vm.stopBroadcast();
     }
@@ -81,8 +79,7 @@ contract UpgradeOutbe is UpgradeBase {
 
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
+        upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
         upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
         vm.stopBroadcast();
     }

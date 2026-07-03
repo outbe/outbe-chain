@@ -6,28 +6,33 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
-import {IONFT1155AdapterBatch, BatchSendParam, MultiRecipientSendParam} from "./interfaces/IONFT1155AdapterBatch.sol";
-import {ONFT1155BatchMsgCodec} from "./libs/ONFT1155BatchMsgCodec.sol";
+import {
+    IIntexNFT1155Bridge,
+    SendParam,
+    BatchSendParam,
+    MultiRecipientSendParam
+} from "./interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155BridgeCodec} from "./libs/IntexNFT1155BridgeCodec.sol";
 import {ERC7786MessengerBase} from "./ERC7786MessengerBase.sol";
 import {IntexGas} from "./libs/IntexGas.sol";
 
-/// @title ONFT1155AdapterBatch
+/// @title IntexNFT1155Bridge
 /// @author Outbe
 /// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge: burns on the source and
 ///         mints on the paired adapter registered as the remote messenger for a chainId.
 /// @dev UUPS upgradeable; the bridge and bridged token are implementation immutables. Modes: single-recipient batch,
 ///      multi-recipient, and a relay-float-funded system holder migration (SYSTEM_RELAYER_ROLE).
-contract ONFT1155AdapterBatch is
-    IONFT1155AdapterBatch,
+contract IntexNFT1155Bridge is
+    IIntexNFT1155Bridge,
     ERC7786MessengerBase,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
-    uint16 public constant SEND = ONFT1155BatchMsgCodec.SEND;
-    uint16 public constant SEND_MULTI = ONFT1155BatchMsgCodec.SEND_MULTI;
-    uint8 public constant BODY_VERSION_V2 = ONFT1155BatchMsgCodec.BODY_VERSION_V2;
-    uint256 public constant MAX_BATCH_SIZE = ONFT1155BatchMsgCodec.MAX_BATCH_SIZE;
+    uint16 public constant SEND = IntexNFT1155BridgeCodec.SEND;
+    uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
+    uint8 public constant BODY_VERSION_V2 = IntexNFT1155BridgeCodec.BODY_VERSION_V2;
+    uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
 
     /// @notice Granted to TargetMessenger; gates the relay-funded `systemMultiSend` holder migration.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
@@ -46,18 +51,18 @@ contract ONFT1155AdapterBatch is
         bool exists;
     }
 
-    /// @custom:storage-location erc7201:outbe.intex.ONFT1155AdapterBatch
-    struct ONFT1155AdapterBatchStorage {
+    /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Bridge
+    struct IntexNFT1155BridgeStorage {
         /// @dev Inbound message ids already minted (defence-in-depth; the hub also dedups).
         mapping(bytes32 receiveId => bool) processed;
         /// @dev Per-message map of items whose `token.crosschainMint` reverted.
         mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("outbe.intex.ONFT1155AdapterBatch")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0x6727c2bc99fd63b213294d83fd1690033f4cd7fa6aa4e7cd0cbe5775c7ffda00;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155Bridge")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x769097ec453d253ed110328ac911e291d0940836557f2ebb5d6ffb80fa001500;
 
-    function _bs() private pure returns (ONFT1155AdapterBatchStorage storage $) {
+    function _bs() private pure returns (IntexNFT1155BridgeStorage storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
@@ -92,22 +97,48 @@ contract ONFT1155AdapterBatch is
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
-        return interfaceId == type(IONFT1155AdapterBatch).interfaceId || super.supportsInterface(interfaceId);
+        return interfaceId == type(IIntexNFT1155Bridge).interfaceId || super.supportsInterface(interfaceId);
     }
 
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRemoteMessenger(chainId, interop);
     }
 
+    // --- Single transfer ---
+    /// @inheritdoc IIntexNFT1155Bridge
+    function quoteSend(SendParam calldata _sendParam) external view returns (uint256) {
+        return _quoteFee(_sendParam.dstChainId, _buildSingleMsg(_sendParam), IntexGas.onftMint(1));
+    }
+
+    /// @inheritdoc IIntexNFT1155Bridge
+    function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
+        bytes memory message = _buildSingleMsg(_sendParam);
+        token.crosschainBurn(msg.sender, _sendParam.tokenId, _sendParam.amount);
+        sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(1));
+        emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.amount);
+    }
+
+    /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
+    function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
+        if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = _sendParam.tokenId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = _sendParam.amount;
+        return IntexNFT1155BridgeCodec.encodeBatch(
+            IntexNFT1155BridgeCodec.BatchPayload({to: _sendParam.to, tokenIds: tokenIds, amounts: amounts})
+        );
+    }
+
     // --- Single-recipient batch ---
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256) {
         return
             _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.onftMint(_sendParam.tokenIds.length));
     }
 
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function batchSend(BatchSendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         if (_sendParam.tokenIds.length == 0) revert EmptyBatch();
         if (_sendParam.tokenIds.length != _sendParam.amounts.length) revert ArrayLengthMismatch();
@@ -119,23 +150,23 @@ contract ONFT1155AdapterBatch is
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.tokenIds.length));
-        emit ONFTBatchSent(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.amounts);
+        emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.amounts);
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         if (_sendParam.tokenIds.length > MAX_BATCH_SIZE) {
-            revert ONFT1155BatchMsgCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
+            revert IntexNFT1155BridgeCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
         }
-        return ONFT1155BatchMsgCodec.encodeBatch(
-            ONFT1155BatchMsgCodec.BatchPayload({
+        return IntexNFT1155BridgeCodec.encodeBatch(
+            IntexNFT1155BridgeCodec.BatchPayload({
                 to: _sendParam.to, tokenIds: _sendParam.tokenIds, amounts: _sendParam.amounts
             })
         );
     }
 
     // --- Multi-recipient batch ---
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function quoteMultiSend(MultiRecipientSendParam calldata _sendParam) external view returns (uint256) {
         return
             _quoteFee(
@@ -143,7 +174,7 @@ contract ONFT1155AdapterBatch is
             );
     }
 
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function multiSend(MultiRecipientSendParam calldata _sendParam)
         external
         payable
@@ -161,24 +192,24 @@ contract ONFT1155AdapterBatch is
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.onftMint(_sendParam.recipients.length));
-        emit ONFTMultiSent(
+        emit MultiBridged(
             sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.amounts
         );
     }
 
     function _buildMultiMsg(MultiRecipientSendParam calldata _sendParam) internal pure returns (bytes memory) {
         if (_sendParam.recipients.length > MAX_BATCH_SIZE) {
-            revert ONFT1155BatchMsgCodec.BatchTooLarge(_sendParam.recipients.length, MAX_BATCH_SIZE);
+            revert IntexNFT1155BridgeCodec.BatchTooLarge(_sendParam.recipients.length, MAX_BATCH_SIZE);
         }
-        return ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({
+        return IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({
                 recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, amounts: _sendParam.amounts
             })
         );
     }
 
     // --- System bridge ---
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function quoteSystemMultiSend(
         uint256 tokenId,
         address[] calldata holders,
@@ -188,7 +219,7 @@ contract ONFT1155AdapterBatch is
         return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts), IntexGas.onftMint(holders.length));
     }
 
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
         external
         payable
@@ -207,7 +238,7 @@ contract ONFT1155AdapterBatch is
 
         // TargetMessenger forwards the exact fee as msg.value; this adapter holds no float of its own.
         sendId = _send(dstChainId, message, IntexGas.onftMint(len));
-        emit SystemMultiSent(sendId, dstChainId, tokenId, len);
+        emit SystemBridged(sendId, dstChainId, tokenId, len);
     }
 
     /// @dev Build a SEND_MULTI message where every entry shares `tokenId`.
@@ -217,7 +248,7 @@ contract ONFT1155AdapterBatch is
         returns (bytes memory)
     {
         uint256 len = holders.length;
-        if (len > MAX_BATCH_SIZE) revert ONFT1155BatchMsgCodec.BatchTooLarge(len, MAX_BATCH_SIZE);
+        if (len > MAX_BATCH_SIZE) revert IntexNFT1155BridgeCodec.BatchTooLarge(len, MAX_BATCH_SIZE);
 
         bytes32[] memory recipients = new bytes32[](len);
         uint256[] memory tokenIds = new uint256[](len);
@@ -225,8 +256,8 @@ contract ONFT1155AdapterBatch is
             recipients[i] = bytes32(uint256(uint160(holders[i])));
             tokenIds[i] = tokenId;
         }
-        return ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        return IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
     }
 
@@ -244,15 +275,15 @@ contract ONFT1155AdapterBatch is
     }
 
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
-        ONFT1155AdapterBatchStorage storage $ = _bs();
+        IntexNFT1155BridgeStorage storage $ = _bs();
         if ($.processed[receiveId]) revert AlreadyProcessed(receiveId);
         $.processed[receiveId] = true;
 
-        if (message.length < ONFT1155BatchMsgCodec.HEADER_LEN) {
-            revert ONFT1155BatchMsgCodec.InvalidPayloadLength(message.length, ONFT1155BatchMsgCodec.HEADER_LEN);
+        if (message.length < IntexNFT1155BridgeCodec.HEADER_LEN) {
+            revert IntexNFT1155BridgeCodec.InvalidPayloadLength(message.length, IntexNFT1155BridgeCodec.HEADER_LEN);
         }
         uint8 version = uint8(message[0]);
-        if (version != BODY_VERSION_V2) revert ONFT1155BatchMsgCodec.UnsupportedBodyVersion(version);
+        if (version != BODY_VERSION_V2) revert IntexNFT1155BridgeCodec.UnsupportedBodyVersion(version);
         uint8 msgType = uint8(message[1]);
 
         if (msgType == SEND) {
@@ -265,9 +296,9 @@ contract ONFT1155AdapterBatch is
     }
 
     function _handleBatchReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
-        ONFT1155BatchMsgCodec.BatchPayload memory p = ONFT1155BatchMsgCodec.decodeBatch(message);
+        IntexNFT1155BridgeCodec.BatchPayload memory p = IntexNFT1155BridgeCodec.decodeBatch(message);
 
-        ONFT1155BatchMsgCodec.assertAddress(p.to);
+        IntexNFT1155BridgeCodec.assertAddress(p.to);
         if (p.to == bytes32(0)) revert InvalidReceiver();
         address toAddress = address(uint160(uint256(p.to)));
 
@@ -275,20 +306,20 @@ contract ONFT1155AdapterBatch is
             _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.amounts[i]);
         }
 
-        emit ONFTBatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, p.amounts);
+        emit BatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, p.amounts);
     }
 
     function _handleMultiReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
-        ONFT1155BatchMsgCodec.MultiPayload memory p = ONFT1155BatchMsgCodec.decodeMulti(message);
+        IntexNFT1155BridgeCodec.MultiPayload memory p = IntexNFT1155BridgeCodec.decodeMulti(message);
 
         for (uint256 i = 0; i < p.recipients.length; i++) {
-            ONFT1155BatchMsgCodec.assertAddress(p.recipients[i]);
+            IntexNFT1155BridgeCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             address toAddress = address(uint160(uint256(p.recipients[i])));
             _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.amounts[i]);
         }
 
-        emit ONFTMultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.amounts);
+        emit MultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.amounts);
     }
 
     /// @dev Isolate a per-item `token.crosschainMint` revert: park a snapshot for `retryCrosschainMint`
@@ -320,7 +351,7 @@ contract ONFT1155AdapterBatch is
 
     /// @notice Permissionless retry of a previously-failed crosschainMint; the entry is cleared on success.
     function retryCrosschainMint(bytes32 receiveId, uint256 idx) external nonReentrant {
-        ONFT1155AdapterBatchStorage storage $ = _bs();
+        IntexNFT1155BridgeStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
@@ -334,7 +365,7 @@ contract ONFT1155AdapterBatch is
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
     function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
-        ONFT1155AdapterBatchStorage storage $ = _bs();
+        IntexNFT1155BridgeStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         if (f.srcChainId == 0) revert NoReclaimSource(receiveId, idx);
@@ -346,14 +377,14 @@ contract ONFT1155AdapterBatch is
         tokenIds[0] = f.tokenId;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = f.amount;
-        bytes memory message = ONFT1155BatchMsgCodec.encodeMulti(
-            ONFT1155BatchMsgCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
+        bytes memory message = IntexNFT1155BridgeCodec.encodeMulti(
+            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
         sendId = _send(f.srcChainId, message, IntexGas.onftMint(1));
         emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.amount);
     }
 
-    /// @inheritdoc IONFT1155AdapterBatch
+    /// @inheritdoc IIntexNFT1155Bridge
     function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (to == address(0)) revert ZeroAddress("to");
         uint256 balance = address(this).balance;
