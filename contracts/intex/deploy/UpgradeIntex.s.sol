@@ -20,8 +20,8 @@ import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
 /// @dev The proxy keeps its storage (roles, peers, balances) — only the implementation pointer
 ///      changes. Proxies are located by their deterministic CREATE3 address (same `predictProxy`
 ///      as the deploy scripts), so no addresses need to be passed in. The broadcaster must hold
-///      each contract's upgrade authority (DEFAULT_ADMIN_ROLE for the AccessControl contracts,
-///      owner for the OApp contracts) — the deployer does. `data` is empty (logic-only upgrade);
+///      each contract's upgrade authority (DEFAULT_ADMIN_ROLE) — the deployer does. `data` is empty
+///      (logic-only upgrade);
 ///      pass `reinitializer` calldata here if a storage migration is ever needed.
 abstract contract UpgradeBase is BaseScript {
     /// @dev The CREATE3 factory at its deterministic address; reverts if not yet deployed.

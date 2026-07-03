@@ -88,8 +88,9 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_CreateSeries() public {
+        uint32 callPeriod = uint32(30 days);
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, callPeriod));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -98,26 +99,8 @@ contract IntexNFT1155Test is Test {
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
         assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
-        // Default callPeriod (21 days) is applied when 0 is passed at creation.
-        assertEq(data.callTrigger.intexCallPeriod, uint32(21 days));
-    }
-
-    function test_CreateSeries_RevertsCallPeriodAboveMax() public {
-        uint32 overMax = nft.MAX_INTEX_CALL_PERIOD() + 1;
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, overMax));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, overMax));
-    }
-
-    function test_CreateSeries_AcceptsCallPeriodAtMax() public {
-        uint32 atMax = nft.MAX_INTEX_CALL_PERIOD();
-        vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, atMax));
-        assertEq(nft.readData(SERIES_ID_1).callTrigger.intexCallPeriod, atMax);
-    }
-
-    function test_MaxIntexCallPeriod_IsOneYear() public view {
-        assertEq(nft.MAX_INTEX_CALL_PERIOD(), uint32(365 days));
+        // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
+        assertEq(data.callTrigger.intexCallPeriod, callPeriod);
     }
 
     function test_OnlyBridgeCanCreateSeries() public {
@@ -286,16 +269,6 @@ contract IntexNFT1155Test is Test {
         );
         nft.markQualified(SERIES_ID_1);
         vm.stopPrank();
-    }
-
-    function test_CreateSeriesRejectsInvalidCallPeriod() public {
-        // The settlement deadline is derived from calledAt + callPeriod; the legacy
-        // "invalid deadline" failure mode is captured at series creation by enforcing
-        // an upper bound on the requested callPeriod.
-        uint32 tooLong = uint32(366 days);
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidCallPeriod.selector, tooLong));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, tooLong));
     }
 
     function test_CrosschainBurnNonexistentToken() public {
@@ -657,6 +630,21 @@ contract IntexNFT1155Test is Test {
         IIntexNFT1155.HolderBalances memory bals = nft.holderBalances(SERIES_ID_1, user);
         assertEq(bals.issued, 6);
         assertEq(bals.settled, 4);
+    }
+
+    function test_HolderBalances_AboveUint16NoTruncation() public {
+        // Drive a single holder above type(uint16).max via two sub-cap mints (each <= 65_535).
+        uint32 bigCap = 100_000;
+        vm.startPrank(bridger);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, bigCap, uint32(21 days)));
+        nft.mint(user, 40_000, SERIES_ID_1);
+        nft.mint(user, 40_000, SERIES_ID_1);
+        vm.stopPrank();
+
+        // 80_000 would wrap to 14_464 under the old uint16 field; the widened field must not truncate.
+        IIntexNFT1155.HolderBalances memory bals = nft.holderBalances(SERIES_ID_1, user);
+        assertEq(bals.issued, 80_000);
+        assertEq(bals.settled, 0);
     }
 
     function test_Settle_RevertsInIssued() public {
@@ -1263,6 +1251,72 @@ contract IntexNFT1155Test is Test {
         assertEq(holders[1], user2);
         assertEq(balances[0], 10);
         assertEq(balances[1], 5);
+    }
+
+    function test_PaginatedGetters_WindowClipAndTotal() public {
+        _createSeries(SERIES_ID_1, 0);
+        address h3 = address(7);
+        address h4 = address(8);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.mint(user2, 20, SERIES_ID_1);
+        nft.mint(h3, 30, SERIES_ID_1);
+        nft.mint(h4, 40, SERIES_ID_1);
+        vm.stopPrank();
+
+        (address[] memory hp, uint256 total) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 1, 2);
+        assertEq(total, 4);
+        assertEq(hp.length, 2);
+        assertEq(hp[0], user2);
+        assertEq(hp[1], h3);
+
+        (address[] memory hb, uint256[] memory bal, uint256 total2) =
+            nft.getSeriesHoldersWithBalancesPaginated(TOKEN_ID_1, 1, 2);
+        assertEq(total2, 4);
+        assertEq(hb[0], user2);
+        assertEq(bal[0], 20);
+        assertEq(hb[1], h3);
+        assertEq(bal[1], 30);
+
+        (address[] memory tail,) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 3, 100);
+        assertEq(tail.length, 1);
+        assertEq(tail[0], h4);
+
+        (address[] memory none, uint256 total3) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 10, 5);
+        assertEq(none.length, 0);
+        assertEq(total3, 4);
+
+        (uint256[] memory ids, uint256[] memory obal, uint256 ototal) =
+            nft.getOwnedSeriesWithBalancesPaginated(user, 0, 10);
+        assertEq(ototal, 1);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], TOKEN_ID_1);
+        assertEq(obal[0], 10);
+    }
+
+    function test_PaginatedGetters_ZeroLimitAndExactBoundary() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.mint(user2, 20, SERIES_ID_1);
+        vm.stopPrank();
+
+        // limit == 0 -> empty window, real total.
+        (address[] memory h0, uint256 t0) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 0, 0);
+        assertEq(h0.length, 0);
+        assertEq(t0, 2);
+
+        // offset == total -> empty window, real total.
+        (address[] memory hEnd, uint256 tEnd) = nft.getSeriesHoldersPaginated(TOKEN_ID_1, 2, 5);
+        assertEq(hEnd.length, 0);
+        assertEq(tEnd, 2);
+
+        // WithBalances variant, limit == 0.
+        (address[] memory hb, uint256[] memory bb, uint256 t2) =
+            nft.getSeriesHoldersWithBalancesPaginated(TOKEN_ID_1, 0, 0);
+        assertEq(hb.length, 0);
+        assertEq(bb.length, 0);
+        assertEq(t2, 2);
     }
 
     function test_SeriesHolders_NoDuplicateOnDoubleMint() public {

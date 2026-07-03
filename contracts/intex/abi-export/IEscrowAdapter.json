@@ -141,6 +141,19 @@
     },
     {
       "type": "function",
+      "name": "hasOutstandingLocks",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "outstanding",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "lockFunds",
       "inputs": [
         {

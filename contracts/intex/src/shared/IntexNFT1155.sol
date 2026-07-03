@@ -35,10 +35,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      can only `crosschainBurn` while the series is `Qualified`.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
-    /// @notice Upper bound on a series call period. Exposed so integrators can read the bound and
-    ///         tests can assert against it rather than an inline literal.
-    uint32 public constant override MAX_INTEX_CALL_PERIOD = uint32(365 days);
-
     /// @notice Maximum byte length of `collectionDescription`. Bounds the cost of building every
     ///         token's metadata document so an over-long description cannot inflate `tokenURI`
     ///         view gas into a DoS. Internal (no public getter) to conserve EIP-170 runtime size.
@@ -171,11 +167,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // one can mint into," which never matches an auction-cleared result.
         if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
-        // Default to 21 days when zero is provided; cap at MAX_INTEX_CALL_PERIOD to guard against accidents.
-        uint32 effectiveCallPeriod =
-            params.callTrigger.intexCallPeriod == 0 ? uint32(21 days) : params.callTrigger.intexCallPeriod;
-        if (effectiveCallPeriod > MAX_INTEX_CALL_PERIOD) revert InvalidCallPeriod(params.callTrigger.intexCallPeriod);
-
         $.seriesData[iTok] = IIntexNFT1155.SeriesData({
             issuanceCurrency: params.issuanceCurrency,
             referenceCurrency: params.referenceCurrency,
@@ -187,7 +178,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 windowDays: params.callTrigger.windowDays,
                 thresholdDays: params.callTrigger.thresholdDays,
-                intexCallPeriod: effectiveCallPeriod
+                intexCallPeriod: params.callTrigger.intexCallPeriod
             }),
             issuedAt: uint32(block.timestamp),
             calledAt: 0,
@@ -572,7 +563,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 iTok = uint256(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
         return IIntexNFT1155.HolderBalances({
-            issued: uint16(balanceOf(holder, iTok)), settled: uint16(balanceOf(holder, sTok))
+            issued: uint32(balanceOf(holder, iTok)), settled: uint32(balanceOf(holder, sTok))
         });
     }
 
@@ -837,11 +828,53 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return (ownedTokenIds, balances);
     }
 
+    /// @inheritdoc IIntexNFT1155
+    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total)
+    {
+        uint256[] storage owned = _s().ownedSeries[owner];
+        total = owned.length;
+        if (offset >= total) return (new uint256[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        ownedTokenIds = new uint256[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 tokenId = owned[offset + i];
+            ownedTokenIds[i] = tokenId;
+            balances[i] = balanceOf(owner, tokenId);
+        }
+    }
+
     // --- Series holder enumeration (tokenId → holders[]) ---
 
     /// @inheritdoc IIntexNFT1155
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory) {
         return _s().seriesHolders[tokenId];
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        holders = new address[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            holders[i - offset] = all[i];
+        }
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -855,6 +888,29 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         for (uint256 i = 0; i < holders.length; i++) {
             balances[i] = balanceOf(holders[i], tokenId);
+        }
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory balances, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        holders = new address[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            address holder = all[offset + i];
+            holders[i] = holder;
+            balances[i] = balanceOf(holder, tokenId);
         }
     }
 
