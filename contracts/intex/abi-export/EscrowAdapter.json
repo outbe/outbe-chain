@@ -466,6 +466,19 @@
     },
     {
       "type": "function",
+      "name": "hasOutstandingLocks",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "hasRole",
       "inputs": [
         {
