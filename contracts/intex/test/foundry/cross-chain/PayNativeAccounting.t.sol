@@ -191,40 +191,40 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Relay / float path — msg.value == 0 (systemMultiSend)
+    // System bridge funding — TargetMessenger forwards the quoted fee
     // ---------------------------------------------------------------
 
-    function test_Relay_EmptyFloatRevertsNotEnoughNative() public {
+    function test_SystemMultiSend_UnderfundedReverts() public {
         (address[] memory holders, uint256[] memory amounts) = _holderArrays();
-        // The adapter's float is empty while the bridge charges a fee, so the relay path reverts.
-        assertEq(address(onftBatch).balance, 0);
+        // The caller must cover the fee; forwarding less than the quote reverts.
+        vm.deal(address(this), BRIDGE_FEE);
 
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.NotEnoughNative.selector, uint256(0)));
-        onftBatch.systemMultiSend(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, BRIDGE_FEE - 1, BRIDGE_FEE)
+        );
+        onftBatch.systemMultiSend{value: BRIDGE_FEE - 1}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
     }
 
-    function test_Relay_FundedFloatDrawsFeeAndSucceeds() public {
+    function test_SystemMultiSend_CallerFundedDrawsFee() public {
         (address[] memory holders, uint256[] memory amounts) = _holderArrays();
 
-        vm.deal(address(onftBatch), BRIDGE_FEE + 1 ether); // pre-funded relay float
-        uint256 floatBefore = address(onftBatch).balance;
+        vm.deal(address(this), BRIDGE_FEE);
 
-        onftBatch.systemMultiSend(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
+        onftBatch.systemMultiSend{value: BRIDGE_FEE}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
 
-        // Exactly the fee was drawn from the float; nothing else moved.
-        assertEq(address(onftBatch).balance, floatBefore - BRIDGE_FEE, "relay fee drawn from float");
-        assertEq(bridge.lastValue(), BRIDGE_FEE, "bridge received the fee from the float");
+        // The caller's value covered the fee and the universal adapter kept nothing.
+        assertEq(bridge.lastValue(), BRIDGE_FEE, "bridge received the forwarded fee");
+        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
     }
 
     // ---------------------------------------------------------------
     // Relay / float path — fired from inside receiveMessage (MARK_CALLED)
     // ---------------------------------------------------------------
 
-    /// @dev The inbound MARK_CALLED handler fires the holders relay with `msg.value == 0`. With an empty adapter
-    ///      float the relay reverts `NotEnoughNative`, which the handler catches and parks for later flush — the
-    ///      observable proof that the relay ran on the float path (not an entry path).
+    /// @dev The inbound MARK_CALLED handler fires the holders relay, funding it from TargetMessenger's float. With
+    ///      that float empty the forwarded-value call fails, which the handler catches and parks for later flush.
     function test_Relay_InsideReceiveMessage_EmptyFloatDefers() public {
-        assertEq(address(onftBatch).balance, 0, "adapter float unfunded");
+        assertEq(address(bnbMessenger).balance, 0, "messenger float unfunded");
 
         _deliverMarkCalled();
 
@@ -234,17 +234,18 @@ contract PayNativeAccountingTest is CrossChainTest {
         assertFalse(done);
     }
 
-    /// @dev With the adapter float funded, the relay fired from inside `receiveMessage` draws the fee and sends
-    ///      cleanly — nothing is parked.
+    /// @dev With TargetMessenger's float funded, the relay fired from inside `receiveMessage` forwards the fee and
+    ///      sends cleanly — nothing is parked.
     function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
-        vm.deal(address(onftBatch), 1 ether); // systemMultiSend self-funds from the adapter's float
-        uint256 floatBefore = address(onftBatch).balance;
+        vm.deal(address(bnbMessenger), 1 ether); // TargetMessenger pays the systemMultiSend fee
+        uint256 floatBefore = address(bnbMessenger).balance;
 
         _deliverMarkCalled();
 
-        // No parked relay: the send landed on the float path.
+        // No parked relay: TargetMessenger funded the send.
         assertEq(bnbMessenger.nextPendingHoldersRelayIdx(), 0, "no holders relay deferred");
-        assertEq(address(onftBatch).balance, floatBefore - BRIDGE_FEE, "relay fee drawn from adapter float");
+        assertEq(address(bnbMessenger).balance, floatBefore - BRIDGE_FEE, "fee drawn from messenger float");
+        assertEq(address(onftBatch).balance, 0, "adapter holds no float");
     }
 
     function _deliverMarkCalled() internal {

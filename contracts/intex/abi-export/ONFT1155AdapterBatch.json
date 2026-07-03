@@ -666,7 +666,7 @@
           "internalType": "bytes32"
         }
       ],
-      "stateMutability": "nonpayable"
+      "stateMutability": "payable"
     },
     {
       "type": "function",

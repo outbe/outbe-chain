@@ -583,10 +583,12 @@ contract TargetMessenger is
     /// @param holders Source chain holder addresses.
     /// @param amounts Corresponding balances for each holder.
     function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        // `onftBatchAdapter` is admin-wired in `wire()` and is not user-controlled; the returned sendId is
-        // informational and intentionally discarded.
-        // slither-disable-next-line unused-return
-        _ts().onftBatchAdapter.systemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
+        // TargetMessenger pays the bridge fee from its own relay float: quote it and forward it as value so the
+        // universal adapter never needs to hold native. The returned sendId is informational.
+        IONFT1155AdapterBatch adapter = _ts().onftBatchAdapter;
+        uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
+        // slither-disable-next-line unused-return,arbitrary-send-eth
+        adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);
     }
 
     /// @inheritdoc ITargetMessenger

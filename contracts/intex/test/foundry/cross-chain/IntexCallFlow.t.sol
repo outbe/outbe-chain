@@ -21,7 +21,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
  * @dev When Desis calls a series, the full cross-chain flow is:
  *      1. OriginMessenger sends MARK_CALLED to BSC.
  *      2. TargetMessenger marks the series as Called (transfers blocked).
- *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (self-funded from its adapter's float).
+ *      3. TargetMessenger reads all holders and triggers `systemMultiSend` (funded from its own relay float).
  *      4. ONFT1155AdapterBatch burns Intex on BSC and, once delivered, mints on Outbe.
  *      Delivery is manual: each `sendMessage` records the payload on the loopback bridge, which we then hand-deliver
  *      to the destination as the authenticated peer.
@@ -103,8 +103,8 @@ contract IntexCallFlowTest is CrossChainTest {
         intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
         intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(batchAdapterOutbe));
 
-        // ---- Pre-fund the BSC batch adapter float: systemMultiSend self-funds the bridge fee from it ----
-        vm.deal(address(batchAdapterBnb), 100 ether);
+        // ---- Pre-fund TargetMessenger's float: it pays the systemMultiSend bridge fee ----
+        vm.deal(address(bnbAdapter), 100 ether);
     }
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.

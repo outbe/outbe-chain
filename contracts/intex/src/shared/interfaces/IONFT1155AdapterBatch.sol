@@ -187,8 +187,8 @@ interface IONFT1155AdapterBatch {
         uint32 dstChainId
     ) external view returns (uint256 fee);
 
-    /// @notice Burns tokens from all holders and sends a single SEND_MULTI message, funded from the relay float.
-    /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetMessenger).
+    /// @notice Burns tokens from all holders and sends a single SEND_MULTI message, funded by the caller's msg.value.
+    /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetMessenger), which forwards the quoted fee as value.
     /// @param tokenId Token ID (series) to bridge.
     /// @param holders Holder addresses on source chain.
     /// @param amounts Corresponding balances for each holder.
@@ -196,5 +196,6 @@ interface IONFT1155AdapterBatch {
     /// @return sendId Bridge send identifier.
     function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
         external
+        payable
         returns (bytes32 sendId);
 }

@@ -190,6 +190,7 @@ contract ONFT1155AdapterBatch is
     /// @inheritdoc IONFT1155AdapterBatch
     function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
         external
+        payable
         onlyRole(SYSTEM_RELAYER_ROLE)
         nonReentrant
         returns (bytes32 sendId)
@@ -203,7 +204,7 @@ contract ONFT1155AdapterBatch is
             token.crosschainBurn(holders[i], tokenId, amounts[i]);
         }
 
-        // Relay-funded: msg.value is 0, so `_send` draws the fee from the pre-funded float.
+        // TargetMessenger forwards the exact fee as msg.value; this adapter holds no float of its own.
         sendId = _send(dstChainId, message, IntexGas.onftMint(len));
         emit SystemMultiSent(sendId, dstChainId, tokenId, len);
     }
