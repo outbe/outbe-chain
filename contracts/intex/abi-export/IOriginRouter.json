@@ -1,0 +1,1041 @@
+{
+  "contractName": "IOriginRouter",
+  "abi": [
+    {
+      "type": "function",
+      "name": "quoteSendAuctionResult",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuedIntexCount",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "auctionClearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "wonBidsCount",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendAuctionStageClearing",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendAuctionStageReveal",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isGreenDay",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendAuctionStageStart",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.AuctionStageStartParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "commitEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "revealEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "minIntexBidRate",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "entryPrice",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "minIntexBidQuantity",
+              "type": "uint16",
+              "internalType": "uint16"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendIssuanceInstructions",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuedIntexCount",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "recipients",
+              "type": "address[]",
+              "internalType": "address[]"
+            },
+            {
+              "name": "quantities",
+              "type": "uint256[]",
+              "internalType": "uint256[]"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendMarkCalled",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendMarkQualified",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "quoteSendRefundInstructions",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidders",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "refundedAmounts",
+          "type": "uint128[]",
+          "internalType": "uint128[]"
+        },
+        {
+          "name": "paidAmounts",
+          "type": "uint128[]",
+          "internalType": "uint128[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "sendAuctionResult",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuedIntexCount",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "auctionClearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "wonBidsCount",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendAuctionStageClearing",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendAuctionStageReveal",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isGreenDay",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendAuctionStageStart",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.AuctionStageStartParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "commitEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "revealEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceEnd",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "minIntexBidRate",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "entryPrice",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "minIntexBidQuantity",
+              "type": "uint16",
+              "internalType": "uint16"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendIssuanceInstructions",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "components": [
+            {
+              "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuedIntexCount",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "promisLoadMinor",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "intexCallPeriod",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callWindowDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callThresholdDays",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "recipients",
+              "type": "address[]",
+              "internalType": "address[]"
+            },
+            {
+              "name": "quantities",
+              "type": "uint256[]",
+              "internalType": "uint256[]"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendMarkCalled",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendMarkQualified",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendRefundInstructions",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidders",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "refundedAmounts",
+          "type": "uint128[]",
+          "internalType": "uint128[]"
+        },
+        {
+          "name": "paidAmounts",
+          "type": "uint128[]",
+          "internalType": "uint128[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "setRemoteMessenger",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "interop",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "sweepNative",
+      "inputs": [
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address payable"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "wire",
+      "inputs": [
+        {
+          "name": "desis",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "intexFactory",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AuctionResultSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuedIntexCount",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        },
+        {
+          "name": "clearingRate",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "AuctionStageSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "stageType",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BidsBatchReceived",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ClearingAutoDispatchFailed",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ClearingAutoDispatched",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DependenciesWired",
+      "inputs": [
+        {
+          "name": "desisOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "desisNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "intexFactoryOld",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "intexFactoryNew",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceInstructionsSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "recipientsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkCalledSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkQualifiedSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "NativeSwept",
+      "inputs": [
+        {
+          "name": "to",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "RefundInstructionsSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "instructionsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "ArrayLengthMismatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "EmptyArray",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidDesisInterface",
+      "inputs": [
+        {
+          "name": "wired",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NativeBalanceInsufficient",
+      "inputs": [
+        {
+          "name": "available",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "requested",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NativeSweepFailed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SrcChainIdBodyMismatch",
+      "inputs": [
+        {
+          "name": "origin",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "body",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ZeroAddress",
+      "inputs": [
+        {
+          "name": "field",
+          "type": "string",
+          "internalType": "string"
+        }
+      ]
+    }
+  ]
+}
