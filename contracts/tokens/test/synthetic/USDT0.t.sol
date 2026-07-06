@@ -39,14 +39,34 @@ contract USDT0Test is Test {
         assertTrue(token.supportsInterface(type(IERC7802).interfaceId));
     }
 
-    function test_SetTokenBridge_IsOneTime() public {
+    function test_SetTokenBridge_OwnerCanRotate() public {
         token.setTokenBridge(address(tokenBridge));
         ERC7786TokenBridge nextBridge = new ERC7786TokenBridge(
             address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ConfigurableERC7802.TokenBridgeAlreadySet.selector, address(tokenBridge)));
+        vm.expectEmit(true, true, false, true);
+        emit ConfigurableERC7802.TokenBridgeUpdated(address(tokenBridge), address(nextBridge));
         token.setTokenBridge(address(nextBridge));
+        assertEq(token.tokenBridge(), address(nextBridge));
+    }
+
+    function test_RotatedTokenBridge_ReplacesMintPermission() public {
+        address alice = makeAddr("alice");
+        ERC7786TokenBridge nextBridge = new ERC7786TokenBridge(
+            address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
+        );
+
+        token.setTokenBridge(address(tokenBridge));
+        token.setTokenBridge(address(nextBridge));
+
+        vm.prank(address(tokenBridge));
+        vm.expectRevert(abi.encodeWithSelector(ConfigurableERC7802.UnauthorizedTokenBridge.selector, address(tokenBridge)));
+        token.crosschainMint(alice, 100);
+
+        vm.prank(address(nextBridge));
+        token.crosschainMint(alice, 100);
+        assertEq(token.balanceOf(alice), 100);
     }
 
     function test_CrosschainMintAndBurn_OnlyTokenBridge() public {

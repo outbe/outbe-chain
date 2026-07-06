@@ -38,7 +38,7 @@ contract SendSourceToTarget is Script {
         address bridgeToken = address(bridge.token());
         if (configuredToken != bridgeToken) revert BridgeTokenMismatch(configuredToken, bridgeToken);
 
-        nativeFee = bridge.quoteSendFrom(signer, destinationChainId, recipient, amount);
+        nativeFee = bridge.quoteSend(destinationChainId, recipient, amount, "", 0);
 
         uint256 tokenBalance = IERC20(configuredToken).balanceOf(signer);
         if (tokenBalance < amount) revert InsufficientTokenBalance(signer, tokenBalance, amount);

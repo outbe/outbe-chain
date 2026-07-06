@@ -12,8 +12,9 @@ abstract contract ConfigurableERC7802 is ERC20Bridgeable, Ownable {
 
     address public tokenBridge;
 
+    event TokenBridgeUpdated(address indexed previousBridge, address indexed newBridge);
+
     error InvalidTokenBridge();
-    error TokenBridgeAlreadySet(address currentBridge);
     error UnauthorizedTokenBridge(address caller);
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_, address owner_)
@@ -29,8 +30,9 @@ abstract contract ConfigurableERC7802 is ERC20Bridgeable, Ownable {
 
     function setTokenBridge(address bridge_) external onlyOwner {
         if (bridge_ == address(0) || bridge_.code.length == 0) revert InvalidTokenBridge();
-        if (tokenBridge != address(0)) revert TokenBridgeAlreadySet(tokenBridge);
+        address previousBridge = tokenBridge;
         tokenBridge = bridge_;
+        emit TokenBridgeUpdated(previousBridge, bridge_);
     }
 
     function _checkTokenBridge(address caller) internal view override {

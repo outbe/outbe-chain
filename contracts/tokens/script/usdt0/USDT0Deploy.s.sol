@@ -28,7 +28,6 @@ contract USDT0Deploy is Script {
     error UnauthorizedSigner(address signer, address expectedOwner);
     error InvalidDecimals(uint256 decimals_);
     error DomainTooLarge(uint256 chainId);
-    error TokenBridgeMismatch(address currentBridge, address expectedBridge);
     error InvalidRemoteTokenBridge();
     error Create2FactoryDeploymentFailed(bytes32 salt, address expected);
 
@@ -196,7 +195,6 @@ contract USDT0Deploy is Script {
         USDT0 bridgeableToken = USDT0(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
-        if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);
 
         _requireOwner(signer, bridgeableToken.owner());
 

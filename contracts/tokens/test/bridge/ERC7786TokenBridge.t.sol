@@ -110,7 +110,8 @@ contract ERC7786TokenBridgeTest is Test {
 
     function test_Quote_DelegatesToBridge() public {
         outbeGateway.setFeeQuote(123);
-        assertEq(outbeUsdt0Bridge.quoteSendFrom(targetAddr, BNB, sourceAddr, 1), 123);
+        vm.prank(targetAddr);
+        assertEq(outbeUsdt0Bridge.quoteSend(BNB, sourceAddr, 1, "", 0), 123);
     }
 
     function test_RevertWhen_RemoteBridgeNotSet() public {
@@ -124,6 +125,19 @@ contract ERC7786TokenBridgeTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.RemoteBridgeNotSet.selector, OUTBE));
         bridge.send(OUTBE, targetAddr, 1);
         vm.stopPrank();
+    }
+
+    function test_RevertWhen_SendToZeroRecipient() public {
+        usdt.mint(sourceAddr, 1);
+
+        vm.startPrank(sourceAddr);
+        usdt.approve(address(bnbUsdtBridge), 1);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.InvalidRecipient.selector, address(0)));
+        bnbUsdtBridge.send(OUTBE, address(0), 1);
+        vm.stopPrank();
+
+        assertEq(usdt.balanceOf(sourceAddr), 1);
+        assertEq(usdt.balanceOf(address(bnbUsdtBridge)), 0);
     }
 
     function test_RevertWhen_ReceiveFromNonBridge() public {

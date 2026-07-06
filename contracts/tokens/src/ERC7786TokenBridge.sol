@@ -42,6 +42,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     error InvalidToken();
     error InvalidBridge();
     error InvalidAmount();
+    error InvalidRecipient(address to);
     error EmptyExtraData();
     error InvalidTokenReceiver(address to);
     error RemoteBridgeNotSet(uint32 domain);
@@ -66,20 +67,25 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         emit RemoteBridgeRegistered(domain, recipient);
     }
 
-    function quoteSend(uint32 destinationDomain, address to, uint256 amount) external view returns (uint256) {
-        return _quoteSendFrom(msg.sender, destinationDomain, to, amount);
-    }
-
-    function quoteSendFrom(address from, uint32 destinationDomain, address to, uint256 amount)
-        external
-        view
-        returns (uint256)
-    {
-        return _quoteSendFrom(from, destinationDomain, to, amount);
+    function quoteSend(
+        uint32 destinationDomain,
+        address to,
+        uint256 amount,
+        bytes calldata extraData,
+        uint256 gasLimit
+    ) external view returns (uint256) {
+        _requireRecipient(to);
+        return IGatewayQuote(address(bridge))
+            .quote(
+                _remoteBridge(destinationDomain),
+                _encodePayload(msg.sender, to, amount, extraData),
+                _gasAttributes(gasLimit)
+            );
     }
 
     function send(uint32 destinationDomain, address to, uint256 amount) external payable returns (bytes32 sendId) {
         if (amount == 0) revert InvalidAmount();
+        _requireRecipient(to);
 
         _onSend(msg.sender, amount);
 
@@ -100,6 +106,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         uint256 gasLimit
     ) external payable returns (bytes32 sendId) {
         if (amount == 0) revert InvalidAmount();
+        _requireRecipient(to);
         if (extraData.length == 0) revert EmptyExtraData();
 
         _onSend(msg.sender, amount);
@@ -109,21 +116,6 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
             bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _gasAttributes(gasLimit));
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
-    }
-
-    function quoteSendAndCall(
-        uint32 destinationDomain,
-        address to,
-        uint256 amount,
-        bytes calldata extraData,
-        uint256 gasLimit
-    ) external view returns (uint256) {
-        return IGatewayQuote(address(bridge))
-            .quote(
-                _remoteBridge(destinationDomain),
-                _encodePayload(msg.sender, to, amount, extraData),
-                _gasAttributes(gasLimit)
-            );
     }
 
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
@@ -143,6 +135,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
 
         (bytes memory from, address to, uint256 amount, bytes memory extraData) =
             abi.decode(payload, (bytes, address, uint256, bytes));
+        _requireRecipient(to);
         _onReceive(to, amount);
 
         if (extraData.length > 0) {
@@ -156,18 +149,13 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         return IERC7786Recipient.receiveMessage.selector;
     }
 
-    function _quoteSendFrom(address from, uint32 destinationDomain, address to, uint256 amount)
-        internal
-        view
-        returns (uint256)
-    {
-        return IGatewayQuote(address(bridge))
-            .quote(_remoteBridge(destinationDomain), _encodePayload(from, to, amount, ""));
-    }
-
     function _remoteBridge(uint32 domain) internal view returns (bytes memory recipient) {
         recipient = remoteBridges[domain];
         if (recipient.length == 0) revert RemoteBridgeNotSet(domain);
+    }
+
+    function _requireRecipient(address to) internal pure {
+        if (to == address(0)) revert InvalidRecipient(to);
     }
 
     function _encodePayload(address from, address to, uint256 amount, bytes memory extraData)

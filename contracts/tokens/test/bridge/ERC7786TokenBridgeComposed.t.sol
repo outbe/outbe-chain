@@ -138,6 +138,19 @@ contract ERC7786TokenBridgeComposedTest is Test {
         vm.stopPrank();
     }
 
+    function test_RevertWhen_SendAndCallToZeroRecipient() public {
+        usdt.mint(alice, 1);
+
+        vm.startPrank(alice);
+        usdt.approve(address(bnbUsdtBridge), 1);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.InvalidRecipient.selector, address(0)));
+        bnbUsdtBridge.sendAndCall(OUTBE, address(0), 1, abi.encode(uint32(1)), 0);
+        vm.stopPrank();
+
+        assertEq(usdt.balanceOf(alice), 1);
+        assertEq(usdt.balanceOf(address(bnbUsdtBridge)), 0);
+    }
+
     function test_RevertWhen_HookReturnsWrongMagic() public {
         receiver.setReturnWrongMagic(true);
         uint256 amount = 100e6;
@@ -181,9 +194,9 @@ contract ERC7786TokenBridgeComposedTest is Test {
         vm.stopPrank();
     }
 
-    function test_QuoteSendAndCall_DelegatesToBridge() public {
+    function test_QuoteSend_WithExtraDataDelegatesToBridge() public {
         bnbGateway.setFeeQuote(456);
-        assertEq(bnbUsdtBridge.quoteSendAndCall(OUTBE, address(receiver), 1, abi.encode(uint32(1)), 500_000), 456);
+        assertEq(bnbUsdtBridge.quoteSend(OUTBE, address(receiver), 1, abi.encode(uint32(1)), 500_000), 456);
     }
 
     function _interop(uint256 chainId, address addr) internal pure returns (bytes memory) {
