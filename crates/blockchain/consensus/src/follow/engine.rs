@@ -32,8 +32,8 @@ use crate::digest::Digest;
 use crate::follow::driver::{self, Driver};
 use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
-use crate::follow::{stubs, CommitteeChain};
 use crate::follow::FollowerEpocher;
+use crate::follow::{stubs, CommitteeChain};
 use crate::marshal_types::{FollowMarshalActor, MarshalMailbox};
 
 /// Inputs to [`run_follow_engine`].
@@ -195,15 +195,12 @@ where
         first
     };
 
-    let certified = upstream
-        .get_finalization(candidate)
-        .await
-        .ok_or_else(|| {
-            eyre!(
-                "upstream did not return the anchor epoch's boundary block at height {candidate}; \
+    let certified = upstream.get_finalization(candidate).await.ok_or_else(|| {
+        eyre!(
+            "upstream did not return the anchor epoch's boundary block at height {candidate}; \
                  cannot bootstrap the committee chain"
-            )
-        })?;
+        )
+    })?;
 
     let extra = certified.block.header().extra_data().clone();
     let registered = chain

@@ -93,7 +93,11 @@ mod tests {
         assert_eq!(epoch_of(1), 0);
         assert_eq!(epoch_of(59), 0);
         assert_eq!(epoch_of(60), 0, "block 60 is the LAST block of epoch 0");
-        assert_eq!(epoch_of(61), 1, "block 61 (boundary) is the FIRST of epoch 1");
+        assert_eq!(
+            epoch_of(61),
+            1,
+            "block 61 (boundary) is the FIRST of epoch 1"
+        );
         assert_eq!(epoch_of(120), 1, "block 120 is the LAST block of epoch 1");
         assert_eq!(epoch_of(121), 2);
         assert_eq!(epoch_of(180), 2);
