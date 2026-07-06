@@ -343,6 +343,16 @@ fn contributors_empty_series_is_zero() {
 // ---------------------------------------------------------------------
 
 #[test]
+fn start_distribution_rejects_duplicate() {
+    with_registry(|s| {
+        api::record_contributors(&s, 7, &[(addr(1), U256::from(40u64))]).unwrap();
+        api::start_distribution(&s, 7, U256::from(1000u64), U256::from(40u64)).unwrap();
+        // A second open for the same series must not overwrite in-flight progress.
+        assert!(api::start_distribution(&s, 7, U256::from(500u64), U256::from(40u64)).is_err());
+    });
+}
+
+#[test]
 fn distribution_progress_lifecycle() {
     with_registry(|s| {
         api::record_contributors(
