@@ -1,7 +1,3 @@
-/// 21 days, in seconds. Period a freshly-issued Nod stays locked from mining.
-pub const MATURITY_PERIOD_DAYS: u64 = 21;
-pub const UNLOCK_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
-
 /// Legacy ERC-721 metadata surface values.
 pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";

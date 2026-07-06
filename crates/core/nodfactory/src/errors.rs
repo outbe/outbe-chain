@@ -23,9 +23,6 @@ pub enum NodFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("nod is locked until unlocks_at")]
-    NodLocked,
-
     #[error("nonce exceeds uint64 range")]
     NonceExceedsUint64Range,
 

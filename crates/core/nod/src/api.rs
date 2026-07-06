@@ -30,7 +30,7 @@ pub fn add_nod(
 /// Remove `item` from every Nod slot collection and decrement bucket + supply.
 ///
 /// The caller has already loaded `item` (via [`get_item`]) and verified
-/// authorization and business preconditions (owner, unlock, qualification).
+/// authorization and business preconditions (owner, qualification).
 pub fn remove_nod(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     nod.remove_nod(item)

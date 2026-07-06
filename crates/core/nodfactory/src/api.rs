@@ -20,7 +20,7 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
     runtime::issue_nod(storage, params)
 }
 
-/// Burn the caller-owned Nod after a PoW + unlock + qualification check,
+/// Burn the caller-owned Nod after a PoW + qualification check,
 /// pull `cost_amount_minor` of `asset` from the caller and deposit it into the
 /// reserve vault provider (skipped when `cost_amount_minor == 0`), and mint the
 /// matching gratis load to the caller. Returns the minted amount.
