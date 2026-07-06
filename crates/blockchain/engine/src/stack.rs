@@ -1235,15 +1235,16 @@ fn spawn_finalization_drainer<E>(
     E: Spawner + Metrics,
 {
     let rx = bridge.set_finalization_fetcher();
-    ctx.child("finalization_drainer").spawn(move |_| async move {
-        let mut rx = rx;
-        while let Some((height, reply)) = rx.recv().await {
-            let answer =
-                finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
-            // The receiver may have gone away (RPC client disconnected); ignore.
-            let _ = reply.send(answer);
-        }
-    });
+    ctx.child("finalization_drainer")
+        .spawn(move |_| async move {
+            let mut rx = rx;
+            while let Some((height, reply)) = rx.recv().await {
+                let answer =
+                    finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
+                // The receiver may have gone away (RPC client disconnected); ignore.
+                let _ = reply.send(answer);
+            }
+        });
 }
 
 /// Read `(finalization, block)` for `height` from the marshal and encode them
@@ -1621,6 +1622,7 @@ fn validate_validator_evm_signer(
 /// 6. Simplex consensus engine (restarted on reshare)
 /// 7. Block propagation — proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
+///
 /// Follower stack: cold-sync finalized blocks from an upstream node, verify them
 /// against the trusted network identity (committee-chaining — see the `follow`
 /// module), and drive the EL via the existing executor, WITHOUT running the
@@ -1704,7 +1706,15 @@ where
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    run_certified_follow_stack(ctx, anchor_participants, node, bridge, upstream, epoch_length).await
+    run_certified_follow_stack(
+        ctx,
+        anchor_participants,
+        node,
+        bridge,
+        upstream,
+        epoch_length,
+    )
+    .await
 }
 
 /// The committee-chaining follower engine (transport A — upstream RPC, no
@@ -1765,8 +1775,7 @@ where
     // through a clone is visible everywhere).
     // Genesis anchor: epoch 0, the genesis validator committee.
     let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
-    let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
-        chain.scheme_provider().clone();
+    let certificate_scheme_provider: HybridSchemeProvider<MinSig> = chain.scheme_provider().clone();
     let anchor_epoch = Epoch::new(chain.anchor_epoch());
     let chain = Arc::new(Mutex::new(chain));
 
@@ -1925,19 +1934,19 @@ where
         last_execution_hash,
         Some(execution_finalized_height_tx),
     );
-    let _executor_handle =
-        executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
     //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
     //        so this follower can itself be an UPSTREAM for other followers
     //        (their tip discovery polls that status field). ────────────────
     spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
-    ctx.child("follower_tip_publisher").spawn(move |_| async move {
-        while let Some(height) = execution_finalized_height_rx.recv().await {
-            bridge.set_last_finalized_block_number(height);
-        }
-    });
+    ctx.child("follower_tip_publisher")
+        .spawn(move |_| async move {
+            while let Some(height) = execution_finalized_height_rx.recv().await {
+                bridge.set_last_finalized_block_number(height);
+            }
+        });
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
     run_follow_engine(

@@ -219,10 +219,7 @@ pub trait OutbeApi {
     /// height; otherwise errors. The caller verifies the certificate against the
     /// epoch committee — this RPC is a bytes transport, not a trust root.
     #[method(name = "getFinalization")]
-    async fn get_finalization(
-        &self,
-        height: u64,
-    ) -> jsonrpsee::core::RpcResult<FinalizationProof>;
+    async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 }
 
 #[cfg(test)]

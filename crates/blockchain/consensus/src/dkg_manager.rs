@@ -937,9 +937,7 @@ pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
 /// epoch's committee (`output.players()`) and verifier polynomial
 /// (`output.public()`) from a finalized boundary block, without ever having run
 /// the DKG ceremony. Deterministic and panic-free.
-pub fn decode_boundary_outcome(
-    outcome: &[u8],
-) -> Option<Output<MinSig, bls12381::PublicKey>> {
+pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
     use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
     // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
     const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;

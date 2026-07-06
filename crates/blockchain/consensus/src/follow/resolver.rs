@@ -105,26 +105,26 @@ where
     /// Spawn the actor's receive loop. Each fetch is resolved on its own child
     /// task so a slow upstream fetch never blocks others.
     pub(super) fn start(self) -> commonware_runtime::Handle<()> {
-        self.context.child("follow_resolver").spawn(move |_| async move {
-            let ResolverActor {
-                context,
-                handler,
-                upstream,
-                local,
-                chain,
-                mut rx,
-            } = self;
-            while let Some(fetch) = rx.next().await {
-                let task_ctx = context.child("follow_fetch");
-                let handler = handler.clone();
-                let upstream = upstream.clone();
-                let local = local.clone();
-                let chain = chain.clone();
-                task_ctx.spawn(move |_| {
-                    resolve_one(fetch, handler, upstream, local, chain)
-                });
-            }
-        })
+        self.context
+            .child("follow_resolver")
+            .spawn(move |_| async move {
+                let ResolverActor {
+                    context,
+                    handler,
+                    upstream,
+                    local,
+                    chain,
+                    mut rx,
+                } = self;
+                while let Some(fetch) = rx.next().await {
+                    let task_ctx = context.child("follow_fetch");
+                    let handler = handler.clone();
+                    let upstream = upstream.clone();
+                    let local = local.clone();
+                    let chain = chain.clone();
+                    task_ctx.spawn(move |_| resolve_one(fetch, handler, upstream, local, chain));
+                }
+            })
     }
 }
 
@@ -216,7 +216,7 @@ async fn resolve_one<F, L>(
     };
 
     let delivery = Delivery {
-        key: key.clone(),
+        key,
         subscribers: NonEmptyVec::new(subscriber),
     };
     // AWAIT the marshal's validation response. Dropping the returned receiver is
