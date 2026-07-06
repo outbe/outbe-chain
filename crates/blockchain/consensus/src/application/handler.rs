@@ -1179,10 +1179,23 @@ impl ApplicationShared {
                 crate::metrics::record_dkg_boundary_requirement(
                     crate::metrics::DkgBoundaryDecision::NoPending,
                 );
-                self.dkg_manager
-                    .get_dealer_log(round.epoch())
-                    .await
-                    .map(ConsensusHeaderArtifact::DealerLog)
+                // If the DKG for the NEXT epoch has completed (its boundary is
+                // pending) but this is not yet its activation block, PRE-ANNOUNCE
+                // that committee in this E-1 block so a follower authenticates it via
+                // the already-trusted E-1 committee — before the self-finalized
+                // activation boundary at E·L+1 (Path A committee-chaining). Otherwise
+                // a DKG is still in flight, so emit a dealer log.
+                if let Some(boundary) = pending_boundary {
+                    Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+                        epoch: boundary.epoch,
+                        outcome: boundary.outcome,
+                    })
+                } else {
+                    self.dkg_manager
+                        .get_dealer_log(round.epoch())
+                        .await
+                        .map(ConsensusHeaderArtifact::DealerLog)
+                }
             }
             Err(error) => {
                 warn!(
@@ -1898,6 +1911,21 @@ async fn validate_header_consensus_artifacts(
         ConsensusHeaderArtifact::DealerLog(bytes) => {
             dkg_manager
                 .verify_dealer_log(round.epoch(), bytes.to_vec())
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        }
+        ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome } => {
+            // Path A committee pre-announce, emitted during E-1 after the DKG
+            // completes. Validate its carried outcome against this node's OWN
+            // reconstructed DKG output for the incoming epoch — fail-closed if this
+            // node has no pending boundary to compare against, so a forged
+            // pre-announce cannot ride a finalized block.
+            dkg_manager
+                .verify_preannounce_outcome(
+                    commonware_consensus::types::Epoch::new(epoch),
+                    outcome.as_ref(),
+                )
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(())
