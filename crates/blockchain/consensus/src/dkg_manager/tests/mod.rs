@@ -62,8 +62,7 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         NonZeroU32::new(crate::bls::MAX_VALIDATORS).unwrap(),
         ModeVersion::v0(),
     );
-    let recovered =
-        Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
+    let recovered = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
     let recovered_participants = recovered.players().clone();
     let recovered_polynomial = recovered.public().clone();
     assert_eq!(
@@ -73,12 +72,9 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
 
     // 3. Build the verifier ONLY from boundary-decoded public data.
     let ns = config::outbe_app_namespace();
-    let verifier = HybridScheme::<MinSig>::verifier(
-        &ns,
-        recovered_participants,
-        recovered_polynomial,
-    )
-    .unwrap();
+    let verifier =
+        HybridScheme::<MinSig>::verifier(&ns, recovered_participants, recovered_polynomial)
+            .unwrap();
 
     // 4. The committee signs a finalization (using their secret shares).
     let signers: Vec<HybridScheme<MinSig>> = keys
@@ -96,7 +92,11 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         })
         .collect();
     let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(b"phase0-spike").as_ref()));
-    let proposal = Proposal::new(Round::new(Epoch::new(5), View::new(2)), View::new(1), digest);
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(5), View::new(2)),
+        View::new(1),
+        digest,
+    );
     let subject = Subject::Finalize {
         proposal: &proposal,
     };

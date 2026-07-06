@@ -30,10 +30,10 @@ use crate::digest::Digest;
 use crate::hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider};
 
 mod driver;
+pub mod engine;
 mod epocher;
 mod resolver;
 mod stubs;
-pub mod engine;
 pub mod upstream;
 
 pub use engine::{run_follow_engine, FollowEngineConfig};
@@ -130,7 +130,12 @@ impl CommitteeChain {
             participants.clone(),
             polynomial,
         )
-        .ok_or_else(|| eyre::eyre!("failed to build committee verifier for epoch {}", epoch.get()))?;
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "failed to build committee verifier for epoch {}",
+                epoch.get()
+            )
+        })?;
         self.scheme_provider.register(epoch, verifier);
         self.highest_registered = Some(match self.highest_registered {
             Some(h) => h.max(epoch),
@@ -169,11 +174,11 @@ impl CommitteeChain {
         epoch: Epoch,
         finalization: &Finalization<HybridScheme<MinSig>, Digest>,
     ) -> Result<()> {
-        let scheme = commonware_cryptography::certificate::Provider::scoped(
-            &self.scheme_provider,
-            epoch,
-        )
-        .ok_or_else(|| eyre::eyre!("no committee verifier registered for epoch {}", epoch.get()))?;
+        let scheme =
+            commonware_cryptography::certificate::Provider::scoped(&self.scheme_provider, epoch)
+                .ok_or_else(|| {
+                    eyre::eyre!("no committee verifier registered for epoch {}", epoch.get())
+                })?;
         let mut rng = bls_batch_verification_rng();
         if !finalization.verify(&mut rng, scheme.as_ref(), &Sequential) {
             bail!(
@@ -300,7 +305,9 @@ mod tests {
                 .iter()
                 .map(|s| s.sign::<Digest>(subject).unwrap())
                 .collect();
-            let certificate = verifier.assemble::<_, N3f1>(attestations, &Sequential).unwrap();
+            let certificate = verifier
+                .assemble::<_, N3f1>(attestations, &Sequential)
+                .unwrap();
             Finalization {
                 proposal,
                 certificate,
@@ -315,11 +322,15 @@ mod tests {
         let c6 = committee(50);
         let mut chain = CommitteeChain::new(e5, c5.participants.clone());
 
-        chain.register_epoch_from_outcome(e5, &c5.outcome(e5)).unwrap();
+        chain
+            .register_epoch_from_outcome(e5, &c5.outcome(e5))
+            .unwrap();
         chain.verify_finalization(e5, &c5.finalization(e5)).unwrap();
 
         // Chain forward to epoch 6 (a different committee) and verify it.
-        chain.register_epoch_from_outcome(e6, &c6.outcome(e6)).unwrap();
+        chain
+            .register_epoch_from_outcome(e6, &c6.outcome(e6))
+            .unwrap();
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         assert_eq!(chain.highest_registered(), Some(e6));
 
@@ -350,7 +361,10 @@ mod tests {
         let mut chain = CommitteeChain::new(e6, c6.participants.clone());
         // Feeding the boundary block's extra_data registers epoch 6's committee.
         let extra = c6.boundary_block_extra_data(e6);
-        assert_eq!(chain.advance_from_block_extra_data(&extra).unwrap(), Some(e6));
+        assert_eq!(
+            chain.advance_from_block_extra_data(&extra).unwrap(),
+            Some(e6)
+        );
         // That epoch's finalization now verifies.
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         // A non-boundary block (empty extra_data) registers nothing.
@@ -406,14 +420,14 @@ mod tests {
         // Decode the marshal's way: certificate first (with its cfg), block from
         // the remaining bytes.
         let mut buf: &[u8] = &wire;
-        let decoded_fin = Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut buf, &cert_cfg)
-            .expect("finalization must decode from the delivery prefix");
+        let decoded_fin =
+            Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut buf, &cert_cfg)
+                .expect("finalization must decode from the delivery prefix");
         let decoded_block = ConsensusBlock::read_cfg(&mut buf, &())
             .expect("block must decode from the delivery suffix");
 
         assert_eq!(
-            decoded_fin.proposal.payload,
-            finalization.proposal.payload,
+            decoded_fin.proposal.payload, finalization.proposal.payload,
             "decoded finalization payload must match"
         );
         assert_eq!(
@@ -452,7 +466,9 @@ mod tests {
         let mut chain = CommitteeChain::new(epoch, c.participants.clone());
         let boundary_extra = c.boundary_block_extra_data(epoch);
         assert_eq!(
-            chain.advance_from_block_extra_data(&boundary_extra).unwrap(),
+            chain
+                .advance_from_block_extra_data(&boundary_extra)
+                .unwrap(),
             Some(epoch)
         );
 
@@ -482,7 +498,10 @@ mod tests {
         let decoded_fin =
             Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut fin_reader, &unbounded_cfg)
                 .expect("client must decode the served finalization with the unbounded cfg");
-        assert!(fin_reader.is_empty(), "no trailing bytes after finalization");
+        assert!(
+            fin_reader.is_empty(),
+            "no trailing bytes after finalization"
+        );
         let mut block_reader: &[u8] = &block_bytes;
         let _decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
             .expect("client must decode the served block");

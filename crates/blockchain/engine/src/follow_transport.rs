@@ -129,7 +129,9 @@ impl UpstreamRpcClient {
         };
         let client = HttpClientBuilder::default()
             .build(&normalized)
-            .map_err(|e| eyre::eyre!("failed to build upstream RPC client for {normalized}: {e}"))?;
+            .map_err(|e| {
+                eyre::eyre!("failed to build upstream RPC client for {normalized}: {e}")
+            })?;
         Ok(Self {
             client: Arc::new(client),
             url: normalized,
@@ -169,9 +171,7 @@ impl UpstreamRpcClient {
 /// The certificate is decoded with the unbounded committee config (a permissive
 /// upper bound on length). Trust is NOT established here — the marshal verifies
 /// the cert against the epoch committee. `None` on any malformed field.
-fn decode_finalization_proof(
-    proof: &UpstreamFinalizationProof,
-) -> Option<CertifiedFinalizedBlock> {
+fn decode_finalization_proof(proof: &UpstreamFinalizationProof) -> Option<CertifiedFinalizedBlock> {
     let fin_bytes = alloy_primitives::hex::decode(proof.finalization_hex.trim_start_matches("0x"))
         .inspect_err(|error| debug!(%error, "malformed finalizationHex from upstream"))
         .ok()?;

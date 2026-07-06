@@ -260,7 +260,8 @@ where
                 // boundary block isn't available. Retry on the next poll.
                 debug!(
                     epoch = epoch.get(),
-                    height, "upstream has no block yet while scanning for epoch boundary; will retry"
+                    height,
+                    "upstream has no block yet while scanning for epoch boundary; will retry"
                 );
                 return false;
             };
@@ -279,7 +280,8 @@ where
                         epoch = epoch.get(),
                         height, "registered epoch committee from boundary block"
                     );
-                    self.registered_epoch = Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
+                    self.registered_epoch =
+                        Some(self.registered_epoch.map_or(epoch, |r| r.max(epoch)));
                     return true;
                 }
                 Ok(Some(reg)) => {
