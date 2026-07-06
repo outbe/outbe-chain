@@ -65,20 +65,20 @@ contract WCOENDeploy is Script {
         return 18;
     }
 
-    function _getSourceTokenSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("WCOEN_TOKEN_CREATE2_SALT", string("OUTBE_WCOEN_TOKEN"))));
+    function _getSourceTokenSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("WCOEN")));
     }
 
-    function _getSourceBridgeSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("WCOEN_BRIDGE_CREATE2_SALT", string("OUTBE_WCOEN_BRIDGE"))));
+    function _getSourceBridgeSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("OUTBE_WCOEN_BRIDGE")));
     }
 
-    function _getTargetTokenSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_CREATE2_SALT", string("BSC_WCOEN_TOKEN"))));
+    function _getTargetTokenSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("WCOENOFT")));
     }
 
-    function _getTargetBridgeSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_BRIDGE_CREATE2_SALT", string("BSC_WCOEN_BRIDGE"))));
+    function _getTargetBridgeSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("BSC_WCOEN_BRIDGE")));
     }
 
     function _getSourceBridgeCreationCode(address token_) internal view returns (bytes memory) {

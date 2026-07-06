@@ -55,12 +55,12 @@ contract USDT0Deploy is Script {
         return uint8(decimals_);
     }
 
-    function _getTokenSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_CREATE2_SALT", string("USDT0_TOKEN"))));
+    function _getTokenSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("USDT0")));
     }
 
-    function _getBridgeSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_BRIDGE_CREATE2_SALT", string("OUTBE_USDT0_BRIDGE"))));
+    function _getBridgeSalt() internal pure returns (bytes32) {
+        return keccak256(bytes(string("USDT0_BRIDGE")));
     }
 
     function _getTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
