@@ -64,6 +64,17 @@ interface IEscrowAdapter {
         bool finalized;
     }
 
+    /// @notice Commit-entry bond taken at `commitBid` and held until reveal/cancel/claim.
+    /// @dev Existence sentinel is `amount > 0`; the record is deleted on release so a
+    ///      commit→cancel→commit cycle can re-lock within the same series.
+    struct CommitBond {
+        /// @notice Amount of payment-token bonded.
+        uint128 amount;
+        /// @notice Timestamp when the bond was locked (UNIX seconds). Anchors the
+        ///         escrow-local `claimAbandonedCommitBond` safety window.
+        uint32 lockedAt;
+    }
+
     // --- Events ---
 
     /// @notice Emitted when funds are locked for a bid during reveal.
@@ -71,6 +82,19 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose funds were locked.
     /// @param amount Amount of payment-token locked.
     event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+
+    /// @notice Emitted when a commit-entry bond is locked at `commitBid`.
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder whose bond was taken.
+    /// @param amount Amount of payment-token bonded.
+    event CommitBondLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+
+    /// @notice Emitted when a commit-entry bond is returned to its owner (reveal, cancel,
+    ///         auction-side claim, or the escrow-local abandoned-bond claim).
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder the bond was returned to.
+    /// @param amount Amount of payment-token returned.
+    event CommitBondReleased(uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
     /// @param receiveId Inbound bridge message that triggered the refund, or `bytes32(0)` for a
@@ -219,6 +243,14 @@ interface IEscrowAdapter {
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose lock was targeted.
     error NoPendingVaultOwed(uint32 seriesId, address bidder);
+    /// @notice `lockCommitBond` called while the bidder already holds a live bond for the series.
+    error CommitBondAlreadyLocked();
+    /// @notice No live commit bond exists for the series/bidder pair.
+    error CommitBondNotFound();
+    /// @notice `claimAbandonedCommitBond` was called before the escrow-local safety window elapsed.
+    /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
+    /// @param now_ Current block timestamp.
+    error CommitBondNotYetAbandoned(uint32 claimableAt, uint32 now_);
 
     // --- Admin ---
 
@@ -244,6 +276,20 @@ interface IEscrowAdapter {
     /// @param bidder Bidder address.
     /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
     function lockFunds(uint32 seriesId, address bidder, uint128 amount) external;
+
+    /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
+    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The bond is
+    ///      held in The Compact under the same lock id as bid escrow.
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder address the bond is taken from (and later returned to).
+    /// @param amount Bond amount (the series' `commitBondMinor`).
+    function lockCommitBond(uint32 seriesId, address bidder, uint128 amount) external;
+
+    /// @notice Return a live commit bond to its owner. Callable only by the IntexAuction contract
+    ///         (reveal, cancel, and the auction-side stage-aware claim path).
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder whose bond is returned.
+    function releaseCommitBond(uint32 seriesId, address bidder) external;
 
     // --- Bridge Finalization ---
 
@@ -280,6 +326,14 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose parked vault portion is being settled.
     function settleVaultOwed(uint32 seriesId, address bidder) external;
 
+    /// @notice Escrow-local safety valve for a commit bond stranded past
+    ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
+    ///         bond was live). Time-based only — never consults the auction — and pays the stored
+    ///         `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder whose bond is being claimed.
+    function claimAbandonedCommitBond(uint32 seriesId, address bidder) external;
+
     // --- Views ---
 
     /// @notice Get bid lock information.
@@ -287,6 +341,12 @@ interface IEscrowAdapter {
     /// @param bidder Bidder address whose lock is being read.
     /// @return lock The stored `BidLock` record for the series/bidder pair.
     function getBidLock(uint32 seriesId, address bidder) external view returns (BidLock memory lock);
+
+    /// @notice Get commit bond information. A zero `amount` means no live bond.
+    /// @param seriesId Series identifier.
+    /// @param bidder Bidder address whose bond is being read.
+    /// @return bond The stored `CommitBond` record for the series/bidder pair.
+    function getCommitBond(uint32 seriesId, address bidder) external view returns (CommitBond memory bond);
 
     /// @notice Get series escrow status.
     /// @param seriesId Series identifier.

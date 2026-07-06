@@ -53,6 +53,13 @@ contract EscrowAdapter is
     ///         `claimRefund` the full principal. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
     uint32 public constant ABANDON_DELAY = 30 days;
 
+    /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
+    ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
+    ///         an auction-contract rotation. MUST exceed the auction-side no-reveal gate
+    ///         (`revealEnd + COMMIT_BOND_LOCK_PERIOD`), which holds while auction schedules span
+    ///         less than 9 days (daily series span ~2).
+    uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
+
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
@@ -74,6 +81,8 @@ contract EscrowAdapter is
         mapping(uint32 seriesId => mapping(address bidder => BidLock)) bidLocks;
         /// @dev Per-series escrow state.
         mapping(uint32 seriesId => AuctionEscrowState) auctionEscrowState;
+        /// @dev Commit-entry bonds: seriesId => bidder => CommitBond.
+        mapping(uint32 seriesId => mapping(address bidder => CommitBond)) commitBonds;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -295,6 +304,62 @@ contract EscrowAdapter is
         _executeLock(seriesId, bidder, amount);
     }
 
+    // --- Commit bonds ---
+    /// @inheritdoc IEscrowAdapter
+    /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.commitBid`,
+    ///      forwarded through the `AUCTION_ROLE`-gated entry point (mirrors `lockFunds`).
+    function lockCommitBond(uint32 seriesId, address bidder, uint128 amount)
+        external
+        override
+        onlyRole(AUCTION_ROLE)
+        nonReentrant
+    {
+        if (seriesId == 0) revert ZeroValue("seriesId");
+        if (bidder == address(0)) revert ZeroAddress("bidder");
+        if (amount == 0) revert ZeroValue("amount");
+        EscrowAdapterStorage storage $ = _s();
+        if ($.commitBonds[seriesId][bidder].amount != 0) revert CommitBondAlreadyLocked();
+
+        // CEI deviation mirrors `_executeLock`: the one-time lockId bootstrap inside
+        // `_depositToCompact` needs depositERC20's return; nonReentrant covers the deviation.
+        // slither-disable-next-line arbitrary-send-erc20
+        $.paymentToken.safeTransferFrom(bidder, address(this), amount);
+        _depositToCompact(amount);
+
+        $.commitBonds[seriesId][bidder] = CommitBond({amount: amount, lockedAt: uint32(block.timestamp)});
+        emit CommitBondLocked(seriesId, bidder, amount);
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function releaseCommitBond(uint32 seriesId, address bidder) external override onlyRole(AUCTION_ROLE) nonReentrant {
+        _releaseCommitBond(seriesId, bidder);
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function claimAbandonedCommitBond(uint32 seriesId, address bidder) external override nonReentrant {
+        CommitBond storage bond = _s().commitBonds[seriesId][bidder];
+        if (bond.amount == 0) revert CommitBondNotFound();
+        uint32 claimableAt = bond.lockedAt + COMMIT_BOND_ABANDON_DELAY;
+        if (block.timestamp < claimableAt) revert CommitBondNotYetAbandoned(claimableAt, uint32(block.timestamp));
+        _releaseCommitBond(seriesId, bidder);
+    }
+
+    /// @dev Delete the bond record, withdraw from The Compact, and pay the stored bidder.
+    ///      CEI: the delete precedes both external calls; a re-claim reverts `CommitBondNotFound`.
+    function _releaseCommitBond(uint32 seriesId, address bidder) internal {
+        EscrowAdapterStorage storage $ = _s();
+        uint128 amount = $.commitBonds[seriesId][bidder].amount;
+        if (amount == 0) revert CommitBondNotFound();
+
+        // Effects
+        delete $.commitBonds[seriesId][bidder];
+
+        // Interactions
+        _withdrawFromCompact(amount);
+        $.paymentToken.safeTransfer(bidder, amount);
+        emit CommitBondReleased(seriesId, bidder, amount);
+    }
+
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
     function finalizeAuction(uint32 seriesId, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
@@ -497,6 +562,11 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
+    function getCommitBond(uint32 seriesId, address bidder) external view override returns (CommitBond memory) {
+        return _s().commitBonds[seriesId][bidder];
+    }
+
+    /// @inheritdoc IEscrowAdapter
     function getAuctionStatus(uint32 seriesId)
         external
         view
@@ -548,17 +618,7 @@ contract EscrowAdapter is
         // move above; nonReentrant on every outer entrypoint covers the deviation regardless.
         // slither-disable-next-line arbitrary-send-erc20
         $.paymentToken.safeTransferFrom(bidder, address(this), amount);
-
-        // Deposit to The Compact (we receive ERC6909 tokens).
-        uint256 returnedLockId = $.compact.depositERC20(address($.paymentToken), $.lockTag, amount, address(this));
-
-        // Enable forced withdrawal on first deposit (one-time setup). The returned
-        // `withdrawableAt` is informational; finalization invokes forcedWithdrawal directly.
-        if ($.lockId == 0) {
-            $.lockId = returnedLockId;
-            // slither-disable-next-line unused-return
-            $.compact.enableForcedWithdrawal(returnedLockId);
-        }
+        _depositToCompact(amount);
 
         // Store lock data.
         $.bidLocks[seriesId][bidder] = BidLock({
@@ -622,6 +682,20 @@ contract EscrowAdapter is
             $.paymentToken.forceApprove(address($.vaultProvider), paidAmount);
             $.vaultProvider.depositLiquidity(address($.paymentToken), paidAmount);
             emit FundsClaimed(receiveId, seriesId, bidder, paidAmount);
+        }
+    }
+
+    /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).
+    /// @dev Bootstraps `lockId` and enables forced withdrawal on the first-ever deposit. The
+    ///      returned `withdrawableAt` is informational; withdrawals invoke forcedWithdrawal directly.
+    /// @param amount Amount to deposit.
+    function _depositToCompact(uint128 amount) internal {
+        EscrowAdapterStorage storage $ = _s();
+        uint256 returnedLockId = $.compact.depositERC20(address($.paymentToken), $.lockTag, amount, address(this));
+        if ($.lockId == 0) {
+            $.lockId = returnedLockId;
+            // slither-disable-next-line unused-return
+            $.compact.enableForcedWithdrawal(returnedLockId);
         }
     }
 
