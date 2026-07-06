@@ -171,11 +171,11 @@ pub fn set_authorized_settler(
     factory.write_authorized_settler(holder, series_id, settler)
 }
 
-/// Distribute auction proceeds (native COEN, arriving as `amount` = msg.value)
-/// to the series' contributing tribute owners, proportional to their nominal
-/// share. Gated to the OriginMessenger. Pays the first chunk in-tx; any
-/// remainder is drained by the begin-block hook. Reverts on no contributors,
-/// returning the native value to the caller via the tx rollback.
+/// Register an auction-proceeds distribution (native COEN, arriving as
+/// `amount` = msg.value) for the series' contributing tribute owners. Gated to
+/// the OriginMessenger. Payouts run entirely in the begin-block drain, keeping
+/// the cross-chain delivery tx light and deterministic. Reverts on no
+/// contributors, returning the native value to the caller via the tx rollback.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -192,15 +192,14 @@ pub fn distribute(
     if total.is_zero() {
         return Err(IntexFactoryError::NoContributors(series_id).into());
     }
-    outbe_intex::api::start_distribution(storage, series_id, amount, total)?;
-    pay_chunk(storage, series_id, DIST_CHUNK_LIMIT)
+    outbe_intex::api::start_distribution(storage, series_id, amount, total)
 }
 
 /// Pay up to `limit` contributors of an in-flight distribution, advancing the
 /// cursor. The last contributor absorbs the integer-division remainder so the
 /// full `amount` is paid out exactly. On reaching the last contributor the
-/// distribution is finalized (progress + contributor map cleared). Shared by
-/// `distribute` (first chunk) and the begin-block drain.
+/// distribution is finalized (progress + contributor map cleared). Driven by
+/// the begin-block drain.
 pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32) -> Result<()> {
     let mut progress = outbe_intex::api::get_progress(storage, series_id)?
         .ok_or_else(|| IntexFactoryError::NoDistribution(series_id))?;

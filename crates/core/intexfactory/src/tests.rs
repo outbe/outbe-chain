@@ -1068,6 +1068,12 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
 
         runtime::distribute(&s, crate::constants::ORIGIN_MESSENGER_ADDRESS, 7, amount).unwrap();
 
+        // distribute only registers; nothing is paid until the begin-block drain.
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::ZERO);
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        runtime::drain_distributions(&s).unwrap();
+
         // floor shares (amount * nominal / total); the last owner absorbs the
         // rounding remainder, so the sum is exactly `amount`.
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(166u64)); // 1000*100/600
