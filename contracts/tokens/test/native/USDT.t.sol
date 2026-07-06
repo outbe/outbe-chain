@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {USDT} from "../src/USDT.sol";
+import {USDT} from "../../src/native/USDT.sol";
 
 contract USDTTest is Test {
     USDT internal token;

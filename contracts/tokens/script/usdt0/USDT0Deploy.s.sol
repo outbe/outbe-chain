@@ -9,8 +9,8 @@ import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {USDT} from "../../src/USDT.sol";
-import {USDT0BridgeToken} from "../../src/USDT0OFT.sol";
+import {USDT} from "../../src/native/USDT.sol";
+import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
 
 /// @title USDT0Deploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(BNB) <> USDT0(Outbe).

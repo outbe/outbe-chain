@@ -17,7 +17,7 @@ This package bridges the project token pairs through the ERC-7786 bridge hub and
 
 ## Scripts
 
-Use `script/usdt0/OFTDeploy.s.sol:USDT0Deploy` for USDT and `script/wcoen/OFTDeploy.s.sol:WCOENDeploy` for WCOEN.
+Use `script/usdt0/USDT0Deploy.s.sol:USDT0Deploy` for USDT0 and `script/wcoen/WCOENDeploy.s.sol:WCOENDeploy` for WCOEN.
 
 Common required environment:
 
@@ -52,12 +52,12 @@ Optional deployment inputs:
 
 ### Pure Forge USDT0 Flow
 
-Start from `contracts/oft` and load the shared environment. The deploy scripts
+Start from `contracts/tokens` and load the shared environment. The deploy scripts
 expect `PRIVATE_KEY`; this repo's `.env` may use `DEPLOYER_PK`, so export both.
 If `BSC_RPC` points to BSC testnet (`prebsc`), use `BSC_CHAIN_ID=97`.
 
 ```bash
-cd /c/Users/USER/Desktop/projects/outbe-chain/contracts/oft
+cd /c/Users/USER/Desktop/projects/outbe-chain/contracts/tokens
 
 set -a
 source .env
@@ -74,7 +74,7 @@ in `LockUnlock` mode. Copy the printed `BSC_USDT_TOKEN` and `BSC_USDT_BRIDGE`
 values into `deployments/usdt0.env`.
 
 ```bash
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
   --sig "deploySource()" \
   --rpc-url "$BSC_RPC" \
   --broadcast \
@@ -86,7 +86,7 @@ Deploy target-side Outbe contracts. This deploys `USDT0BridgeToken` and the targ
 and `OUTBE_USDT0_BRIDGE` values into `deployments/usdt0.env`.
 
 ```bash
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
   --sig "deployTarget()" \
   --rpc-url "$OUTBE_RPC" \
   --broadcast \
@@ -106,13 +106,13 @@ Configure both remotes. The source bridge stores the Outbe remote under
 `BSC_CHAIN_ID`.
 
 ```bash
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
   --sig "configureSourceRemote()" \
   --rpc-url "$BSC_RPC" \
   --broadcast \
   --priority-gas-price 100000000
 
-forge script script/usdt0/OFTDeploy.s.sol:OFTDeploy \
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
   --sig "configureTargetRemote()" \
   --rpc-url "$OUTBE_RPC" \
   --broadcast \
@@ -168,19 +168,19 @@ forge script script/usdt0/SendTargetToSource.s.sol \
 USDT0:
 
 ```bash
-forge script script/usdt0/OFTDeploy.s.sol:USDT0Deploy --sig "deploySource()" --rpc-url "$BSC_RPC" --broadcast
-forge script script/usdt0/OFTDeploy.s.sol:USDT0Deploy --sig "deployTarget()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/usdt0/OFTDeploy.s.sol:USDT0Deploy --sig "configureSourceRemote()" --rpc-url "$BSC_RPC" --broadcast
-forge script script/usdt0/OFTDeploy.s.sol:USDT0Deploy --sig "configureTargetRemote()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy --sig "deploySource()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy --sig "deployTarget()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy --sig "configureSourceRemote()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy --sig "configureTargetRemote()" --rpc-url "$OUTBE_RPC" --broadcast
 ```
 
 WCOEN:
 
 ```bash
-forge script script/wcoen/OFTDeploy.s.sol:WCOENDeploy --sig "deploySource()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/OFTDeploy.s.sol:WCOENDeploy --sig "deployTarget()" --rpc-url "$BSC_RPC" --broadcast
-forge script script/wcoen/OFTDeploy.s.sol:WCOENDeploy --sig "configureSourceRemote()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/OFTDeploy.s.sol:WCOENDeploy --sig "configureTargetRemote()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "deploySource()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "deployTarget()" --rpc-url "$BSC_RPC" --broadcast
+forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "configureSourceRemote()" --rpc-url "$OUTBE_RPC" --broadcast
+forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "configureTargetRemote()" --rpc-url "$BSC_RPC" --broadcast
 ```
 
 Send examples:

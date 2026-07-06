@@ -9,12 +9,22 @@ import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {USDT} from "../../src/USDT.sol";
-import {USDT0BridgeToken} from "../../src/USDT0OFT.sol";
+import {WCOEN} from "../../src/native/WCOEN.sol";
+import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
 
-/// @title USDT0Deploy
-/// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(BNB) <> USDT0(Outbe).
-contract USDT0Deploy is Script {
+/// @title WCOENDeploy
+/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
+contract WCOENDeploy is Script {
+    struct SourceDeployment {
+        address token;
+        address tokenBridge;
+        bool tokenFromEnv;
+        bytes32 tokenSalt;
+        bytes32 bridgeSalt;
+        bytes tokenCreationCode;
+        bytes bridgeCreationCode;
+    }
+
     struct TargetDeployment {
         address token;
         address tokenBridge;
@@ -50,28 +60,48 @@ contract USDT0Deploy is Script {
     }
 
     function _getDecimals() internal view returns (uint8) {
-        uint256 decimals_ = vm.envOr("TOKEN_DECIMALS", uint256(6));
-        if (decimals_ > type(uint8).max) revert InvalidDecimals(decimals_);
-        return uint8(decimals_);
+        uint256 decimals_ = vm.envOr("TOKEN_DECIMALS", uint256(18));
+        if (decimals_ != 18) revert InvalidDecimals(decimals_);
+        return 18;
     }
 
-    function _getTokenSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_CREATE2_SALT", string("USDT0_TOKEN"))));
+    function _getSourceTokenSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("WCOEN_TOKEN_CREATE2_SALT", string("OUTBE_WCOEN_TOKEN"))));
     }
 
-    function _getBridgeSalt() internal view returns (bytes32) {
-        return keccak256(bytes(vm.envOr("TOKEN_BRIDGE_CREATE2_SALT", string("OUTBE_USDT0_BRIDGE"))));
+    function _getSourceBridgeSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("WCOEN_BRIDGE_CREATE2_SALT", string("OUTBE_WCOEN_BRIDGE"))));
     }
 
-    function _getTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
+    function _getTargetTokenSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("TOKEN_CREATE2_SALT", string("BSC_WCOEN_TOKEN"))));
+    }
+
+    function _getTargetBridgeSalt() internal view returns (bytes32) {
+        return keccak256(bytes(vm.envOr("TOKEN_BRIDGE_CREATE2_SALT", string("BSC_WCOEN_BRIDGE"))));
+    }
+
+    function _getSourceBridgeCreationCode(address token_) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            type(ERC7786TokenBridge).creationCode,
+            abi.encode(
+                token_,
+                vm.envAddress("BRIDGE_ADDRESS"),
+                vm.envAddress("DEPLOYER_ADDRESS"),
+                ERC7786TokenBridge.TokenBridgeMode.LockUnlock
+            )
+        );
+    }
+
+    function _getTargetTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
         internal
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(USDT0BridgeToken).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(type(WCOENBridgeToken).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
     }
 
-    function _getBridgeCreationCode(address token_) internal view returns (bytes memory) {
+    function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
         return abi.encodePacked(
             type(ERC7786TokenBridge).creationCode,
             abi.encode(
@@ -83,17 +113,35 @@ contract USDT0Deploy is Script {
         );
     }
 
+    function _predictSource() internal view returns (SourceDeployment memory source) {
+        address configuredToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));
+        source.tokenFromEnv = configuredToken != address(0);
+
+        if (source.tokenFromEnv) {
+            source.token = configuredToken;
+        } else {
+            source.tokenSalt = _getSourceTokenSalt();
+            source.tokenCreationCode = type(WCOEN).creationCode;
+            source.token = Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
+        }
+
+        source.bridgeSalt = _getSourceBridgeSalt();
+        source.bridgeCreationCode = _getSourceBridgeCreationCode(source.token);
+        source.tokenBridge =
+            Create2.computeAddress(source.bridgeSalt, keccak256(source.bridgeCreationCode), CREATE2_FACTORY);
+    }
+
     function _predictTarget(string memory name_, string memory symbol_, uint8 decimals_)
         internal
         view
         returns (TargetDeployment memory target)
     {
-        target.tokenSalt = _getTokenSalt();
-        target.tokenCreationCode = _getTokenCreationCode(name_, symbol_, decimals_);
+        target.tokenSalt = _getTargetTokenSalt();
+        target.tokenCreationCode = _getTargetTokenCreationCode(name_, symbol_, decimals_);
         target.token = Create2.computeAddress(target.tokenSalt, keccak256(target.tokenCreationCode), CREATE2_FACTORY);
 
-        target.bridgeSalt = _getBridgeSalt();
-        target.bridgeCreationCode = _getBridgeCreationCode(target.token);
+        target.bridgeSalt = _getTargetBridgeSalt();
+        target.bridgeCreationCode = _getTargetBridgeCreationCode(target.token);
         target.tokenBridge =
             Create2.computeAddress(target.bridgeSalt, keccak256(target.bridgeCreationCode), CREATE2_FACTORY);
     }
@@ -105,46 +153,32 @@ contract USDT0Deploy is Script {
         if (!success || expected.code.length == 0) revert Create2FactoryDeploymentFailed(salt, expected);
     }
 
-    function deploySource() external returns (address sourceToken, address tokenBridge) {
-        uint256 pk = _getPrivateKey();
-        address owner = vm.envAddress("DEPLOYER_ADDRESS");
-        address localBridge = vm.envAddress("BRIDGE_ADDRESS");
-        address configuredToken = vm.envOr("BSC_USDT_TOKEN", address(0));
-        address configuredBridge = vm.envOr("BSC_USDT_BRIDGE", address(0));
-        uint256 initialMint = vm.envOr("INITIAL_MINT_AMOUNT", uint256(1_000_000_000e6));
-
-        _requireCode(localBridge);
-
-        vm.startBroadcast(pk);
-        if (configuredToken == address(0)) {
-            USDT token = new USDT();
-            token.mint(owner, initialMint);
-            sourceToken = address(token);
-        } else {
-            sourceToken = configuredToken;
-        }
-
-        if (configuredBridge == address(0)) {
-            tokenBridge = address(
-                new ERC7786TokenBridge(
-                    sourceToken, localBridge, owner, ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-                )
-            );
-        } else {
-            tokenBridge = configuredBridge;
-        }
-        vm.stopBroadcast();
-
-        _requireCode(sourceToken);
-        _requireCode(tokenBridge);
-
-        console2.log("BSC_USDT_TOKEN=", sourceToken);
-        console2.log("BSC_USDT_BRIDGE=", tokenBridge);
+    function predictSource() external view returns (address sourceToken, address tokenBridge) {
+        SourceDeployment memory source = _predictSource();
+        _logSource(source);
+        return (source.token, source.tokenBridge);
     }
 
-    function predictOutbe() external view returns (address token, address tokenBridge) {
+    function deploySource() external returns (address sourceToken, address tokenBridge) {
+        uint256 pk = _getPrivateKey();
+        SourceDeployment memory source = _predictSource();
+
+        _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
+
+        vm.startBroadcast(pk);
+        if (!source.tokenFromEnv) _deployCreate2(source.tokenSalt, source.tokenCreationCode, source.token);
+        _deployCreate2(source.bridgeSalt, source.bridgeCreationCode, source.tokenBridge);
+        vm.stopBroadcast();
+
+        _requireCode(source.token);
+        _requireCode(source.tokenBridge);
+        _logSource(source);
+        return (source.token, source.tokenBridge);
+    }
+
+    function predictTarget() external view returns (address token, address tokenBridge) {
         TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals());
+            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
         _logTarget(target);
         return (target.token, target.tokenBridge);
     }
@@ -153,7 +187,7 @@ contract USDT0Deploy is Script {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
         TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals());
+            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
 
         _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
 
@@ -170,22 +204,22 @@ contract USDT0Deploy is Script {
     function setTargetTokenBridge() external {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        _setTokenBridge(pk, signer, vm.envAddress("OUTBE_USDT0_TOKEN"), vm.envAddress("OUTBE_USDT0_BRIDGE"));
+        _setTokenBridge(pk, signer, vm.envAddress("BSC_WCOEN_TOKEN"), vm.envAddress("BSC_WCOEN_BRIDGE"));
     }
 
     function configureSourceRemote() external {
         _configureRemote(
-            vm.envAddress("BSC_USDT_BRIDGE"),
-            vm.envUint("OUTBE_CHAIN_ID"),
-            vm.envAddress("OUTBE_USDT0_BRIDGE")
+            vm.envAddress("OUTBE_WCOEN_BRIDGE"),
+            vm.envUint("BSC_CHAIN_ID"),
+            vm.envAddress("BSC_WCOEN_BRIDGE")
         );
     }
 
     function configureTargetRemote() external {
         _configureRemote(
-            vm.envAddress("OUTBE_USDT0_BRIDGE"),
-            vm.envUint("BSC_CHAIN_ID"),
-            vm.envAddress("BSC_USDT_BRIDGE")
+            vm.envAddress("BSC_WCOEN_BRIDGE"),
+            vm.envUint("OUTBE_CHAIN_ID"),
+            vm.envAddress("OUTBE_WCOEN_BRIDGE")
         );
     }
 
@@ -193,7 +227,7 @@ contract USDT0Deploy is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        USDT0BridgeToken bridgeableToken = USDT0BridgeToken(token);
+        WCOENBridgeToken bridgeableToken = WCOENBridgeToken(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
         if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);
@@ -204,7 +238,7 @@ contract USDT0Deploy is Script {
         bridgeableToken.setTokenBridge(tokenBridge);
         vm.stopBroadcast();
 
-        console2.log("USDT0 token bridge set:", tokenBridge);
+        console2.log("WCOEN token bridge set:", tokenBridge);
     }
 
     function _configureRemote(address localTokenBridge, uint256 remoteChainId, address remoteTokenBridge) internal {
@@ -228,9 +262,23 @@ contract USDT0Deploy is Script {
         console2.log("  remote bridge=", remoteTokenBridge);
     }
 
+    function _logSource(SourceDeployment memory source) internal pure {
+        console2.log("OUTBE_WCOEN_TOKEN=", source.token);
+        console2.log("OUTBE_WCOEN_BRIDGE=", source.tokenBridge);
+        console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
+        if (source.tokenFromEnv) {
+            console2.log("OUTBE_WCOEN_TOKEN provided by env; token salt not used");
+        } else {
+            console2.log("WCOEN_TOKEN_CREATE2_SALT=");
+            console2.logBytes32(source.tokenSalt);
+        }
+        console2.log("WCOEN_BRIDGE_CREATE2_SALT=");
+        console2.logBytes32(source.bridgeSalt);
+    }
+
     function _logTarget(TargetDeployment memory target) internal pure {
-        console2.log("OUTBE_USDT0_TOKEN=", target.token);
-        console2.log("OUTBE_USDT0_BRIDGE=", target.tokenBridge);
+        console2.log("BSC_WCOEN_TOKEN=", target.token);
+        console2.log("BSC_WCOEN_BRIDGE=", target.tokenBridge);
         console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
         console2.log("TOKEN_CREATE2_SALT=");
         console2.logBytes32(target.tokenSalt);

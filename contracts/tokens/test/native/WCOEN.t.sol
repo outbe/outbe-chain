@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {WCOEN} from "../src/WCOEN.sol";
+import {WCOEN} from "../../src/native/WCOEN.sol";
 
 contract WCOENTest is Test {
     WCOEN internal token;

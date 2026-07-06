@@ -4,11 +4,11 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 
-import {ConfigurableERC7802} from "../src/ConfigurableERC7802.sol";
-import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
-import {USDT0BridgeToken} from "../src/USDT0OFT.sol";
-import {WCOENBridgeToken} from "../src/WCOENOFT.sol";
-import {MockERC7786Bridge} from "./mocks/MockERC7786Bridge.sol";
+import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
+import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
+import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract USDT0BridgeTokenTest is Test {
     MockERC7786Bridge internal gateway;

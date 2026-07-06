@@ -4,12 +4,12 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
-import {USDT} from "../src/USDT.sol";
-import {USDT0BridgeToken} from "../src/USDT0OFT.sol";
-import {WCOEN} from "../src/WCOEN.sol";
-import {WCOENBridgeToken} from "../src/WCOENOFT.sol";
-import {MockERC7786Bridge} from "./mocks/MockERC7786Bridge.sol";
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {USDT} from "../../src/native/USDT.sol";
+import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
+import {WCOEN} from "../../src/native/WCOEN.sol";
+import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
+import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ERC7786TokenBridgeTest is Test {
     uint32 internal constant BNB = 97;

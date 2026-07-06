@@ -10,11 +10,11 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {WCOEN} from "../../src/WCOEN.sol";
-import {WCOENOFT} from "../../src/WCOENOFT.sol";
+import {WCOENBridgeToken} from "../../src/WCOENOFT.sol";
 
-/// @title OFTDeploy
+/// @title WCOENDeploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
-contract OFTDeploy is Script {
+contract WCOENDeploy is Script {
     struct SourceDeployment {
         address token;
         address tokenBridge;
@@ -98,7 +98,7 @@ contract OFTDeploy is Script {
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(WCOENOFT).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(type(WCOENBridgeToken).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
     }
 
     function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
@@ -227,7 +227,7 @@ contract OFTDeploy is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        WCOENOFT bridgeableToken = WCOENOFT(token);
+        WCOENBridgeToken bridgeableToken = WCOENBridgeToken(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
         if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);

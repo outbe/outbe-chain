@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {ConfigurableERC7802} from "./ConfigurableERC7802.sol";
+import {ConfigurableERC7802} from "../ConfigurableERC7802.sol";
 
 /// @title WCOENBridgeToken
 /// @notice WCOEN-compatible ERC-7802 bridgeable token with constructor-configured decimals.
