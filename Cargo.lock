@@ -6851,6 +6851,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-common",
  "outbe-emissionlimit",
  "outbe-intexfactory",
  "outbe-macros",

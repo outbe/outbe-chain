@@ -157,6 +157,13 @@ Per-block fees are escrowed and settled at `N+K` across the late-finalize
 inclusion window. Dust from fee and emission splits routes deterministically to
 terminal Metadosis. Block 0 produces no validator rewards.
 
+WorldwideDay lifecycle statuses (FORMING → LOOKBACK_DELAY → OFFERING → WAITING
+→ READY) advance on two daily begin-zone Cycle ticks: 00:00 UTC
+(`emission_limit_1`, which also creates the next day and settles READY days)
+and 12:00 UTC (`wwd_advance_noon`, status advancement only). The 12:00 tick
+exists because the forming/offering window edges land at 12:00 UTC; without it
+every offering window opened ~12 hours late.
+
 ## RPC
 
 The `outbe_*` namespace exposes read-only views over committed chain state:

@@ -20,6 +20,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+outbe-common.workspace = true
 
 [lints]
 workspace = true
