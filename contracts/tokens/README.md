@@ -11,9 +11,9 @@ This package bridges the project token pairs through the ERC-7786 bridge hub and
 
 ## Routes
 
-- USDT: BNB canonical `USDT` + BNB lock bridge ↔ Outbe `USDT0BridgeToken` ERC-7802 token + Outbe mint/burn bridge.
-- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ BNB `WCOENBridgeToken` ERC-7802 token + BNB mint/burn bridge.
-- `USDT0BridgeToken` and `WCOENBridgeToken` are ERC-7802 bridgeable ERC20s.
+- USDT: BNB canonical `USDT` + BNB lock bridge ↔ Outbe `USDT0` ERC-7802 token + Outbe mint/burn bridge.
+- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ BNB synthetic `WCOEN` ERC-7802 token + BNB mint/burn bridge.
+- `USDT0` and synthetic `WCOEN` are ERC-7802 bridgeable ERC20s.
 
 ## Scripts
 
@@ -81,7 +81,7 @@ forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
   --priority-gas-price 100000000
 ```
 
-Deploy target-side Outbe contracts. This deploys `USDT0BridgeToken` and the target
+Deploy target-side Outbe contracts. This deploys `USDT0` and the target
 `ERC7786TokenBridge` in `BurnMint` mode. Copy the printed `OUTBE_USDT0_TOKEN`
 and `OUTBE_USDT0_BRIDGE` values into `deployments/usdt0.env`.
 

@@ -6,18 +6,18 @@ import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 
 import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
-import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
+import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {WCOEN} from "../../src/synthetic/WCOEN.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
-contract USDT0BridgeTokenTest is Test {
+contract USDT0Test is Test {
     MockERC7786Bridge internal gateway;
     ERC7786TokenBridge internal tokenBridge;
-    USDT0BridgeToken internal token;
+    USDT0 internal token;
 
     function setUp() public {
         gateway = new MockERC7786Bridge(block.chainid);
-        token = new USDT0BridgeToken("USDT0", "USDT0", 6, address(this));
+        token = new USDT0("USDT0", "USDT0", 6, address(this));
         tokenBridge = new ERC7786TokenBridge(
             address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
         );
@@ -28,7 +28,7 @@ contract USDT0BridgeTokenTest is Test {
     }
 
     function test_MetadataAndDecimals_AreConstructorConfigured() public {
-        WCOENBridgeToken wcoen = new WCOENBridgeToken("Wrapped COEN", "WCOEN", 18, address(this));
+        WCOEN wcoen = new WCOEN("Wrapped COEN", "WCOEN", 18, address(this));
 
         assertEq(wcoen.name(), "Wrapped COEN");
         assertEq(wcoen.symbol(), "WCOEN");

@@ -780,6 +780,90 @@ const intexFactoryAssertRelayerRole = task(
   .setAction(lazy(intexFactoryAssertRelayerRoleAction));
 
 // ============================================================================
+// Grant RELAYER_ROLE (inbound-delivery caller)
+// ============================================================================
+
+interface GrantRelayerRoleArgs {
+  token: string;
+  adapter: string;
+  contract: string;
+}
+
+const grantRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+  const contractName = args.contract || "IntexNFT1155";
+
+  console.log(`Granting RELAYER_ROLE on ${contractName} @ ${args.token} to ${args.adapter}...`);
+
+  const token = (await viem.getContractAt(contractName, args.token as `0x${string}`)) as {
+    read: {
+      RELAYER_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const role = await token.read.RELAYER_ROLE();
+  if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
+    console.log("✅ RELAYER_ROLE already granted");
+    return;
+  }
+
+  const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
+  console.log(`✅ RELAYER_ROLE granted. Tx: ${txHash}`);
+};
+
+const grantRelayerRole = task(
+  "grant-relayer-role",
+  "Grant RELAYER_ROLE on an app contract (IntexAuction, EscrowAdapter, IntexNFT1155) to a bridge client",
+)
+  .addOption({ name: "token", description: "App contract that gates inbound calls by RELAYER_ROLE", defaultValue: "" })
+  .addOption({ name: "adapter", description: "Bridge client to grant RELAYER_ROLE to (messenger or ONFT adapter)", defaultValue: "" })
+  .addOption({ name: "contract", description: "App contract name: IntexAuction | EscrowAdapter | IntexNFT1155 (default: IntexNFT1155)", defaultValue: "" })
+  .setAction(lazy(grantRelayerRoleAction));
+
+// ============================================================================
+// Grant SYSTEM_RELAYER_ROLE (holder-migration system bridge)
+// ============================================================================
+
+const grantSystemRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+  const contractName = args.contract || "IntexNFT1155";
+
+  console.log(`Granting SYSTEM_RELAYER_ROLE on ${contractName} @ ${args.token} to ${args.adapter}...`);
+
+  const token = (await viem.getContractAt(contractName, args.token as `0x${string}`)) as {
+    read: {
+      SYSTEM_RELAYER_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const role = await token.read.SYSTEM_RELAYER_ROLE();
+  if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
+    console.log("✅ SYSTEM_RELAYER_ROLE already granted");
+    return;
+  }
+
+  const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
+  console.log(`✅ SYSTEM_RELAYER_ROLE granted. Tx: ${txHash}`);
+};
+
+const grantSystemRelayerRole = task(
+  "grant-system-relayer-role",
+  "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155 to the system holder-migration adapter (ONFT1155AdapterBatch)",
+)
+  .addOption({ name: "token", description: "IntexNFT1155 contract address", defaultValue: "" })
+  .addOption({ name: "adapter", description: "System bridge adapter to grant SYSTEM_RELAYER_ROLE to", defaultValue: "" })
+  .addOption({ name: "contract", description: "Contract name (default: IntexNFT1155)", defaultValue: "" })
+  .setAction(lazy(grantSystemRelayerRoleAction));
+
+// ============================================================================
 // Export
 // ============================================================================
 
@@ -793,4 +877,6 @@ export const wireTasks = [
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
+  grantRelayerRole.build(),
+  grantSystemRelayerRole.build(),
 ];

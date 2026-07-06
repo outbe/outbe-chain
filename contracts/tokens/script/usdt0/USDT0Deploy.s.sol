@@ -10,7 +10,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/native/USDT.sol";
-import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
+import {USDT0} from "../../src/synthetic/USDT0.sol";
 
 /// @title USDT0Deploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(BNB) <> USDT0(Outbe).
@@ -68,7 +68,7 @@ contract USDT0Deploy is Script {
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(USDT0BridgeToken).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(type(USDT0).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
     }
 
     function _getBridgeCreationCode(address token_) internal view returns (bytes memory) {
@@ -193,7 +193,7 @@ contract USDT0Deploy is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        USDT0BridgeToken bridgeableToken = USDT0BridgeToken(token);
+        USDT0 bridgeableToken = USDT0(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
         if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);

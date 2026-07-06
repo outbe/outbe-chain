@@ -9,8 +9,8 @@ import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {WCOEN} from "../../src/native/WCOEN.sol";
-import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
+import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
+import {WCOEN as SyntheticWCOEN} from "../../src/synthetic/WCOEN.sol";
 
 /// @title WCOENDeploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
@@ -98,7 +98,7 @@ contract WCOENDeploy is Script {
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(WCOENBridgeToken).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(type(SyntheticWCOEN).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
     }
 
     function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
@@ -121,7 +121,7 @@ contract WCOENDeploy is Script {
             source.token = configuredToken;
         } else {
             source.tokenSalt = _getSourceTokenSalt();
-            source.tokenCreationCode = type(WCOEN).creationCode;
+            source.tokenCreationCode = type(NativeWCOEN).creationCode;
             source.token = Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
         }
 
@@ -227,7 +227,7 @@ contract WCOENDeploy is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        WCOENBridgeToken bridgeableToken = WCOENBridgeToken(token);
+        SyntheticWCOEN bridgeableToken = SyntheticWCOEN(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
         if (currentBridge != address(0)) revert TokenBridgeMismatch(currentBridge, tokenBridge);

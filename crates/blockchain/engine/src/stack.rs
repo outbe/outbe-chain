@@ -572,12 +572,25 @@ fn read_startup_dkg_snapshot(
         last_consensus_finalized_height,
         args.trust_el_head,
     )?;
+    // NORMALIZE the tuple height to the ACTIVATION ANCHOR. The header scan
+    // returns the height of the block CARRYING the boundary artifact, but that
+    // artifact always rides the FIRST block of the new epoch — one block ABOVE
+    // the activation height the committee anchored its rotation schedule on
+    // (genesis: activation 0, committed in block 1; a reshare activated at H is
+    // committed in block H+1). A restarted node that anchors on the commit
+    // height runs its whole freeze/activation schedule one block LATE: it waits
+    // for activation H+1 while the live committee restarts its engine at H. With
+    // one such node the committee still has quorum and the laggard self-heals
+    // one block later; with two of five (e.g. a restarted validator plus a
+    // freshly promoted one) the new epoch is 3-of-5 < quorum and the chain
+    // deadlocks at the boundary. Anchor = commit_height - 1, uniformly.
     let mut recovered_boundary = recover_latest_boundary_artifact(
         &node.provider,
         boundary_recovery_height,
         dkg_rotation_params,
     )
-    .wrap_err("failed to recover latest DKG boundary artifact")?;
+    .wrap_err("failed to recover latest DKG boundary artifact")?
+    .map(|(commit_height, artifact)| (commit_height.saturating_sub(1), artifact));
     let mut recovered_boundary_finalized = recovered_boundary.is_some();
 
     if let Some(keys_dir) = args.keys_dir.as_ref().filter(|_| !args.force_dkg) {
@@ -1203,6 +1216,55 @@ fn genesis_consensus_block(node: &OutbeFullNode) -> Result<outbe_consensus::bloc
     ))
 }
 
+/// Spawn the drainer that answers `outbe_getFinalization` RPC requests from the
+/// marshal. The `outbe-rpc` handler cannot see the marshal or `ConsensusBlock`,
+/// so it requests bytes through [`ConsensusExecutionBridge::request_finalization`];
+/// this task is the consensus-side responder. Wired on BOTH the validator path
+/// (`run_consensus_stack`) and the certified-follower path (a follower can serve
+/// upstream too), right after `marshal_mailbox` exists.
+///
+/// For each `(height, reply)` it reads the finalization certificate and the
+/// finalized block from the marshal, encodes both with `commonware_codec`, and
+/// answers `Some` only when both are present locally (otherwise `None`, which
+/// the RPC maps to a "not available" error).
+fn spawn_finalization_drainer<E>(
+    ctx: &E,
+    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
+    bridge: ConsensusExecutionBridge,
+) where
+    E: Spawner + Metrics,
+{
+    let rx = bridge.set_finalization_fetcher();
+    ctx.child("finalization_drainer").spawn(move |_| async move {
+        let mut rx = rx;
+        while let Some((height, reply)) = rx.recv().await {
+            let answer =
+                finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
+            // The receiver may have gone away (RPC client disconnected); ignore.
+            let _ = reply.send(answer);
+        }
+    });
+}
+
+/// Read `(finalization, block)` for `height` from the marshal and encode them
+/// for transport. `None` if either is missing locally.
+async fn finalization_bytes_for_height(
+    marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+    height: Height,
+) -> Option<outbe_primitives::consensus::FinalizedBlockBytes> {
+    use commonware_codec::Encode as _;
+
+    let finalization = marshal_mailbox.get_finalization(height).await?;
+    // The block is keyed by the finalization's payload digest.
+    let block = marshal_mailbox
+        .get_block(&finalization.proposal.payload)
+        .await?;
+    Some(outbe_primitives::consensus::FinalizedBlockBytes {
+        finalization: alloy_primitives::Bytes::from(finalization.encode().to_vec()),
+        block: alloy_primitives::Bytes::from(block.encode().to_vec()),
+    })
+}
+
 fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
     NonZeroU16::new(value).ok_or_else(|| eyre::eyre!("{name} must be > 0"))
 }
@@ -1559,6 +1621,345 @@ fn validate_validator_evm_signer(
 /// 6. Simplex consensus engine (restarted on reshare)
 /// 7. Block propagation — proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
+/// Follower stack: cold-sync finalized blocks from an upstream node, verify them
+/// against the trusted network identity (committee-chaining — see the `follow`
+/// module), and drive the EL via the existing executor, WITHOUT running the
+/// consensus engine. Selected by `--upstream`.
+async fn run_follow_stack<E>(
+    ctx: &E,
+    args: ConsensusArgs,
+    node: OutbeFullNode,
+    bridge: ConsensusExecutionBridge,
+    upstream: String,
+) -> Result<()>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    let epoch_length = epoch_length_blocks_from_genesis(&node)?;
+
+    if args.upstream_nocertify {
+        return Err(eyre::eyre!(
+            "--upstream.nocertify (uncertified dev sync) is not yet implemented"
+        ));
+    }
+
+    // Trust anchor: the genesis validator committee (the MinPk consensus key
+    // set), read from the follower's OWN genesis state. Consensus finality is a
+    // multisig over these keys, so this set — not the VRF group key — is the
+    // trust root, and it is already in genesis (the operator provides nothing).
+    let genesis_validators = validators::read_consensus_validators_at_latest(&node.provider)
+        .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+        genesis_validators
+            .public_keys
+            .iter()
+            .cloned()
+            .try_collect()
+            .map_err(|e| {
+                eyre::eyre!("genesis validator set is not a valid participant set: {e:?}")
+            })?;
+
+    // TEE-chain guardrail. Full execution re-runs offer txs (decrypt in the
+    // enclave) and enclave-registration txs (`registerEnclave` seals the
+    // resident offer key to the joiner and emits `OfferKeySealed`) — BOTH route
+    // through the local enclave, and BOTH land in the block's receipts root. A
+    // follower without an enclave silently omits the seal / cannot decrypt, so
+    // its receipts root diverges and reth rejects the block (a cryptic
+    // "receipt root mismatch" at the first such height). Fail fast here with an
+    // actionable message instead. The offer key is a lifetime constant, so it is
+    // installed ONCE, before sync, via `outbe-cli tee join`. The TEE-chain probe
+    // reads the UPSTREAM's state, not the follower's: the follower is at genesis,
+    // where the bootstrap tx that sets the offer key has not run yet.
+    let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    let tee_offer_public = tee_probe
+        .tribute_offer_public_key()
+        .await
+        .wrap_err("failed to probe the upstream for TEE-chain status (follower prerequisites)")?;
+    if !tee_offer_public.is_zero() && args.tee_enclave_socket.is_none() {
+        return Err(eyre::eyre!(
+            "this is a TEE chain (a tribute offer key is set on-chain) but the follower was \
+             started WITHOUT --tee-enclave-socket. A full-execution follower re-runs offer and \
+             enclave-registration transactions through the enclave, so it needs an attested \
+             enclave that holds the (lifetime-constant) offer key. Install the key once, before \
+             syncing:\n  1. start the enclave sidecar,\n  2. `outbe-cli tee join --enclave-socket \
+             <socket> --rpc-url {upstream}` (registers + waits for the sealed offer key),\n  3. \
+             start the node with `--tee-enclave-socket <socket> --upstream {upstream}`."
+        ));
+    }
+
+    info!(
+        %upstream,
+        anchor_validators = anchor_participants.len(),
+        epoch_length,
+        "follower mode (--upstream) selected; anchored on the genesis validator set"
+    );
+
+    run_certified_follow_stack(ctx, anchor_participants, node, bridge, upstream, epoch_length).await
+}
+
+/// The committee-chaining follower engine (transport A — upstream RPC, no
+/// consensus P2P). Builds the same marshal + executor as the validator path,
+/// feeds the marshal finalized blocks fetched from the upstream, and verifies
+/// each against the per-epoch committee derived from the trusted anchor.
+async fn run_certified_follow_stack<E>(
+    ctx: &E,
+    anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    node: OutbeFullNode,
+    bridge: ConsensusExecutionBridge,
+    upstream: String,
+    epoch_length_blocks: u32,
+) -> Result<()>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    use commonware_consensus::marshal;
+    use commonware_cryptography::certificate::Scheme as _;
+    use commonware_storage::archive::immutable;
+    use outbe_consensus::follow::{run_follow_engine, CommitteeChain, FollowEngineConfig};
+    use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
+    use std::sync::{Arc, Mutex};
+
+    // ── 0. Startup chain-state sources ───────────────────────────────────
+    let genesis_hash = genesis_hash(&node)?;
+    let last_execution_height = node
+        .provider
+        .last_block_number()
+        .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
+    let last_execution_hash = if last_execution_height > 0 {
+        node.provider
+            .block_hash(last_execution_height)
+            .map_err(|e| {
+                eyre::eyre!("failed to get block hash for height {last_execution_height}: {e}")
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!("missing block hash for execution height {last_execution_height}")
+            })?
+    } else {
+        genesis_hash
+    };
+
+    // ── 1. Committee chain anchored on the trusted identity ──────────────
+    // The marshal verifies finalization certs against THIS chain's per-epoch
+    // verifier provider, so the provider clone we hand the marshal must share
+    // state with the chain (HybridSchemeProvider is Arc-backed; `register`
+    // through a clone is visible everywhere).
+    // Genesis anchor: epoch 0, the genesis validator committee.
+    let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
+    let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
+        chain.scheme_provider().clone();
+    let anchor_epoch = Epoch::new(chain.anchor_epoch());
+    let chain = Arc::new(Mutex::new(chain));
+
+    // ── 2. Page cache + marshal archives (mirrors run_consensus_stack) ───
+    let page_cache = CacheRef::from_pooler(
+        ctx,
+        nonzero_u16(4096, "page cache page size")?,
+        nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
+    );
+
+    let partition_prefix = "outbe-marshal".to_string();
+
+    let finalizations_archive = immutable::Archive::init(
+        ctx.child("marshal_finalizations"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-finalizations-freezer-table"),
+            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
+            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-finalizations-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_value_partition: format!("{partition_prefix}-finalizations-freezer-value"),
+            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-finalizations-ordinal"),
+            items_per_section: nonzero_u64(
+                config::IMMUTABLE_ITEMS_PER_SECTION,
+                "IMMUTABLE_ITEMS_PER_SECTION",
+            )?,
+            codec_config: HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
+            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
+            freezer_key_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            freezer_value_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            ordinal_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+        },
+    )
+    .await
+    .wrap_err("failed to initialize finalizations archive")?;
+
+    let blocks_archive = immutable::Archive::init(
+        ctx.child("marshal_blocks"),
+        immutable::Config {
+            metadata_partition: format!("{partition_prefix}-blocks-metadata"),
+            freezer_table_partition: format!("{partition_prefix}-blocks-freezer-table"),
+            freezer_table_initial_size: config::FREEZER_TABLE_INITIAL_SIZE,
+            freezer_table_resize_frequency: config::FREEZER_TABLE_RESIZE_FREQUENCY,
+            freezer_table_resize_chunk_size: config::FREEZER_TABLE_RESIZE_CHUNK_SIZE,
+            freezer_key_partition: format!("{partition_prefix}-blocks-freezer-key"),
+            freezer_key_page_cache: page_cache.clone(),
+            freezer_value_partition: format!("{partition_prefix}-blocks-freezer-value"),
+            freezer_value_target_size: config::FREEZER_VALUE_TARGET_SIZE,
+            freezer_value_compression: config::FREEZER_VALUE_COMPRESSION,
+            ordinal_partition: format!("{partition_prefix}-blocks-ordinal"),
+            items_per_section: nonzero_u64(
+                config::IMMUTABLE_ITEMS_PER_SECTION,
+                "IMMUTABLE_ITEMS_PER_SECTION",
+            )?,
+            codec_config: (),
+            replay_buffer: nonzero_usize(config::MARSHAL_REPLAY_BUFFER, "MARSHAL_REPLAY_BUFFER")?,
+            freezer_key_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            freezer_value_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+            ordinal_write_buffer: nonzero_usize(
+                config::MARSHAL_WRITE_BUFFER,
+                "MARSHAL_WRITE_BUFFER",
+            )?,
+        },
+    )
+    .await
+    .wrap_err("failed to initialize blocks archive")?;
+
+    // The follower marshal uses the boundary-aligned `FollowerEpocher`, whose
+    // epoch boundaries match outbe's on-chain committee epochs (`[E·L+1,
+    // (E+1)·L]`). The validator's `FixedEpocher` disagrees by one block at every
+    // multiple of L, which would stall a resolver-only follower at boundary
+    // blocks (see outbe_consensus::follow::epocher).
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(u64::from(epoch_length_blocks));
+    let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
+        .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
+        .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
+
+    let marshal_genesis_anchor = genesis_consensus_block(&node)?;
+    let (marshal_actor, marshal_mailbox, last_consensus_finalized_opt) =
+        marshal::core::Actor::init(
+            ctx.child("marshal"),
+            finalizations_archive,
+            blocks_archive,
+            marshal::Config {
+                provider: certificate_scheme_provider,
+                epocher: epocher.clone(),
+                start: marshal::Start::Genesis(marshal_genesis_anchor),
+                partition_prefix: partition_prefix.clone(),
+                mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+                view_retention_timeout: ViewDelta::new(view_retention_timeout),
+                prunable_items_per_section: nonzero_u64(
+                    config::PRUNABLE_ITEMS_PER_SECTION,
+                    "PRUNABLE_ITEMS_PER_SECTION",
+                )?,
+                page_cache: page_cache.clone(),
+                replay_buffer: nonzero_usize(
+                    config::MARSHAL_REPLAY_BUFFER,
+                    "MARSHAL_REPLAY_BUFFER",
+                )?,
+                key_write_buffer: nonzero_usize(
+                    config::MARSHAL_WRITE_BUFFER,
+                    "MARSHAL_WRITE_BUFFER",
+                )?,
+                value_write_buffer: nonzero_usize(
+                    config::MARSHAL_WRITE_BUFFER,
+                    "MARSHAL_WRITE_BUFFER",
+                )?,
+                block_codec_config: (),
+                max_repair: nonzero_usize(config::MAX_REPAIR, "MAX_REPAIR")?,
+                max_pending_acks: nonzero_usize(config::MAX_PENDING_ACKS, "MAX_PENDING_ACKS")?,
+                strategy: commonware_parallel::Sequential,
+            },
+        )
+        .await;
+    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    info!(
+        last_consensus_finalized = last_consensus_finalized.get(),
+        last_execution_height, "follower marshal initialized"
+    );
+
+    // ── 3. Transports ────────────────────────────────────────────────────
+    let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
+    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    // Separate cheap client handle for tip discovery (engine takes the
+    // `FinalizedSource` and `TipSource` as distinct values).
+    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+
+    // ── 4. Executor (REUSED verbatim) — drives the EL via FCU+newPayload ──
+    let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
+    let (execution_finalized_height_tx, mut execution_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
+    let (executor_actor, executor_mailbox) = ExecutorActor::new(
+        ctx.child("executor"),
+        engine_handle,
+        genesis_hash,
+        last_execution_height,
+        last_execution_hash,
+        Some(execution_finalized_height_tx),
+    );
+    let _executor_handle =
+        executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+
+    // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
+    //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
+    //        so this follower can itself be an UPSTREAM for other followers
+    //        (their tip discovery polls that status field). ────────────────
+    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    ctx.child("follower_tip_publisher").spawn(move |_| async move {
+        while let Some(height) = execution_finalized_height_rx.recv().await {
+            bridge.set_last_finalized_block_number(height);
+        }
+    });
+
+    // ── 5. Assemble + run the follower engine ────────────────────────────
+    run_follow_engine(
+        ctx.child("follow_engine"),
+        FollowEngineConfig {
+            marshal_actor,
+            marshal_mailbox,
+            executor_reporter: crate::marshal_update_reporter::MarshalUpdateReporter::new(
+                executor_mailbox,
+            ),
+            upstream: upstream_client,
+            local,
+            tip: tip_client,
+            epocher,
+            chain,
+            anchor_epoch,
+            mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+        },
+    )
+    .await
+}
+
 pub async fn run_consensus_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
@@ -1578,6 +1979,13 @@ where
         + Sync
         + 'static,
 {
+    // Follower mode: cold-sync finalized blocks from an upstream node and verify
+    // them against the trusted network identity, WITHOUT running the consensus
+    // engine. Short-circuits before any validator material is loaded.
+    if let Some(upstream) = args.upstream.clone() {
+        return run_follow_stack(ctx, args, node, bridge, upstream).await;
+    }
+
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
     let chain_id = node.chain_spec().chain().id();
     if (args.trust_el_head || args.force_dkg) && outbe_primitives::chain::is_mainnet(chain_id) {
@@ -2527,27 +2935,18 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    // The boundary tuple height is the ACTIVATION ANCHOR (the height the live
+    // committee anchored its rotation schedule on), NOT the commit height of the
+    // artifact-carrying block: every producer normalizes commit → anchor
+    // (commit - 1, since the artifact rides the FIRST new-epoch block), and the
+    // pending-snapshot restore stores the anchor directly. Anchoring on the
+    // commit height instead shifts a restarted node's freeze/activation schedule
+    // one block late vs the committee — fatal when several committee members
+    // restart within one epoch (the new epoch loses quorum waiting for an
+    // activation height that can never be produced).
     let mut last_dkg_activation_height = active_boundary
         .as_ref()
-        .map(|(height, artifact)| {
-            // The genesis epoch's DKG activated at height 0, but its mandatory
-            // BoundaryOutcome is committed in block 1. A never-restarted committee node
-            // has no recovered boundary at startup, so it keeps `last_dkg_activation_height
-            // = 0` for the genesis epoch — and from that derives `planned_activation_height`
-            // for the FIRST reshare. A node that recovers the genesis boundary on restart
-            // must use the SAME 0, not the boundary's commit height (1): otherwise its
-            // freeze/activation schedule is one block AHEAD of the committee's, it waits
-            // for an activation height the committee already passed, and (on a
-            // membership-changing first reshare) it can never verify the first new-epoch
-            // block with its old scheme — it deadlocks one block before activation. Only
-            // the genesis boundary (epoch 0) needs this; a recovered reshare boundary's
-            // commit height IS its activation height.
-            if artifact.epoch == 0 {
-                0
-            } else {
-                *height
-            }
-        })
+        .map(|(height, _)| *height)
         .unwrap_or(last_execution_height);
     let mut dkg_cycle = recovered_boundary_artifact
         .map(|artifact| artifact.dkg_cycle.saturating_add(1))
@@ -2760,6 +3159,10 @@ where
             .add_block_consumer(peer_manager_mailbox.clone());
     let mut marshal_handle =
         marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
+
+    // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
+    // can backfill + verify finalized blocks from this validator.
+    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
 
     let recovered_finalized_round = match recover_application_finalized_round(
         ctx,
@@ -5344,7 +5747,11 @@ where
                     vrf_group_public_key = %expected_vrf_group_public_key,
                     "startup live-join boundary finalized; threshold material is current"
                 );
-                break (height, boundary);
+                // Same activation-anchor normalization as `read_startup_dkg_snapshot`:
+                // the artifact rides the FIRST new-epoch block (activation + 1), so
+                // anchoring on the commit height would shift this node's whole
+                // rotation schedule one block late vs the live committee.
+                break (height.saturating_sub(1), boundary);
             }
         }
 

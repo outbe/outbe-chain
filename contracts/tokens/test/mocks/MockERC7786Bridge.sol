@@ -35,6 +35,10 @@ contract MockERC7786Bridge is IERC7786GatewaySource {
         return feeQuote;
     }
 
+    function quote(bytes calldata, bytes calldata, bytes[] calldata) external view returns (uint256) {
+        return feeQuote;
+    }
+
     function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata)
         external
         payable

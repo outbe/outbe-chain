@@ -30,6 +30,7 @@ commonware-utils.workspace = true
 commonware-math.workspace = true
 commonware-parallel.workspace = true
 commonware-macros.workspace = true
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network"] }

@@ -5,9 +5,8 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
-    addresses::INTEX_FACTORY_ADDRESS,
     block::{BlockLifecycle, BlockRuntimeContext},
-    error::{PrecompileError, Result},
+    error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
 };
@@ -16,7 +15,7 @@ use outbe_intex::IntexState;
 
 use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_MESSENGER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, MessagingFee};
+use crate::sol_ext::{IIntexNFT1155, IOriginMessenger};
 
 pub struct IntexLifecycle;
 
@@ -167,29 +166,12 @@ pub(crate) fn try_qualify(
 }
 
 fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendMarkQualifiedCall {
-            seriesId: series_id,
-            extraOptions: alloy_primitives::Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let fee = IOriginMessenger::quoteSendMarkQualifiedCall::abi_decode_returns(&quote_ret)
-        .map_err(|_| PrecompileError::Revert("quoteSendMarkQualified undecodable".into()))?;
+    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendMarkQualifiedCall {
             seriesId: series_id,
-            extraOptions: alloy_primitives::Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: fee.nativeFee,
-                lzTokenFee: fee.lzTokenFee,
-            },
-            refundAddress: INTEX_FACTORY_ADDRESS,
         }
         .abi_encode()
         .into(),

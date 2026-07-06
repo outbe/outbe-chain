@@ -6,9 +6,9 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/native/USDT.sol";
-import {USDT0BridgeToken} from "../../src/synthetic/USDT0.sol";
-import {WCOEN} from "../../src/native/WCOEN.sol";
-import {WCOENBridgeToken} from "../../src/synthetic/WCOEN.sol";
+import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
+import {WCOEN as SyntheticWCOEN} from "../../src/synthetic/WCOEN.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ERC7786TokenBridgeTest is Test {
@@ -23,12 +23,12 @@ contract ERC7786TokenBridgeTest is Test {
     MockERC7786Bridge internal outbeGateway;
 
     USDT internal usdt;
-    USDT0BridgeToken internal usdt0;
+    USDT0 internal usdt0;
     ERC7786TokenBridge internal bnbUsdtBridge;
     ERC7786TokenBridge internal outbeUsdt0Bridge;
 
-    WCOEN internal outbeWcoen;
-    WCOENBridgeToken internal bnbWcoen;
+    NativeWCOEN internal outbeWcoen;
+    SyntheticWCOEN internal bnbWcoen;
     ERC7786TokenBridge internal outbeWcoenBridge;
     ERC7786TokenBridge internal bnbWcoenBridge;
 
@@ -150,7 +150,7 @@ contract ERC7786TokenBridgeTest is Test {
 
     function _setUpUsdtRoute() internal {
         usdt = new USDT();
-        usdt0 = new USDT0BridgeToken("USDT0", "USDT0", 6, address(this));
+        usdt0 = new USDT0("USDT0", "USDT0", 6, address(this));
 
         bnbUsdtBridge = new ERC7786TokenBridge(
             address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
@@ -165,8 +165,8 @@ contract ERC7786TokenBridgeTest is Test {
     }
 
     function _setUpWcoenRoute() internal {
-        outbeWcoen = new WCOEN();
-        bnbWcoen = new WCOENBridgeToken("Wrapped COEN", "WCOEN", 18, address(this));
+        outbeWcoen = new NativeWCOEN();
+        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, address(this));
 
         outbeWcoenBridge = new ERC7786TokenBridge(
             address(outbeWcoen), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
