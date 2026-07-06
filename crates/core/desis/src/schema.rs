@@ -195,6 +195,14 @@ pub struct DesisContract {
     /// series_id -> call cooldown (seconds).
     #[attribute(order = 19)]
     pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Bid-batch completeness (per bid-relay generation) ---
+    /// series_id -> totalBatches expected for the current generation.
+    #[attribute(order = 20)]
+    pub bids_total_batches: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
+    #[attribute(order = 21)]
+    pub bids_arrived_mask: outbe_primitives::storage::dsl::Map<u32, U256>,
 }
 
 impl DesisContract<'_> {

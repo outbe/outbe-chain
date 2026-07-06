@@ -14,6 +14,7 @@ contract MockAuctionEscrow {
 
     mapping(uint32 => mapping(address => uint128)) public lockedFunds;
     bool public lockShouldRevert;
+    uint256 public outstandingCount;
 
     IntexAuction public reentryTarget;
     bytes public reentryCalldata;
@@ -43,6 +44,17 @@ contract MockAuctionEscrow {
             }
         }
         lockedFunds[seriesId][bidder] = amount;
+        ++outstandingCount;
         emit FundsLocked(seriesId, bidder, amount);
+    }
+
+    /// @notice Selector-matches `IEscrowAdapter.hasOutstandingLocks`: true while any lock is live.
+    function hasOutstandingLocks() external view returns (bool) {
+        return outstandingCount != 0;
+    }
+
+    /// @dev Test helper: simulate finalization/refund clearing every live lock.
+    function releaseAllLocks() external {
+        outstandingCount = 0;
     }
 }

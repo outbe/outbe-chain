@@ -1805,6 +1805,8 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        upstream: None,
+        upstream_nocertify: false,
     };
 
     let address = validate_validator_evm_signer(
@@ -2758,6 +2760,8 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         bls_passphrase: None,
         tee_enclave_socket: None,
         tee_bootstrap_timeout_secs: 60,
+        upstream: None,
+        upstream_nocertify: false,
     };
 
     let address = super::validate_validator_evm_signer(
@@ -3176,6 +3180,8 @@ mod restart_recovery {
             bls_passphrase: None,
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
+            upstream: None,
+            upstream_nocertify: false,
         };
         let signer_address = validate_validator_evm_signer(
             &args,

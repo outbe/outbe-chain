@@ -40,10 +40,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         Settled
     }
 
-    /// @notice Per-holder, per-series balance pair.
+    /// @notice Per-holder, per-series balance pair. Widths match the `uint32` supply cap so a
+    ///         balance accumulated above `type(uint16).max` is reported without truncation.
     struct HolderBalances {
-        uint16 issued;
-        uint16 settled;
+        uint32 issued;
+        uint32 settled;
     }
 
     /// @notice Forced-call trigger parameters (window/threshold/period).
@@ -52,21 +53,21 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 windowDays;
         /// @notice Call-trigger threshold in days.
         uint16 thresholdDays;
-        /// @notice Called->deadline window in seconds (0 = default).
+        /// @notice Called->deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
         uint32 intexCallPeriod;
     }
 
     /// @notice Series-level data, stored per token id (one entry for the Issued token id
     ///         and one for the Settled token id; `status` distinguishes them).
     /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the current
-    ///      `totalSupply` minted via `mint`/`mintBatch` (a burn frees cap room).
+    ///      `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
         /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
         uint16 referenceCurrency;
         /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
-        ///         never mutated; `mint`/`mintBatch` reject pushing `totalSupply` past it.
+        ///         never mutated; `mint` rejects pushing `totalSupply` past it.
         uint32 issuedIntexCount;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
@@ -161,14 +162,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error SeriesNotYetExpired(uint32 deadline, uint32 nowTs);
     /// @notice `expireSeries` has nothing to expire — the series supply is already zero (swept).
     error NothingToExpire();
-    /// @notice Provided call period is invalid (zero or out of allowed range).
-    error InvalidCallPeriod(uint32 intexCallPeriod);
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
-    /// @notice Input array lengths do not match.
-    error ArrayLengthMismatch(uint256 length1, uint256 length2);
-    /// @notice Empty array provided.
-    error EmptyArray();
     /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
     error ZeroIssuedIntexCount();
     /// @notice A settlement or burn amount was zero.
@@ -222,12 +217,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     function mint(address to, uint256 quantity, uint32 seriesId) external;
 
-    /// @notice Mint Intex to multiple addresses in one transaction.
-    /// @param recipients Recipient addresses, parallel to `quantities`.
-    /// @param quantities Per-recipient mint amounts, parallel to `recipients`.
-    /// @param seriesId Series identifier.
-    function mintBatch(address[] calldata recipients, uint256[] calldata quantities, uint32 seriesId) external;
-
     /// @notice Mark a series as Qualified (Issued -> Qualified).
     /// @param seriesId Series identifier.
     function markQualified(uint32 seriesId) external;
@@ -268,11 +257,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
 
     // --- Reads ---
-
-    /// @notice Upper bound on a series call period, in seconds. Implemented by the
-    ///         `MAX_INTEX_CALL_PERIOD` public constant on the implementation.
-    /// @return The maximum allowed call period in seconds.
-    function MAX_INTEX_CALL_PERIOD() external view returns (uint32);
 
     /// @notice Issued token id for a series (= `uint256(seriesId)`). Pure helper.
     /// @param seriesId Series identifier.
@@ -400,10 +384,33 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         view
         returns (uint256[] memory ownedTokenIds, uint256[] memory balances);
 
+    /// @notice Paginated owned series with balances for an address.
+    /// @param owner Owner address to read.
+    /// @param offset Start index into the owned-series set.
+    /// @param limit Maximum number of entries to return.
+    /// @return ownedTokenIds The token ids in the `[offset, offset+limit)` window.
+    /// @return balances Balances parallel to `ownedTokenIds`.
+    /// @return total Total number of owned series (for computing further pages).
+    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total);
+
     /// @notice All holder addresses for a given series token id.
     /// @param tokenId Series token id to read.
     /// @return holders The holder addresses for that token id.
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory holders);
+
+    /// @notice Paginated holder addresses for a given series token id.
+    /// @param tokenId Series token id to read.
+    /// @param offset Start index into the holder set.
+    /// @param limit Maximum number of entries to return.
+    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
+    /// @return total Total number of holders (for computing further pages).
+    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256 total);
 
     /// @notice All holders and their balances for a given series token id.
     /// @param tokenId Series token id to read.
@@ -413,6 +420,18 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         external
         view
         returns (address[] memory holders, uint256[] memory balances);
+
+    /// @notice Paginated holders and their balances for a given series token id.
+    /// @param tokenId Series token id to read.
+    /// @param offset Start index into the holder set.
+    /// @param limit Maximum number of entries to return.
+    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
+    /// @return balances Balances parallel to `holders`.
+    /// @return total Total number of holders (for computing further pages).
+    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory balances, uint256 total);
 
     /// @notice Number of unique holders for a given series token id.
     /// @param tokenId Series token id to read.

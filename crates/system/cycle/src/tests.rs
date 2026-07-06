@@ -440,6 +440,90 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
     });
 }
 
+/// Production regression (devnet WWD 20260630): the WWD offering-open edge
+/// lands at 12:00 UTC (`forming_end = forming_start(10:00 UTC prev day) + 50h`,
+/// devnet bootstrap lookback = 0h), but status transitions were applied only by
+/// the midnight `emission_limit_1` tick — `offerTribute` reverted
+/// `not in OFFERING status (status=0)` for ~12 hours until the next midnight.
+/// The `wwd_advance_noon` trigger must open OFFERING on the first block past
+/// 12:00 UTC, without creating a new worldwide day and without re-firing the
+/// midnight settlement.
+#[test]
+fn noon_trigger_opens_offering_at_noon_not_next_midnight() {
+    const DEVNET: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+    let devnet_ctx = |n: u64, ts: u64| BlockContext::new(n, ts, DEVNET, Address::ZERO, Vec::new());
+
+    let mut storage = HashMapStorageProvider::new(DEVNET);
+    storage.enter(|handle| {
+        // Block 1 just past midnight Jan 1: `CycleLifecycle::begin_block`
+        // creates the genesis day 20240101 (forming_start = Dec 31 10:00 UTC,
+        // forming_end = lookback_end = Jan 2 12:00 UTC) and anchors all
+        // triggers without firing.
+        let ctx1 = BlockRuntimeContext::new(devnet_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&ctx1);
+        <CycleLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
+
+        let wwd_jan1 = outbe_common::WorldwideDay::new(20_240_101);
+        let wwd_jan2 = outbe_common::WorldwideDay::new(20_240_102);
+
+        // Block 2 at Jan 2 00:00:30 — midnight tick fires: creates 20240102
+        // and advances 20240101, which stays FORMING (00:00 < forming_end
+        // 12:00). This pins the pre-fix behavior: the day is still closed
+        // right after midnight.
+        let ctx2 = BlockRuntimeContext::new(
+            devnet_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 30),
+            handle.clone(),
+        );
+        account_parent(&ctx2, 2);
+        dispatch_triggers(&ctx2).unwrap();
+
+        let metadosis = outbe_metadosis::schema::MetadosisContract::new(ctx2.storage.clone());
+        assert_eq!(
+            metadosis.get_wwd_status(wwd_jan1).unwrap(),
+            outbe_metadosis::schema::status::FORMING,
+            "at midnight the 12:00-edge day must still be FORMING"
+        );
+        drop(metadosis);
+
+        // Block 3 at Jan 2 12:00:30 — only the noon slot is reached.
+        let ctx3 = BlockRuntimeContext::new(
+            devnet_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 43_200 + 30),
+            handle,
+        );
+        account_parent(&ctx3, 3);
+        dispatch_triggers(&ctx3).unwrap();
+
+        let metadosis = outbe_metadosis::schema::MetadosisContract::new(ctx3.storage.clone());
+        assert_eq!(
+            metadosis.get_wwd_status(wwd_jan1).unwrap(),
+            outbe_metadosis::schema::status::OFFERING,
+            "noon trigger must open OFFERING at the 12:00 UTC edge, not at the next midnight"
+        );
+
+        // The noon handler advances statuses only: no worldwide day for
+        // Jan 3 (which `create_worldwide_day_if_needed` WOULD create at
+        // 12:00+14h), and the midnight settlement did not re-fire.
+        let active = metadosis.active_wwd.read_all().unwrap();
+        assert_eq!(active.len(), 2, "noon tick must not create a new day");
+        assert!(active.contains(&wwd_jan1) && active.contains(&wwd_jan2));
+
+        let cycle: Cycle<'_> = ctx3.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY,
+            "midnight settlement trigger must not fire at noon"
+        );
+        assert_eq!(
+            cycle
+                .last_executed_at
+                .read(&TriggerId::WwdAdvanceNoon.as_u32())
+                .unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY + 43_200,
+            "noon trigger fired for the Jan 2 12:00 UTC slot"
+        );
+    });
+}
+
 #[test]
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC
