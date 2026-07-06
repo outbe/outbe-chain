@@ -197,6 +197,20 @@ contract EscrowAdapterBondTest is Test {
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
     }
 
+    /// @dev Any bond amount round-trips lock -> release without residue in The Compact.
+    function testFuzz_LockRelease_RoundTrips(uint128 amount) public {
+        amount = uint128(bound(amount, 1, 1000e18));
+
+        vm.prank(auction);
+        escrow.lockCommitBond(seriesId1, bidder1, amount);
+        assertEq(_liveCompactBalance(), amount, "custodied");
+
+        vm.prank(auction);
+        escrow.releaseCommitBond(seriesId1, bidder1);
+        assertEq(_liveCompactBalance(), 0, "no residue");
+        assertEq(paymentToken.balanceOf(bidder1), 1000e18, "principal intact");
+    }
+
     // --- shared-lockId accounting ---
 
     /// @dev A live bond alone must register as an outstanding lock, so the wire() rotation
