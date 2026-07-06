@@ -24,9 +24,9 @@ import {
   type IntexAddresses,
   NETWORKS,
   NFT_ABI,
-  ONFT_ABI,
+  NFT_BRIDGE_ABI,
   INTEX_ABI,
-  bridgeDstEid,
+  bridgeDstChainId,
   intexAddress,
 } from "../intex/registry.js";
 import { auctionStage, epochIso, intexState, intexStatus, isActiveStage } from "../intex/format.js";
@@ -607,7 +607,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
-  // --- Bridge BSC -> outbe (ONFT1155Adapter, signed) -------------------------
+  // --- Bridge BSC -> outbe (IntexNFT1155Bridge, signed) ----------------------
 
   async function buildSendParam(n: Network, series: number, amount: bigint, recipient: Address) {
     const ids = (await n.client.readContract({
@@ -617,19 +617,17 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       args: [series],
     })) as [bigint, bigint];
     return {
-      dstEid: bridgeDstEid(n.name),
+      dstChainId: bridgeDstChainId(n.name),
       to: pad(recipient, { size: 32 }),
       tokenId: ids[0], // issued token id
       amount,
-      extraOptions: "0x" as Hex,
-      composeMsg: "0x" as Hex,
     };
   }
 
 
   server.tool(
     "intex_bridge_quote",
-    "LayerZero native fee to bridge a Qualified Intex NFT from BSC to outbe. Bridging is only allowed once " +
+    "Bridge native fee to move a Qualified Intex NFT from BSC to outbe. Bridging is only allowed once " +
       "a series is Qualified (Issued cannot bridge; Called is auto-bridged by the system).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, amount, recipient, network }) => {
@@ -637,34 +635,19 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const to = recipient ? getAddress(recipient) : whoever();
       const sp = await buildSendParam(n, series, BigInt(amount), to);
       const fee = (await n.client.readContract({
-        address: addr(n, "bridgeAdapter"),
-        abi: ONFT_ABI,
+        address: addr(n, "nftBridge"),
+        abi: NFT_BRIDGE_ABI,
         functionName: "quoteSend",
-        args: [sp, false],
-      })) as { nativeFee: bigint; lzTokenFee: bigint };
+        args: [sp],
+      })) as bigint;
       return ok({
         network: n.name,
         series,
         tokenId: sp.tokenId.toString(),
-        dstEid: sp.dstEid,
+        dstChainId: sp.dstChainId,
         recipient: to,
-        fee: { nativeFee: { raw: fee.nativeFee.toString(), value: formatUnits(fee.nativeFee, 18) } },
+        fee: { nativeFee: { raw: fee.toString(), value: formatUnits(fee, 18) } },
       });
-    }),
-  );
-
-  server.tool(
-    "intex_bridge_approve",
-    "One-time approval for the bridge adapter to move your Intex NFTs (setApprovalForAll), needed before " +
-      "intex_bridge_nft. Requires OUTBE_PRIVATE_KEY.",
-    { network: networkArg.optional(), wait: waitArg },
-    handler(async ({ network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      requireAccount();
-      const adapter = addr(n, "bridgeAdapter");
-      const data = encodeFunctionData({ abi: NFT_ABI, functionName: "setApprovalForAll", args: [adapter, true] });
-      const receipt = await submit(n, addr(n, "nft"), data, 0n, wait);
-      return ok({ network: n.name, nft: addr(n, "nft"), adapter, ...receipt });
     }),
   );
 
@@ -672,36 +655,29 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_bridge_nft",
     "Bridge a Qualified Intex NFT from BSC to outbe (voluntary, holder-initiated) to settle there. Only " +
       "works once the series is Qualified — Issued cannot bridge, and Called is auto-bridged by the system, " +
-      "not via this tool. Auto-quotes the LayerZero fee (paid as native value) and needs intex_bridge_approve " +
-      "first. Requires OUTBE_PRIVATE_KEY.",
+      "not via this tool. The bridge burns your token directly (role-gated), so no approval is needed. " +
+      "Auto-quotes the native fee (paid as value). Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, recipient, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
-      const adapter = addr(n, "bridgeAdapter");
-      const approved = (await n.client.readContract({
-        address: addr(n, "nft"),
-        abi: NFT_ABI,
-        functionName: "isApprovedForAll",
-        args: [account.address, adapter],
-      })) as boolean;
-      if (!approved) throw new Error("NFT not approved for the bridge adapter — run intex_bridge_approve first");
+      const bridge = addr(n, "nftBridge");
       const to = recipient ? getAddress(recipient) : account.address;
       const sp = await buildSendParam(n, series, BigInt(amount), to);
       const fee = (await n.client.readContract({
-        address: adapter,
-        abi: ONFT_ABI,
+        address: bridge,
+        abi: NFT_BRIDGE_ABI,
         functionName: "quoteSend",
-        args: [sp, false],
-      })) as { nativeFee: bigint; lzTokenFee: bigint };
-      const data = encodeFunctionData({ abi: ONFT_ABI, functionName: "send", args: [sp, fee, account.address] });
-      const receipt = await submit(n, adapter, data, fee.nativeFee, wait);
+        args: [sp],
+      })) as bigint;
+      const data = encodeFunctionData({ abi: NFT_BRIDGE_ABI, functionName: "send", args: [sp] });
+      const receipt = await submit(n, bridge, data, fee, wait);
       return ok({
         network: n.name,
         series,
         tokenId: sp.tokenId.toString(),
         recipient: to,
-        lzFee: { raw: fee.nativeFee.toString(), value: formatUnits(fee.nativeFee, 18) },
+        fee: { raw: fee.toString(), value: formatUnits(fee, 18) },
         ...receipt,
       });
     }),

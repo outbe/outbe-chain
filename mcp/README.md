@@ -197,10 +197,11 @@ default; pass `network: outbe-testnet` to read the bridged side.
 **Series ledger (outbe)** — `intex_series_info` (canonical series record + lifecycle
 state), `intex_series_list`.
 
-**Bridge BSC→outbe (Qualified only)** — `intex_bridge_quote` (LayerZero fee),
-`intex_bridge_approve` (one-time), `intex_bridge_nft`. Bridging is voluntary and
-only allowed once a series is **Qualified**; *Issued* cannot bridge, and *Called*
-is auto-bridged by the system (not via these tools).
+**Bridge BSC→outbe (Qualified only)** — `intex_bridge_quote` (native fee),
+`intex_bridge_nft`. The bridge burns the token directly (role-gated), so no
+approval step is needed. Bridging is voluntary and only allowed once a series is
+**Qualified**; *Issued* cannot bridge, and *Called* is auto-bridged by the system
+(not via these tools).
 
 **Settlement + Promis (outbe)** — `intex_settle` (step 1: pay strike, Issued→Settled),
 `intex_mine_promis` (step 2: Settled→Promis), `intex_set_authorized_settler`,
@@ -231,8 +232,8 @@ series and amount.
 - *"Reveal my bid in series 42: 5 at 1.5."* →
   `intex_reveal_bid { series: 42, quantity: 5, price: "1.5" }` (auto-approves first if needed)
 - *"Show my Intex NFTs."* → `intex_my_holdings`
-- *"Bridge my series 42 NFT to outbe."* (only once Qualified) → `intex_bridge_approve`
-  (once) then `intex_bridge_nft { series: 42, amount: "5" }`
+- *"Bridge my series 42 NFT to outbe."* (only once Qualified) →
+  `intex_bridge_nft { series: 42, amount: "5" }`
 - *"Settle series 42 and mine Promis."* → `intex_settle { series: 42, amount: "5" }`
   then `intex_mine_promis { series: 42, amount: "5" }`
 
