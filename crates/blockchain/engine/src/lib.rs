@@ -12,6 +12,7 @@
 
 pub mod args;
 pub mod bridge;
+pub(crate) mod follow_transport;
 pub(crate) mod marshal_update_reporter;
 pub(crate) mod peer_manager;
 pub mod stack;
