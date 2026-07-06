@@ -486,8 +486,8 @@ mod tests {
             let b = b.map_header(OutbeHeader::new);
             ConsensusBlock::from_sealed(SealedBlock::seal_slow(b))
         };
-        let finalization_hex = format!("0x{}", hex::encode(finalization.encode().to_vec()));
-        let block_hex = format!("0x{}", hex::encode(block.encode().to_vec()));
+        let finalization_hex = format!("0x{}", hex::encode(&finalization.encode()));
+        let block_hex = format!("0x{}", hex::encode(&block.encode()));
 
         // CLIENT: hex-decode and decode the certificate with the UNBOUNDED
         // committee config (the engine UpstreamRpcClient path).
