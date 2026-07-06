@@ -544,6 +544,33 @@ impl Mailbox {
         Ok(())
     }
 
+    /// Validate a committee pre-announce's `outcome` against this node's locally
+    /// reconstructed DKG output for the incoming epoch. Mirrors
+    /// [`Self::verify_pending_boundary_artifact`] but for the slim
+    /// `CommitteePreAnnounce` carrier (epoch + outcome bytes only, no full
+    /// `DkgBoundaryArtifact`). Fail-closed: errors if this node has no pending
+    /// boundary to compare against, so an unvalidated pre-announce is never
+    /// accepted onto a finalized block.
+    pub async fn verify_preannounce_outcome(&self, epoch: Epoch, outcome: &[u8]) -> Result<()> {
+        let expected = self
+            .with_state(|state| state.pending_boundary.clone())
+            .ok_or_else(|| {
+                eyre::eyre!("no pending DKG boundary artifact to validate committee pre-announce")
+            })?;
+        ensure!(
+            expected.epoch == epoch.get(),
+            "committee pre-announce epoch {} does not match pending boundary epoch {}",
+            epoch.get(),
+            expected.epoch
+        );
+        ensure!(
+            expected.outcome.as_ref() == outcome,
+            "committee pre-announce outcome does not match local DKG output for epoch {}",
+            epoch.get()
+        );
+        Ok(())
+    }
+
     pub async fn verify_dealer_log(
         &self,
         epoch: Epoch,
@@ -699,6 +726,10 @@ impl Mailbox {
                     }
                 }
             }
+            // A committee pre-announce is a follower-facing carrier of an already-
+            // reconstructed outcome; it does not commit a boundary or feed the local
+            // DKG ceremony, so the boundary/dealer-log tracker ignores it.
+            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => {}
             None => {}
         });
     }
@@ -937,9 +968,7 @@ pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
 /// epoch's committee (`output.players()`) and verifier polynomial
 /// (`output.public()`) from a finalized boundary block, without ever having run
 /// the DKG ceremony. Deterministic and panic-free.
-pub fn decode_boundary_outcome(
-    outcome: &[u8],
-) -> Option<Output<MinSig, bls12381::PublicKey>> {
+pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
     use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
     // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
     const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
