@@ -43,7 +43,7 @@ contract DeployOutbe is BaseScript {
             address(new IntexNFT1155Bridge(nft, bridge)),
             abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate))
         );
-        address messenger = deployProxy(
+        address router = deployProxy(
             factory,
             deployer,
             "OriginRouter",
@@ -53,7 +53,7 @@ contract DeployOutbe is BaseScript {
 
         // Register the BNB-side peers. Proxy addresses are CREATE3-deterministic across chains, so the
         // BNB clients are predictable from the same (factory, deployer, salt) before that chain is deployed.
-        OriginRouter(payable(messenger))
+        OriginRouter(payable(router))
             .setRemoteMessenger(
                 bnbChainId,
                 InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "TargetRouter"))
@@ -69,6 +69,6 @@ contract DeployOutbe is BaseScript {
         console.log("Create3Factory:", address(factory));
         console.log("IntexNFT1155:", nft);
         console.log("IntexNFT1155Bridge:", nftBridge);
-        console.log("OriginRouter:", messenger);
+        console.log("OriginRouter:", router);
     }
 }
