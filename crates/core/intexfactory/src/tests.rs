@@ -621,7 +621,7 @@ fn try_call_excludes_pre_issuance_days() {
 }
 
 // ---------------------------------------------------------------------
-// LZ notification failure: state transition must survive messenger outage
+// Cross-chain notification failure: state transition must survive router outage
 // ---------------------------------------------------------------------
 
 /// Seed a series directly in the registry + bin index, bypassing issue()
@@ -653,8 +653,8 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
 }
 
 #[test]
-fn qualify_survives_lz_messenger_failure() {
-    // No OriginRouter stub: notify_lz_qualified fails silently.
+fn qualify_survives_router_failure() {
+    // No OriginRouter stub: notify_qualified fails silently.
     // The Issued -> Qualified transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
@@ -686,8 +686,8 @@ fn qualify_survives_lz_messenger_failure() {
 }
 
 #[test]
-fn call_survives_lz_messenger_failure() {
-    // No OriginRouter stub: notify_lz_called fails silently.
+fn call_survives_router_failure() {
+    // No OriginRouter stub: notify_called fails silently.
     // The Qualified -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));

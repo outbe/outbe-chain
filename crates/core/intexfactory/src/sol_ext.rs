@@ -3,7 +3,7 @@
 use alloy_sol_types::sol;
 
 sol! {
-    // `OriginRouter` sends are relay-float-funded: called with value 0, the messenger quotes and pays
+    // `OriginRouter` sends are relay-float-funded: called with value 0, the router quotes and pays
     // the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IOriginRouter {

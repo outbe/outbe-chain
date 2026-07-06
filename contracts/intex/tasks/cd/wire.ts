@@ -625,7 +625,7 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   console.log(`  OriginRouter: ${args.bridgeContract}`);
   console.log(`  IntexNFT1155:    ${args.intexContract}`);
 
-  const messenger = (await viem.getContractAt(
+  const router = (await viem.getContractAt(
     "OriginRouter",
     args.bridgeContract as `0x${string}`
   )) as {
@@ -653,10 +653,10 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   };
 
   const grantOnRouter = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
-    if (await messenger.read.hasRole([role, addr])) {
+    if (await router.read.hasRole([role, addr])) {
       console.log(`✅ OriginRouter: ${addr} already has ${label}`);
     } else {
-      const tx = await sendAndWait(viem, () => messenger.write.grantRole([role, addr]));
+      const tx = await sendAndWait(viem, () => router.write.grantRole([role, addr]));
       console.log(`✅ OriginRouter: ${label} -> ${addr}. Tx: ${tx}`);
     }
   };
@@ -670,8 +670,8 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
     }
   };
 
-  const desisRole = await messenger.read.DESIS_ROLE();
-  const intexFactoryRole = await messenger.read.INTEX_FACTORY_ROLE();
+  const desisRole = await router.read.DESIS_ROLE();
+  const intexFactoryRole = await router.read.INTEX_FACTORY_ROLE();
   const relayerRole = await intex.read.RELAYER_ROLE();
 
   // Begin-block caller: auction stage sends (DESIS_ROLE), qualify/call mark
@@ -762,7 +762,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
       throw new Error(
         `${addr} does NOT hold RELAYER_ROLE on IntexNFT1155 ${args.intexContract}. ` +
           `Issuance (createSeries) or qualify / call (markQualified / markCalled) will revert. ` +
-          `Grant it first: outbe-system-grant-roles --bridge-contract <messenger> --intex-contract <intex> --system-address <system> --desis-contract <desis>.`,
+          `Grant it first: outbe-system-grant-roles --bridge-contract <router> --intex-contract <intex> --system-address <system> --desis-contract <desis>.`,
       );
     }
   }

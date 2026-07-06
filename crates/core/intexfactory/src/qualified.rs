@@ -154,7 +154,7 @@ pub(crate) fn try_qualify(
     // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_lz_qualified(storage, series_id);
+    let _ = notify_qualified(storage, series_id);
 
     crate::runtime::emit_event(
         storage,
@@ -165,8 +165,8 @@ pub(crate) fn try_qualify(
     Ok(true)
 }
 
-fn notify_lz_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
+fn notify_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,

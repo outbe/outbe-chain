@@ -92,7 +92,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let messenger_params = IOriginRouter::IssuanceInstructionsParams {
+    let router_params = IOriginRouter::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
@@ -107,12 +107,12 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         recipients: params.recipients,
         quantities: params.quantities,
     };
-    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
+    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendIssuanceInstructionsCall {
-            params: messenger_params,
+            params: router_params,
         }
         .abi_encode()
         .into(),
