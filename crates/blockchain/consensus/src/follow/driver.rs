@@ -121,7 +121,7 @@ where
         loop {
             // Refresh the tip on the first wakeup and every TIP_REFRESH_EVERY
             // after; otherwise reuse the last known tip and just re-hint.
-            if wakeups % TIP_REFRESH_EVERY == 0 {
+            if wakeups.is_multiple_of(TIP_REFRESH_EVERY) {
                 match self.config.tip.finalized_tip().await {
                     Some(tip) => last_tip = Some(tip),
                     None => debug!("upstream tip query failed; driving to last known tip"),

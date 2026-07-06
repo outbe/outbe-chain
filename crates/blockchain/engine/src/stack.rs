@@ -1622,6 +1622,7 @@ fn validate_validator_evm_signer(
 /// 6. Simplex consensus engine (restarted on reshare)
 /// 7. Block propagation — proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
+///
 /// Follower stack: cold-sync finalized blocks from an upstream node, verify them
 /// against the trusted network identity (committee-chaining — see the `follow`
 /// module), and drive the EL via the existing executor, WITHOUT running the

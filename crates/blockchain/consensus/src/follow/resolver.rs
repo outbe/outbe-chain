@@ -216,7 +216,7 @@ async fn resolve_one<F, L>(
     };
 
     let delivery = Delivery {
-        key: key.clone(),
+        key,
         subscribers: NonEmptyVec::new(subscriber),
     };
     // AWAIT the marshal's validation response. Dropping the returned receiver is
