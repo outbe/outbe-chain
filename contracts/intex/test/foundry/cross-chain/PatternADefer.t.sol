@@ -214,6 +214,49 @@ contract PatternADeferTest is CrossChainTest {
         return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
     }
 
+    // A holder set larger than MAX_BATCH_SIZE is split across multiple systemMultiSend chunks, so a big
+    // series is never stuck on the codec's per-message cap. (65 holders -> 64 + 1.)
+    function test_TM_HoldersRelay_ChunksAboveCap() public {
+        vm.deal(address(bnbRouter), 10 ether);
+
+        uint256 holderCount = 65;
+        for (uint256 i = 0; i < holderCount; i++) {
+            intex.mint(address(uint160(0x1000 + i)), 1, SERIES_ID);
+        }
+        assertEq(intex.seriesHolderCount(TOKEN_ID), holderCount);
+
+        vm.recordLogs();
+        _deliverBridge(_markCalledPacket());
+        uint256[] memory sizes = _systemBridgedSizes(vm.getRecordedLogs());
+
+        assertEq(sizes.length, 2, "ceil(65 / 64) = 2 chunks");
+        assertEq(sizes[0], 64, "chunk 0 at cap");
+        assertEq(sizes[1], 1, "chunk 1 remainder");
+
+        // Every holder burned off BSC; nothing parked (the float covers both chunk fees).
+        assertEq(intex.totalSupply(TOKEN_ID), 0, "all holders migrated off BSC");
+        assertEq(intex.seriesHolderCount(TOKEN_ID), 0, "holder set cleared");
+        (, bool exists,) = bnbRouter.pendingHoldersRelays(0);
+        assertFalse(exists, "no chunk parked");
+    }
+
+    /// @dev Extract the `holdersCount` of every `SystemBridged` log, in emission order.
+    function _systemBridgedSizes(Vm.Log[] memory logs) internal pure returns (uint256[] memory sizes) {
+        bytes32 topic = keccak256("SystemBridged(bytes32,uint32,uint256,uint256)");
+        uint256 n;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) n++;
+        }
+        sizes = new uint256[](n);
+        uint256 j;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
+                (, uint256 holdersCount) = abi.decode(logs[i].data, (uint32, uint256));
+                sizes[j++] = holdersCount;
+            }
+        }
+    }
+
     function test_TM_HoldersRelayDeferredOnRouterFloatStarved() public {
         // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
         // The inbound MARK_CALLED triggers markCalled + the holders bridge.

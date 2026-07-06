@@ -12,6 +12,7 @@ import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
+import {IntexNFT1155BridgeCodec} from "../shared/libs/IntexNFT1155BridgeCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
 
@@ -43,8 +44,9 @@ contract TargetRouter is
         bool done;
     }
 
-    /// @notice A holders bridge parked because `systemMultiSend` reverted; retried via `flushPendingHoldersRelay`.
-    ///         markCalled does not change balances, so the snapshot stays the canonical work.
+    /// @notice A holders bridge chunk parked because `systemMultiSend` reverted; retried via
+    ///         `flushPendingHoldersRelay`. markCalled does not change balances, so the snapshot stays the canonical
+    ///         work. Holders migrate in `MAX_BATCH_SIZE` chunks, so each parked entry is one such chunk.
     struct PendingHoldersRelay {
         uint256 tokenId;
         address[] holders;
@@ -530,16 +532,32 @@ contract TargetRouter is
         uint256 tokenId = $.intex.issuedTokenId(seriesId);
         (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
 
-        if (holders.length > 0) {
-            try this.bridgeSeriesHoldersExt(tokenId, holders, amounts) {
-            // ok — holders forwarded
+        // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
+        // series with more holders than the cap spans several sends. Each chunk is tried and parked independently, so
+        // one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the cap for
+        // `flushPendingHoldersRelay` to retry.
+        uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+        for (uint256 start = 0; start < holders.length; start += maxChunk) {
+            uint256 end = start + maxChunk;
+            if (end > holders.length) end = holders.length;
+            uint256 chunkLen = end - start;
+
+            address[] memory chunkHolders = new address[](chunkLen);
+            uint256[] memory chunkAmounts = new uint256[](chunkLen);
+            for (uint256 i = 0; i < chunkLen; i++) {
+                chunkHolders[i] = holders[start + i];
+                chunkAmounts[i] = amounts[start + i];
+            }
+
+            try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
+            // ok — chunk forwarded
             }
             catch (bytes memory reason) {
                 uint256 idx = $.nextPendingHoldersRelayIdx++;
                 $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                    tokenId: tokenId, holders: holders, amounts: amounts, exists: true, done: false
+                    tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
                 });
-                emit HoldersRelayDeferred(idx, tokenId, holders.length, reason);
+                emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
             }
         }
 
