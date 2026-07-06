@@ -623,16 +623,17 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return super.uri(tokenId);
     }
 
-    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens and maintains the
-    ///         owned-series / series-holder enumeration indexes.
+    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called
+    ///         series, and maintains the owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
-    ///          * Issued token ids are transferable in every series state
-    ///            (Issued, Qualified, Called). Bridge gating is separate and lives in
-    ///            `crosschainBurn` / `crosschainMint`.
+    ///          * Issued token ids are transferable while the series is Issued or Qualified.
+    ///            A Called series freezes holder-to-holder transfers: the settlement
+    ///            obligation stays with the holder and cannot be passed on. Bridge gating
+    ///            is separate and lives in `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).
     /// @param ids Array of token IDs.
@@ -641,8 +642,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IntexNFT1155Storage storage $ = _s();
         if (from != address(0) && to != address(0)) {
             for (uint256 i = 0; i < ids.length; i++) {
-                if ($.seriesData[ids[i]].status == IIntexNFT1155.IntexStatus.Settled) {
+                IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
+                if (data.status == IIntexNFT1155.IntexStatus.Settled) {
                     revert SoulboundSettled(ids[i]);
+                }
+                if (data.state == IIntexNFT1155.IntexState.Called) {
+                    revert TransferOnCalledForbidden(ids[i]);
                 }
             }
         }
