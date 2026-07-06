@@ -4,15 +4,19 @@ pragma solidity ^0.8.30;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
+import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 
 /// @title ERC7786TokenBridge
 /// @notice ERC-7786 fungible token bridge supporting lock/unlock and ERC-7802 burn/mint sides.
-contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
+///         Composed transfers (`sendAndCall`) additionally invoke an ERC-1363-style receiver hook
+///         on the destination after the tokens are credited.
+contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipient {
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
 
@@ -38,10 +42,15 @@ contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
     error InvalidToken();
     error InvalidBridge();
     error InvalidAmount();
+    error EmptyExtraData();
+    error InvalidTokenReceiver(address to);
     error RemoteBridgeNotSet(uint32 domain);
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
+
+    /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
+    bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
 
     constructor(address token_, address bridge_, address owner_, TokenBridgeMode mode_) Ownable(owner_) {
         if (token_ == address(0)) revert InvalidToken();
@@ -74,15 +83,53 @@ contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
 
         _onSend(msg.sender, amount);
 
-        bytes memory payload = _encodePayload(msg.sender, to, amount);
+        bytes memory payload = _encodePayload(msg.sender, to, amount, "");
         sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
     }
 
+    /// @notice Composed transfer: deliver `amount` to `to` and invoke its receiver hook with `extraData`.
+    /// @param gasLimit Destination execution gas (0 = gateway default), carried as the
+    ///        `executionGasLimit` ERC-7786 attribute to cover the hook.
+    function sendAndCall(
+        uint32 destinationDomain,
+        address to,
+        uint256 amount,
+        bytes calldata extraData,
+        uint256 gasLimit
+    ) external payable returns (bytes32 sendId) {
+        if (amount == 0) revert InvalidAmount();
+        if (extraData.length == 0) revert EmptyExtraData();
+
+        _onSend(msg.sender, amount);
+
+        bytes memory payload = _encodePayload(msg.sender, to, amount, extraData);
+        sendId =
+            bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _gasAttributes(gasLimit));
+
+        emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
+    }
+
+    function quoteSendAndCall(
+        uint32 destinationDomain,
+        address to,
+        uint256 amount,
+        bytes calldata extraData,
+        uint256 gasLimit
+    ) external view returns (uint256) {
+        return IGatewayQuote(address(bridge))
+            .quote(
+                _remoteBridge(destinationDomain),
+                _encodePayload(msg.sender, to, amount, extraData),
+                _gasAttributes(gasLimit)
+            );
+    }
+
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         external
         payable
+        nonReentrant
         returns (bytes4)
     {
         if (msg.sender != address(bridge)) revert UnauthorizedBridge(msg.sender);
@@ -94,8 +141,16 @@ contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
         bytes memory expectedSender = _remoteBridge(sourceDomain);
         if (keccak256(sender) != keccak256(expectedSender)) revert UnauthorizedRemoteBridge(sender);
 
-        (bytes memory from, address to, uint256 amount) = abi.decode(payload, (bytes, address, uint256));
+        (bytes memory from, address to, uint256 amount, bytes memory extraData) =
+            abi.decode(payload, (bytes, address, uint256, bytes));
         _onReceive(to, amount);
+
+        if (extraData.length > 0) {
+            // Composed transfer: tokens are credited before the receiver hook runs; a hook
+            // revert rolls back the whole delivery, which the transport then redelivers.
+            bytes4 magic = IERC7786TokenReceiver(to).onCrosschainTokensReceived(sourceDomain, from, amount, extraData);
+            if (magic != IERC7786TokenReceiver.onCrosschainTokensReceived.selector) revert InvalidTokenReceiver(to);
+        }
 
         emit CrosschainTransferReceived(receiveId, sourceDomain, from, to, amount);
         return IERC7786Recipient.receiveMessage.selector;
@@ -106,7 +161,8 @@ contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
         view
         returns (uint256)
     {
-        return IGatewayQuote(address(bridge)).quote(_remoteBridge(destinationDomain), _encodePayload(from, to, amount));
+        return IGatewayQuote(address(bridge))
+            .quote(_remoteBridge(destinationDomain), _encodePayload(from, to, amount, ""));
     }
 
     function _remoteBridge(uint32 domain) internal view returns (bytes memory recipient) {
@@ -114,8 +170,18 @@ contract ERC7786TokenBridge is Ownable, IERC7786Recipient {
         if (recipient.length == 0) revert RemoteBridgeNotSet(domain);
     }
 
-    function _encodePayload(address from, address to, uint256 amount) internal view returns (bytes memory) {
-        return abi.encode(InteroperableAddress.formatEvmV1(block.chainid, from), to, amount);
+    function _encodePayload(address from, address to, uint256 amount, bytes memory extraData)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return abi.encode(InteroperableAddress.formatEvmV1(block.chainid, from), to, amount, extraData);
+    }
+
+    function _gasAttributes(uint256 gasLimit) internal pure returns (bytes[] memory attrs) {
+        if (gasLimit == 0) return new bytes[](0);
+        attrs = new bytes[](1);
+        attrs[0] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 
     function _onSend(address from, uint256 amount) internal {
