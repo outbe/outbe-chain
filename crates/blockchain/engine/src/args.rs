@@ -143,7 +143,11 @@ pub struct ConsensusArgs {
 
     /// Dev only: follow without verifying consensus certificates (EL-only sync).
     /// Requires `--upstream`.
-    #[arg(long = "upstream.nocertify", default_value_t = false, requires = "upstream")]
+    #[arg(
+        long = "upstream.nocertify",
+        default_value_t = false,
+        requires = "upstream"
+    )]
     pub upstream_nocertify: bool,
 }
 
@@ -159,9 +163,7 @@ impl ConsensusArgs {
         // `conflicts_with` also enforces this on the CLI; this covers programmatic
         // construction and gives a clear message.)
         if self.upstream.is_some() && self.is_validator {
-            eyre::bail!(
-                "--upstream (follower mode) is mutually exclusive with --validator"
-            );
+            eyre::bail!("--upstream (follower mode) is mutually exclusive with --validator");
         }
         if self.upstream_nocertify && self.upstream.is_none() {
             eyre::bail!("--upstream.nocertify requires --upstream");
@@ -320,7 +322,10 @@ mod tests {
         let mut args = default_args();
         args.upstream_nocertify = true;
         let err = args.validate().unwrap_err().to_string();
-        assert!(err.contains("--upstream.nocertify requires --upstream"), "error: {err}");
+        assert!(
+            err.contains("--upstream.nocertify requires --upstream"),
+            "error: {err}"
+        );
     }
 
     #[test]

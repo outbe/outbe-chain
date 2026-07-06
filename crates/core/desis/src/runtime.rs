@@ -215,6 +215,7 @@ pub fn begin_clearing(
 /// `total_batches` distinct indices have arrived the stage advances to `BidsReceived` (a zero-bid flush
 /// is one empty batch that completes immediately and then clears as a no-sale). A redelivered batch (its
 /// bit already set) is an idempotent no-op, so the transport may safely re-deliver.
+#[allow(clippy::too_many_arguments)]
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -229,9 +230,9 @@ pub fn process_bids_batch(
     require_nonzero_series_id(series_id)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
     if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
-        return Err(
-            PrecompileError::Revert("processBidsBatch: invalid batch index/total".into()).into(),
-        );
+        return Err(PrecompileError::Revert(
+            "processBidsBatch: invalid batch index/total".into(),
+        ));
     }
     let mut contract = storage.contract::<DesisContract>();
 
@@ -270,8 +271,7 @@ pub fn process_bids_batch(
     if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
         return Err(PrecompileError::Revert(
             "processBidsBatch: batch total/index mismatch for generation".into(),
-        )
-        .into());
+        ));
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);

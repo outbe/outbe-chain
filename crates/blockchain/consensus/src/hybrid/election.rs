@@ -446,7 +446,7 @@ mod tests {
         // leader to the pre-fix single-guess code.
         let epoch = Epoch::new(1);
         let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
-        let n = participants.len() as usize;
+        let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
 
@@ -465,7 +465,7 @@ mod tests {
         // seed. Pinning the exact verified value proves no degrade occurred.
         let epoch = Epoch::new(1);
         let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
-        let n = participants.len() as usize;
+        let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
 
@@ -486,7 +486,7 @@ mod tests {
         // dv>1 views are distinct from the raw-seed value.
         let epoch = Epoch::new(1);
         let (participants, provider, cert) = cert_over_round(7, Round::new(epoch, View::new(20)));
-        let n = participants.len() as usize;
+        let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
         let raw = cert.raw_vrf_seed_bytes().unwrap();
 
@@ -519,7 +519,7 @@ mod tests {
         // round-robin path (fail-closed) rather than accepting a wrong-round seed.
         let epoch = Epoch::new(1);
         let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(2)));
-        let n = participants.len() as usize;
+        let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
 
         // Smallest probed view is (elected - WINDOW) = cert_view + 1, so the true
