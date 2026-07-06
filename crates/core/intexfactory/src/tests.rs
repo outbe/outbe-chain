@@ -80,7 +80,7 @@ fn issue_creates_series_in_registry() {
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 20,
+                threshold_days: 21,
                 intex_call_period: CALL_PERIOD,
             }
         );
@@ -520,7 +520,7 @@ fn try_call_marks_called_when_threshold_met() {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
-        // All 30 window days above the trigger (threshold is 20).
+        // All 30 window days above the trigger (threshold is 21).
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -549,13 +549,13 @@ fn try_call_skips_when_below_threshold() {
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         let calm = U256::from(EXPECTED_TRIGGER); // equal: strict `>` is not a breach
-                                                 // 19 breach days + 11 calm days; threshold is 20.
+                                                 // 20 breach days + 10 calm days; threshold is 21.
         let mut d = today;
-        for _ in 0..19 {
+        for _ in 0..20 {
             set_vwap(&oracle, d, pair_id, breach);
             d = d.previous_date_key();
         }
-        for _ in 0..11 {
+        for _ in 0..10 {
             set_vwap(&oracle, d, pair_id, calm);
             d = d.previous_date_key();
         }
@@ -576,8 +576,8 @@ fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
         // Seed the series directly with threshold 27 (above the 21d maturity),
-        // since the protocol default (20) is below maturity and a qualified
-        // series would always have >= 21 completed post-issuance days.
+        // since the protocol default (21) does not exceed maturity and a
+        // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
             outbe_intex::CreateSeriesParams {

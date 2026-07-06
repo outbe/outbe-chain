@@ -43,4 +43,4 @@ pub const INTEX_CALL_PERIOD_SECONDS: u32 = 21 * 24 * 3600;
 /// Call-trigger evaluation window: most recent completed days scanned for breaches.
 pub const CALL_WINDOW_DAYS: u16 = 30;
 /// Call-trigger threshold: breach-days within the window required to force-call.
-pub const CALL_THRESHOLD_DAYS: u16 = 20;
+pub const CALL_THRESHOLD_DAYS: u16 = 21;
