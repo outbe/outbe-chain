@@ -1,32 +1,21 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/oapp/libs/OptionsBuilder.sol";
-import {EnforcedOptionParam} from "@layerzerolabs/oapp-evm/oapp/interfaces/IOAppOptionsType3.sol";
 
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
 import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
 import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
 import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {
-    IONFT1155AdapterBatch,
-    BatchSendParam,
-    MultiRecipientSendParam
-} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
-// Re-import inside contract context not needed; lib usage via `OptionsBuilder for bytes` declared below.
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
-///         defer/flush path. `bidCount = 0` exercises the no-bid → single empty `isLast` batch path.
+///         defer/flush path. `bidCount = 0` exercises the no-bid → single empty final batch path.
 contract StubAuctionWithBids {
     uint256 public bidCount = 1;
 
@@ -59,186 +48,65 @@ contract StubAuctionWithBids {
     }
 }
 
-/// @notice Stub `IONFT1155AdapterBatch` whose `systemMultiSend` and `quoteSystemMultiSend` always
-///         revert with a controllable reason. Used by TM holders-relay defer tests.
-contract StubBatchAdapterReverter is IONFT1155AdapterBatch {
-    error StubBatchRevert();
-
-    function quoteSystemMultiSend(uint256, address[] calldata, uint256[] calldata, uint32, bytes calldata, bool)
-        external
-        pure
-        returns (MessagingFee memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function systemMultiSend(
-        uint256,
-        address[] calldata,
-        uint256[] calldata,
-        uint32,
-        bytes calldata,
-        MessagingFee calldata
-    ) external payable returns (MessagingReceipt memory) {
-        revert StubBatchRevert();
-    }
-
-    // --- Unused interface methods (revert if anyone calls them in this test) ---
-    function quoteBatchSend(BatchSendParam calldata, bool) external pure returns (MessagingFee memory) {
-        revert StubBatchRevert();
-    }
-
-    function batchSend(BatchSendParam calldata, MessagingFee calldata, address)
-        external
-        payable
-        returns (MessagingReceipt memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function quoteMultiSend(MultiRecipientSendParam calldata, bool) external pure returns (MessagingFee memory) {
-        revert StubBatchRevert();
-    }
-
-    function multiSend(MultiRecipientSendParam calldata, MessagingFee calldata, address)
-        external
-        payable
-        returns (MessagingReceipt memory)
-    {
-        revert StubBatchRevert();
-    }
-
-    function sweepNative(address payable, uint256) external pure {
-        revert StubBatchRevert();
-    }
-}
-
 /// @title PatternADeferTest
-/// @notice Behavioural coverage Pattern A on `TargetMessenger` (bids relay + holders
-///         bridge) and `ONFT1155Adapter` (compose forward). Each inbound handler defers the
-///         outbound send on revert and exposes `flushPending*` for permissionless recovery.
-contract PatternADeferTest is TestHelperOz5 {
-    using OptionsBuilder for bytes;
+/// @notice Behavioural coverage of Pattern A on `TargetMessenger`: the inbound clearing/mark-called handlers fire an
+///         outbound relay (bids batch / holders bridge) that parks on failure and is retried permissionlessly via
+///         `flushPending*`. Failure is forced by starving the relay float — a positive bridge fee with a zero native
+///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
+contract PatternADeferTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant BNB_EID = 1;
-    uint32 internal constant OUTBE_EID = 2;
-    uint32 internal constant THIRD_EID = 3;
+    /// @dev Fee the loopback bridge charges; the relay must have this in native float to send.
+    uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetMessenger internal bnbMessenger;
-    ONFT1155Adapter internal onftBnb;
-    ONFT1155Adapter internal onftOutbe;
+    ONFT1155AdapterBatch internal onftBatch;
+    ONFT1155AdapterBatch internal onftBatchOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
-    StubBatchAdapterReverter internal stubBatch;
 
     address internal admin = address(this);
+    // Registered peer standing in for the Outbe-side messenger; delivery is authenticated against this address.
+    address internal outbePeer = makeAddr("outbePeer");
     uint32 internal constant SERIES_ID = 20260301;
     uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
 
-    function setUp() public override {
-        super.setUp();
-        setUpEndpoints(3, LibraryType.UltraLightNode);
+    function setUp() public {
+        _setUpBridge();
+        // A positive fee with an unfunded relay float is what forces the inbound-triggered relays to defer.
+        bridge.setFee(BRIDGE_FEE);
 
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(endpoints[BNB_EID]), admin, OUTBE_EID);
-        onftBnb = DeployProxy.onftAdapter(address(intex), address(endpoints[BNB_EID]), admin);
-        onftOutbe = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[OUTBE_EID]), admin);
+        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
+        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
 
-        address[] memory onfts = new address[](2);
-        onfts[0] = address(onftBnb);
-        onfts[1] = address(onftOutbe);
-        this.wireOApps(onfts);
+        // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
+        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
+        onftBatch.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
 
-        // Stubs for TM defer scenarios.
         stubAuction = new StubAuctionWithBids();
-        stubBatch = new StubBatchAdapterReverter();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(stubBatch));
+        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(onftBatch));
 
-        // Configure enforcedOptions so `_doSendBidsToOutbe` builds a valid LZ options blob during
-        // retry. Without this the ULN rejects with `LZ_ULN_InvalidWorkerOptions(0)`.
-        bytes memory bidsOptions = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-        EnforcedOptionParam[] memory params = new EnforcedOptionParam[](1);
-        params[0] = EnforcedOptionParam({eid: OUTBE_EID, msgType: BridgeMsgCodec.MSG_BIDS_BATCH, options: bidsOptions});
-        bnbMessenger.setEnforcedOptions(params);
-
-        // Series for the ONFT compose path.
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
-        intex.markQualified(SERIES_ID);
-        intex.grantRole(intex.RELAYER_ROLE(), address(onftBnb));
+        // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
+        // Intex. crosschainBurn is gated by RELAYER_ROLE, and by SYSTEM_RELAYER_ROLE during the Called window.
+        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
+        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatch));
+        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(onftBatch));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
 
-        // Wire bridge peer for TM (need OutbeMessenger as peer; minimal stub instance).
-        address[] memory bridge = new address[](2);
-        bridge[0] = address(bnbMessenger);
-        bridge[1] = address(0x1234); // placeholder peer — bnbMessenger.setPeer expects bytes32 form
-        // The OAppCore.setPeer is called via wireOApps; placeholder needs to be a deployed OApp.
-        // We simply skip outbound wiring for TM since defer tests don't need it to land successfully.
-        // The defer happens BEFORE the LZ endpoint validates the peer.
-        // (left intentionally without `wireOApps` for TM)
+        // Series so markCalled + holder enumeration work.
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.markQualified(SERIES_ID);
     }
 
-    function _deliverBridge(uint64 nonce, bytes32 guid, bytes memory message) internal {
-        Origin memory origin =
-            Origin({srcEid: OUTBE_EID, sender: bytes32(uint256(uint160(address(0x1234)))), nonce: nonce});
-        // Set the peer manually so OAppReceiver's `_getPeerOrRevert` passes.
-        bnbMessenger.setPeer(OUTBE_EID, bytes32(uint256(uint160(address(0x1234)))));
-
-        vm.prank(address(endpoints[BNB_EID]));
-        (bool ok, bytes memory data) = address(bnbMessenger)
-            .call(
-                abi.encodeWithSignature(
-                    "lzReceive((uint32,bytes32,uint64),bytes32,bytes,address,bytes)",
-                    origin,
-                    guid,
-                    message,
-                    address(0),
-                    ""
-                )
-            );
-        if (!ok) {
-            assembly {
-                revert(add(data, 32), mload(data))
-            }
-        }
-    }
-
-    function _deliverToOnft(uint32 srcEid, address peer, bytes32 guid, bytes memory message) internal {
-        Origin memory origin = Origin({srcEid: srcEid, sender: bytes32(uint256(uint160(peer))), nonce: 1});
-        vm.prank(address(endpoints[BNB_EID]));
-        (bool ok, bytes memory data) = address(onftBnb)
-            .call(
-                abi.encodeWithSignature(
-                    "lzReceive((uint32,bytes32,uint64),bytes32,bytes,address,bytes)",
-                    origin,
-                    guid,
-                    message,
-                    address(0),
-                    ""
-                )
-            );
-        if (!ok) {
-            assembly {
-                revert(add(data, 32), mload(data))
-            }
-        }
-    }
-
-    function _onftComposedPacket(address to, uint256 tokenId_, uint256 amount_, bytes memory composeMsg)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encodePacked(
-            ONFT1155MsgCodec.BODY_VERSION_V1,
-            bytes32(uint256(uint160(to))),
-            tokenId_,
-            amount_,
-            bytes32(uint256(uint160(address(0xDEADBEEF)))),
-            composeMsg
-        );
+    /// @dev Deliver an inbound packet to the messenger from the registered Outbe peer.
+    function _deliverBridge(bytes memory message) internal {
+        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbMessenger), message);
     }
 
     // ---------------------------------------------------------------
@@ -246,11 +114,10 @@ contract PatternADeferTest is TestHelperOz5 {
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayDeferredOnInsufficientBalance() public {
-        // TM has zero native balance, so `_lzSend` will revert when relaying bids.
+        // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
         assertEq(address(bnbMessenger).balance, 0);
 
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
-        _deliverBridge(1, bytes32(uint256(0xD001)), packet);
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
         // First parked slot.
         (uint32 seriesId, bool exists, bool done) = bnbMessenger.pendingBidsRelays(0);
@@ -261,10 +128,9 @@ contract PatternADeferTest is TestHelperOz5 {
     }
 
     function test_TM_FlushBidsRelaySucceedsAfterTopUp() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
-        _deliverBridge(1, bytes32(uint256(0xD002)), packet);
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
-        // Top up TM balance generously so the retry can pay the LZ fee.
+        // Top up TM float generously so the retry can pay the bridge fee.
         vm.deal(address(bnbMessenger), 10 ether);
 
         bnbMessenger.flushPendingBidsRelay(0);
@@ -274,8 +140,7 @@ contract PatternADeferTest is TestHelperOz5 {
     }
 
     function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyFlushed() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
-        _deliverBridge(1, bytes32(uint256(0xD003)), packet);
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
         vm.deal(address(bnbMessenger), 10 ether);
         bnbMessenger.flushPendingBidsRelay(0);
 
@@ -297,7 +162,7 @@ contract PatternADeferTest is TestHelperOz5 {
     // instead of the old early-return that sent nothing.
     function test_TM_BidsRelay_ZeroBids_SendsOneEmptyFinalBatch() public {
         stubAuction.setBidCount(0);
-        _deliverBridge(1, bytes32(uint256(0xD010)), BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
         vm.deal(address(bnbMessenger), 10 ether);
 
         vm.recordLogs();
@@ -312,7 +177,7 @@ contract PatternADeferTest is TestHelperOz5 {
     // final chunk carries the remainder. (130 bids -> 64 + 64 + 2.)
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);
-        _deliverBridge(1, bytes32(uint256(0xD011)), BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
         vm.deal(address(bnbMessenger), 10 ether);
 
         vm.recordLogs();
@@ -349,20 +214,35 @@ contract PatternADeferTest is TestHelperOz5 {
         return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
     }
 
-    function test_TM_HoldersRelayDeferredOnBatchAdapterRevert() public {
+    function test_TM_HoldersRelayDeferredOnMessengerFloatStarved() public {
         // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
-        // Skip `markCalled` first — that's what the inbound packet triggers.
+        // The inbound MARK_CALLED triggers markCalled + the holders bridge.
         intex.mint(address(0xCAFE), 1, SERIES_ID);
 
-        _deliverBridge(1, bytes32(uint256(0xD101)), _markCalledPacket());
+        // TargetMessenger's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
+        // fails → holders relay deferred.
+        assertEq(address(bnbMessenger).balance, 0);
 
-        // Stub batch adapter reverted → holders relay deferred.
-        // Auto-getter skips the dynamic-array fields (holders, amounts) — returns
-        // (uint256 tokenId, bool exists, bool done).
+        _deliverBridge(_markCalledPacket());
+
+        // Auto-getter skips the dynamic-array fields (holders, amounts) — returns (tokenId, exists, done).
         (uint256 storedTokenId, bool exists, bool done) = bnbMessenger.pendingHoldersRelays(0);
         assertEq(storedTokenId, TOKEN_ID, "deferred tokenId");
         assertTrue(exists);
         assertFalse(done);
+    }
+
+    function test_TM_FlushHoldersRelaySucceedsAfterMessengerTopUp() public {
+        intex.mint(address(0xCAFE), 1, SERIES_ID);
+        _deliverBridge(_markCalledPacket());
+
+        // TargetMessenger pays the bridge fee, so top up the messenger (not the adapter).
+        vm.deal(address(bnbMessenger), 1 ether);
+
+        bnbMessenger.flushPendingHoldersRelay(0);
+
+        (,, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        assertTrue(done, "flushed holders slot marked done");
     }
 
     function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
@@ -375,47 +255,5 @@ contract PatternADeferTest is TestHelperOz5 {
         uint256[] memory amounts = new uint256[](0);
         vm.expectRevert(ITargetMessenger.NotSelf.selector);
         bnbMessenger.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
-    }
-
-    // ---------------------------------------------------------------
-    // ONFT1155Adapter — compose defer + flush
-    // ---------------------------------------------------------------
-
-    function test_ONFT_DeliverCompose_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(ONFT1155Adapter.NotSelf.selector);
-        onftBnb.deliverCompose(address(0xCAFE), bytes32(uint256(1)), "");
-    }
-
-    function test_ONFT_FlushPendingCompose_UnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155Adapter.NoSuchPendingCompose.selector, 42));
-        onftBnb.flushPendingCompose(42);
-    }
-
-    function test_ONFT_ComposeDeferredOnDuplicateSendCompose() public {
-        // Wire a third srcEid so the same guid can be delivered from a second peer.
-        ONFT1155Adapter onftThird = DeployProxy.onftAdapter(address(intexOutbe), address(endpoints[THIRD_EID]), admin);
-        address[] memory triple = new address[](2);
-        triple[0] = address(onftBnb);
-        triple[1] = address(onftThird);
-        this.wireOApps(triple);
-
-        address recipient = address(0xCAFE);
-        bytes32 guid = bytes32(uint256(0xE001));
-        bytes memory packet = _onftComposedPacket(recipient, TOKEN_ID, 1, hex"deadbeef");
-
-        // First delivery: crosschainMint + sendCompose succeed.
-        _deliverToOnft(OUTBE_EID, address(onftOutbe), guid, packet);
-
-        // Second delivery (different srcEid bypasses processed[srcEid][guid]; same (to, guid)
-        // collides on the endpoint's composeQueue → sendCompose reverts → Pattern A parks it.
-        uint256 before_ = onftBnb.nextPendingComposeIdx();
-        _deliverToOnft(THIRD_EID, address(onftThird), guid, packet);
-        assertEq(onftBnb.nextPendingComposeIdx(), before_ + 1, "compose slot enqueued");
-
-        (address to, bytes32 storedGuid,, bool exists, bool done) = onftBnb.pendingComposes(before_);
-        assertEq(to, recipient);
-        assertEq(storedGuid, guid);
-        assertTrue(exists);
-        assertFalse(done);
     }
 }

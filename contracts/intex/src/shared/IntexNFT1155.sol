@@ -23,7 +23,7 @@ import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role; gates series lifecycle, mint/mintBatch, expireSeries, and
+    /// @notice Bridge relayer role; gates series lifecycle, mint, expireSeries, and
     ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
@@ -34,10 +34,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
     ///      can only `crosschainBurn` while the series is `Qualified`.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
-
-    /// @notice Upper bound on a series call period. Exposed so integrators can read the bound and
-    ///         tests can assert against it rather than an inline literal.
-    uint32 public constant override MAX_INTEX_CALL_PERIOD = uint32(365 days);
 
     /// @notice Maximum byte length of `collectionDescription`. Bounds the cost of building every
     ///         token's metadata document so an over-long description cannot inflate `tokenURI`
@@ -171,11 +167,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // one can mint into," which never matches an auction-cleared result.
         if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
-        // Default to 21 days when zero is provided; cap at MAX_INTEX_CALL_PERIOD to guard against accidents.
-        uint32 effectiveCallPeriod =
-            params.callTrigger.intexCallPeriod == 0 ? uint32(21 days) : params.callTrigger.intexCallPeriod;
-        if (effectiveCallPeriod > MAX_INTEX_CALL_PERIOD) revert InvalidCallPeriod(params.callTrigger.intexCallPeriod);
-
         $.seriesData[iTok] = IIntexNFT1155.SeriesData({
             issuanceCurrency: params.issuanceCurrency,
             referenceCurrency: params.referenceCurrency,
@@ -187,7 +178,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 windowDays: params.callTrigger.windowDays,
                 thresholdDays: params.callTrigger.thresholdDays,
-                intexCallPeriod: effectiveCallPeriod
+                intexCallPeriod: params.callTrigger.intexCallPeriod
             }),
             issuedAt: uint32(block.timestamp),
             calledAt: 0,
@@ -246,68 +237,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         emit IntexIssued(msg.sender, tokenId, to, quantity);
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function mintBatch(address[] calldata recipients, uint256[] calldata quantities, uint32 seriesId)
-        external
-        onlyRole(RELAYER_ROLE)
-    {
-        if (recipients.length != quantities.length) {
-            revert ArrayLengthMismatch(recipients.length, quantities.length);
-        }
-        if (recipients.length == 0) {
-            revert EmptyArray();
-        }
-
-        IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
-
-        if (data.issuedAt == 0) {
-            revert NonexistentToken(tokenId);
-        }
-
-        // Pre-validate every recipient and per-quantity bound before any state mutation, and
-        // sum the batch so the supply cap is enforced once with the full batch total (not
-        // partially mid-loop). This makes the batch all-or-nothing wrt. the cap.
-        uint256 batchSum = 0;
-        for (uint256 i = 0; i < recipients.length; i++) {
-            if (recipients[i] == address(0)) {
-                revert ZeroAddress("recipient", recipients[i]);
-            }
-            if (quantities[i] > type(uint16).max) revert QuantityTooLarge(quantities[i]);
-            batchSum += quantities[i];
-        }
-
-        // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate is
-        // widened to uint256 so a series with `issuedIntexCount` near `type(uint32).max`
-        // surfaces `SupplyCapExceeded` rather than an arithmetic panic. The cap field is
-        // itself uint32, so any `newTotal > issuedIntexCount` covers `batchSum > uint32.max`
-        // implicitly — no separate batchSum overflow guard is needed.
-        uint256 newTotal = uint256(data.totalSupply) + batchSum;
-        if (newTotal > data.issuedIntexCount) {
-            revert SupplyCapExceeded(seriesId, newTotal, data.issuedIntexCount);
-        }
-        // CEI ok: write the post-batch total before the per-recipient _mint loop so each
-        // ERC1155 receiver callback sees (totalSupply == Σ balanceOf) for the final batch.
-        // Cast is safe because `newTotal ≤ issuedIntexCount ≤ uint32.max`.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
-        data.totalSupply = uint32(newTotal);
-
-        for (uint256 i = 0; i < recipients.length; i++) {
-            if (quantities[i] == 0) {
-                continue;
-            }
-            _mint(recipients[i], tokenId, quantities[i], "");
-
-            if ($.auctionWonCount[tokenId][recipients[i]] == 0) {
-                // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-                $.auctionWonCount[tokenId][recipients[i]] = uint16(quantities[i]);
-            }
-
-            emit IntexIssued(msg.sender, tokenId, recipients[i], quantities[i]);
-        }
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -488,7 +417,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
         // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. The
-        // live-supply invariant matches mint/mintBatch, which also cap on live `totalSupply`.
+        // live-supply invariant matches mint, which also caps on live `totalSupply`.
         // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
         // even at the `issuedIntexCount == type(uint32).max` boundary.
         uint256 newTotal = uint256(data.totalSupply) + amount;
@@ -634,7 +563,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 iTok = uint256(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
         return IIntexNFT1155.HolderBalances({
-            issued: uint16(balanceOf(holder, iTok)), settled: uint16(balanceOf(holder, sTok))
+            issued: uint32(balanceOf(holder, iTok)), settled: uint32(balanceOf(holder, sTok))
         });
     }
 
@@ -698,7 +627,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///         owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
-    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint/mintBatch).
+    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
     ///          * Issued token ids are transferable in every series state
@@ -899,11 +828,53 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return (ownedTokenIds, balances);
     }
 
+    /// @inheritdoc IIntexNFT1155
+    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total)
+    {
+        uint256[] storage owned = _s().ownedSeries[owner];
+        total = owned.length;
+        if (offset >= total) return (new uint256[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        ownedTokenIds = new uint256[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 tokenId = owned[offset + i];
+            ownedTokenIds[i] = tokenId;
+            balances[i] = balanceOf(owner, tokenId);
+        }
+    }
+
     // --- Series holder enumeration (tokenId → holders[]) ---
 
     /// @inheritdoc IIntexNFT1155
     function getSeriesHolders(uint256 tokenId) external view returns (address[] memory) {
         return _s().seriesHolders[tokenId];
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        holders = new address[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            holders[i - offset] = all[i];
+        }
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -917,6 +888,29 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         for (uint256 i = 0; i < holders.length; i++) {
             balances[i] = balanceOf(holders[i], tokenId);
+        }
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory balances, uint256 total)
+    {
+        address[] storage all = _s().seriesHolders[tokenId];
+        total = all.length;
+        if (offset >= total) return (new address[](0), new uint256[](0), total);
+
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+
+        uint256 n = end - offset;
+        holders = new address[](n);
+        balances = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            address holder = all[offset + i];
+            holders[i] = holder;
+            balances[i] = balanceOf(holder, tokenId);
         }
     }
 

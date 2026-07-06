@@ -1,8 +1,7 @@
 //! Desis runtime: auction lifecycle and clearing algorithm.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
@@ -17,7 +16,7 @@ use crate::constants::{
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
-use crate::sol_ext::{IOriginMessenger, MessagingFee};
+use crate::sol_ext::IOriginMessenger;
 
 // ---------------------------------------------------------------------------
 // Auction lifecycle
@@ -117,30 +116,12 @@ pub fn start_auction(
         callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
     };
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendAuctionStageStartCall {
-            params: stage_params.clone(),
-            extraOptions: Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let start_fee =
-        IOriginMessenger::quoteSendAuctionStageStartCall::abi_decode_returns(&quote_ret)
-            .map_err(|_| PrecompileError::Revert("quote auction start undecodable".into()))?;
+    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendAuctionStageStartCall {
             params: stage_params,
-            extraOptions: Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: start_fee.nativeFee,
-                lzTokenFee: start_fee.lzTokenFee,
-            },
-            refundAddress: DESIS_ADDRESS,
         }
         .abi_encode()
         .into(),
@@ -170,32 +151,12 @@ pub fn reveal_auction(
         })?;
     }
 
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendAuctionStageRevealCall {
-            seriesId: series_id,
-            isGreenDay: is_green_day,
-            extraOptions: Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let reveal_fee =
-        IOriginMessenger::quoteSendAuctionStageRevealCall::abi_decode_returns(&quote_ret)
-            .map_err(|_| PrecompileError::Revert("quote auction reveal undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendAuctionStageRevealCall {
             seriesId: series_id,
             isGreenDay: is_green_day,
-            extraOptions: Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: reveal_fee.nativeFee,
-                lzTokenFee: reveal_fee.lzTokenFee,
-            },
-            refundAddress: DESIS_ADDRESS,
         }
         .abi_encode()
         .into(),
@@ -230,30 +191,11 @@ pub fn begin_clearing(
         .pending_supply_intex
         .write(&series_id, supply_intex32)?;
 
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendAuctionStageClearingCall {
-            seriesId: series_id,
-            extraOptions: Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let clearing_fee =
-        IOriginMessenger::quoteSendAuctionStageClearingCall::abi_decode_returns(&quote_ret)
-            .map_err(|_| PrecompileError::Revert("quote auction clearing undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
         IOriginMessenger::sendAuctionStageClearingCall {
             seriesId: series_id,
-            extraOptions: Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: clearing_fee.nativeFee,
-                lzTokenFee: clearing_fee.lzTokenFee,
-            },
-            refundAddress: DESIS_ADDRESS,
         }
         .abi_encode()
         .into(),
@@ -266,22 +208,41 @@ pub fn begin_clearing(
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
-/// Accept a relayed bid batch. Bids accumulate while stage is `Revealing`.
-/// A higher `generation` flushes all prior bids. The final batch (`is_last`)
-/// always transitions to `BidsReceived` — a zero-bid batch then clears as a no-sale.
+/// Accept a relayed bid batch. Bids of one `generation` accumulate while the stage is `Revealing`; a
+/// higher `generation` supersedes all prior bids. Batches may arrive in any order over the unordered
+/// bridge, so completeness is tracked by a per-generation bitmap of `batch_index`: once all
+/// `total_batches` distinct indices have arrived the stage advances to `BidsReceived` (a zero-bid flush
+/// is one empty batch that completes immediately and then clears as a no-sale). A redelivered batch (its
+/// bit already set) is an idempotent no-op, so the transport may safely re-deliver.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
     series_id: u32,
-    src_eid: u32,
-    is_last: bool,
+    src_chain_id: u32,
     generation: u32,
+    batch_index: u16,
+    total_batches: u16,
     bids: Vec<BidData>,
 ) -> Result<()> {
     require_origin_messenger(caller)?;
     require_nonzero_series_id(series_id)?;
+    // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
+    if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
+        return Err(
+            PrecompileError::Revert("processBidsBatch: invalid batch index/total".into()).into(),
+        );
+    }
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, series_id, AuctionStage::Revealing)?;
+
+    // Intake is open only while Revealing. Past intake a late/re-flushed batch is redundant → no-op (else the
+    // transport redelivers forever); before intake it's premature → revert so it redelivers after reveal.
+    let stage = contract.read_stage(series_id)?;
+    if stage != AuctionStage::Revealing {
+        return match stage {
+            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
+            _ => Err(DesisError::InvalidStageTransition.into()),
+        };
+    }
 
     let last_gen = contract.read_last_generation(series_id)?;
     if generation < last_gen {
@@ -293,27 +254,48 @@ pub fn process_bids_batch(
     }
 
     if generation > last_gen {
-        // New generation: flush old bids by zeroing the count (old entries become unreachable).
+        // New generation supersedes: drop prior bids and reset the completeness tracker.
         contract.bid_count.write(&series_id, 0)?;
-        contract.write_bid_batch_meta(series_id, src_eid, generation)?;
-        contract.replace_bids(series_id, &bids)?;
-    } else {
-        contract.write_bid_batch_meta(series_id, src_eid, generation)?;
-        for bid in &bids {
-            contract.append_bid(series_id, bid)?;
-        }
+        contract.write_bid_batch_meta(series_id, src_chain_id, generation)?;
+        contract
+            .bids_total_batches
+            .write(&series_id, u32::from(total_batches))?;
+        contract.bids_arrived_mask.write(&series_id, U256::ZERO)?;
     }
 
-    if is_last {
-        // Always advance to BidsReceived so OriginMessenger auto-fires clearing. A zero-bid batch
-        // then clears as a no-sale (0 issued, full supply returned to PromisLimit) and still reports
-        // the result to the target chain, instead of dead-ending in Cancelled with no cross-chain
-        // notice. Cancelled is reserved for red days (see `reveal_auction`).
+    // All batches of a generation must agree on total_batches and stay in range, else a bad peer could set an
+    // out-of-range bit and false-complete the set with a real batch missing.
+    let stored_total = contract.bids_total_batches.read(&series_id)?;
+    if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
+        return Err(PrecompileError::Revert(
+            "processBidsBatch: batch total/index mismatch for generation".into(),
+        )
+        .into());
+    }
+
+    let bit = U256::from(1u8) << (batch_index as usize);
+    let mask = contract.bids_arrived_mask.read(&series_id)?;
+    if !(mask & bit).is_zero() {
+        // This batch of the current generation was already applied; redelivery is idempotent.
+        return Ok(());
+    }
+
+    for bid in &bids {
+        contract.append_bid(series_id, bid)?;
+    }
+    let mask = mask | bit;
+    contract.bids_arrived_mask.write(&series_id, mask)?;
+
+    // Advance once every batch of the generation has arrived. A zero-bid flush completes here and
+    // clears as a no-sale (0 issued, full supply returned to PromisLimit), still reporting the result
+    // to the target chain; Cancelled is reserved for red days (see `reveal_auction`).
+    let expected = contract.bids_total_batches.read(&series_id)?;
+    if mask.count_ones() as u32 == expected {
         let count = contract.read_bid_count(series_id)?;
         contract.write_stage(series_id, AuctionStage::BidsReceived)?;
         contract.emit(IDesis::BidsReceived {
             seriesId: series_id,
-            srcEid: src_eid,
+            srcChainId: src_chain_id,
             bidsCount: U256::from(count),
         })?;
     }
@@ -412,22 +394,6 @@ pub fn clear_auction(
     // Send AUCTION_RESULT to BNB.
     let won_bids_count = u32::try_from(result.winners.len())
         .map_err(|_| PrecompileError::Revert("winner count exceeds u32".into()))?;
-    let quote_ret = storage.staticcall(
-        ORIGIN_MESSENGER_ADDRESS,
-        IOriginMessenger::quoteSendAuctionResultCall {
-            seriesId: series_id,
-            issuedIntexCount: result.issued_intex_count,
-            auctionClearingRate: u64::from(result.clearing_rate),
-            wonBidsCount: won_bids_count,
-            extraOptions: Bytes::new(),
-            payInLzToken: false,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let result_fee =
-        IOriginMessenger::quoteSendAuctionResultCall::abi_decode_returns(&quote_ret)
-            .map_err(|_| PrecompileError::Revert("quote auction result undecodable".into()))?;
     storage.call(
         ORIGIN_MESSENGER_ADDRESS,
         U256::ZERO,
@@ -436,12 +402,6 @@ pub fn clear_auction(
             issuedIntexCount: result.issued_intex_count,
             auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
-            extraOptions: Bytes::new(),
-            fee: MessagingFee {
-                nativeFee: result_fee.nativeFee,
-                lzTokenFee: result_fee.lzTokenFee,
-            },
-            refundAddress: DESIS_ADDRESS,
         }
         .abi_encode()
         .into(),
@@ -449,24 +409,6 @@ pub fn clear_auction(
 
     // Send REFUND_INSTRUCTIONS to BNB (all bidders including losers).
     if !result.all_bidders.is_empty() {
-        let quote_ret = storage.staticcall(
-            ORIGIN_MESSENGER_ADDRESS,
-            IOriginMessenger::quoteSendRefundInstructionsCall {
-                seriesId: series_id,
-                bidders: result.all_bidders.clone(),
-                refundedAmounts: result.refunded_amounts.clone(),
-                paidAmounts: result.paid_amounts.clone(),
-                extraOptions: Bytes::new(),
-                payInLzToken: false,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-        let refund_fee =
-            IOriginMessenger::quoteSendRefundInstructionsCall::abi_decode_returns(&quote_ret)
-                .map_err(|_| {
-                    PrecompileError::Revert("quote refund instructions undecodable".into())
-                })?;
         storage.call(
             ORIGIN_MESSENGER_ADDRESS,
             U256::ZERO,
@@ -475,12 +417,6 @@ pub fn clear_auction(
                 bidders: result.all_bidders.clone(),
                 refundedAmounts: result.refunded_amounts.clone(),
                 paidAmounts: result.paid_amounts.clone(),
-                extraOptions: Bytes::new(),
-                fee: MessagingFee {
-                    nativeFee: refund_fee.nativeFee,
-                    lzTokenFee: refund_fee.lzTokenFee,
-                },
-                refundAddress: DESIS_ADDRESS,
             }
             .abi_encode()
             .into(),

@@ -34,6 +34,10 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+# Async request/response channel for the bridge's finalization fetcher (the
+# follower-upstream `outbe_getFinalization` serving path crosses the
+# outbe-rpc → consensus crate boundary through the bridge). `sync` only.
+tokio = { workspace = true, features = ["sync"] }
 # Validator EVM signer (system-tx signing key). Lives here so consensus does
 # not need an `outbe-evm` dep just for the signer type.
 k256.workspace = true

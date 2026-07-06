@@ -292,4 +292,7 @@ interface IEscrowAdapter {
         external
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
+
+    /// @notice True while any lock is still live in The Compact under the active lock id.
+    function hasOutstandingLocks() external view returns (bool outstanding);
 }

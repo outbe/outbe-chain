@@ -14,7 +14,7 @@ use crate::runtime;
 use crate::schema::BidData;
 
 /// `IDesis` interface ID (XOR of non-ERC-165 selectors in IDesis).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xd2, 0xcf, 0xe8, 0xda];
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xa2, 0xce, 0x63, 0xc8];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -41,9 +41,10 @@ pub fn dispatch(
                     storage.clone(),
                     sender,
                     c.seriesId,
-                    c.srcEid,
-                    c.isLast,
+                    c.srcChainId,
                     c.relayGeneration,
+                    c.batchIndex,
+                    c.totalBatches,
                     bids,
                 )
             }),
