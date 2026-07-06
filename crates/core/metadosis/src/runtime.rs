@@ -121,11 +121,9 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
 
     create_worldwide_day_if_needed(&mut metadosis, ctx, timestamp)?;
 
-    let active = metadosis.active_wwd.read_all()?;
+    advance_active_worldwide_days(ctx)?;
 
-    for wwd in &active {
-        update_wwd_status_machine(&mut metadosis, ctx, *wwd, timestamp)?;
-    }
+    let active = metadosis.active_wwd.read_all()?;
 
     for wwd in &active {
         if metadosis.get_wwd_status(*wwd)? == status::READY {
@@ -139,6 +137,31 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     // delete-queue (see `MetadosisContract::mark_wwd_*`), which evicts and
     // deletes the oldest record past `MAX_RECORDS_KEPT`.
 
+    Ok(())
+}
+
+/// Walk every active WorldwideDay's status machine forward to the phase
+/// dictated by `ctx.block.timestamp`. Pure window/status logic plus the
+/// transition side effects owned by [`update_wwd_status_machine`] (day-rate
+/// resolve, tribute seal/unseal, best-effort auction dispatch) — no day
+/// creation and no READY settlement; those stay midnight-owned in
+/// [`start_metadosis`].
+///
+/// Two callers:
+/// * [`start_metadosis`] — the 00:00 UTC Cycle trigger, before settlement,
+///   so a day crossing WAITING→READY at midnight settles in the same tick;
+/// * the `wwd_advance_noon` Cycle trigger (12:00 UTC,
+///   `outbe_cycle::triggers`) — the forming/offering window edges land at
+///   12:00 UTC (`forming_end = forming_start + 50h` with `forming_start` at
+///   10:00 UTC of the previous day), so with only the midnight tick every
+///   12:00 transition was applied ~12h late and `offerTribute` reverted
+///   `not in OFFERING status` for the whole gap.
+pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {
+    let mut metadosis = MetadosisContract::new(ctx.storage.clone());
+    let timestamp = ctx.block.timestamp;
+    for wwd in metadosis.active_wwd.read_all()? {
+        update_wwd_status_machine(&mut metadosis, ctx, wwd, timestamp)?;
+    }
     Ok(())
 }
 

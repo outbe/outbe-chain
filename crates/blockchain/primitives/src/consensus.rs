@@ -11,6 +11,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex, MutexGuard},
 };
+use tokio::sync::{mpsc, oneshot};
 
 use crate::reshare_artifact::ExecutionSummaryArtifact;
 
@@ -372,7 +373,34 @@ struct BridgeState {
     /// coordination, handed to the payload builder so the proposer injects it
     /// (slice 5.1). `take`-semantics: consumed once by the next proposal.
     pending_tee_bootstrap: Option<crate::tee_bootstrap::TeeBootstrapPayload>,
+    /// Channel to the consensus-side drainer that answers `outbe_getFinalization`
+    /// RPC requests from the marshal. Set once at marshal-start; `None` on a
+    /// node that does not serve finalizations (e.g. before consensus is up).
+    finalization_fetcher: Option<FinalizationFetcherTx>,
 }
+
+/// The marshal-backed answer to an `outbe_getFinalization` request: the
+/// commonware-codec-encoded finalization certificate and the encoded
+/// `ConsensusBlock`, ready to hex and ship. A follower's resolver reconstructs
+/// `finalization.encode() || block.encode()` from exactly these two fields.
+#[derive(Clone, Debug)]
+pub struct FinalizedBlockBytes {
+    /// `commonware_codec::Encode` bytes of the `Finalization` certificate.
+    pub finalization: Bytes,
+    /// `commonware_codec::Encode` bytes of the finalized `ConsensusBlock`.
+    pub block: Bytes,
+}
+
+/// Sender half of the finalization fetch channel: a height plus a one-shot
+/// reply. Lives in the bridge so the `outbe-rpc` handler (which cannot see the
+/// marshal or `ConsensusBlock`) can request finalized bytes from the consensus
+/// thread.
+type FinalizationFetcherTx =
+    mpsc::UnboundedSender<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
+
+/// Receiver half handed to the consensus-side drainer.
+pub type FinalizationFetcherRx =
+    mpsc::UnboundedReceiver<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
 
 #[derive(Clone, Copy)]
 struct ExecutionSummaryCacheEntry {
@@ -504,6 +532,33 @@ impl ConsensusExecutionBridge {
     pub fn consensus_status(&self) -> ConsensusStatus {
         let state = self.lock_state();
         state.consensus_status.clone()
+    }
+
+    /// Installs the finalization fetcher channel. Called once at marshal-start
+    /// (validator and follower paths both register one) with the sender; the
+    /// consensus thread drains the matching [`FinalizationFetcherRx`] and answers
+    /// from the marshal. Returns the receiver to hand to the drainer.
+    pub fn set_finalization_fetcher(&self) -> FinalizationFetcherRx {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.lock_state().finalization_fetcher = Some(tx);
+        rx
+    }
+
+    /// Requests the finalized certificate + block bytes for `height` from the
+    /// consensus thread (used by the `outbe_getFinalization` RPC handler).
+    ///
+    /// Returns `None` if no fetcher is installed (consensus not serving), the
+    /// drainer dropped the reply (height not available), or the channel is
+    /// closed. The reply travels back over a one-shot so concurrent requests do
+    /// not interfere.
+    pub async fn request_finalization(&self, height: u64) -> Option<FinalizedBlockBytes> {
+        let sender = {
+            let state = self.lock_state();
+            state.finalization_fetcher.clone()?
+        };
+        let (reply_tx, reply_rx) = oneshot::channel();
+        sender.send((height, reply_tx)).ok()?;
+        reply_rx.await.ok().flatten()
     }
 }
 
