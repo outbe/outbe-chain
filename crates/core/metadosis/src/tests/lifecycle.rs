@@ -744,7 +744,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
 fn no_tributes_green_day_clears_started_auction() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 64]),
     );
     StorageHandle::enter(&mut storage, |storage| {
@@ -802,7 +802,7 @@ fn no_tributes_green_day_clears_started_auction() {
 fn no_day_limit_green_day_still_empty_clears_started_auction() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 64]),
     );
     StorageHandle::enter(&mut storage, |storage| {

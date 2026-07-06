@@ -5,10 +5,10 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {BatchSendParam, IONFT1155AdapterBatch} from "@contracts/shared/interfaces/IONFT1155AdapterBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 
-/// @dev Cross-chain conservation invariants for the IntexNFT1155 + ONFT1155AdapterBatch pair:
+/// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
 ///   - SI-08: `Σ totalSupply(issuedId)` across chains is never larger than the on-chain
 ///     `issuedIntexCount` cap of the underlying series. Mint+bridge+round-trip moves balances
@@ -27,8 +27,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
-    ONFT1155AdapterBatch private adapterA;
-    ONFT1155AdapterBatch private adapterB;
+    IntexNFT1155Bridge private adapterA;
+    IntexNFT1155Bridge private adapterB;
 
     address private user = address(0x1);
 
@@ -40,8 +40,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.onftAdapterBatch(address(tokenA), address(bridge), address(this));
-        adapterB = DeployProxy.onftAdapterBatch(address(tokenB), address(bridge), address(this));
+        adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), address(this));
+        adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), address(this));
 
         tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
@@ -162,7 +162,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenA.balanceOf(user, parkTokenId), minted, "holder whole on origin");
 
         // A second reclaim reverts — the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(IONFT1155AdapterBatch.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
     }
 
@@ -184,8 +184,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     ///      Returns the destination `receiveId` (matching `MockERC7786Bridge._deliver`) so a parked
     ///      inbound can be retried.
     function _send(
-        ONFT1155AdapterBatch from,
-        ONFT1155AdapterBatch to,
+        IntexNFT1155Bridge from,
+        IntexNFT1155Bridge to,
         uint32 srcChainId,
         address recipient,
         uint256 tokenId,

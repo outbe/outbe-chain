@@ -6,9 +6,8 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {BaseScript} from "./BaseScript.s.sol";
 import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
 /// @title DeployOutbe
 /// @author Outbe
@@ -37,52 +36,39 @@ contract DeployOutbe is BaseScript {
             address(new IntexNFT1155()),
             abi.encodeCall(IntexNFT1155.initialize, (admin))
         );
-        address onft = deployProxy(
+        address nftBridge = deployProxy(
             factory,
             deployer,
-            "ONFT1155Adapter",
-            address(new ONFT1155Adapter(nft, bridge)),
-            abi.encodeCall(ONFT1155Adapter.initialize, (delegate))
+            "IntexNFT1155Bridge",
+            address(new IntexNFT1155Bridge(nft, bridge)),
+            abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate))
         );
-        address onftBatch = deployProxy(
+        address router = deployProxy(
             factory,
             deployer,
-            "ONFT1155AdapterBatch",
-            address(new ONFT1155AdapterBatch(nft, bridge)),
-            abi.encodeCall(ONFT1155AdapterBatch.initialize, (delegate))
-        );
-        address messenger = deployProxy(
-            factory,
-            deployer,
-            "OriginMessenger",
-            address(new OriginMessenger(bridge, bnbChainId)),
-            abi.encodeCall(OriginMessenger.initialize, (delegate))
+            "OriginRouter",
+            address(new OriginRouter(bridge, bnbChainId)),
+            abi.encodeCall(OriginRouter.initialize, (delegate))
         );
 
         // Register the BNB-side peers. Proxy addresses are CREATE3-deterministic across chains, so the
         // BNB clients are predictable from the same (factory, deployer, salt) before that chain is deployed.
-        OriginMessenger(payable(messenger))
+        OriginRouter(payable(router))
             .setRemoteMessenger(
                 bnbChainId,
-                InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "TargetMessenger"))
+                InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "TargetRouter"))
             );
-        ONFT1155Adapter(payable(onft))
+        IntexNFT1155Bridge(payable(nftBridge))
             .setRemoteMessenger(
                 bnbChainId,
-                InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "ONFT1155Adapter"))
-            );
-        ONFT1155AdapterBatch(payable(onftBatch))
-            .setRemoteMessenger(
-                bnbChainId,
-                InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "ONFT1155AdapterBatch"))
+                InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "IntexNFT1155Bridge"))
             );
 
         vm.stopBroadcast();
 
         console.log("Create3Factory:", address(factory));
         console.log("IntexNFT1155:", nft);
-        console.log("ONFT1155Adapter:", onft);
-        console.log("ONFT1155AdapterBatch:", onftBatch);
-        console.log("OriginMessenger:", messenger);
+        console.log("IntexNFT1155Bridge:", nftBridge);
+        console.log("OriginRouter:", router);
     }
 }

@@ -1,13 +1,13 @@
 //! External contract ABIs invoked via `storage.call`.
 //!
-//! `OriginMessenger` sends are relay-float-funded: called with value 0, the messenger quotes and
+//! `OriginRouter` sends are relay-float-funded: called with value 0, the router quotes and
 //! pays the bridge fee from its own native balance, so the precompile passes no fee/options/refund.
 
 use alloy_sol_types::sol;
 
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IOriginMessenger {
+    interface IOriginRouter {
         struct AuctionStageStartParams {
             uint32 seriesId;
             uint32 commitEnd;

@@ -1,20 +1,19 @@
 //! Module-local constants: external contract addresses called via
 //! `storage.call`, plus protocol constants.
 //!
-//! NFT / messenger addresses are permanent CREATE3 proxies via the outbe-intex
+//! NFT / router addresses are permanent CREATE3 proxies via the outbe-intex
 //! Create3Factory (deployer 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05, salt
-//! "outbe-intex:<Name>:v1.0.0") — stable across chains and redeploys.
+//! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
-/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v1.0.0".
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83");
+/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0".
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");
 
-/// OriginMessenger on Outbe (outbound LayerZero sends).
-/// CREATE3 proxy, salt "outbe-intex:OriginMessenger:v1.0.0".
-pub const ORIGIN_MESSENGER_ADDRESS: Address =
-    address!("0x53c5DB9AAf0Ecf8A8c734b2d6C88fE2e56F2f955");
+/// OriginRouter on Outbe (outbound ERC-7786 sends).
+/// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
 
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;

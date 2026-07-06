@@ -73,28 +73,32 @@ interface IEscrowAdapter {
     event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
-    /// @param guid Inbound LZ packet that triggered the refund, or `bytes32(0)` for a
-    ///        permissionless `claimRefund` (not LZ-triggered).
+    /// @param receiveId Inbound bridge message that triggered the refund, or `bytes32(0)` for a
+    ///        permissionless `claimRefund` (not bridge-triggered).
     /// @param seriesId Series identifier.
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
-    event FundsRefunded(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are paid out to the vault for a winning bid.
-    /// @param guid Inbound LZ packet that triggered the payout.
+    /// @param receiveId Inbound bridge message that triggered the payout.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose winning portion was paid out.
     /// @param amount Amount routed to the vault provider.
-    event FundsClaimed(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event FundsClaimed(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a series escrow is finalized.
-    /// @param guid Inbound LZ packet that triggered finalization.
+    /// @param receiveId Inbound bridge message that triggered finalization.
     /// @param seriesId Series identifier.
     /// @param totalRefunded Total refunded to bidders.
     /// @param totalPaid Total paid out to the vault.
     /// @param bidsProcessed Number of bids processed.
     event AuctionEscrowFinalized(
-        bytes32 indexed guid, uint32 indexed seriesId, uint128 totalRefunded, uint128 totalPaid, uint32 bidsProcessed
+        bytes32 indexed receiveId,
+        uint32 indexed seriesId,
+        uint128 totalRefunded,
+        uint128 totalPaid,
+        uint32 bidsProcessed
     );
 
     /// @notice Emitted on each successful `wire()` call (initial + rotations).
@@ -122,20 +126,20 @@ interface IEscrowAdapter {
     /// @notice Emitted when a single bidder's finalization step fails. The lock stays in
     ///         `Locked` status and can be recovered via `retryFinalize` (RELAYER) or `claimRefund`
     ///         (permissionless, after the post-finalize safety window).
-    /// @param guid Inbound LZ packet that triggered the failed finalization.
+    /// @param receiveId Inbound bridge message that triggered the failed finalization.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose finalization step failed.
     /// @param reason Raw revert data from the failed per-bidder finalization call.
-    event BidderRefundFailed(bytes32 indexed guid, uint32 indexed seriesId, address indexed bidder, bytes reason);
+    event BidderRefundFailed(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, bytes reason);
 
     /// @notice Emitted on a successful `retryFinalize` call.
-    /// @param guid Original inbound LZ packet the relayer is retrying for.
+    /// @param receiveId Original inbound bridge message the relayer is retrying for.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder whose finalization was retried.
     /// @param refundedAmount Amount refunded to the bidder on retry.
     /// @param paidAmount Amount paid out to the vault on retry.
     event BidderRetried(
-        bytes32 indexed guid,
+        bytes32 indexed receiveId,
         uint32 indexed seriesId,
         address indexed bidder,
         uint128 refundedAmount,
@@ -245,10 +249,11 @@ interface IEscrowAdapter {
 
     /// @notice Finalize a series escrow with per-bidder refund/payout instructions.
     /// @param seriesId Series identifier.
-    /// @param guid Inbound LZ packet GUID that carried the refund instructions; threaded into the
+    /// @param receiveId Inbound bridge message id that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.
     /// @param instructions Array of finalization instructions per bidder.
-    function finalizeAuction(uint32 seriesId, bytes32 guid, FinalizationInstruction[] calldata instructions) external;
+    function finalizeAuction(uint32 seriesId, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
+        external;
 
     // --- Recovery ---
 
@@ -263,9 +268,9 @@ interface IEscrowAdapter {
     ///         Gated by `RELAYER_ROLE` (operational, not admin). Lets the relayer deliver the
     ///         correct refund/payout split for a failed bidder once the upstream issue is fixed.
     /// @param seriesId Series identifier (must be already finalized).
-    /// @param guid Original inbound LZ packet GUID being retried; threaded into the emitted events.
+    /// @param receiveId Original inbound bridge message id being retried; threaded into the emitted events.
     /// @param inst Finalization instruction for the single bidder being retried.
-    function retryFinalize(uint32 seriesId, bytes32 guid, FinalizationInstruction calldata inst) external;
+    function retryFinalize(uint32 seriesId, bytes32 receiveId, FinalizationInstruction calldata inst) external;
 
     /// @notice Permissionless settlement of a payout portion left parked by a post-finalize
     ///         `claimRefund` (lock in `RefundClaimed`). Withdraws the parked amount from The Compact

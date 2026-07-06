@@ -230,24 +230,23 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeRefundInstructions(overCap);
     }
 
-    // --- Real payload-length ceiling vs the LayerZero message-size cap ---
+    // --- Real payload-length ceiling vs the ERC-7786 message-size cap ---
 
-    /// @notice The send-side Executor `maxMessageSize` configured for these pathways
-    ///         (`scripts/shared/layerzero.ts` → `LZ_INFRA.maxMessageSize`). A send whose
+    /// @notice The send-side `maxMessageSize` the bridge configures for these pathways. A send whose
     ///         encoded message exceeds this reverts on the source chain. This is the *byte*
     ///         ceiling only; destination gas (the per-item crosschainMint loop) is a separate and,
     ///         for the heavy paths, tighter limit — not measured here.
-    uint256 internal constant LZ_MAX_MESSAGE_BYTES = 10_000;
+    uint256 internal constant MAX_MESSAGE_BYTES = 10_000;
 
     /// @dev Derives the largest array length whose encoded message still fits under
-    ///      `LZ_MAX_MESSAGE_BYTES`, by measuring the actual per-item byte cost, and asserts
+    ///      `MAX_MESSAGE_BYTES`, by measuring the actual per-item byte cost, and asserts
     ///      `MAX_PAYLOAD_ARRAY_LEN` sits under it. Regression guard: if a payload grows
     ///      (e.g. a new array/field), the real ceiling drops and this fails if the cap loses
     ///      headroom. `len0/len1/len2` are encoded lengths at 0/1/2 items.
     function _deriveCeilingAndAssertHeadroom(string memory label, uint256 len0, uint256 len1, uint256 len2) internal {
         uint256 perItem = len1 - len0;
         assertEq(len2 - len1, perItem, string.concat(label, ": per-item byte cost is not linear"));
-        uint256 derivedMaxItems = (LZ_MAX_MESSAGE_BYTES - len0) / perItem;
+        uint256 derivedMaxItems = (MAX_MESSAGE_BYTES - len0) / perItem;
         emit log_named_uint(string.concat(label, " bytes/item"), perItem);
         emit log_named_uint(string.concat(label, " real max items @ 10000B"), derivedMaxItems);
         assertGe(
@@ -257,7 +256,7 @@ contract BridgeMsgCodecValidationTest is Test {
         );
     }
 
-    /// @notice Computes the real per-message array ceiling under the LZ byte cap and proves the
+    /// @notice Computes the real per-message array ceiling under the bridge byte cap and proves the
     ///         single system-wide `MAX_PAYLOAD_ARRAY_LEN = 64` clears every one of them. Run with
     ///         `-vv` to see the derived numbers (bids is the tightest at ~128 B/item).
     function test_RealPayloadByteCeiling_ClearsTheCap() public {

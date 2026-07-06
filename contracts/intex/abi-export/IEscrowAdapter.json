@@ -29,7 +29,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "internalType": "bytes32"
         },
@@ -185,7 +185,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "internalType": "bytes32"
         },
@@ -266,7 +266,7 @@
       "name": "AuctionEscrowFinalized",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -303,7 +303,7 @@
       "name": "BidderRefundFailed",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -334,7 +334,7 @@
       "name": "BidderRetried",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -390,7 +390,7 @@
       "name": "FundsClaimed",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
@@ -446,7 +446,7 @@
       "name": "FundsRefunded",
       "inputs": [
         {
-          "name": "guid",
+          "name": "receiveId",
           "type": "bytes32",
           "indexed": true,
           "internalType": "bytes32"
