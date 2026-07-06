@@ -23,9 +23,9 @@ contract OriginRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    OriginRouter private outbeAdapter;
-    TargetRouter private bnbAdapter;
-    IntexNFT1155Bridge private batchAdapter;
+    OriginRouter private originRouter;
+    TargetRouter private targetRouter;
+    IntexNFT1155Bridge private nftBridge;
 
     // Stand-in Desis recipient that advertises `IDesis` via ERC-165 so that
     // `OriginRouter.wire`'s interface probe accepts it.
@@ -61,23 +61,23 @@ contract OriginRouterTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy BNB adapter (for cross-chain testing)
-        bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
-        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
-        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
+        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
+        targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
 
         // Wire Outbe adapter
-        outbeAdapter.wire(desis, intexFactory);
+        originRouter.wire(desis, intexFactory);
 
         // Wire BNB adapter
-        bnbAdapter.wire(address(auction), address(intex), admin, address(batchAdapter));
+        targetRouter.wire(address(auction), address(intex), admin, address(nftBridge));
     }
 
     // --- Helpers ---
@@ -126,51 +126,51 @@ contract OriginRouterTest is CrossChainTest {
 
     // --- Constructor Tests ---
     function test_constructor() public view {
-        assertEq(outbeAdapter.BNB_CHAIN_ID(), BNB_CHAIN_ID);
-        assertTrue(outbeAdapter.hasRole(outbeAdapter.DEFAULT_ADMIN_ROLE(), admin));
+        assertEq(originRouter.BNB_CHAIN_ID(), BNB_CHAIN_ID);
+        assertTrue(originRouter.hasRole(originRouter.DEFAULT_ADMIN_ROLE(), admin));
     }
 
     function test_wire() public view {
-        assertEq(outbeAdapter.desis(), desis);
-        assertTrue(outbeAdapter.hasRole(outbeAdapter.DESIS_ROLE(), desis));
+        assertEq(originRouter.desis(), desis);
+        assertTrue(originRouter.hasRole(originRouter.DESIS_ROLE(), desis));
     }
 
     function test_wire_revert_zero_address() public {
-        OriginRouter newAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter newRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.ZeroAddress.selector, "desis"));
-        newAdapter.wire(address(0), intexFactory);
+        newRouter.wire(address(0), intexFactory);
     }
 
     // --- Access Control Tests ---
     function test_sendAuctionStageStart_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams());
+        originRouter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams());
     }
 
     function test_sendAuctionStageReveal_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageReveal{value: 0.1 ether}(SERIES_ID, true);
+        originRouter.sendAuctionStageReveal{value: 0.1 ether}(SERIES_ID, true);
     }
 
     function test_sendMarkCalled_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendMarkCalled{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendMarkCalled{value: 0.1 ether}(SERIES_ID);
     }
 
     function test_sendAuctionStageClearing_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionStageClearing{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendAuctionStageClearing{value: 0.1 ether}(SERIES_ID);
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendAuctionResult{value: 0.1 ether}(SERIES_ID, 10_000, 100e6, 50);
+        originRouter.sendAuctionResult{value: 0.1 ether}(SERIES_ID, 10_000, 100e6, 50);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
@@ -181,7 +181,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
@@ -194,13 +194,13 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendMarkQualified_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        outbeAdapter.sendMarkQualified{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendMarkQualified{value: 0.1 ether}(SERIES_ID);
     }
 
     // --- Validation Tests ---
@@ -210,7 +210,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(intexFactory);
         vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendIssuanceInstructions_revert_array_length_mismatch() public {
@@ -223,7 +223,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(intexFactory);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        outbeAdapter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendRefundInstructions_revert_empty_array() public {
@@ -233,7 +233,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
@@ -249,36 +249,36 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        outbeAdapter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
     }
 
     // --- Role Constants Tests ---
     function test_role_constants() public view {
-        assertEq(outbeAdapter.DESIS_ROLE(), keccak256("DESIS_ROLE"));
+        assertEq(originRouter.DESIS_ROLE(), keccak256("DESIS_ROLE"));
     }
 
     // --- Quote Tests ---
     function test_quoteSendAuctionStageStart() public view {
-        uint256 fee = outbeAdapter.quoteSendAuctionStageStart(_baseStageStartParams());
+        uint256 fee = originRouter.quoteSendAuctionStageStart(_baseStageStartParams());
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionStageReveal() public view {
-        uint256 fee = outbeAdapter.quoteSendAuctionStageReveal(SERIES_ID, true);
+        uint256 fee = originRouter.quoteSendAuctionStageReveal(SERIES_ID, true);
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionStageClearing() public view {
-        uint256 fee = outbeAdapter.quoteSendAuctionStageClearing(SERIES_ID);
+        uint256 fee = originRouter.quoteSendAuctionStageClearing(SERIES_ID);
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionResult() public view {
         // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount)
-        uint256 fee = outbeAdapter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42);
+        uint256 fee = originRouter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42);
 
         assertEq(fee, 0.001 ether);
     }
@@ -292,7 +292,7 @@ contract OriginRouterTest is CrossChainTest {
         quantities[0] = 10;
         quantities[1] = 20;
 
-        uint256 fee = outbeAdapter.quoteSendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
+        uint256 fee = originRouter.quoteSendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
 
         assertEq(fee, 0.001 ether);
     }
@@ -309,13 +309,13 @@ contract OriginRouterTest is CrossChainTest {
         paidAmounts[0] = 50e6;
         paidAmounts[1] = 75e6;
 
-        uint256 fee = outbeAdapter.quoteSendRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        uint256 fee = originRouter.quoteSendRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendMarkCalled() public view {
-        uint256 fee = outbeAdapter.quoteSendMarkCalled(SERIES_ID);
+        uint256 fee = originRouter.quoteSendMarkCalled(SERIES_ID);
 
         assertEq(fee, 0.001 ether);
     }
@@ -324,6 +324,6 @@ contract OriginRouterTest is CrossChainTest {
     function test_supportsInterface() public view {
         // IAccessControl interface ID
         bytes4 accessControlId = 0x7965db0b;
-        assertTrue(outbeAdapter.supportsInterface(accessControlId));
+        assertTrue(originRouter.supportsInterface(accessControlId));
     }
 }

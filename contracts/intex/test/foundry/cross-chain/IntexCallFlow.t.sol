@@ -36,13 +36,13 @@ contract IntexCallFlowTest is CrossChainTest {
     // --- BSC contracts ---
     IntexNFT1155 private intexBnb;
     IntexAuction private auction;
-    TargetRouter private bnbAdapter;
-    IntexNFT1155Bridge private batchAdapterBnb;
+    TargetRouter private targetRouter;
+    IntexNFT1155Bridge private nftBridgeBnb;
 
     // --- Outbe contracts ---
     IntexNFT1155 private intexOutbe;
-    OriginRouter private outbeAdapter;
-    IntexNFT1155Bridge private batchAdapterOutbe;
+    OriginRouter private originRouter;
+    IntexNFT1155Bridge private nftBridgeOutbe;
 
     address private admin = address(this);
 
@@ -74,37 +74,37 @@ contract IntexCallFlowTest is CrossChainTest {
         // ---- Deploy BSC contracts ----
         intexBnb = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
-        bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        batchAdapterBnb = DeployProxy.intexNFT1155Bridge(address(intexBnb), address(bridge), admin);
+        targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intexBnb), address(bridge), admin);
 
         // ---- Deploy Outbe contracts ----
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        outbeAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
-        batchAdapterOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // ---- Register remote messengers ----
-        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
-        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
-        batchAdapterBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(batchAdapterOutbe)));
-        batchAdapterOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(batchAdapterBnb)));
+        targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
+        nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftBridgeOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
 
         // ---- Wire contract dependencies ----
-        bnbAdapter.wire(address(auction), address(intexBnb), admin, address(batchAdapterBnb));
-        outbeAdapter.wire(desis, intexFactory);
+        targetRouter.wire(address(auction), address(intexBnb), admin, address(nftBridgeBnb));
+        originRouter.wire(desis, intexFactory);
 
         // ---- Grant roles ----
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbAdapter));
-        intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(bnbAdapter));
-        intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(batchAdapterBnb));
+        auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
+        intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(targetRouter));
+        intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(nftBridgeBnb));
         // The system bridge runs while the series is Called; both batch adapters need SYSTEM_RELAYER_ROLE on their
         // local Intex to crosschainBurn/crosschainMint during that window.
-        intexBnb.grantRole(intexBnb.SYSTEM_RELAYER_ROLE(), address(batchAdapterBnb));
-        batchAdapterBnb.grantRole(batchAdapterBnb.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
-        intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(batchAdapterOutbe));
-        intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(batchAdapterOutbe));
+        intexBnb.grantRole(intexBnb.SYSTEM_RELAYER_ROLE(), address(nftBridgeBnb));
+        nftBridgeBnb.grantRole(nftBridgeBnb.SYSTEM_RELAYER_ROLE(), address(targetRouter));
+        intexOutbe.grantRole(intexOutbe.RELAYER_ROLE(), address(nftBridgeOutbe));
+        intexOutbe.grantRole(intexOutbe.SYSTEM_RELAYER_ROLE(), address(nftBridgeOutbe));
 
         // ---- Pre-fund TargetRouter's float: it pays the systemMultiSend bridge fee ----
-        vm.deal(address(bnbAdapter), 100 ether);
+        vm.deal(address(targetRouter), 100 ether);
     }
 
     /// @dev Create the series on a given Intex contract with the shared default parameters.
@@ -125,19 +125,19 @@ contract IntexCallFlowTest is CrossChainTest {
         }
 
         // 1. OriginRouter sends MARK_CALLED → BSC. Record the payload for hand-delivery.
-        uint256 fee = outbeAdapter.quoteSendMarkCalled(seriesId);
+        uint256 fee = originRouter.quoteSendMarkCalled(seriesId);
         vm.prank(intexFactory);
-        outbeAdapter.sendMarkCalled{value: fee}(seriesId);
+        originRouter.sendMarkCalled{value: fee}(seriesId);
         bytes memory markCalledPayload = bridge.lastPayload();
 
         // 2. Deliver MARK_CALLED → TargetRouter._handleMarkCalled. If holders exist, this fires the
         //    systemMultiSend, whose SEND_MULTI payload the bridge records last.
-        _deliver(OUTBE_CHAIN_ID, address(outbeAdapter), address(bnbAdapter), markCalledPayload);
+        _deliver(OUTBE_CHAIN_ID, address(originRouter), address(targetRouter), markCalledPayload);
 
         // 3. Deliver SEND_MULTI → Outbe batch adapter (only if holders exist).
         if (hasHolders) {
             bytes memory sendMultiPayload = bridge.lastPayload();
-            _deliver(BNB_CHAIN_ID, address(batchAdapterBnb), address(batchAdapterOutbe), sendMultiPayload);
+            _deliver(BNB_CHAIN_ID, address(nftBridgeBnb), address(nftBridgeOutbe), sendMultiPayload);
         }
     }
 

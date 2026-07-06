@@ -25,9 +25,9 @@ contract TargetRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    TargetRouter private bnbAdapter;
-    OriginRouter private outbeAdapter;
-    IntexNFT1155Bridge private batchAdapter;
+    TargetRouter private targetRouter;
+    OriginRouter private originRouter;
+    IntexNFT1155Bridge private nftBridge;
 
     // Mock contracts
     IntexAuction private auction;
@@ -58,33 +58,33 @@ contract TargetRouterTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy BNB adapter
-        bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy Outbe adapter (for cross-chain testing)
-        outbeAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        batchAdapter = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
-        bnbAdapter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeAdapter)));
-        outbeAdapter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbAdapter)));
+        targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
 
         // Wire BNB adapter dependencies
-        bnbAdapter.wire(address(auction), address(intex), admin, address(batchAdapter));
+        targetRouter.wire(address(auction), address(intex), admin, address(nftBridge));
 
         // Wire Outbe adapter dependencies
-        outbeAdapter.wire(desis, makeAddr("factory"));
+        originRouter.wire(desis, makeAddr("factory"));
 
         // Grant RELAYER_ROLE to adapter
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbAdapter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbAdapter));
+        auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
+        intex.grantRole(intex.RELAYER_ROLE(), address(targetRouter));
 
         // Grant SYSTEM_RELAYER_ROLE to TargetRouter on batch adapter
-        batchAdapter.grantRole(batchAdapter.SYSTEM_RELAYER_ROLE(), address(bnbAdapter));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(targetRouter));
 
         // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
-        intex.grantRole(intex.RELAYER_ROLE(), address(batchAdapter));
+        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
     }
 
     // --- Helpers ---
@@ -113,41 +113,41 @@ contract TargetRouterTest is CrossChainTest {
 
     // --- Constructor Tests ---
     function test_constructor() public view {
-        assertTrue(bnbAdapter.hasRole(bnbAdapter.DEFAULT_ADMIN_ROLE(), admin));
+        assertTrue(targetRouter.hasRole(targetRouter.DEFAULT_ADMIN_ROLE(), admin));
     }
 
     function test_wire() public view {
-        assertEq(address(bnbAdapter.auction()), address(auction));
-        assertEq(address(bnbAdapter.intex()), address(intex));
-        assertTrue(bnbAdapter.hasRole(bnbAdapter.AUCTION_ROLE(), address(auction)));
+        assertEq(address(targetRouter.auction()), address(auction));
+        assertEq(address(targetRouter.intex()), address(intex));
+        assertTrue(targetRouter.hasRole(targetRouter.AUCTION_ROLE(), address(auction)));
     }
 
     function test_wire_revert_zero_address() public {
-        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
-        newAdapter.wire(address(0), address(intex), admin, address(batchAdapter));
+        newRouter.wire(address(0), address(intex), admin, address(nftBridge));
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
-        newAdapter.wire(address(auction), address(0), admin, address(batchAdapter));
+        newRouter.wire(address(auction), address(0), admin, address(nftBridge));
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
-        newAdapter.wire(address(auction), address(intex), address(0), address(batchAdapter));
+        newRouter.wire(address(auction), address(intex), address(0), address(nftBridge));
     }
 
     function test_wire_revert_zero_nftBridge() public {
-        TargetRouter newAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "nftBridge"));
-        newAdapter.wire(address(auction), address(intex), admin, address(0));
+        newRouter.wire(address(auction), address(intex), admin, address(0));
     }
 
     // --- Access Control Tests ---
@@ -156,19 +156,19 @@ contract TargetRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        bnbAdapter.sendBidsBatch{value: 0.1 ether}(params);
+        targetRouter.sendBidsBatch{value: 0.1 ether}(params);
     }
 
     // --- Role Constants Tests ---
     function test_role_constants() public view {
-        assertEq(bnbAdapter.AUCTION_ROLE(), keccak256("AUCTION_ROLE"));
+        assertEq(targetRouter.AUCTION_ROLE(), keccak256("AUCTION_ROLE"));
     }
 
     // --- Quote Tests ---
     function test_quoteSendBidsBatch() public view {
         ITargetRouter.BidsBatchParams memory params = _bidsBatchParams(2);
 
-        uint256 fee = bnbAdapter.quoteSendBidsBatch(params);
+        uint256 fee = targetRouter.quoteSendBidsBatch(params);
 
         // Fee should be non-zero
         assertEq(fee, 0.001 ether);
@@ -178,84 +178,84 @@ contract TargetRouterTest is CrossChainTest {
     function test_supportsInterface() public view {
         // IAccessControl interface ID
         bytes4 accessControlId = 0x7965db0b;
-        assertTrue(bnbAdapter.supportsInterface(accessControlId));
+        assertTrue(targetRouter.supportsInterface(accessControlId));
     }
 
     // --- sweepNative Tests (TargetRouter) ---
     function test_sweepNative_bnb_success() public {
-        vm.deal(address(bnbAdapter), 5 ether);
+        vm.deal(address(targetRouter), 5 ether);
         address payable recipient = payable(address(0xBEEF));
         uint256 before = recipient.balance;
 
-        bnbAdapter.sweepNative(recipient, 5 ether);
+        targetRouter.sweepNative(recipient, 5 ether);
 
         assertEq(recipient.balance - before, 5 ether);
-        assertEq(address(bnbAdapter).balance, 0);
+        assertEq(address(targetRouter).balance, 0);
     }
 
     function test_sweepNative_bnb_revert_zeroTo() public {
-        vm.deal(address(bnbAdapter), 1 ether);
+        vm.deal(address(targetRouter), 1 ether);
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "to"));
-        bnbAdapter.sweepNative(payable(address(0)), 1 ether);
+        targetRouter.sweepNative(payable(address(0)), 1 ether);
     }
 
     function test_sweepNative_bnb_revert_insufficientBalance() public {
-        vm.deal(address(bnbAdapter), 1 ether);
+        vm.deal(address(targetRouter), 1 ether);
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NativeBalanceInsufficient.selector, 1 ether, 2 ether));
-        bnbAdapter.sweepNative(payable(address(0xBEEF)), 2 ether);
+        targetRouter.sweepNative(payable(address(0xBEEF)), 2 ether);
     }
 
     function test_sweepNative_bnb_revert_failedCall() public {
-        vm.deal(address(bnbAdapter), 1 ether);
+        vm.deal(address(targetRouter), 1 ether);
         RejectingReceiver rejector = new RejectingReceiver();
         vm.expectRevert(ITargetRouter.NativeSweepFailed.selector);
-        bnbAdapter.sweepNative(payable(address(rejector)), 1 ether);
+        targetRouter.sweepNative(payable(address(rejector)), 1 ether);
     }
 
     function test_sweepNative_bnb_revert_unauthorized() public {
-        vm.deal(address(bnbAdapter), 1 ether);
+        vm.deal(address(targetRouter), 1 ether);
         vm.prank(user);
         vm.expectRevert();
-        bnbAdapter.sweepNative(payable(address(0xBEEF)), 1 ether);
+        targetRouter.sweepNative(payable(address(0xBEEF)), 1 ether);
     }
 
     // --- sweepNative Tests (IntexNFT1155Bridge) ---
     function test_sweepNative_batch_success() public {
-        vm.deal(address(batchAdapter), 3 ether);
+        vm.deal(address(nftBridge), 3 ether);
         address payable recipient = payable(address(0xCAFE));
         uint256 before = recipient.balance;
 
-        batchAdapter.sweepNative(recipient, 3 ether);
+        nftBridge.sweepNative(recipient, 3 ether);
 
         assertEq(recipient.balance - before, 3 ether);
-        assertEq(address(batchAdapter).balance, 0);
+        assertEq(address(nftBridge).balance, 0);
     }
 
     function test_sweepNative_batch_revert_zeroTo() public {
-        vm.deal(address(batchAdapter), 1 ether);
+        vm.deal(address(nftBridge), 1 ether);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "to"));
-        batchAdapter.sweepNative(payable(address(0)), 1 ether);
+        nftBridge.sweepNative(payable(address(0)), 1 ether);
     }
 
     function test_sweepNative_batch_revert_insufficientBalance() public {
-        vm.deal(address(batchAdapter), 1 ether);
+        vm.deal(address(nftBridge), 1 ether);
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155Bridge.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
         );
-        batchAdapter.sweepNative(payable(address(0xCAFE)), 2 ether);
+        nftBridge.sweepNative(payable(address(0xCAFE)), 2 ether);
     }
 
     function test_sweepNative_batch_revert_failedCall() public {
-        vm.deal(address(batchAdapter), 1 ether);
+        vm.deal(address(nftBridge), 1 ether);
         RejectingReceiver rejector = new RejectingReceiver();
         vm.expectRevert(IIntexNFT1155Bridge.NativeSweepFailed.selector);
-        batchAdapter.sweepNative(payable(address(rejector)), 1 ether);
+        nftBridge.sweepNative(payable(address(rejector)), 1 ether);
     }
 
     function test_sweepNative_batch_revert_unauthorized() public {
-        vm.deal(address(batchAdapter), 1 ether);
+        vm.deal(address(nftBridge), 1 ether);
         vm.prank(user);
         vm.expectRevert();
-        batchAdapter.sweepNative(payable(address(0xCAFE)), 1 ether);
+        nftBridge.sweepNative(payable(address(0xCAFE)), 1 ether);
     }
 }

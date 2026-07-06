@@ -413,7 +413,7 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + 
 // ============================================================================
 
 interface NftBridgeWireArgs {
-  batchAdapterContract: string;
+  nftBridgeContract: string;
   targetRouter: string;
 }
 
@@ -421,12 +421,12 @@ const nftBridgeWireAction = async (args: NftBridgeWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
 
   console.log(`Wiring IntexNFT1155Bridge (grant SYSTEM_RELAYER_ROLE)...`);
-  console.log(`  BatchAdapter: ${args.batchAdapterContract}`);
+  console.log(`  NftBridge: ${args.nftBridgeContract}`);
   console.log(`  TargetRouter: ${args.targetRouter}`);
 
-  const adapter = (await viem.getContractAt(
+  const bridge = (await viem.getContractAt(
     "IntexNFT1155Bridge",
-    args.batchAdapterContract as `0x${string}`
+    args.nftBridgeContract as `0x${string}`
   )) as {
     read: {
       SYSTEM_RELAYER_ROLE: () => Promise<`0x${string}`>;
@@ -437,8 +437,8 @@ const nftBridgeWireAction = async (args: NftBridgeWireArgs, hre: unknown) => {
     };
   };
 
-  const role = await adapter.read.SYSTEM_RELAYER_ROLE();
-  const alreadyGranted = await adapter.read.hasRole([role, args.targetRouter as `0x${string}`]);
+  const role = await bridge.read.SYSTEM_RELAYER_ROLE();
+  const alreadyGranted = await bridge.read.hasRole([role, args.targetRouter as `0x${string}`]);
 
   if (alreadyGranted) {
     console.log(`✅ SYSTEM_RELAYER_ROLE already granted to TargetRouter`);
@@ -446,14 +446,14 @@ const nftBridgeWireAction = async (args: NftBridgeWireArgs, hre: unknown) => {
   }
 
   const txHash = await sendAndWait(viem, () =>
-    adapter.write.grantRole([role, args.targetRouter as `0x${string}`]),
+    bridge.write.grantRole([role, args.targetRouter as `0x${string}`]),
   );
   console.log(`✅ IntexNFT1155Bridge wired. Tx: ${txHash}`);
 };
 
 const nftBridgeWire = task("nft-bridge-wire", "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155Bridge to TargetRouter")
   .addOption({
-    name: "batchAdapterContract",
+    name: "nftBridgeContract",
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
