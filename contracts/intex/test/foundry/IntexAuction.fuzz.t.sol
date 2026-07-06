@@ -164,7 +164,8 @@ contract IntexAuctionFuzzTest is Test {
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
-            minIntexBidQuantity: MIN_QTY
+            minIntexBidQuantity: MIN_QTY,
+            commitBondMinor: 0
         });
         vm.prank(bridger);
         auction.auctionStart(seriesId, schedule, params);

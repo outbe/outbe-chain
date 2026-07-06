@@ -382,7 +382,8 @@ contract OriginRouter is
             p.intexCallPeriod,
             p.callWindowDays,
             p.callThresholdDays,
-            p.minIntexBidQuantity
+            p.minIntexBidQuantity,
+            p.commitBondMinor
         );
     }
 

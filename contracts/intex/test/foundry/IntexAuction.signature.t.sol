@@ -109,7 +109,8 @@ contract AuctionSignatureTest is Test {
             floorPriceMinor: 100,
             callPriceMinor: 100,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
-            minIntexBidQuantity: 1
+            minIntexBidQuantity: 1,
+            commitBondMinor: 0
         });
         vm.prank(bridger);
         auction.auctionStart(seriesId, schedule, params);
@@ -221,7 +222,8 @@ contract AuctionSignatureTest is Test {
             floorPriceMinor: 100,
             callPriceMinor: 100,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
-            minIntexBidQuantity: 1
+            minIntexBidQuantity: 1,
+            commitBondMinor: 0
         });
         vm.startPrank(bridger);
         auction.auctionStart(seriesId, schedule, params);

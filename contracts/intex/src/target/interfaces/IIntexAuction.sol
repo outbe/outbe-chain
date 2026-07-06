@@ -83,6 +83,9 @@ interface IIntexAuction {
         uint64 floorPriceMinor;
         /// @notice Call price (reference ccy).
         uint64 callPriceMinor;
+        /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
+        ///         reveal/cancel; 0 disables the bond.
+        uint128 commitBondMinor;
     }
 
     /// @notice Auction results and statistics (final, set at clearing).

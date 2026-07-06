@@ -115,6 +115,7 @@ pub fn start_auction(
         callWindowDays: iparams.call_window_days,
         callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
+        commitBondMinor: config.commit_bond_minor,
     };
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(

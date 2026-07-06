@@ -5,7 +5,7 @@ use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::units::SCALE_1E18_U128;
 
-use crate::constants::PROMIS_LOAD;
+use crate::constants::{COMMIT_BOND, PROMIS_LOAD};
 
 /// Auction lifecycle stage.
 ///
@@ -64,6 +64,8 @@ pub struct AuctionConfig {
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
+    /// Commit-entry bond (payment-token 18-dec minor units); 0 disables the bond.
+    pub commit_bond_minor: u128,
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
     /// Floor and call derive from it; the escrow basis is `promis_load` (not entry-derived).
     pub entry_price_minor: U256,
@@ -84,6 +86,7 @@ impl AuctionConfig {
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
+            commit_bond_minor: COMMIT_BOND.saturating_mul(SCALE_1E18_U128),
             entry_price_minor,
         }
     }
@@ -203,6 +206,10 @@ pub struct DesisContract {
     /// series_id -> bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
     #[attribute(order = 21)]
     pub bids_arrived_mask: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// series_id -> commit-entry bond (payment-token minor units).
+    #[attribute(order = 22)]
+    pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 }
 
 impl DesisContract<'_> {

@@ -16,9 +16,10 @@ contract BridgeMsgCodecValidationTest is Test {
     // --- fixed-width decoders reject over-long payloads ---
 
     function test_AuctionStageStart_OverLong_Reverts() public {
-        bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
-        bytes memory tooLong = abi.encodePacked(packet, hex"00"); // 73 bytes, expected 72
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+        );
+        bytes memory tooLong = abi.encodePacked(packet, hex"00"); // 93 bytes, expected 92
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -27,7 +28,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
             )
         );
-        this.exposedDecodeAuctionStageStart(tooLong);
+        BridgeMsgCodec.decodeAuctionParams(tooLong);
     }
 
     // --- fixed-width decoders reject empty / truncated payloads with a typed error ---
@@ -42,13 +43,14 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
             )
         );
-        this.exposedDecodeAuctionStageStart(empty);
+        BridgeMsgCodec.decodeAuctionParams(empty);
     }
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
-        bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
-        bytes memory truncated = new bytes(packet.length - 1); // 71 bytes
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+        );
+        bytes memory truncated = new bytes(packet.length - 1); // 91 bytes
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = packet[i];
         }
@@ -60,7 +62,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START
             )
         );
-        this.exposedDecodeAuctionStageStart(truncated);
+        BridgeMsgCodec.decodeAuctionParams(truncated);
     }
 
     // --- remaining fixed-width decoders reject over-long payloads ---
@@ -161,8 +163,8 @@ contract BridgeMsgCodecValidationTest is Test {
     // --- Happy-path round-trips still pass after the exact-length guard ---
 
     function test_FixedWidth_RoundTrips_StillPass() public view {
-        (uint32 s,,,,,,,,,,,,,,) = this.exposedDecodeAuctionStageStart(
-            BridgeMsgCodec.encodeAuctionStageStart(42, 1, 2, 3, 840, 840, 1e18, 1, 2, 3, 4e6, 5, 6, 7, 1)
+        (uint32 s,,) = BridgeMsgCodec.decodeAuctionParams(
+            BridgeMsgCodec.encodeAuctionStageStart(42, 1, 2, 3, 840, 840, 1e18, 1, 2, 3, 4e6, 5, 6, 7, 1, 9e18)
         );
         assertEq(s, 42, "stageStart");
         assertEq(this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(7)), 7, "clearing");
@@ -281,30 +283,6 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     // --- External wrappers ---
-
-    function exposedDecodeAuctionStageStart(bytes calldata p)
-        external
-        pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            uint128,
-            uint32,
-            uint64,
-            uint64,
-            uint64,
-            uint32,
-            uint16,
-            uint16,
-            uint16
-        )
-    {
-        return BridgeMsgCodec.decodeAuctionStageStart(p);
-    }
 
     function exposedDecodeAuctionStageReveal(bytes calldata p) external pure returns (uint32, bool) {
         return BridgeMsgCodec.decodeAuctionStageReveal(p);
