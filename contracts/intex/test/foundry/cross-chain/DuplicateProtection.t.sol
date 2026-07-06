@@ -12,8 +12,8 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
-/// @dev Under ERC-7786 the messengers have NO message-level dedup — the hub deduplicates and rolls back, so the old
-///      ERC-7786 ORDERED `nextNonce` premise no longer exists at the messenger. The NFT batch adapter, which
+/// @dev Under ERC-7786 the routers have NO message-level dedup — the hub deduplicates and rolls back, so the old
+///      ERC-7786 ORDERED `nextNonce` premise no longer exists at the router. The NFT batch adapter, which
 ///      carries independent transfers, keeps its OWN defence-in-depth dedup keyed by the bridge `receiveId`
 ///      (`processed[receiveId]`), rejecting a replay of the same message with `AlreadyProcessed(receiveId)`. A
 ///      `deliverLast()` replay reuses the same `receiveId`, so it exercises exactly this guard.

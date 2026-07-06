@@ -60,7 +60,7 @@ contract PatternADeferTest is CrossChainTest {
     /// @dev Fee the loopback bridge charges; the relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetRouter internal bnbMessenger;
+    TargetRouter internal bnbRouter;
     IntexNFT1155Bridge internal nftBridge;
     IntexNFT1155Bridge internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
@@ -68,7 +68,7 @@ contract PatternADeferTest is CrossChainTest {
     StubAuctionWithBids internal stubAuction;
 
     address internal admin = address(this);
-    // Registered peer standing in for the Outbe-side messenger; delivery is authenticated against this address.
+    // Registered peer standing in for the Outbe-side router; delivery is authenticated against this address.
     address internal outbePeer = makeAddr("outbePeer");
     uint32 internal constant SERIES_ID = 20260301;
     uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
@@ -81,32 +81,32 @@ contract PatternADeferTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
-        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
+        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
         nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(nftBridge));
+        bnbRouter.wire(address(stubAuction), address(intex), admin, address(nftBridge));
 
-        // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
+        // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
         // Intex. crosschainBurn is gated by RELAYER_ROLE, and by SYSTEM_RELAYER_ROLE during the Called window.
-        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbRouter));
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
+        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + holder enumeration work.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
         intex.markQualified(SERIES_ID);
     }
 
-    /// @dev Deliver an inbound packet to the messenger from the registered Outbe peer.
+    /// @dev Deliver an inbound packet to the router from the registered Outbe peer.
     function _deliverBridge(bytes memory message) internal {
-        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbMessenger), message);
+        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbRouter), message);
     }
 
     // ---------------------------------------------------------------
@@ -115,47 +115,47 @@ contract PatternADeferTest is CrossChainTest {
 
     function test_TM_BidsRelayDeferredOnInsufficientBalance() public {
         // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
-        assertEq(address(bnbMessenger).balance, 0);
+        assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
         // First parked slot.
-        (uint32 seriesId, bool exists, bool done) = bnbMessenger.pendingBidsRelays(0);
+        (uint32 seriesId, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
         assertEq(seriesId, SERIES_ID, "deferred seriesId");
         assertTrue(exists);
         assertFalse(done);
-        assertEq(bnbMessenger.nextPendingBidsRelayIdx(), 1);
+        assertEq(bnbRouter.nextPendingBidsRelayIdx(), 1);
     }
 
     function test_TM_FlushBidsRelaySucceedsAfterTopUp() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
         // Top up TM float generously so the retry can pay the bridge fee.
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
 
-        (,, bool done) = bnbMessenger.pendingBidsRelays(0);
+        (,, bool done) = bnbRouter.pendingBidsRelays(0);
         assertTrue(done, "flushed slot marked done");
     }
 
     function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyFlushed() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
-        bnbMessenger.flushPendingBidsRelay(0);
+        vm.deal(address(bnbRouter), 10 ether);
+        bnbRouter.flushPendingBidsRelay(0);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, 0));
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
     }
 
     function test_TM_FlushBidsRelayUnknownIdxReverts() public {
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingBidsRelay.selector, 42));
-        bnbMessenger.flushPendingBidsRelay(42);
+        bnbRouter.flushPendingBidsRelay(42);
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbMessenger.relayBidsToOutbe(SERIES_ID);
+        bnbRouter.relayBidsToOutbe(SERIES_ID);
     }
 
     // a zero-bid auction still emits one empty final batch (the no-bid completion signal),
@@ -163,10 +163,10 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_BidsRelay_ZeroBids_SendsOneEmptyFinalBatch() public {
         stubAuction.setBidCount(0);
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 1, "exactly one batch even with no bids");
@@ -178,10 +178,10 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 3, "ceil(130 / 64) = 3 chunks");
@@ -214,46 +214,46 @@ contract PatternADeferTest is CrossChainTest {
         return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
     }
 
-    function test_TM_HoldersRelayDeferredOnMessengerFloatStarved() public {
+    function test_TM_HoldersRelayDeferredOnRouterFloatStarved() public {
         // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
         // The inbound MARK_CALLED triggers markCalled + the holders bridge.
         intex.mint(address(0xCAFE), 1, SERIES_ID);
 
         // TargetRouter's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
         // fails → holders relay deferred.
-        assertEq(address(bnbMessenger).balance, 0);
+        assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(_markCalledPacket());
 
         // Auto-getter skips the dynamic-array fields (holders, amounts) — returns (tokenId, exists, done).
-        (uint256 storedTokenId, bool exists, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        (uint256 storedTokenId, bool exists, bool done) = bnbRouter.pendingHoldersRelays(0);
         assertEq(storedTokenId, TOKEN_ID, "deferred tokenId");
         assertTrue(exists);
         assertFalse(done);
     }
 
-    function test_TM_FlushHoldersRelaySucceedsAfterMessengerTopUp() public {
+    function test_TM_FlushHoldersRelaySucceedsAfterRouterTopUp() public {
         intex.mint(address(0xCAFE), 1, SERIES_ID);
         _deliverBridge(_markCalledPacket());
 
-        // TargetRouter pays the bridge fee, so top up the messenger (not the adapter).
-        vm.deal(address(bnbMessenger), 1 ether);
+        // TargetRouter pays the bridge fee, so top up the router (not the adapter).
+        vm.deal(address(bnbRouter), 1 ether);
 
-        bnbMessenger.flushPendingHoldersRelay(0);
+        bnbRouter.flushPendingHoldersRelay(0);
 
-        (,, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        (,, bool done) = bnbRouter.pendingHoldersRelays(0);
         assertTrue(done, "flushed holders slot marked done");
     }
 
     function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingHoldersRelay.selector, 99));
-        bnbMessenger.flushPendingHoldersRelay(99);
+        bnbRouter.flushPendingHoldersRelay(99);
     }
 
     function test_TM_BridgeSeriesHoldersExt_ExternalCallerRevertsNotSelf() public {
         address[] memory holders = new address[](0);
         uint256[] memory amounts = new uint256[](0);
         vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbMessenger.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
+        bnbRouter.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
     }
 }

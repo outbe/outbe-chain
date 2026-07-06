@@ -39,8 +39,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant REFERENCE_CURRENCY = 840;
 
-    TargetRouter internal bnbMessenger;
-    OriginRouter internal outbeMessenger;
+    TargetRouter internal bnbRouter;
+    OriginRouter internal outbeRouter;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
@@ -59,8 +59,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
 
-        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
@@ -73,17 +73,17 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         escrow.wire(admin, address(compact), address(provider), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
-        outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
+        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
-        bnbMessenger.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        bnbRouter.wire(address(auction), address(intex), address(escrow), address(nftBridge));
 
-        // The messenger drives auction lifecycle (RELAYER_ROLE), creates/mints IntexNFT1155
+        // The router drives auction lifecycle (RELAYER_ROLE), creates/mints IntexNFT1155
         // (RELAYER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
-        // mutations on its own RELAYER_ROLE which only the wired messenger should hold.
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbMessenger));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(bnbMessenger));
+        // mutations on its own RELAYER_ROLE which only the wired router should hold.
+        auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        escrow.grantRole(escrow.RELAYER_ROLE(), address(bnbRouter));
 
         // Bidder funds + approve so EscrowAdapter.lockFunds works in the REFUND_INSTRUCTIONS test.
         paymentToken.mint(bidder, 1e24);
@@ -109,9 +109,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     function test_handleAuctionResult_persistsClearingOnAuction() public {
         _seedAuction();
         // Push the auction into Issuance stage so executeAuctionClearing is accepted.
-        vm.prank(address(bnbMessenger));
+        vm.prank(address(bnbRouter));
         auction.startRevealingBidsStage(SERIES_ID, true);
-        vm.prank(address(bnbMessenger));
+        vm.prank(address(bnbRouter));
         auction.startClearingStage(SERIES_ID);
 
         uint64 clearingPrice = 100e6;
@@ -191,8 +191,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
         assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
-        assertEq(bnbMessenger.nextPendingIssuanceMintIdx(), 1, "one mint parked");
-        (uint32 s, address r, uint256 q, bool exists, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        assertEq(bnbRouter.nextPendingIssuanceMintIdx(), 1, "one mint parked");
+        (uint32 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuanceMints(0);
         assertEq(s, SERIES_ID);
         assertEq(r, address(bad));
         assertEq(q, 3);
@@ -212,15 +212,15 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         // Recipient stops reverting; the parked mint is retried permissionlessly.
         bad.setReject(false);
-        bnbMessenger.flushPendingIssuanceMint(0);
+        bnbRouter.flushPendingIssuanceMint(0);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
-        (,,,, bool done) = bnbMessenger.pendingIssuanceMints(0);
+        (,,,, bool done) = bnbRouter.pendingIssuanceMints(0);
         assertTrue(done);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
-        bnbMessenger.flushPendingIssuanceMint(0);
+        bnbRouter.flushPendingIssuanceMint(0);
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---
@@ -279,7 +279,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
             minIntexBidQuantity: 1
         });
-        vm.prank(address(bnbMessenger));
+        vm.prank(address(bnbRouter));
         auction.auctionStart(SERIES_ID, schedule, params);
     }
 
@@ -288,6 +288,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _deliver(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 }

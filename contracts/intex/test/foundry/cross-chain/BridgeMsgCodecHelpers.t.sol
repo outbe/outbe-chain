@@ -34,9 +34,9 @@ contract BridgeMsgCodecHarness {
 
 /// @dev Library-level negative tests for `BridgeMsgCodec`. The revert paths exercised here used to
 ///      ride end-to-end via the now-skipped `InboundValidation.t.sol` / `InboundDropDontBlock.t.sol`
-///      messenger tests (drop-don't-block was temporarily removed for the BSC testnet executor
+///      router tests (drop-don't-block was temporarily removed for the BSC testnet executor
 ///      workaround). The library still emits these reverts identically; this file pins them at the
-///      library boundary so they stay asserted in CI regardless of the messenger-layer wrapper state.
+///      library boundary so they stay asserted in CI regardless of the router-layer wrapper state.
 contract BridgeMsgCodecHelpersTest is Test {
     BridgeMsgCodecHarness internal harness;
 

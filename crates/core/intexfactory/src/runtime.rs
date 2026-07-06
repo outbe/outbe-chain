@@ -24,7 +24,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// Capture series identity in Intex and enroll it in the floor-bin
-/// index. The outbound LayerZero send is added with messenger wiring.
+/// index. The outbound ERC-7786 send is added with router wiring.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     // u32 timestamp; bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())

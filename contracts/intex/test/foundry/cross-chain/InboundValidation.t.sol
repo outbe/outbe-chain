@@ -18,7 +18,7 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundValidationTest
 /// @notice Inbound validation over the ERC-7786 bridge: a malformed/unknown payload no longer advances a lane
-///         silently — the messenger/adapter reverts with a typed error, the bridge rolls back, and the transport
+///         silently — the router/adapter reverts with a typed error, the bridge rolls back, and the transport
 ///         redelivers. Each case asserts the exact typed revert propagates out of `bridge.deliverAs`.
 /// @dev Delivery goes through the loopback bridge as the authenticated peer, so the peer table + bridge gate are
 ///      honored and the payload is the only thing under test — exactly what we want for validation coverage.
@@ -26,8 +26,8 @@ contract InboundValidationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    TargetRouter internal bnbMessenger;
-    OriginRouter internal outbeMessenger;
+    TargetRouter internal bnbRouter;
+    OriginRouter internal outbeRouter;
     IntexNFT1155Bridge internal nftBridgeBnb;
     IntexNFT1155Bridge internal nftBridgeOutbe;
 
@@ -45,20 +45,20 @@ contract InboundValidationTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound peer authentication passes and the payload is what fails.
-        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
-        outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
+        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
         nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
-        bnbMessenger.wire(address(auction), address(intex), admin, address(nftBridgeBnb));
-        outbeMessenger.wire(desis, intexFactory);
+        bnbRouter.wire(address(auction), address(intex), admin, address(nftBridgeBnb));
+        outbeRouter.wire(desis, intexFactory);
     }
 
     // ---------------------------------------------------------------
@@ -69,14 +69,14 @@ contract InboundValidationTest is CrossChainTest {
         // Only the bodyVersion byte — header itself is shorter than 2.
         bytes memory packet = hex"01";
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, 0, 1, 2));
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_UnknownMsgType_RevertsUnknownMsgType() public {
         // Header is well-formed (version=1, msgType=0xFE) but msgType is not in TM's accepted set.
         bytes memory packet = hex"01FE";
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 0xFE));
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_ShortMarkCalled_RevertsInvalidPayloadLength() public {
@@ -87,7 +87,7 @@ contract InboundValidationTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 5, 6)
         );
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_ShortStageReveal_RevertsInvalidPayloadLength() public {
@@ -99,7 +99,7 @@ contract InboundValidationTest is CrossChainTest {
                 BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL, 6, 7
             )
         );
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_ShortRefundInstructions_RevertsInvalidPayloadLength() public {
@@ -114,7 +114,7 @@ contract InboundValidationTest is CrossChainTest {
                 BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, minLen - 1, minLen
             )
         );
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_ShortIssuanceInstructions_RevertsInvalidPayloadLength() public {
@@ -132,7 +132,7 @@ contract InboundValidationTest is CrossChainTest {
                 minLen
             )
         );
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function test_TM_RefundArrayLengthMismatch_Reverts() public {
@@ -155,7 +155,7 @@ contract InboundValidationTest is CrossChainTest {
                 BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
             )
         );
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     // ---------------------------------------------------------------
@@ -167,7 +167,7 @@ contract InboundValidationTest is CrossChainTest {
         // per-type length assertion is a no-op, and the OM dispatch else-branch raises `UnknownMsgType(0xFE)`.
         bytes memory packet = hex"01FE";
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 0xFE));
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     /// @notice Reverse of the previous test: a msgType that the codec knows but OM does not accept
@@ -179,7 +179,7 @@ contract InboundValidationTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 2, 6)
         );
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     function test_OM_BodySrcChainIdMismatch_RevertsSrcChainIdBodyMismatch() public {
@@ -189,7 +189,7 @@ contract InboundValidationTest is CrossChainTest {
             42, 0xDEAD, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     function test_OM_ShortBidsBatch_RevertsInvalidPayloadLength() public {
@@ -210,7 +210,7 @@ contract InboundValidationTest is CrossChainTest {
                 full.length
             )
         );
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), truncated);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), truncated);
     }
 
     function test_OM_BidsBatchTooLarge_Reverts() public {
@@ -240,7 +240,7 @@ contract InboundValidationTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)
         );
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     // ---------------------------------------------------------------
@@ -248,20 +248,20 @@ contract InboundValidationTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginRouter fresh = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);

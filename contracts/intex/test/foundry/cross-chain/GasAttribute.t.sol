@@ -24,7 +24,7 @@ contract GasAttributeTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        outbe = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        outbe = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
         bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
         bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));

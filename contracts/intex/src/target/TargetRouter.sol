@@ -17,7 +17,7 @@ import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol"
 
 /// @title TargetRouter
 /// @author Outbe
-/// @notice BNB-side messenger: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe over the
+/// @notice BNB-side router: sends BIDS_BATCH to Outbe and receives auction/series messages from Outbe over the
 ///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series

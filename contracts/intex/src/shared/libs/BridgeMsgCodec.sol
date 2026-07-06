@@ -322,7 +322,7 @@ library BridgeMsgCodec {
 
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
     ///         Kept `external` so the struct construction lives in the linked library, off the
-    ///         messenger's runtime size (EIP-170). Mirrors `decodeAuctionStageStart`'s layout.
+    ///         router's runtime size (EIP-170). Mirrors `decodeAuctionStageStart`'s layout.
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return seriesId The auction series identifier.
     /// @return schedule The decoded commit/reveal/issuance schedule.

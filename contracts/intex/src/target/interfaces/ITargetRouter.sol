@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 /// @title ITargetRouter
 /// @author Outbe
-/// @notice Interface for the BNB-side messenger. Sends BIDS_BATCH to Outbe and receives auction/series messages from
+/// @notice Interface for the BNB-side router. Sends BIDS_BATCH to Outbe and receives auction/series messages from
 ///         Outbe over the protocol-agnostic ERC-7786 bridge.
 /// @dev Deployed on BNB Chain behind a UUPS proxy. Inbound delivery arrives via
 ///      {ERC7786MessengerBase-receiveMessage}. Outbound `sendBidsBatch` returns the bridge `sendId` and is funded

@@ -45,7 +45,7 @@ library DeployProxy {
         return escrow;
     }
 
-    function originMessenger(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginRouter) {
+    function originRouter(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginRouter) {
         OriginRouter impl = new OriginRouter(bridge, bnbChainId);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginRouter.initialize, (delegate)));
         return OriginRouter(payable(address(proxy)));

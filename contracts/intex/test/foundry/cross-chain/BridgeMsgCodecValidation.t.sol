@@ -232,8 +232,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     // --- Real payload-length ceiling vs the ERC-7786 message-size cap ---
 
-    /// @notice The send-side Executor `maxMessageSize` configured for these pathways
-    ///         (`scripts/shared/layerzero.ts` → `LZ_INFRA.maxMessageSize`). A send whose
+    /// @notice The send-side `maxMessageSize` the bridge configures for these pathways. A send whose
     ///         encoded message exceeds this reverts on the source chain. This is the *byte*
     ///         ceiling only; destination gas (the per-item crosschainMint loop) is a separate and,
     ///         for the heavy paths, tighter limit — not measured here.

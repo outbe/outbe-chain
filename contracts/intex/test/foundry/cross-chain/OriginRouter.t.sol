@@ -61,7 +61,7 @@ contract OriginRouterTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        outbeAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        outbeAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
         // Deploy BNB adapter (for cross-chain testing)
         bnbAdapter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
@@ -136,7 +136,7 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginRouter newAdapter = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter newAdapter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.ZeroAddress.selector, "desis"));
         newAdapter.wire(address(0), intexFactory);

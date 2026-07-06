@@ -163,7 +163,7 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_OriginRouter() public {
-        OriginRouter origin = DeployProxy.originMessenger(address(bridge), admin, B_CHAIN_ID);
+        OriginRouter origin = DeployProxy.originRouter(address(bridge), admin, B_CHAIN_ID);
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));

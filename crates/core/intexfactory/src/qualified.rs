@@ -151,7 +151,7 @@ pub(crate) fn try_qualify(
     factory.remove_unqualified(series_id, floor)?;
     factory.insert_qualified(series_id, series.call_price_minor)?;
 
-    // Notify the target chain of the Qualified transition via LayerZero; best-effort.
+    // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
     let _ = notify_lz_qualified(storage, series_id);

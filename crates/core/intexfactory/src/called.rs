@@ -159,7 +159,7 @@ pub(crate) fn try_call(
     mark_nft_called(storage, series_id)?;
     factory.remove_qualified(series_id, trigger)?;
 
-    // Notify the target chain of the Called transition via LayerZero; best-effort.
+    // Notify the target chain of the Called transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
     let _ = notify_lz_called(storage, series_id);
