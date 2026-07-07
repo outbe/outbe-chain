@@ -62,8 +62,7 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         NonZeroU32::new(crate::bls::MAX_VALIDATORS).unwrap(),
         ModeVersion::v0(),
     );
-    let recovered =
-        Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
+    let recovered = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
     let recovered_participants = recovered.players().clone();
     let recovered_polynomial = recovered.public().clone();
     assert_eq!(
@@ -73,12 +72,9 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
 
     // 3. Build the verifier ONLY from boundary-decoded public data.
     let ns = config::outbe_app_namespace();
-    let verifier = HybridScheme::<MinSig>::verifier(
-        &ns,
-        recovered_participants,
-        recovered_polynomial,
-    )
-    .unwrap();
+    let verifier =
+        HybridScheme::<MinSig>::verifier(&ns, recovered_participants, recovered_polynomial)
+            .unwrap();
 
     // 4. The committee signs a finalization (using their secret shares).
     let signers: Vec<HybridScheme<MinSig>> = keys
@@ -96,7 +92,11 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         })
         .collect();
     let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(b"phase0-spike").as_ref()));
-    let proposal = Proposal::new(Round::new(Epoch::new(5), View::new(2)), View::new(1), digest);
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(5), View::new(2)),
+        View::new(1),
+        digest,
+    );
     let subject = Subject::Finalize {
         proposal: &proposal,
     };
@@ -824,6 +824,70 @@ fn dealer_log_size_within_extra_data_for_n128() {
         "encoded artifact size {} must fit OUTBE_MAX_EXTRA_DATA_SIZE {}",
         encoded.len(),
         outbe_primitives::consensus::OUTBE_MAX_EXTRA_DATA_SIZE
+    );
+}
+
+#[tokio::test]
+async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
+    // The producer-side gate for Path A: a committee pre-announce is accepted only
+    // if its carried outcome byte-matches THIS node's own reconstructed DKG output
+    // for the incoming epoch — and is fail-closed when no pending boundary exists.
+    let (keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
+    let validator_set = ValidatorSet {
+        public_keys: keys.iter().map(|k| k.public_key()).collect(),
+        addresses: vec![
+            address!("0x1111111111111111111111111111111111111111"),
+            address!("0x2222222222222222222222222222222222222222"),
+            address!("0x3333333333333333333333333333333333333333"),
+        ],
+        p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let artifact = build_boundary_artifact(BoundaryArtifactInput {
+        epoch: Epoch::new(0),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 0,
+        freeze_height: 0,
+        planned_activation_height: 0,
+        vrf_material_version: 0,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+
+    let manager = Mailbox::new();
+    // Fail-closed BEFORE any pending boundary exists.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(0), artifact.outcome.as_ref())
+            .await
+            .is_err(),
+        "pre-announce must be rejected when the node has no pending boundary"
+    );
+
+    manager.note_recovered_pending_boundary(artifact.clone());
+
+    // Matching outcome + epoch -> accepted.
+    manager
+        .verify_preannounce_outcome(Epoch::new(0), artifact.outcome.as_ref())
+        .await
+        .unwrap();
+    // Forged outcome -> rejected.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(0), b"forged-dkg-outcome")
+            .await
+            .is_err(),
+        "a pre-announce whose outcome differs from the local DKG output must be rejected"
+    );
+    // Wrong epoch -> rejected.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(1), artifact.outcome.as_ref())
+            .await
+            .is_err(),
+        "a pre-announce epoch that does not match the pending boundary must be rejected"
     );
 }
 
