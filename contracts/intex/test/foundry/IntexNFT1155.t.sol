@@ -277,17 +277,18 @@ contract IntexNFT1155Test is Test {
         nft.crosschainBurn(user, TOKEN_ID_1, 5);
     }
 
-    function test_CrosschainBurn_RevertsInIssuedState() public {
+    function test_CrosschainBurnAndMint_AllowedInIssuedState() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.BridgeStateForbidden.selector, TOKEN_ID_1, uint8(IIntexNFT1155.IntexState.Issued)
-            )
-        );
-        nft.crosschainBurn(user, TOKEN_ID_1, 1);
+        // Voluntary bridging is open while the series is tradable (Issued): burn out...
+        nft.crosschainBurn(user, TOKEN_ID_1, 4);
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+
+        // ...and mint in (the destination side of the same hop).
+        nft.crosschainMint(user2, TOKEN_ID_1, 4);
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 4);
         vm.stopPrank();
     }
 

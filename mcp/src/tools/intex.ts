@@ -687,8 +687,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_quote",
-    "Bridge native fee to move a Qualified Intex NFT from BSC to outbe. Bridging is only allowed once " +
-      "a series is Qualified (Issued cannot bridge; Called is auto-bridged by the system).",
+    "Bridge native fee to move an Intex NFT from BSC to outbe. Voluntary bridging is allowed while the " +
+      "series is Issued or Qualified (Called is auto-bridged by the system).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, amount, recipient, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -713,9 +713,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_nft",
-    "Bridge a Qualified Intex NFT from BSC to outbe (voluntary, holder-initiated) to settle there. Only " +
-      "works once the series is Qualified — Issued cannot bridge, and Called is auto-bridged by the system, " +
-      "not via this tool. The bridge burns your token directly (role-gated), so no approval is needed. " +
+    "Bridge an Intex NFT from BSC to outbe (voluntary, holder-initiated), e.g. to settle there. Works " +
+      "while the series is Issued or Qualified; Called is auto-bridged by the system, not via this tool. " +
+      "The bridge burns your token directly (role-gated), so no approval is needed. " +
       "Auto-quotes the native fee (paid as value). Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, recipient, network, wait }) => {
