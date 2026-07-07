@@ -1,4 +1,4 @@
-name: CI oft
+name: CI tokens
 
 on:
   push:
@@ -6,13 +6,13 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
-      - "contracts/oft/**"
+      - "contracts/tokens/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
-      - "contracts/oft/**"
+      - "contracts/tokens/**"
 
 permissions:
   contents: read
@@ -21,4 +21,4 @@ jobs:
   ci:
     uses: ./.github/workflows/_contract-ci.yml
     with:
-      project: oft
+      project: tokens
