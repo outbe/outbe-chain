@@ -135,44 +135,30 @@ fn burn_compacts_owner_index() {
 }
 
 #[test]
-fn qualify_respects_state_maturity_and_floor() {
+fn qualify_respects_state_and_floor() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut gem = GemContract::new(storage.clone());
         let floor = U256::from(540_000_000_000_000_000u128);
 
-        // Not matured yet.
-        assert!(!gem
-            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
-            .unwrap());
-
-        // Exactly 21 days — not enough (strict `>`).
-        let mature_boundary = T_NOW + 21 * 24 * 60 * 60;
-        assert!(!gem
-            .qualify(gem_id, mature_boundary, floor + U256::from(1u64))
-            .unwrap());
-
-        // One second past 21 days — passes the maturity gate.
-        let mature_time = mature_boundary + 1;
-
         // Rate equals floor (strict `>`) — must NOT qualify.
-        assert!(!gem.qualify(gem_id, mature_time, floor).unwrap());
+        assert!(!gem.qualify(gem_id, T_NOW, floor).unwrap());
 
         // Rate below floor.
         assert!(!gem
-            .qualify(gem_id, mature_time, floor - U256::from(1u64))
+            .qualify(gem_id, T_NOW, floor - U256::from(1u64))
             .unwrap());
 
-        // Past 21 days and rate strictly above floor — qualifies.
+        // Rate strictly above floor — qualifies.
         assert!(gem
-            .qualify(gem_id, mature_time, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
             .unwrap());
         let after = gem.get_gem(gem_id).unwrap().unwrap();
         assert_eq!(after.state, GemState::Qualified as u8);
 
         // Second qualify is a no-op (already qualified).
         assert!(!gem
-            .qualify(gem_id, mature_time, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
             .unwrap());
     });
 }
@@ -202,10 +188,9 @@ fn qualify_removes_from_bin_tree() {
         let mut gem = GemContract::new(storage.clone());
         let floor = U256::from(540_000_000_000_000_000u128);
         let bin = GemContract::price_to_bin(floor).unwrap();
-        let mature_time = T_NOW + 21 * 24 * 60 * 60 + 1;
 
         assert!(gem
-            .qualify(gem_id, mature_time, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
             .unwrap());
         assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
         assert!(!tree_math::contains(&gem, bin).unwrap());
@@ -238,11 +223,10 @@ fn scan_skips_bins_above_rate() {
         let _high_id = api::add_gem(storage, high.clone()).unwrap();
 
         let mut gem = GemContract::new(storage.clone());
-        let mature_time = T_NOW + 21 * 24 * 60 * 60 + 1;
         let rate = U256::from(500_000_000_000_000_000u128);
 
         // Direct qualify call on low gem: passes (floor 0.1 < rate 0.5).
-        assert!(gem.qualify(low_id, mature_time, rate).unwrap());
+        assert!(gem.qualify(low_id, T_NOW, rate).unwrap());
 
         // High gem stays Issued (rate 0.5 < floor 0.9). It must still be
         // in its bin and the bin must still be set in the trie.
