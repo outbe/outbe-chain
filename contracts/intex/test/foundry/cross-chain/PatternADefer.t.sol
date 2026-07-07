@@ -4,9 +4,9 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -49,7 +49,7 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `TargetMessenger`: the inbound clearing/mark-called handlers fire an
+/// @notice Behavioural coverage of Pattern A on `TargetRouter`: the inbound clearing/mark-called handlers fire an
 ///         outbound relay (bids batch / holders bridge) that parks on failure and is retried permissionlessly via
 ///         `flushPending*`. Failure is forced by starving the relay float — a positive bridge fee with a zero native
 ///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
@@ -60,15 +60,15 @@ contract PatternADeferTest is CrossChainTest {
     /// @dev Fee the loopback bridge charges; the relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetMessenger internal bnbMessenger;
-    ONFT1155AdapterBatch internal onftBatch;
-    ONFT1155AdapterBatch internal onftBatchOutbe;
+    TargetRouter internal bnbRouter;
+    IntexNFT1155Bridge internal nftBridge;
+    IntexNFT1155Bridge internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
 
     address internal admin = address(this);
-    // Registered peer standing in for the Outbe-side messenger; delivery is authenticated against this address.
+    // Registered peer standing in for the Outbe-side router; delivery is authenticated against this address.
     address internal outbePeer = makeAddr("outbePeer");
     uint32 internal constant SERIES_ID = 20260301;
     uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
@@ -81,81 +81,81 @@ contract PatternADeferTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
-        onftBatch = DeployProxy.onftAdapterBatch(address(intex), address(bridge), admin);
-        onftBatchOutbe = DeployProxy.onftAdapterBatch(address(intexOutbe), address(bridge), admin);
+        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
-        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
-        onftBatch.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(onftBatchOutbe)));
+        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
+        nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
-        bnbMessenger.wire(address(stubAuction), address(intex), admin, address(onftBatch));
+        bnbRouter.wire(address(stubAuction), address(intex), admin, address(nftBridge));
 
-        // Holders bridge: the messenger drives the adapter's systemMultiSend, which crosschainBurns on the local
+        // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
         // Intex. crosschainBurn is gated by RELAYER_ROLE, and by SYSTEM_RELAYER_ROLE during the Called window.
-        onftBatch.grantRole(onftBatch.SYSTEM_RELAYER_ROLE(), address(bnbMessenger));
-        intex.grantRole(intex.RELAYER_ROLE(), address(onftBatch));
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(onftBatch));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
+        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
+        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
+        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + holder enumeration work.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
         intex.markQualified(SERIES_ID);
     }
 
-    /// @dev Deliver an inbound packet to the messenger from the registered Outbe peer.
+    /// @dev Deliver an inbound packet to the router from the registered Outbe peer.
     function _deliverBridge(bytes memory message) internal {
-        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbMessenger), message);
+        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbRouter), message);
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — bids relay defer + flush
+    // TargetRouter — bids relay defer + flush
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayDeferredOnInsufficientBalance() public {
         // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
-        assertEq(address(bnbMessenger).balance, 0);
+        assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
         // First parked slot.
-        (uint32 seriesId, bool exists, bool done) = bnbMessenger.pendingBidsRelays(0);
+        (uint32 seriesId, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
         assertEq(seriesId, SERIES_ID, "deferred seriesId");
         assertTrue(exists);
         assertFalse(done);
-        assertEq(bnbMessenger.nextPendingBidsRelayIdx(), 1);
+        assertEq(bnbRouter.nextPendingBidsRelayIdx(), 1);
     }
 
     function test_TM_FlushBidsRelaySucceedsAfterTopUp() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
 
         // Top up TM float generously so the retry can pay the bridge fee.
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
 
-        (,, bool done) = bnbMessenger.pendingBidsRelays(0);
+        (,, bool done) = bnbRouter.pendingBidsRelays(0);
         assertTrue(done, "flushed slot marked done");
     }
 
     function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyFlushed() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
-        bnbMessenger.flushPendingBidsRelay(0);
+        vm.deal(address(bnbRouter), 10 ether);
+        bnbRouter.flushPendingBidsRelay(0);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.AlreadyFlushed.selector, 0));
-        bnbMessenger.flushPendingBidsRelay(0);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, 0));
+        bnbRouter.flushPendingBidsRelay(0);
     }
 
     function test_TM_FlushBidsRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchPendingBidsRelay.selector, 42));
-        bnbMessenger.flushPendingBidsRelay(42);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingBidsRelay.selector, 42));
+        bnbRouter.flushPendingBidsRelay(42);
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(ITargetMessenger.NotSelf.selector);
-        bnbMessenger.relayBidsToOutbe(SERIES_ID);
+        vm.expectRevert(ITargetRouter.NotSelf.selector);
+        bnbRouter.relayBidsToOutbe(SERIES_ID);
     }
 
     // a zero-bid auction still emits one empty final batch (the no-bid completion signal),
@@ -163,10 +163,10 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_BidsRelay_ZeroBids_SendsOneEmptyFinalBatch() public {
         stubAuction.setBidCount(0);
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 1, "exactly one batch even with no bids");
@@ -178,10 +178,10 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
-        vm.deal(address(bnbMessenger), 10 ether);
+        vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbMessenger.flushPendingBidsRelay(0);
+        bnbRouter.flushPendingBidsRelay(0);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 3, "ceil(130 / 64) = 3 chunks");
@@ -207,53 +207,96 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — holders relay defer + flush
+    // TargetRouter — holders relay defer + flush
     // ---------------------------------------------------------------
 
     function _markCalledPacket() internal pure returns (bytes memory) {
         return BridgeMsgCodec.encodeMarkCalled(SERIES_ID);
     }
 
-    function test_TM_HoldersRelayDeferredOnMessengerFloatStarved() public {
+    // A holder set larger than MAX_BATCH_SIZE is split across multiple systemMultiSend chunks, so a big
+    // series is never stuck on the codec's per-message cap. (65 holders -> 64 + 1.)
+    function test_TM_HoldersRelay_ChunksAboveCap() public {
+        vm.deal(address(bnbRouter), 10 ether);
+
+        uint256 holderCount = 65;
+        for (uint256 i = 0; i < holderCount; i++) {
+            intex.mint(address(uint160(0x1000 + i)), 1, SERIES_ID);
+        }
+        assertEq(intex.seriesHolderCount(TOKEN_ID), holderCount);
+
+        vm.recordLogs();
+        _deliverBridge(_markCalledPacket());
+        uint256[] memory sizes = _systemBridgedSizes(vm.getRecordedLogs());
+
+        assertEq(sizes.length, 2, "ceil(65 / 64) = 2 chunks");
+        assertEq(sizes[0], 64, "chunk 0 at cap");
+        assertEq(sizes[1], 1, "chunk 1 remainder");
+
+        // Every holder burned off BSC; nothing parked (the float covers both chunk fees).
+        assertEq(intex.totalSupply(TOKEN_ID), 0, "all holders migrated off BSC");
+        assertEq(intex.seriesHolderCount(TOKEN_ID), 0, "holder set cleared");
+        (, bool exists,) = bnbRouter.pendingHoldersRelays(0);
+        assertFalse(exists, "no chunk parked");
+    }
+
+    /// @dev Extract the `holdersCount` of every `SystemBridged` log, in emission order.
+    function _systemBridgedSizes(Vm.Log[] memory logs) internal pure returns (uint256[] memory sizes) {
+        bytes32 topic = keccak256("SystemBridged(bytes32,uint32,uint256,uint256)");
+        uint256 n;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) n++;
+        }
+        sizes = new uint256[](n);
+        uint256 j;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
+                (, uint256 holdersCount) = abi.decode(logs[i].data, (uint32, uint256));
+                sizes[j++] = holdersCount;
+            }
+        }
+    }
+
+    function test_TM_HoldersRelayDeferredOnRouterFloatStarved() public {
         // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
         // The inbound MARK_CALLED triggers markCalled + the holders bridge.
         intex.mint(address(0xCAFE), 1, SERIES_ID);
 
-        // TargetMessenger's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
+        // TargetRouter's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
         // fails → holders relay deferred.
-        assertEq(address(bnbMessenger).balance, 0);
+        assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(_markCalledPacket());
 
         // Auto-getter skips the dynamic-array fields (holders, amounts) — returns (tokenId, exists, done).
-        (uint256 storedTokenId, bool exists, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        (uint256 storedTokenId, bool exists, bool done) = bnbRouter.pendingHoldersRelays(0);
         assertEq(storedTokenId, TOKEN_ID, "deferred tokenId");
         assertTrue(exists);
         assertFalse(done);
     }
 
-    function test_TM_FlushHoldersRelaySucceedsAfterMessengerTopUp() public {
+    function test_TM_FlushHoldersRelaySucceedsAfterRouterTopUp() public {
         intex.mint(address(0xCAFE), 1, SERIES_ID);
         _deliverBridge(_markCalledPacket());
 
-        // TargetMessenger pays the bridge fee, so top up the messenger (not the adapter).
-        vm.deal(address(bnbMessenger), 1 ether);
+        // TargetRouter pays the bridge fee, so top up the router (not the adapter).
+        vm.deal(address(bnbRouter), 1 ether);
 
-        bnbMessenger.flushPendingHoldersRelay(0);
+        bnbRouter.flushPendingHoldersRelay(0);
 
-        (,, bool done) = bnbMessenger.pendingHoldersRelays(0);
+        (,, bool done) = bnbRouter.pendingHoldersRelays(0);
         assertTrue(done, "flushed holders slot marked done");
     }
 
     function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetMessenger.NoSuchPendingHoldersRelay.selector, 99));
-        bnbMessenger.flushPendingHoldersRelay(99);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingHoldersRelay.selector, 99));
+        bnbRouter.flushPendingHoldersRelay(99);
     }
 
     function test_TM_BridgeSeriesHoldersExt_ExternalCallerRevertsNotSelf() public {
         address[] memory holders = new address[](0);
         uint256[] memory amounts = new uint256[](0);
-        vm.expectRevert(ITargetMessenger.NotSelf.selector);
-        bnbMessenger.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
+        vm.expectRevert(ITargetRouter.NotSelf.selector);
+        bnbRouter.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
     }
 }

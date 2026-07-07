@@ -3,15 +3,13 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {ONFT1155MsgCodec} from "@contracts/shared/libs/ONFT1155MsgCodec.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 
 /// @dev Exercises the body-version contract on both codecs:
 ///      - every encoder emits `bodyVersion == BODY_VERSION_V1` at offset 0;
 ///      - every decoder reverts `UnsupportedBodyVersion(got)` on any other leading byte;
 ///      - round-trip preserves the version byte alongside the payload.
 contract BodyVersionTest is Test {
-    using ONFT1155MsgCodec for bytes;
-
     // --- BridgeMsgCodec: encoder emits version byte ---
 
     function test_BridgeCodec_AllEncodersEmitVersionV1() public pure {
@@ -23,11 +21,12 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsBatch.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
-        encoded =
-            BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
+        encoded = BridgeMsgCodec.encodeAuctionStageStart(
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+        );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
-        assertEq(encoded.length, 76, "stageStart.length"); // 2 header + 74 body
+        assertEq(encoded.length, 92, "stageStart.length"); // 2 header + 90 body
 
         encoded = BridgeMsgCodec.encodeAuctionStageReveal(1, true);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageReveal.version");
@@ -63,41 +62,28 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: round-trip ---
 
     function test_BridgeCodec_AuctionStageStart_RoundTrip() public view {
-        bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(42, 100, 200, 300, 9, 10, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3);
-        (
-            uint32 seriesId,
-            uint32 commitEnd,
-            uint32 revealEnd,
-            uint32 issuanceEnd,
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint128 promisLoadMinor,
-            uint32 minBidRate,
-            uint64 entryPrice,
-            uint64 floor,
-            uint64 callPrice,
-            uint32 callPeriod,
-            uint16 callWindowDays,
-            uint16 callThresholdDays,
-            uint16 minQty
-        ) = this.exposedDecodeAuctionStageStart(packet);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+            42, 100, 200, 300, 9, 10, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3, 17e18
+        );
+        (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
+            BridgeMsgCodec.decodeAuctionParams(packet);
 
         assertEq(seriesId, 42);
-        assertEq(commitEnd, 100);
-        assertEq(revealEnd, 200);
-        assertEq(issuanceEnd, 300);
-        assertEq(issuanceCurrency, 9);
-        assertEq(referenceCurrency, 10);
-        assertEq(promisLoadMinor, 1e18);
-        assertEq(minBidRate, 5e6);
-        assertEq(entryPrice, 7e6);
-        assertEq(floor, 11e6);
-        assertEq(callPrice, 13e6);
-        assertEq(callPeriod, 5);
-        assertEq(callWindowDays, 6);
-        assertEq(callThresholdDays, 7);
-        assertEq(minQty, 3);
+        assertEq(schedule.commitEnd, 100);
+        assertEq(schedule.revealEnd, 200);
+        assertEq(schedule.issuanceEnd, 300);
+        assertEq(params.issuanceCurrency, 9);
+        assertEq(params.referenceCurrency, 10);
+        assertEq(params.promisLoadMinor, 1e18);
+        assertEq(params.minIntexBidRate, 5e6);
+        assertEq(params.entryPriceMinor, 7e6);
+        assertEq(params.floorPriceMinor, 11e6);
+        assertEq(params.callPriceMinor, 13e6);
+        assertEq(params.callTrigger.intexCallPeriod, 5);
+        assertEq(params.callTrigger.windowDays, 6);
+        assertEq(params.callTrigger.thresholdDays, 7);
+        assertEq(params.minIntexBidQuantity, 3);
+        assertEq(params.commitBondMinor, 17e18);
     }
 
     function test_BridgeCodec_AuctionStageReveal_RoundTrip() public view {
@@ -126,11 +112,12 @@ contract BodyVersionTest is Test {
     // --- BridgeMsgCodec: unknown version reverts ---
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageStart_Reverts() public {
-        bytes memory packet =
-            BridgeMsgCodec.encodeAuctionStageStart(1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+        );
         packet[0] = 0xFF;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xFF));
-        this.exposedDecodeAuctionStageStart(packet);
+        BridgeMsgCodec.decodeAuctionParams(packet);
     }
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageReveal_Reverts() public {
@@ -185,43 +172,6 @@ contract BodyVersionTest is Test {
         packet[0] = 0x77;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x77));
         this.exposedDecodeIssuanceInstructions(packet);
-    }
-
-    // --- ONFT1155MsgCodec: encoder + round-trip + revert ---
-
-    function test_ONFT1155Codec_EmitsVersionV1() public view {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, empty);
-        assertEq(uint8(payload[0]), ONFT1155MsgCodec.BODY_VERSION_V1);
-        assertEq(payload.length, 97); // 1 version + 32 + 32 + 32
-
-        bytes memory compose = hex"cafe";
-        (payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, compose);
-        assertEq(uint8(payload[0]), ONFT1155MsgCodec.BODY_VERSION_V1);
-        // 1 version + 32 + 32 + 32 + 32 (composer addr) + 2 (compose body)
-        assertEq(payload.length, 131);
-    }
-
-    function test_ONFT1155Codec_RoundTrip() public view {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(uint160(address(0x1234)))), 5, 100, empty);
-        assertEq(this.exposedSendTo(payload), bytes32(uint256(uint160(address(0x1234)))));
-        assertEq(this.exposedTokenId(payload), 5);
-        assertEq(this.exposedAmount(payload), 100);
-        assertFalse(this.exposedIsComposed(payload));
-    }
-
-    function test_ONFT1155Codec_UnknownBodyVersion_Reverts() public {
-        bytes memory empty;
-        (bytes memory payload,) = this.exposedONFTEncode(bytes32(uint256(0xDEAD)), 5, 100, empty);
-        payload[0] = 0xEE;
-
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedSendTo(payload);
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedTokenId(payload);
-        vm.expectRevert(abi.encodeWithSelector(ONFT1155MsgCodec.UnsupportedBodyVersion.selector, 0xEE));
-        this.exposedAmount(payload);
     }
 
     // --- BridgeMsgCodec: sibling-array parity + cap on the variable-length decoders ---
@@ -333,30 +283,6 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
 
-    function exposedDecodeAuctionStageStart(bytes calldata p)
-        external
-        pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            uint128,
-            uint32,
-            uint64,
-            uint64,
-            uint64,
-            uint32,
-            uint16,
-            uint16,
-            uint16
-        )
-    {
-        return BridgeMsgCodec.decodeAuctionStageStart(p);
-    }
-
     function exposedDecodeAuctionStageReveal(bytes calldata p) external pure returns (uint32, bool) {
         return BridgeMsgCodec.decodeAuctionStageReveal(p);
     }
@@ -387,29 +313,5 @@ contract BodyVersionTest is Test {
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(p);
-    }
-
-    function exposedONFTEncode(bytes32 to, uint256 tokenId, uint256 amount, bytes calldata composeMsg)
-        external
-        view
-        returns (bytes memory payload, bool hasCompose)
-    {
-        return ONFT1155MsgCodec.encode(to, tokenId, amount, composeMsg);
-    }
-
-    function exposedSendTo(bytes calldata p) external pure returns (bytes32) {
-        return ONFT1155MsgCodec.sendTo(p);
-    }
-
-    function exposedTokenId(bytes calldata p) external pure returns (uint256) {
-        return ONFT1155MsgCodec.tokenId(p);
-    }
-
-    function exposedAmount(bytes calldata p) external pure returns (uint256) {
-        return ONFT1155MsgCodec.amount(p);
-    }
-
-    function exposedIsComposed(bytes calldata p) external pure returns (bool) {
-        return ONFT1155MsgCodec.isComposed(p);
     }
 }

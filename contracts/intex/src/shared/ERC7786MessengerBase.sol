@@ -13,7 +13,7 @@ import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 /// @dev Provides the immutable bridge reference, an ERC-7930 remote-messenger registry keyed by chainId, a
 ///      relay-float-aware {_send}, a fee {_quoteFee}, and an authenticated {receiveMessage} that dispatches to the
 ///      abstract {_dispatch}. A base (rather than inlining like intent's single-client Router) avoids duplicating
-///      this across the four intex clients (both messengers + both ONFT adapters).
+///      this across the four intex clients (both messengers + both NFT bridge clients).
 ///
 ///      Upgrade-safe: the bridge is an implementation immutable, so every upgrade must pass the same bridge to the
 ///      constructor; the registry lives in erc7201 namespaced storage.
@@ -165,7 +165,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     /// @dev Handles an authenticated inbound `payload` from the matching messenger on `srcChainId`.
     /// @param srcChainId Source EVM chainId the message was authenticated against.
     /// @param receiveId Bridge-assigned unique message id (binds source bridge + nonce-bearing payload); usable as an
-    ///        idempotency/parking key by clients that isolate per-item work (e.g. the ONFT adapters).
+    ///        idempotency/parking key by clients that isolate per-item work (e.g. the NFT bridge clients).
     /// @param payload Encoded message body delivered verbatim from the remote messenger.
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal virtual;
 

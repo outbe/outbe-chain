@@ -34,7 +34,8 @@ use commonware_codec::{Encode, Read as _};
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{
-        Dealer, DealerLog, DealerPubMsg, Info, Logs, Output, Player, PlayerAck, SignedDealerLog,
+        observe, Dealer, DealerLog, DealerPubMsg, Info, Logs, Output, Player, PlayerAck,
+        SignedDealerLog,
     },
     primitives::{group::Share, sharing::Mode, variant::MinSig},
 };
@@ -60,8 +61,12 @@ use super::wire::{DkgCeremonyId, DkgMessage, DkgMessageReadError, DkgWireConfig}
 pub struct DkgComplete {
     /// Threshold public polynomial (shared by all participants).
     pub output: Output<MinSig, bls12381::PublicKey>,
-    /// This validator's private threshold share.
-    pub share: Share,
+    /// This validator's private threshold share, or `None` when the node
+    /// completed as a shareless VERIFIER — `player.finalize` recovered no share
+    /// (uncorrelated local `MissingPlayerDealing`), but the canonical committee
+    /// output was still reconstructed via `observe`. Only produced on the
+    /// chain-finalized reshare path; genesis bootstrap always yields a share.
+    pub share: Option<Share>,
     /// The participant set used in this DKG round.
     pub participants: Set<bls12381::PublicKey>,
 }
@@ -293,6 +298,10 @@ pub async fn run_initial_dkg(
     let now = clock.current();
     let deadline = now + DKG_TIMEOUT;
     let mut next_retry_tick = now + RETRY_INTERVAL;
+    // C1 (chain-finalized completion gate): only probe `observe` when a NEW dealer
+    // log has arrived, so the actor breaks at the same first-reconstructable log
+    // prefix that `DkgManager` freezes `canonical_output` at (→ matching output).
+    let mut last_reconstruct_probe_len: usize = 0;
 
     let mut bootstrap_threshold_logged = false;
     let mut bootstrap_all_logs_collected_at: Option<std::time::SystemTime> = None;
@@ -519,21 +528,14 @@ pub async fn run_initial_dkg(
             }
         }
 
-        // Check if we have enough finalized logs.
-        //
-        // For chain-finalized reshare, threshold is safe because the chain
-        // carrier makes the selected dealer-log set canonical. For initial
-        // interactive bootstrap there is no canonical carrier yet, so every
-        // validator must use the same complete genesis dealer-log set.
-        if finalized_logs.len() as u32 >= n {
-            if chain_finalized_mode {
-                info!(
-                    logs = finalized_logs.len(),
-                    n, "all logs collected, completing ceremony"
-                );
-                break;
-            }
-
+        // Non-chain interactive bootstrap: there is no canonical chain carrier yet,
+        // so a validator completes only when ALL genesis dealer logs are collected
+        // (threshold P2P subsets are not canonical and may otherwise produce
+        // different public polynomials on different validators). Chain-finalized
+        // reshare does NOT complete on the raw all-n count — it flows through the
+        // observe gate below (C1), so the actor breaks at the same log-set prefix
+        // `DkgManager` freezes `canonical_output` at.
+        if !chain_finalized_mode && finalized_logs.len() as u32 >= n {
             let now = clock.current();
             match bootstrap_all_logs_collected_at {
                 // `SystemTime::duration_since` errors only if `collected_at` is in the
@@ -567,13 +569,33 @@ pub async fn run_initial_dkg(
 
         if finalized_logs.len() as u32 >= log_threshold {
             if chain_finalized_mode {
-                info!(
-                    logs = finalized_logs.len(),
-                    log_threshold, "chain-finalized threshold logs collected, completing ceremony"
-                );
-                break;
-            }
-            if !bootstrap_threshold_logged {
+                // C1: do NOT complete on a RAW 2f+1 count. A byzantine dealer can
+                // chain-finalize a signed-but-content-garbage log (passes the
+                // signature-only acceptance check, then dropped by `select`'s content
+                // check), so the raw first-2f+1 may hold < 2f+1 content-valid logs and
+                // one-shot `finalize` would fail `DkgFailed` identically on every node.
+                // Gate completion on `observe` (public, share-free) over the FULL
+                // finalized_logs — probing once per NEW chain log so the actor breaks
+                // at the SAME first-observe-success prefix `DkgManager` freezes
+                // `canonical_output` at (→ matching output). Never waits for all-n (an
+                // offline dealer's log never arrives); the ceremony deadline bounds it.
+                if finalized_logs.len() > last_reconstruct_probe_len {
+                    last_reconstruct_probe_len = finalized_logs.len();
+                    if chain_finalized_reconstructable(&info, &finalized_logs) {
+                        info!(
+                            logs = finalized_logs.len(),
+                            log_threshold,
+                            "chain-finalized content-valid threshold reached (observe ok); completing ceremony"
+                        );
+                        break;
+                    }
+                    debug!(
+                        logs = finalized_logs.len(),
+                        log_threshold,
+                        "raw threshold reached but < 2f+1 content-valid dealer logs (a signed-but-garbage log is present); awaiting more chain-finalized logs"
+                    );
+                }
+            } else if !bootstrap_threshold_logged {
                 info!(
                     logs = finalized_logs.len(),
                     log_threshold,
@@ -599,13 +621,66 @@ pub async fn run_initial_dkg(
     for (dealer_pk, log) in &finalized_logs {
         finalize_logs.record(dealer_pk.clone(), log.clone());
     }
-    let (output, share) = player
-        .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+    let (output, share) = if chain_finalized_mode {
+        // Reshare path: a signed-but-content-garbage dealer log (passes the
+        // signature-only acceptance check, fails `select`'s content check) can make
+        // `finalize` yield no share for THIS node. That is a LOCAL condition — the
+        // canonical committee is reconstructed independently by `DkgManager`
+        // (`canonical_output` via `observe`), so we must NOT halt the chain. Fall
+        // back to a shareless VERIFIER outcome (public `observe` output, no share);
+        // the node follows/verifies this epoch and regains a share at the next
+        // reshare. This point is only reached after the observe-gated completion
+        // trigger, so `observe` over `finalized_logs` succeeds — a `finalize` Err
+        // here is the uncorrelated `MissingPlayerDealing` (crash-recovery), which
+        // the commonware contract guarantees still lets `observe` reconstruct the
+        // public output.
+        match player.finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
             &mut rand_core::OsRng,
             finalize_logs,
             &Sequential,
-        )
-        .map_err(|e| eyre::eyre!("player finalize failed: {e:?}"))?;
+        ) {
+            Ok((output, share)) => (output, Some(share)),
+            Err(finalize_err) => {
+                warn!(
+                    ?finalize_err,
+                    "player finalize recovered no share; reconstructing shareless canonical \
+                     output — completing DKG as VERIFIER (no signer share this epoch)"
+                );
+                // `finalize` consumed the prior `Logs`; rebuild from `finalized_logs`.
+                let mut observe_logs = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
+                for (dealer_pk, log) in &finalized_logs {
+                    observe_logs.record(dealer_pk.clone(), log.clone());
+                }
+                match observe::<
+                    MinSig,
+                    bls12381::PublicKey,
+                    N3f1,
+                    commonware_cryptography::bls12381::Batch,
+                >(&mut rand_core::OsRng, observe_logs, &Sequential)
+                {
+                    Ok(output) => (output, None),
+                    Err(observe_err) => {
+                        return Err(eyre::eyre!(
+                            "player finalize failed ({finalize_err:?}) and shareless observe also \
+                             failed ({observe_err:?}): fewer than 2f+1 content-valid dealer logs"
+                        ));
+                    }
+                }
+            }
+        }
+    } else {
+        // Genesis / interactive bootstrap: no chain carrier exists to authenticate a
+        // shareless verifier polynomial, so a finalize failure is fatal (a broken
+        // founding committee must not be silently accepted).
+        let (output, share) = player
+            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+                &mut rand_core::OsRng,
+                finalize_logs,
+                &Sequential,
+            )
+            .map_err(|e| eyre::eyre!("player finalize failed: {e:?}"))?;
+        (output, Some(share))
+    };
 
     info!("DKG ceremony complete — threshold material obtained");
 
@@ -987,6 +1062,30 @@ fn record_signed_dealer_log(
         "recorded finalized DKG dealer log"
     );
     Some(dealer_pk)
+}
+
+/// Returns `true` when the canonical group output is reconstructable from the
+/// currently-collected finalized dealer logs — i.e. `observe` (public, share-free)
+/// succeeds, which means ≥ 2f+1 CONTENT-VALID logs are present. Mirrors
+/// `DkgManager`'s `ceremony::try_reconstruct`, so the actor completes at the SAME
+/// log-set prefix the manager freezes `canonical_output` at (→ matching output).
+/// Used as the chain-finalized completion gate: a signed-but-garbage dealer log
+/// inflates the raw log count but is dropped by `observe`'s content check, so
+/// gating on this (not the raw count) prevents finalizing over < 2f+1 valid logs.
+fn chain_finalized_reconstructable(
+    info: &Info<MinSig, bls12381::PublicKey>,
+    finalized_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
+) -> bool {
+    let mut logs = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
+    for (dealer_pk, log) in finalized_logs {
+        logs.record(dealer_pk.clone(), log.clone());
+    }
+    observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
+        &mut rand_core::OsRng,
+        logs,
+        &Sequential,
+    )
+    .is_ok()
 }
 
 async fn gossip_finalized_logs(
@@ -1629,6 +1728,148 @@ mod tests {
                         .any(|result| result.participants.position(&new_pk).is_some()),
                     "new player must be part of the reshared participant set"
                 );
+            });
+    }
+
+    /// C1 regression: a byzantine ex-validator broadcasts a dealer log with a
+    /// VALID signature but GARBAGE content (dealt from a wrong previous share). It
+    /// passes the actor's signature-only acceptance check and lands in the raw
+    /// first-2f+1, but `observe`/`select` drop it. The old code broke on the raw
+    /// 2f+1 count and one-shot `finalize` then failed `DkgFailed` identically on
+    /// every node → chain halt. With the observe-gated trigger the actors keep
+    /// collecting, complete on 2f+1 CONTENT-VALID logs, and every honest node
+    /// recovers a share (signer quorum preserved).
+    #[test]
+    fn reshare_survives_signed_but_garbage_dealer_log() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                // Old committee of 4 (f=1, log_threshold = 2f+1 = 3), resharing to the
+                // same 4 so all are dealers AND players.
+                let mut keys: Vec<bls12381::PrivateKey> =
+                    (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+                keys.sort_by_key(|key| key.public_key().encode());
+                let (participants, previous_output, previous_shares) =
+                    run_direct_initial_round(&keys);
+
+                let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+                    &crate::config::outbe_app_namespace(),
+                    1,
+                    Some(previous_output.clone()),
+                    Mode::NonZeroCounter,
+                    participants.clone(),
+                    participants.clone(),
+                )
+                .unwrap();
+                let max_players = NonZeroU32::new(participants.len() as u32).unwrap();
+
+                // Byzantine dealer log from dealer 0, dealt with dealer 1's previous
+                // share (wrong): dealer 0 signs it (→ passes `check`), but its content
+                // is inconsistent with the previous output (→ dropped by `select`).
+                let byzantine_pk = keys[0].public_key();
+                let (byz_dealer, _pub, _priv) =
+                    Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+                        rand_core::OsRng,
+                        info.clone(),
+                        keys[0].clone(),
+                        Some(previous_shares[1].clone()),
+                    )
+                    .unwrap();
+                let garbage_signed = byz_dealer.finalize::<N3f1>();
+                assert!(
+                    garbage_signed.clone().check(&info).is_some(),
+                    "garbage dealer log must pass the signature-only acceptance check (that is C1)"
+                );
+                let garbage_bytes = Bytes::from(garbage_signed.encode());
+
+                let (senders, receivers) = build_mock_network(&keys);
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                let mut finalized_log_txs = Vec::new();
+                let mut handles = Vec::new();
+
+                for ((key, sender), receiver) in keys.iter().cloned().zip(senders).zip(receivers) {
+                    let participants = participants.clone();
+                    let prev_output = previous_output.clone();
+                    let prev_share = keys
+                        .iter()
+                        .position(|k| k.public_key() == key.public_key())
+                        .map(|idx| previous_shares[idx].clone());
+                    let progress_tx = progress_tx.clone();
+                    let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
+                    finalized_log_txs.push(finalized_log_tx);
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                run_initial_dkg(
+                                    &clock,
+                                    key,
+                                    participants,
+                                    Some(prev_output),
+                                    prev_share,
+                                    1,
+                                    Some(progress_tx),
+                                    Some(finalized_log_rx),
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            }),
+                    );
+                }
+                drop(progress_tx);
+
+                // Collect VALID dealer logs from dealers 1..=3 (skip dealer 0 — its slot
+                // is taken by the garbage log). We need 2f+1 = 3 valid logs.
+                let mut valid_logs: BTreeMap<bls12381::PublicKey, Bytes> = BTreeMap::new();
+                while valid_logs.len() < 3 {
+                    let progress = progress_rx
+                        .recv()
+                        .await
+                        .expect("progress channel should remain open");
+                    if let DkgProgress::LocalDealerLog(bytes) = progress {
+                        let mut reader = bytes.as_ref();
+                        let signed = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+                            &mut reader,
+                            &max_players,
+                        )
+                        .unwrap();
+                        let (dealer, _log) = signed.check(&info).unwrap();
+                        if dealer != byzantine_pk {
+                            valid_logs.entry(dealer).or_insert(bytes);
+                        }
+                    }
+                }
+
+                // Feed the GARBAGE log FIRST (so it lands in the raw first-2f+1), then
+                // the 3 valid logs, to every actor.
+                for tx in &finalized_log_txs {
+                    tx.send(garbage_bytes.clone()).unwrap();
+                    for bytes in valid_logs.values() {
+                        tx.send(bytes.clone()).unwrap();
+                    }
+                }
+
+                let mut results = Vec::new();
+                for handle in handles {
+                    // No halt: the old code returned Err("player finalize failed") here.
+                    results.push(handle.await.unwrap().unwrap());
+                }
+
+                // Canonical output agreed by all, and every node recovered a share
+                // (quorum preserved) — the lone garbage log was filtered, not fatal.
+                let expected_public = results[0].output.public().encode();
+                for result in &results {
+                    assert_eq!(
+                        result.output.public().encode(),
+                        expected_public,
+                        "all nodes must agree on the canonical output despite the garbage log"
+                    );
+                    assert!(
+                        result.share.is_some(),
+                        "every honest node must recover a share (signer quorum preserved)"
+                    );
+                }
             });
     }
 

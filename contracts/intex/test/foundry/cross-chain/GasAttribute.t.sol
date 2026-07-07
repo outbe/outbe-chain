@@ -5,10 +5,10 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
-import {ITargetMessenger} from "@contracts/target/interfaces/ITargetMessenger.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 
 /// @dev Every send carries the destination gas as the ERC-7786 executionGasLimit attribute, sized from IntexGas.
@@ -17,22 +17,22 @@ contract GasAttributeTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     bytes4 internal constant GAS_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    OriginMessenger internal outbe;
-    TargetMessenger internal bnb;
+    OriginRouter internal outbe;
+    TargetRouter internal bnb;
     address internal admin = address(this);
     address internal desis;
 
     function setUp() public {
         _setUpBridge();
-        outbe = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
-        bnb = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbe = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
         bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
 
         desis = address(new MockDesis());
         outbe.wire(desis, makeAddr("factory"));
         // AUCTION_ROLE goes to `admin` so this test can call sendBidsBatch directly.
-        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("onft"));
+        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("nftBridge"));
     }
 
     /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.
@@ -43,7 +43,7 @@ contract GasAttributeTest is CrossChainTest {
     }
 
     function test_fixedMessage_carriesTypeGas() public {
-        IOriginMessenger.AuctionStageStartParams memory p;
+        IOriginRouter.AuctionStageStartParams memory p;
         p.seriesId = 42;
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
@@ -58,7 +58,7 @@ contract GasAttributeTest is CrossChainTest {
     }
 
     function _assertBidsGas(uint256 n) internal {
-        ITargetMessenger.BidsBatchParams memory p = ITargetMessenger.BidsBatchParams({
+        ITargetRouter.BidsBatchParams memory p = ITargetRouter.BidsBatchParams({
             seriesId: 42,
             bidderAddresses: new address[](n),
             intexQuantities: new uint16[](n),
@@ -72,7 +72,7 @@ contract GasAttributeTest is CrossChainTest {
     function test_quoteMatchesSend_bothCarryGas() public view {
         // The quote path builds the same attribute; the mock returns a flat fee, so this simply confirms the
         // quote signature compiles and returns without reverting under the gas attribute.
-        IOriginMessenger.AuctionStageStartParams memory p;
+        IOriginRouter.AuctionStageStartParams memory p;
         p.seriesId = 7;
         outbe.quoteSendAuctionStageStart(p);
     }

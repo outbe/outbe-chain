@@ -32,7 +32,7 @@ export interface IntexAddresses {
   escrow?: Address;
   paymentToken?: Address;
   nft?: Address;
-  bridgeAdapter?: Address;
+  nftBridge?: Address;
   intex?: Address;
   factory?: Address;
   promis?: Address;
@@ -40,18 +40,20 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
+// CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so app contracts share an
+// address across chains.
 export const INTEX: Record<string, IntexAddresses> = {
   "bsc-testnet": {
-    auction: a("0x60195ce77E6848483d7d42AAA30ce23E3B0e53de"),
-    escrow: a("0xA3bdFbB87951C993D08271e6f221CB49cC774B1b"),
+    auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
+    escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
     // wCOEN — auction escrow pays wrapped COEN (18 decimals).
     paymentToken: a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
-    nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
-    bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
+    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
+    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
   },
   "outbe-testnet": {
-    nft: a("0x6f9335086f166c94e4d272a07ac2DA848a7BCE83"),
-    bridgeAdapter: a("0xdb8CE396B042490eB1bee95698fF5e6eB72d61C1"),
+    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
+    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
     // outbe runtime precompiles (addresses.rs):
     intex: a("0x0000000000000000000000000000000000001014"),
     factory: a("0x0000000000000000000000000000000000001015"),
@@ -68,19 +70,19 @@ export function intexAddress(network: string, key: keyof IntexAddresses): Addres
   return addr;
 }
 
-/** LayerZero EID of each network's bridge counterpart (NFT destination). */
-export const BRIDGE_DST_EID: Record<string, number> = {
-  "bsc-testnet": 40912, // -> outbe-testnet
-  "outbe-testnet": 40102, // -> bsc-testnet
+/** Destination EVM chain id of each network's bridge counterpart (NFT destination). */
+export const BRIDGE_DST_CHAIN_ID: Record<string, number> = {
+  "bsc-testnet": 54322345, // -> outbe-testnet
+  "outbe-testnet": 97, // -> bsc-testnet
 };
 
-/** Destination EID for bridging an NFT out of a network, or throw. */
-export function bridgeDstEid(network: string): number {
-  const eid = BRIDGE_DST_EID[network];
-  if (eid === undefined) {
-    throw new Error(`Intex bridge destination EID is not configured on "${network}"`);
+/** Destination chain id for bridging an NFT out of a network, or throw. */
+export function bridgeDstChainId(network: string): number {
+  const chainId = BRIDGE_DST_CHAIN_ID[network];
+  if (chainId === undefined) {
+    throw new Error(`Intex bridge destination chain id is not configured on "${network}"`);
   }
-  return eid;
+  return chainId;
 }
 
 // --- ABIs ------------------------------------------------------------------
@@ -90,8 +92,9 @@ export const AUCTION_ABI: Abi = parseAbi([
   "function commitBid(uint32 seriesId, bytes32 commitHash)",
   "function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes signature)",
   "function cancelCommit(uint32 seriesId)",
+  "function claimCommitBond(uint32 seriesId, address bidder)",
   "function getAuctionStage(uint32 seriesId) view returns (uint8)",
-  "function getAuctionInfo(uint32 seriesId) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
+  "function getAuctionInfo(uint32 seriesId) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
   "function committedBidsByHash(uint32 seriesId, address bidder) view returns (bytes32)",
   "function revealedBidsByBidder(uint32 seriesId, address bidder) view returns (bool)",
   "function escrowContract() view returns (address)",
@@ -118,10 +121,10 @@ export const INTEX_ABI: Abi = parseAbi([
   "function seriesAt(uint64 index) view returns (uint32)",
 ]);
 
-/** ONFT1155Adapter: the cross-chain NFT bridge (BSC <-> outbe). */
-export const ONFT_ABI: Abi = parseAbi([
-  "function quoteSend((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, bool payInLzToken) view returns ((uint256 nativeFee, uint256 lzTokenFee) fee)",
-  "function send((uint32 dstEid, bytes32 to, uint256 tokenId, uint256 amount, bytes extraOptions, bytes composeMsg) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable returns ((bytes32 guid, uint64 nonce, (uint256 nativeFee, uint256 lzTokenFee) fee) receipt)",
+/** IntexNFT1155Bridge: the cross-chain NFT bridge (BSC <-> outbe) over ERC-7786. */
+export const NFT_BRIDGE_ABI: Abi = parseAbi([
+  "function quoteSend((uint32 dstChainId, bytes32 to, uint256 tokenId, uint256 amount) sendParam) view returns (uint256 fee)",
+  "function send((uint32 dstChainId, bytes32 to, uint256 tokenId, uint256 amount) sendParam) payable returns (bytes32 sendId)",
 ]);
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */

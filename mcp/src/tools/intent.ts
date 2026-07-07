@@ -167,7 +167,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
 
   // --- create order ----------------------------------------------------------
   server.tool(
-    "intent_open_order",
+    "intent_order_open",
     "Open a cross-chain intent order on the LayerZeroRouter (ERC-7683 `open`). Pulls/approves the input " +
       "ERC20 (or sends native value), deposits into The Compact, returns the deterministic orderId. " +
       "`amount_in`/`amount_out` are whole-token decimals; input decimals are read on origin and output " +
@@ -269,7 +269,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
 
   // --- track order (lifecycle snapshot) --------------------------------------
   server.tool(
-    "intent_track_order",
+    "intent_order_track",
     "Where an order is in its cross-chain lifecycle, as a deterministic snapshot (no event scan). " +
       "Reads origin/destination status and derives a coarse `phase` (OPENED → CLAIMED → FILLED → SETTLED, " +
       "plus REFUNDED/EXPIRED) with a `next` hint. Poll it (e.g. via /loop) to follow progress.",
@@ -320,7 +320,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         next = "winner is filling on destination";
       } else if (originStatus === "OPENED" && now > order.fillDeadline) {
         phase = "EXPIRED";
-        next = "refundable via intent_refund_order";
+        next = "refundable via intent_order_refund";
       } else if (originStatus === "OPENED") {
         phase = "OPENED";
         next = "auction running on destination — waiting for a solver to claim & fill";
@@ -350,7 +350,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
 
   // --- refund an expired order ----------------------------------------------
   server.tool(
-    "intent_refund_order",
+    "intent_order_refund",
     "Refund an expired, still-OPENED order, returning the input back to the sender. Calls `refund` on the " +
       "destination router; cross-chain refunds pay the LayerZero messaging fee (quoted automatically), " +
       "same-chain refunds are free. Reverts if the order is not OPENED or the deadline has not passed. " +

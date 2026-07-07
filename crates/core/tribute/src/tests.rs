@@ -167,6 +167,7 @@ fn test_token_uri_returns_metadata_json() {
         assert!(token_uri.contains("Outbe Tribute"));
         assert!(token_uri.contains("worldwide_day"));
         assert!(token_uri.contains("issuance_amount_minor"));
+        assert!(token_uri.contains("\"trait_type\":\"reference_currency\""));
     });
 }
 

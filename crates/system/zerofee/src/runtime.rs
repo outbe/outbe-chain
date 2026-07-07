@@ -53,7 +53,7 @@ use crate::{
 ///   votes do not burn the validator's daily quota).
 ///
 /// The target whitelist is intentionally **not** a parameter — the
-/// policy reads [`outbe_primitives::addresses::SPONSORED_TARGET_WHITELIST`]
+/// policy reads [`outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST`]
 /// directly so a future caller cannot drift the policy by passing a
 /// broader list.
 ///
@@ -99,7 +99,7 @@ pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePo
         return Err(ZeroFeePolicyError::FreeTxDailyContractCreationForbidden);
     };
 
-    if !outbe_primitives::addresses::SPONSORED_TARGET_WHITELIST.contains(&to) {
+    if !outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST.contains(&to) {
         return Err(ZeroFeePolicyError::FreeTxDailyTargetNotWhitelisted { to });
     }
 
@@ -236,7 +236,7 @@ mod tests {
     fn sponsored_target() -> Address {
         // First whitelisted address — value is incidental, only being
         // a member of `SPONSORED_TARGET_WHITELIST` matters here.
-        outbe_primitives::addresses::SPONSORED_TARGET_WHITELIST[0]
+        outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST[0]
     }
 
     fn ok_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {

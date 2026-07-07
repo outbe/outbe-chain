@@ -29,6 +29,11 @@ contract IntexAuction is
     /// @notice Role identifier for bridge operations (stage ops driven by the relayer).
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
+    /// @notice No-reveal penalty window on the commit bond, anchored at `revealEnd`. A committed
+    ///         bidder who never reveals on a green day gets the bond back via `claimCommitBond`
+    ///         only after this period; reveal/cancel/red-day return it immediately.
+    uint32 public constant COMMIT_BOND_LOCK_PERIOD = 21 days;
+
     /// @dev EIP-712 type hash for `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`.
     bytes32 private constant REVEAL_BID_TYPEHASH =
         keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
@@ -282,7 +287,7 @@ contract IntexAuction is
 
     // --- User Actions ---
     /// @inheritdoc IIntexAuction
-    function commitBid(uint32 seriesId, bytes32 commitHash) external override {
+    function commitBid(uint32 seriesId, bytes32 commitHash) external override nonReentrant {
         if (commitHash == bytes32(0)) revert InvalidCommitHash();
 
         IntexAuctionStorage storage $ = _s();
@@ -304,10 +309,17 @@ contract IntexAuction is
         $.auctionRunningCounts[seriesId].committedBidsCount += 1;
 
         emit BidCommitted(seriesId, msg.sender, commitHash);
+
+        // Interactions: take the entry bond (CEI — commit state is already recorded; a lock
+        // revert rolls back the whole tx). Requires prior wCOEN approval on the escrow.
+        uint128 bond = a.params.commitBondMinor;
+        if (bond > 0) {
+            $.escrowContract.lockCommitBond(seriesId, msg.sender, bond);
+        }
     }
 
     /// @inheritdoc IIntexAuction
-    function cancelCommit(uint32 seriesId) external override {
+    function cancelCommit(uint32 seriesId) external override nonReentrant {
         IntexAuctionStorage storage $ = _s();
         IIntexAuction.AuctionData storage a = $.auctions[seriesId];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
@@ -330,6 +342,11 @@ contract IntexAuction is
         $.auctionRunningCounts[seriesId].committedBidsCount -= 1;
 
         emit CommitCancelled(seriesId, msg.sender);
+
+        // Interactions: an un-committed bid owes no bond — return it immediately.
+        if (a.params.commitBondMinor > 0) {
+            $.escrowContract.releaseCommitBond(seriesId, msg.sender);
+        }
     }
 
     /// @inheritdoc IIntexAuction
@@ -408,9 +425,34 @@ contract IntexAuction is
         emit BidRevealed(seriesId, msg.sender, quantity, bidRate);
 
         // Interactions
+        // Return the commit bond first so it can fund the bid escrow in the same transaction.
+        if (a.params.commitBondMinor > 0) {
+            $.escrowContract.releaseCommitBond(seriesId, msg.sender);
+        }
         // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
         $.escrowContract.lockFunds(seriesId, msg.sender, uint128(lockAmount));
+    }
+
+    /// @inheritdoc IIntexAuction
+    function claimCommitBond(uint32 seriesId, address bidder) external override nonReentrant {
+        IntexAuctionStorage storage $ = _s();
+        IIntexAuction.AuctionData storage a = $.auctions[seriesId];
+        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
+
+        // Red day cancels the auction before anyone can reveal — no fault, immediate return.
+        // Every other outcome (revealed bidders have no bond; cancel is the in-window path)
+        // is a no-reveal on a live auction: the bond waits out the penalty window anchored
+        // at the (possibly snapped-forward) `revealEnd`.
+        if (_getAuctionStage(seriesId) != IIntexAuction.AuctionStage.Cancelled) {
+            uint32 claimableAt = a.schedule.revealEnd + COMMIT_BOND_LOCK_PERIOD;
+            if (uint32(block.timestamp) < claimableAt) {
+                revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
+            }
+        }
+
+        // Pays the stored bidder; reverts CommitBondNotFound in the escrow when no bond is live.
+        $.escrowContract.releaseCommitBond(seriesId, bidder);
     }
 
     /// @notice Verify the EIP-712 reveal signature and its binding to the prior commit.

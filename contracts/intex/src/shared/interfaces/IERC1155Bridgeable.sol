@@ -5,7 +5,7 @@ pragma solidity 0.8.30;
  * @title IERC1155Bridgeable
  * @author Outbe
  * @notice Interface for ERC1155 tokens with bridge-controlled mint/burn.
- * @dev Implement this interface on any ERC1155 to make it compatible with ONFT1155Adapter.
+ * @dev Implement this interface on any ERC1155 to make it compatible with IntexNFT1155Bridge.
  */
 interface IERC1155Bridgeable {
     /**

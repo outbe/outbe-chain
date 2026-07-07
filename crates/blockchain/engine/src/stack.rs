@@ -1235,15 +1235,16 @@ fn spawn_finalization_drainer<E>(
     E: Spawner + Metrics,
 {
     let rx = bridge.set_finalization_fetcher();
-    ctx.child("finalization_drainer").spawn(move |_| async move {
-        let mut rx = rx;
-        while let Some((height, reply)) = rx.recv().await {
-            let answer =
-                finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
-            // The receiver may have gone away (RPC client disconnected); ignore.
-            let _ = reply.send(answer);
-        }
-    });
+    ctx.child("finalization_drainer")
+        .spawn(move |_| async move {
+            let mut rx = rx;
+            while let Some((height, reply)) = rx.recv().await {
+                let answer =
+                    finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
+                // The receiver may have gone away (RPC client disconnected); ignore.
+                let _ = reply.send(answer);
+            }
+        });
 }
 
 /// Read `(finalization, block)` for `height` from the marshal and encode them
@@ -1621,6 +1622,7 @@ fn validate_validator_evm_signer(
 /// 6. Simplex consensus engine (restarted on reshare)
 /// 7. Block propagation — proposer broadcasts full blocks via P2P channel
 /// 8. Automatic reshare detection and DKG execution
+///
 /// Follower stack: cold-sync finalized blocks from an upstream node, verify them
 /// against the trusted network identity (committee-chaining — see the `follow`
 /// module), and drive the EL via the existing executor, WITHOUT running the
@@ -1704,7 +1706,15 @@ where
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    run_certified_follow_stack(ctx, anchor_participants, node, bridge, upstream, epoch_length).await
+    run_certified_follow_stack(
+        ctx,
+        anchor_participants,
+        node,
+        bridge,
+        upstream,
+        epoch_length,
+    )
+    .await
 }
 
 /// The committee-chaining follower engine (transport A — upstream RPC, no
@@ -1765,8 +1775,7 @@ where
     // through a clone is visible everywhere).
     // Genesis anchor: epoch 0, the genesis validator committee.
     let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
-    let certificate_scheme_provider: HybridSchemeProvider<MinSig> =
-        chain.scheme_provider().clone();
+    let certificate_scheme_provider: HybridSchemeProvider<MinSig> = chain.scheme_provider().clone();
     let anchor_epoch = Epoch::new(chain.anchor_epoch());
     let chain = Arc::new(Mutex::new(chain));
 
@@ -1925,19 +1934,19 @@ where
         last_execution_hash,
         Some(execution_finalized_height_tx),
     );
-    let _executor_handle =
-        executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
     //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
     //        so this follower can itself be an UPSTREAM for other followers
     //        (their tip discovery polls that status field). ────────────────
     spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
-    ctx.child("follower_tip_publisher").spawn(move |_| async move {
-        while let Some(height) = execution_finalized_height_rx.recv().await {
-            bridge.set_last_finalized_block_number(height);
-        }
-    });
+    ctx.child("follower_tip_publisher")
+        .spawn(move |_| async move {
+            while let Some(height) = execution_finalized_height_rx.recv().await {
+                bridge.set_last_finalized_block_number(height);
+            }
+        });
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
     run_follow_engine(
@@ -4323,14 +4332,20 @@ where
                             let epoch_boundary_height =
                                 activation_height.max(target.planned_activation_height);
                             if let Some(ref keys_dir) = args.keys_dir {
-                                save_pending_dkg_state(
-                                    keys_dir,
-                                    &activated_signing_share,
-                                    &activated_polynomial,
-                                    &canonical_output,
-                                    &key_backend,
-                                )
-                                .wrap_err("failed to durably save pending DKG state before activation")?;
+                                // A shareless VERIFIER activation (C1) has no private
+                                // share to persist; only the boundary snapshot is saved.
+                                if let Some(share) = activated_signing_share.as_ref() {
+                                    save_pending_dkg_state(
+                                        keys_dir,
+                                        share,
+                                        &activated_polynomial,
+                                        &canonical_output,
+                                        &key_backend,
+                                    )
+                                    .wrap_err(
+                                        "failed to durably save pending DKG state before activation",
+                                    )?;
+                                }
                                 save_pending_dkg_boundary(
                                     keys_dir,
                                     &PendingDkgBoundarySnapshot {
@@ -4344,7 +4359,7 @@ where
                             vrf_material_version = activated_vrf_material_version;
                             polynomial = activated_polynomial;
                             last_dkg_output = Some(canonical_output.clone());
-                            signing_share = Some(activated_signing_share);
+                            signing_share = activated_signing_share;
                             vrf_materials.activate(
                                 vrf_material_version,
                                 polynomial.clone(),
@@ -5784,10 +5799,22 @@ where
     )?;
     let canonical_polynomial = canonical_output.public().clone();
 
+    // Startup live-join runs `run_initial_dkg` in chain-finalized mode, so a finalize
+    // failure can return a shareless (verifier) result. A startup joiner that can only
+    // verify should instead use the `ThresholdMaterial::VerifierOnly` startup path
+    // (provisioned public polynomial), so here we require a share. (Follow-up: make
+    // `StartupLiveJoinResult.signing_share` optional → VerifierOnly for symmetric
+    // startup resilience.)
+    let signing_share = complete.share.ok_or_else(|| {
+        eyre::eyre!(
+            "startup live-join DKG completed without a signing share; join as a verifier via a \
+             provisioned public polynomial instead"
+        )
+    })?;
     if let Some(ref keys_dir) = args.keys_dir {
         save_dkg_state(
             keys_dir,
-            &complete.share,
+            &signing_share,
             &canonical_polynomial,
             &canonical_output,
             key_backend,
@@ -5795,7 +5822,7 @@ where
     }
 
     Ok(StartupLiveJoinResult {
-        signing_share: complete.share,
+        signing_share,
         polynomial: canonical_polynomial,
         output: canonical_output,
         activated_at_height,
@@ -6091,7 +6118,14 @@ async fn obtain_threshold_material(
     .wrap_err("DKG ceremony failed")?;
 
     let polynomial = dkg_result.output.public().clone();
-    let signing_share = dkg_result.share;
+    // Genesis bootstrap has NO chain carrier to authenticate a shareless verifier
+    // polynomial, so completing without a share is fatal (a broken founding committee
+    // must not be silently accepted). Only the chain-finalized reshare path may return
+    // `None` → verifier; genesis passes no finalized-log receiver, so A5 keeps finalize
+    // fatal and this is always `Some`.
+    let signing_share = dkg_result.share.ok_or_else(|| {
+        eyre::eyre!("initial genesis DKG completed without a signing share; cannot bootstrap")
+    })?;
     info!(
         vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
         "initial DKG ceremony completed; threshold material ready"

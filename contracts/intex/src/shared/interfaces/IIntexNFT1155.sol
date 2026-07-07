@@ -10,7 +10,7 @@ import {IERC1155Bridgeable} from "./IERC1155Bridgeable.sol";
  * @notice Public API, events, errors, and data types for `IntexNFT1155`.
  * @dev Series are keyed by `seriesId` (uint32). Each series has two ERC1155 token ids:
  *      issued = `uint256(seriesId)`, settled = `keccak256("SETTLED", seriesId)`.
- *      Also implements `IERC1155Bridgeable` for LayerZero cross-chain compatibility.
+ *      Also implements `IERC1155Bridgeable` for ERC-7786 cross-chain compatibility.
  */
 interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // The following standard methods are inherited and available on implementers (from OpenZeppelin IERC1155/ERC1155):
@@ -174,6 +174,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
+    /// @notice Holder-to-holder transfer attempted while the series is Called.
+    error TransferOnCalledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted while the series state disallows it.

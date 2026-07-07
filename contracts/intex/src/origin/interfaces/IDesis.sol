@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
-///         This is the minimal interface used by OriginMessenger to call the precompile;
+///         This is the minimal interface used by OriginRouter to call the precompile;
 ///         the authoritative source lives in contracts/precompiles/src/IDesis.sol.
 interface IDesis {
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.

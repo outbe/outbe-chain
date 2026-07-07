@@ -30,10 +30,10 @@ use crate::digest::Digest;
 use crate::hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider};
 
 mod driver;
+pub mod engine;
 mod epocher;
 mod resolver;
 mod stubs;
-pub mod engine;
 pub mod upstream;
 
 pub use engine::{run_follow_engine, FollowEngineConfig};
@@ -130,7 +130,12 @@ impl CommitteeChain {
             participants.clone(),
             polynomial,
         )
-        .ok_or_else(|| eyre::eyre!("failed to build committee verifier for epoch {}", epoch.get()))?;
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "failed to build committee verifier for epoch {}",
+                epoch.get()
+            )
+        })?;
         self.scheme_provider.register(epoch, verifier);
         self.highest_registered = Some(match self.highest_registered {
             Some(h) => h.max(epoch),
@@ -139,26 +144,54 @@ impl CommitteeChain {
         Ok(participants)
     }
 
-    /// Advance the chain from a finalized block's `extra_data`: if it is a DKG
-    /// boundary block, register its epoch's committee verifier (the
-    /// forward-chaining step). Returns the registered epoch, if any.
+    /// Advance the chain from a finalized block's `extra_data`, registering an
+    /// epoch's committee verifier (the forward-chaining step). Returns the
+    /// registered epoch, if any.
     ///
-    /// Safe only for `extra_data` from blocks already verified as finalized by
-    /// the trusted committee (the marshal enforces this via its `provider`), so
-    /// the announced committee inherits that trust.
+    /// Two carriers register a committee:
+    /// - [`CommitteePreAnnounce`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::CommitteePreAnnounce)
+    ///   — the Path A committee-chaining carrier: epoch `E`'s committee riding a
+    ///   block finalized by the already-trusted `E-1` committee. This is the
+    ///   authenticated path — the trust chains from genesis through each E-1.
+    /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
+    ///   — the activating boundary at `E·L+1`, finalized by `E` ITSELF. We register
+    ///   from it ONLY for a not-yet-known epoch (the genesis anchor; and, until the
+    ///   pre-announce producer is wired, epochs lacking a pre-announce). We must NOT
+    ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce:
+    ///   a self-finalized boundary overriding the chained committee is exactly the
+    ///   D1 self-certification bug.
+    ///
+    /// Safe only for `extra_data` from blocks already verified as finalized by the
+    /// trusted committee (the marshal enforces this via its `provider`), so the
+    /// registered committee inherits that trust.
     pub fn advance_from_block_extra_data(&mut self, extra_data: &[u8]) -> Result<Option<Epoch>> {
+        use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
         let artifacts =
             outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(extra_data)
                 .map_err(|e| eyre::eyre!("failed to decode block artifacts: {e:?}"))?;
-        let Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
-            boundary,
-        )) = artifacts.consensus_header_artifact
-        else {
-            return Ok(None);
-        };
-        let epoch = Epoch::new(boundary.epoch);
-        self.register_epoch_from_outcome(epoch, &boundary.outcome)?;
-        Ok(Some(epoch))
+        match artifacts.consensus_header_artifact {
+            Some(CHA::CommitteePreAnnounce { epoch, outcome }) => {
+                let epoch = Epoch::new(epoch);
+                self.register_epoch_from_outcome(epoch, &outcome)?;
+                Ok(Some(epoch))
+            }
+            Some(CHA::BoundaryOutcome(boundary)) => {
+                let epoch = Epoch::new(boundary.epoch);
+                if self
+                    .highest_registered
+                    .map_or(true, |h| epoch.get() > h.get())
+                {
+                    self.register_epoch_from_outcome(epoch, &boundary.outcome)?;
+                    Ok(Some(epoch))
+                } else {
+                    // Already registered — via the E-1 pre-announce (the trusted
+                    // chaining path). The self-finalized boundary is a no-op here; it
+                    // must NOT override the chained committee (that would be D1).
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Verify a finalization certificate for `epoch` against its registered
@@ -169,11 +202,11 @@ impl CommitteeChain {
         epoch: Epoch,
         finalization: &Finalization<HybridScheme<MinSig>, Digest>,
     ) -> Result<()> {
-        let scheme = commonware_cryptography::certificate::Provider::scoped(
-            &self.scheme_provider,
-            epoch,
-        )
-        .ok_or_else(|| eyre::eyre!("no committee verifier registered for epoch {}", epoch.get()))?;
+        let scheme =
+            commonware_cryptography::certificate::Provider::scoped(&self.scheme_provider, epoch)
+                .ok_or_else(|| {
+                    eyre::eyre!("no committee verifier registered for epoch {}", epoch.get())
+                })?;
         let mut rng = bls_batch_verification_rng();
         if !finalization.verify(&mut rng, scheme.as_ref(), &Sequential) {
             bail!(
@@ -265,6 +298,23 @@ mod tests {
             .to_vec()
         }
 
+        /// An `E-1`-finalized block's `extra_data` pre-announcing this committee for
+        /// `epoch` (the Path A committee-chaining carrier).
+        fn preannounce_block_extra_data(&self, epoch: Epoch) -> Vec<u8> {
+            use outbe_primitives::reshare_artifact::{
+                encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+            };
+            encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+                consensus_header_artifact: Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+                    epoch: epoch.get(),
+                    outcome: alloy_primitives::Bytes::from(self.outcome(epoch)),
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+            .to_vec()
+        }
+
         /// A finalization for `epoch` signed by this committee.
         fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
@@ -300,7 +350,9 @@ mod tests {
                 .iter()
                 .map(|s| s.sign::<Digest>(subject).unwrap())
                 .collect();
-            let certificate = verifier.assemble::<_, N3f1>(attestations, &Sequential).unwrap();
+            let certificate = verifier
+                .assemble::<_, N3f1>(attestations, &Sequential)
+                .unwrap();
             Finalization {
                 proposal,
                 certificate,
@@ -315,11 +367,15 @@ mod tests {
         let c6 = committee(50);
         let mut chain = CommitteeChain::new(e5, c5.participants.clone());
 
-        chain.register_epoch_from_outcome(e5, &c5.outcome(e5)).unwrap();
+        chain
+            .register_epoch_from_outcome(e5, &c5.outcome(e5))
+            .unwrap();
         chain.verify_finalization(e5, &c5.finalization(e5)).unwrap();
 
         // Chain forward to epoch 6 (a different committee) and verify it.
-        chain.register_epoch_from_outcome(e6, &c6.outcome(e6)).unwrap();
+        chain
+            .register_epoch_from_outcome(e6, &c6.outcome(e6))
+            .unwrap();
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         assert_eq!(chain.highest_registered(), Some(e6));
 
@@ -327,6 +383,45 @@ mod tests {
         assert!(chain
             .verify_finalization(Epoch::new(7), &c6.finalization(e6))
             .is_err());
+    }
+
+    #[test]
+    fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
+        // The D1 fix, end to end at the follower: epoch 6's committee is registered
+        // from its E-1 PRE-ANNOUNCE (carried in a block finalized by the trusted
+        // epoch-5 committee — the chained path). A later self-finalized epoch-6
+        // boundary announcing a DIFFERENT (forged) committee must NOT override it.
+        let (e5, e6) = (Epoch::new(5), Epoch::new(6));
+        let c5 = committee(10);
+        let c6 = committee(50); // the real epoch-6 committee, pre-announced by trusted e5
+        let forged6 = committee(77); // what a malicious self-finalized e6 boundary would claim
+        let mut chain = CommitteeChain::new(e5, c5.participants.clone());
+        chain
+            .register_epoch_from_outcome(e5, &c5.outcome(e5))
+            .unwrap();
+
+        // Pre-announce epoch 6 in an e5-finalized block -> registered (chained trust).
+        let pre6 = c6.preannounce_block_extra_data(e6);
+        assert_eq!(
+            chain.advance_from_block_extra_data(&pre6).unwrap(),
+            Some(e6)
+        );
+        chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
+
+        // A forged, self-finalized epoch-6 boundary is a NO-OP — it cannot overwrite
+        // the chained committee (that overwrite would be the D1 bug).
+        let forged_boundary = forged6.boundary_block_extra_data(e6);
+        assert_eq!(
+            chain
+                .advance_from_block_extra_data(&forged_boundary)
+                .unwrap(),
+            None
+        );
+        // The forged committee's finalization is rejected; the real one still verifies.
+        assert!(chain
+            .verify_finalization(e6, &forged6.finalization(e6))
+            .is_err());
+        chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
     }
 
     #[test]
@@ -350,7 +445,10 @@ mod tests {
         let mut chain = CommitteeChain::new(e6, c6.participants.clone());
         // Feeding the boundary block's extra_data registers epoch 6's committee.
         let extra = c6.boundary_block_extra_data(e6);
-        assert_eq!(chain.advance_from_block_extra_data(&extra).unwrap(), Some(e6));
+        assert_eq!(
+            chain.advance_from_block_extra_data(&extra).unwrap(),
+            Some(e6)
+        );
         // That epoch's finalization now verifies.
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         // A non-boundary block (empty extra_data) registers nothing.
@@ -406,14 +504,14 @@ mod tests {
         // Decode the marshal's way: certificate first (with its cfg), block from
         // the remaining bytes.
         let mut buf: &[u8] = &wire;
-        let decoded_fin = Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut buf, &cert_cfg)
-            .expect("finalization must decode from the delivery prefix");
+        let decoded_fin =
+            Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut buf, &cert_cfg)
+                .expect("finalization must decode from the delivery prefix");
         let decoded_block = ConsensusBlock::read_cfg(&mut buf, &())
             .expect("block must decode from the delivery suffix");
 
         assert_eq!(
-            decoded_fin.proposal.payload,
-            finalization.proposal.payload,
+            decoded_fin.proposal.payload, finalization.proposal.payload,
             "decoded finalization payload must match"
         );
         assert_eq!(
@@ -452,7 +550,9 @@ mod tests {
         let mut chain = CommitteeChain::new(epoch, c.participants.clone());
         let boundary_extra = c.boundary_block_extra_data(epoch);
         assert_eq!(
-            chain.advance_from_block_extra_data(&boundary_extra).unwrap(),
+            chain
+                .advance_from_block_extra_data(&boundary_extra)
+                .unwrap(),
             Some(epoch)
         );
 
@@ -470,8 +570,8 @@ mod tests {
             let b = b.map_header(OutbeHeader::new);
             ConsensusBlock::from_sealed(SealedBlock::seal_slow(b))
         };
-        let finalization_hex = format!("0x{}", hex::encode(finalization.encode().to_vec()));
-        let block_hex = format!("0x{}", hex::encode(block.encode().to_vec()));
+        let finalization_hex = format!("0x{}", hex::encode(finalization.encode()));
+        let block_hex = format!("0x{}", hex::encode(block.encode()));
 
         // CLIENT: hex-decode and decode the certificate with the UNBOUNDED
         // committee config (the engine UpstreamRpcClient path).
@@ -482,7 +582,10 @@ mod tests {
         let decoded_fin =
             Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut fin_reader, &unbounded_cfg)
                 .expect("client must decode the served finalization with the unbounded cfg");
-        assert!(fin_reader.is_empty(), "no trailing bytes after finalization");
+        assert!(
+            fin_reader.is_empty(),
+            "no trailing bytes after finalization"
+        );
         let mut block_reader: &[u8] = &block_bytes;
         let _decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
             .expect("client must decode the served block");
