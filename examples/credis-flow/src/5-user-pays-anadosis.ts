@@ -87,7 +87,6 @@ function decodeRevert(data: string): string {
     // fall through to raw
   }
   if (KNOWN_ERROR_SIGS[sel]) return KNOWN_ERROR_SIGS[sel];
-  // outbe precompiles return raw UTF-8 strings (no Error() wrapper).
   const bytes = data.startsWith("0x") ? data.slice(2) : data;
   if (bytes.length > 0 && bytes.length % 2 === 0) {
     const buf = Buffer.from(bytes, "hex");

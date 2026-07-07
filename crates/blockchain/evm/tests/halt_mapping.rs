@@ -6,8 +6,8 @@
 //!
 //! - `Ok(bytes)` → `Ok(PrecompileOutput::new(actual_gas, bytes, 0))`
 //! - `OutOfGas` → `Ok(Halt(OOG))` with zero gas reported
-//! - `Revert(msg)` → `Ok(Revert(bytes(msg), actual_gas))`
-//! - `RevertBytes(bytes)` → `Ok(Revert(bytes, actual_gas))` (no UTF-8 path)
+//! - `Revert(msg)` → `Ok(Revert(Error(string)-encoded msg, actual_gas))`
+//! - `RevertBytes(bytes)` → `Ok(Revert(bytes, actual_gas))` (no re-encoding)
 //! - `WriteProtection` → `Ok(Halt(Other("state change during static call")))`
 //! - `SubCall(_)` → `Err(Fatal(_))` with sub-call error info
 //! - `Unsupported` → `Err(Fatal("precompile reported Unsupported"))`
@@ -15,6 +15,7 @@
 //! - `Fatal(s)` → `Err(Fatal(s))` (fallback arm)
 
 use alloy_primitives::Bytes;
+use alloy_sol_types::{Revert, SolError};
 use outbe_evm::precompiles::map_outbe_precompile_result;
 use outbe_primitives::{error::PrecompileError, storage::SubCallError};
 use revm::precompile::{PrecompileHalt, PrecompileStatus};
@@ -44,12 +45,21 @@ fn out_of_gas_halts_with_oog_status() {
 }
 
 #[test]
-fn revert_msg_becomes_revert_bytes() {
+fn revert_msg_becomes_error_string_bytes() {
     let msg = "explicit revert reason".to_string();
     let result = map_outbe_precompile_result(Err(PrecompileError::Revert(msg.clone())), ACTUAL_GAS)
         .expect("revert is non-fatal");
     assert!(matches!(result.status, PrecompileStatus::Revert));
-    assert_eq!(result.bytes, Bytes::from(msg.into_bytes()));
+    // Reason is ABI-encoded as the Solidity-standard `Error(string)`
+    // (selector 0x08c379a0 ++ abi.encode(reason)) so ethers/viem/foundry
+    // can decode it instead of seeing raw UTF-8 ("invalid data length").
+    assert_eq!(
+        result.bytes,
+        Bytes::from(Revert::from(msg.clone()).abi_encode())
+    );
+    assert_eq!(&result.bytes[..4], &[0x08, 0xc3, 0x79, 0xa0]);
+    let decoded = Revert::abi_decode(&result.bytes).expect("decodes as Error(string)");
+    assert_eq!(decoded.reason, msg);
     assert_eq!(result.gas_used, ACTUAL_GAS);
 }
 
