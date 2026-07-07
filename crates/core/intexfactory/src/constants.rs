@@ -18,7 +18,7 @@ pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
 
-/// Qualification maturity in days since issuance (mirrors Nod's MATURITY_PERIOD_DAYS).
+/// Qualification maturity in days since issuance.
 pub const MATURITY_PERIOD_DAYS: u64 = 21;
 /// Derived seconds, for comparison against block timestamps.
 pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
