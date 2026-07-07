@@ -372,6 +372,11 @@
               "name": "minIntexBidQuantity",
               "type": "uint16",
               "internalType": "uint16"
+            },
+            {
+              "name": "commitBondMinor",
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }
@@ -787,6 +792,11 @@
               "name": "minIntexBidQuantity",
               "type": "uint16",
               "internalType": "uint16"
+            },
+            {
+              "name": "commitBondMinor",
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }

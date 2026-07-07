@@ -3,6 +3,24 @@
   "abi": [
     {
       "type": "function",
+      "name": "claimAbandonedCommitBond",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "claimRefund",
       "inputs": [
         {
@@ -141,6 +159,42 @@
     },
     {
       "type": "function",
+      "name": "getCommitBond",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "bond",
+          "type": "tuple",
+          "internalType": "struct IEscrowAdapter.CommitBond",
+          "components": [
+            {
+              "name": "amount",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "lockedAt",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "hasOutstandingLocks",
       "inputs": [],
       "outputs": [
@@ -151,6 +205,29 @@
         }
       ],
       "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "lockCommitBond",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint128",
+          "internalType": "uint128"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -170,6 +247,24 @@
           "name": "amount",
           "type": "uint128",
           "internalType": "uint128"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "releaseCommitBond",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -359,6 +454,56 @@
         },
         {
           "name": "paidAmount",
+          "type": "uint128",
+          "indexed": false,
+          "internalType": "uint128"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "CommitBondLocked",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint128",
+          "indexed": false,
+          "internalType": "uint128"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "CommitBondReleased",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
           "type": "uint128",
           "indexed": false,
           "internalType": "uint128"
@@ -607,6 +752,32 @@
       "type": "error",
       "name": "ClaimAuthorizationUnsupported",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CommitBondAlreadyLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CommitBondNotFound",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "CommitBondNotYetAbandoned",
+      "inputs": [
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "now_",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
     },
     {
       "type": "error",
