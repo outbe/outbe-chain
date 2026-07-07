@@ -83,6 +83,9 @@ interface IIntexAuction {
         uint64 floorPriceMinor;
         /// @notice Call price (reference ccy).
         uint64 callPriceMinor;
+        /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
+        ///         reveal/cancel; 0 disables the bond.
+        uint128 commitBondMinor;
     }
 
     /// @notice Auction results and statistics (final, set at clearing).
@@ -200,6 +203,10 @@ interface IIntexAuction {
     /// @notice `commitBid`/`cancelCommit` attempted at or after the published `commitEnd`.
     ///         The commit window is `[start, commitEnd)`; the deadline second is already closed.
     error CommitWindowClosed(uint32 commitEnd, uint32 nowTs);
+    /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
+    /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
+    /// @param nowTs Current block timestamp.
+    error CommitBondNotYetClaimable(uint32 claimableAt, uint32 nowTs);
 
     // --- Admin ---
 
@@ -244,6 +251,10 @@ interface IIntexAuction {
     // --- User Actions ---
 
     /// @notice Commit a sealed bid hash for an auction.
+    /// @dev When the series carries a non-zero `commitBondMinor`, the bond is pulled from the
+    ///      caller into escrow in the same transaction (requires prior payment-token approval on
+    ///      the escrow adapter). Reveal/cancel return it immediately; a green-day no-reveal locks
+    ///      it until `revealEnd + COMMIT_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param seriesId Auction series id.
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
     ///                   signature over `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`
@@ -252,7 +263,8 @@ interface IIntexAuction {
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
-    ///      be cancelled or revealed — an unrevealed commit is permanently forfeited.
+    ///      be cancelled or revealed — an unrevealed commit is permanently forfeited (its bond
+    ///      stays claimable via `claimCommitBond`). Cancelling returns the bond immediately.
     /// @param seriesId Auction series id.
     function cancelCommit(uint32 seriesId) external;
 
@@ -262,6 +274,8 @@ interface IIntexAuction {
     function reapAuction(uint32 seriesId, uint256 limit) external;
 
     /// @notice Reveal a bid.
+    /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
+    ///      the bid in the same transaction.
     /// @param seriesId Auction series id.
     /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
@@ -270,6 +284,15 @@ interface IIntexAuction {
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
     function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
         external;
+
+    /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
+    ///         A cancelled (red-day) auction releases immediately; otherwise the bond is claimable
+    ///         only after `revealEnd + COMMIT_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
+    ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) backs this up
+    ///         if the auction contract itself is rotated away.
+    /// @param seriesId Auction series id.
+    /// @param bidder Bidder whose bond is being claimed.
+    function claimCommitBond(uint32 seriesId, address bidder) external;
 
     // --- Views ---
 

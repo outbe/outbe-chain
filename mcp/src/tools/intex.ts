@@ -372,6 +372,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           entryPriceMinor: bigint;
           floorPriceMinor: bigint;
           callPriceMinor: bigint;
+          commitBondMinor: bigint;
         };
         result: { auctionClearingRate: bigint; wonBidsCount: number; issuedIntexCount: number; issuedIntexLoadedPromis: bigint };
       };
@@ -399,6 +400,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           // bid rates are 1e6 fixed-point (fraction of strike).
           minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(d.params.minIntexBidRate, 6) },
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
+          // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
+          commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
           // entry/floor/call are in the reference currency (USD); raw on-chain integers.
           entryPriceMinor: d.params.entryPriceMinor.toString(),
           floorPriceMinor: d.params.floorPriceMinor.toString(),
@@ -463,14 +466,48 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_commit",
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
-      "hash (no separate salt). No token approval needed — the escrow is funded only at reveal. IMPORTANT: " +
-      "save your (series, quantity, rate); you must repeat them to reveal, they can't be recovered on-chain, " +
-      "and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
+      "hash (no separate salt). When the series carries an entry bond (commitBondMinor > 0), commitBid pulls " +
+      "it into escrow in the same transaction — the tool auto-approves the escrow if the allowance is short. " +
+      "The bond returns at reveal/cancel; a green-day no-reveal locks it for 21 days past revealEnd " +
+      "(intex_claim_commit_bond). IMPORTANT: save your (series, quantity, rate); you must repeat them to " +
+      "reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, quantity, rate, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const bidRate = toBidRate(rate);
+
+      // Entry bond: the escrow pulls it inside commitBid, so cover the allowance up front.
+      const info = (await n.client.readContract({
+        address: addr(n, "auction"),
+        abi: AUCTION_ABI,
+        functionName: "getAuctionInfo",
+        args: [series],
+      })) as { params: { commitBondMinor: bigint } };
+      const bond = info.params.commitBondMinor;
+      let autoApprove: { txHash: Hex; amount: string } | null = null;
+      let note = "No entry bond on this series; nothing is locked at commit.";
+      if (bond > 0n) {
+        const { decimals: dec, symbol } = await paymentMeta(n);
+        const bondHuman = formatUnits(bond, dec);
+        const token = addr(n, "paymentToken");
+        const escrow = addr(n, "escrow");
+        const allowance = (await n.client.readContract({
+          address: token,
+          abi: ERC20_ABI,
+          functionName: "allowance",
+          args: [account.address, escrow],
+        })) as bigint;
+        if (allowance < bond) {
+          const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, bond] });
+          const ar = await submit(n, token, approveData, 0n, true); // must be mined before commit
+          autoApprove = { txHash: ar.txHash, amount: bond.toString() };
+        }
+        note =
+          `Commit locks a ${bondHuman} ${symbol} entry bond in escrow; it returns at reveal/cancel. ` +
+          `A green-day no-reveal keeps it locked until 21 days past revealEnd (intex_claim_commit_bond).`;
+      }
+
       const signature = await signReveal(n, account, series, quantity, bidRate);
       const hash = commitHash(signature);
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [series, hash] });
@@ -482,6 +519,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         rate,
         bidRate: bidRate.toString(),
         commitHash: hash,
+        bond: bond.toString(),
+        autoApprove,
+        note,
         ...receipt,
         reminder:
           `Record series=${series}, quantity=${quantity}, rate=${rate} — required to reveal, ` +
@@ -509,7 +549,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         abi: AUCTION_ABI,
         functionName: "getAuctionInfo",
         args: [series],
-      })) as { params: { promisLoadMinor: bigint } };
+      })) as { params: { promisLoadMinor: bigint; commitBondMinor: bigint } };
       const strike = info.params.promisLoadMinor;
       const lockAmount = (BigInt(quantity) * strike * bidRate) / RATE_SCALE;
       const lockHuman = formatUnits(lockAmount, dec);
@@ -530,6 +570,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         note = `Reveal locks ${lockHuman} ${symbol} (${quantity} x strike x ${rate}) in escrow. Allowance was short, so the escrow was approved for ${lockHuman} ${symbol} first, then the bid was revealed.`;
       } else {
         note = `Reveal locks ${lockHuman} ${symbol} (${quantity} x strike x ${rate}) in escrow; allowance already covered it, no approval needed.`;
+      }
+      if (info.params.commitBondMinor > 0n) {
+        note += ` The ${formatUnits(info.params.commitBondMinor, dec)} ${symbol} entry bond returns within the same transaction (released before the bid lock, so it can fund the bid).`;
       }
 
       const signature = await signReveal(n, account, series, quantity, bidRate);
@@ -553,6 +596,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [series] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({ network: n.name, series, ...receipt });
+    }),
+  );
+
+  server.tool(
+    "intex_claim_commit_bond",
+    "Reclaim an entry bond left behind by a no-reveal commit. Permissionless and always pays the stored " +
+      "bidder: a cancelled (red-day) auction releases immediately, otherwise the bond is claimable only " +
+      "21 days past revealEnd. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ series, bidder, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const account = requireAccount();
+      const who = bidder ? getAddress(bidder) : account.address;
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [series, who] });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({ network: n.name, series, bidder: who, ...receipt });
     }),
   );
 
@@ -627,8 +686,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_quote",
-    "Bridge native fee to move a Qualified Intex NFT from BSC to outbe. Bridging is only allowed once " +
-      "a series is Qualified (Issued cannot bridge; Called is auto-bridged by the system).",
+    "Bridge native fee to move an Intex NFT from BSC to outbe. Voluntary bridging is allowed while the " +
+      "series is Issued or Qualified (Called is auto-bridged by the system).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, amount, recipient, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -691,7 +750,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "auction_settler_set. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
-      "settle/mine itself — Issued is freely transferable on BSC, so move it there first. Requires OUTBE_PRIVATE_KEY.",
+      "settle/mine itself — Issued is transferable on BSC only while the series is Issued/Qualified (Called " +
+      "freezes transfers), so move it before the call. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, holder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, holder, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");

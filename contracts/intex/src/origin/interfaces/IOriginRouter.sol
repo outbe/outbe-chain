@@ -106,6 +106,8 @@ interface IOriginRouter {
         uint16 callThresholdDays;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
+        /// @notice Commit-entry bond (payment-token minor units); 0 disables the bond.
+        uint128 commitBondMinor;
     }
 
     /// @notice Issuance instructions parameters grouped to keep the calldata layout resilient against stack limits.
