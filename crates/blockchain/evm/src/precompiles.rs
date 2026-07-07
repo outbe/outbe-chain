@@ -11,6 +11,7 @@
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
+use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_primitives::addresses::{
@@ -212,6 +213,12 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
     Some(entry)
 }
 
+/// ABI-encode a revert reason as the Solidity-standard `Error(string)`
+/// (selector `0x08c379a0` followed by `abi.encode(reason)`).
+fn encode_revert_reason(msg: String) -> Bytes {
+    Bytes::from(Revert::from(msg).abi_encode())
+}
+
 /// Translate the outbe-level [`outbe_primitives::error::PrecompileError`] (the
 /// flat error type returned from every outbe precompile dispatch function)
 /// into a revm [`PrecompileResult`] that the EVM interpreter understands.
@@ -241,7 +248,7 @@ pub fn map_outbe_precompile_result(
         }
         Err(outbe_primitives::error::PrecompileError::Revert(msg)) => Ok(PrecompileOutput::revert(
             actual_gas,
-            Bytes::from(msg.into_bytes()),
+            encode_revert_reason(msg),
             0,
         )),
         Err(outbe_primitives::error::PrecompileError::RevertBytes(bytes)) => {
@@ -375,7 +382,7 @@ where
     let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
         let out = PrecompileOutput::revert(
             base_gas,
-            Bytes::from_static(b"outbe precompile reentrancy denied"),
+            encode_revert_reason("outbe precompile reentrancy denied".to_string()),
             0,
         );
         return Ok(Some(precompile_output_to_interpreter_result(
