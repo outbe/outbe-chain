@@ -174,7 +174,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const quantityArg = z.number().int().describe("bid quantity (uint16)");
   const rateArg = z
     .string()
-    .describe('bid rate as a fraction of strike, 0..1 (e.g. "0.8" = 80% of strike; min from intex_auction_info)');
+    .describe('bid rate as a fraction of strike, 0..1 (e.g. "0.8" = 80% of strike; min from auction_info)');
   const amountArg = z.string().describe("amount as the raw on-chain integer");
   const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
   const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
@@ -244,7 +244,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- NFT holdings (BSC or outbe IntexNFT1155) ------------------------------
   server.tool(
-    "intex_my_holdings",
+    "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, and decoded status " +
       "(Issued/Settled). Defaults to bsc-testnet (where won NFTs land); pass network to read outbe.",
     { account: accountArg, network: networkArg.optional() },
@@ -323,7 +323,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   server.tool(
-    "intex_active_auctions",
+    "auctions_active",
     "Active Intex auctions and their stage. Series ids are dates (yyyymmdd); probes a date window " +
       "(default today-2..+10, override via from_date/to_date). Active = CommittingBids or RevealingBids; " +
       "pass include_all for every stage.",
@@ -346,7 +346,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_auction_info",
+    "auction_info",
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (promis-load strike, " +
       "min bid rate/quantity, entry/floor/call). Bids are sealed: the bid counts and clearing result stay 0 " +
       "until clearing runs after reveal, so 0 here does NOT mean there are no participants.",
@@ -416,7 +416,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_my_bids",
+    "auction_bids_by_owner",
     "Your commit/reveal status across active auctions: for each active series, whether you have a " +
       "committed bid and whether it has been revealed. Pass series to check just one.",
     { account: accountArg, series: seriesArg.optional(), network: networkArg.optional() },
@@ -461,7 +461,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   server.tool(
-    "intex_commit_bid",
+    "auction_bid_commit",
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
       "hash (no separate salt). No token approval needed — the escrow is funded only at reveal. IMPORTANT: " +
       "save your (series, quantity, rate); you must repeat them to reveal, they can't be recovered on-chain, " +
@@ -491,7 +491,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_reveal_bid",
+    "auction_bid_reveal",
     "Reveal a committed Intex bid: re-derives the same signature from (series, quantity, rate) and submits " +
       "revealBid; the escrow then locks quantity * strike * rate / RATE_SCALE in wCOEN, where strike is the " +
       "series promis_load. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
@@ -544,7 +544,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_cancel_commit",
+    "auction_bid_cancel",
     "Cancel a committed bid for a series before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, network, wait }) => {
@@ -585,8 +585,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_approve_payment",
-    "Manually approve the EscrowAdapter to pull the payment token. Usually unnecessary — intex_reveal_bid " +
+    "intex_payment_approve",
+    "Manually approve the EscrowAdapter to pull the payment token. Usually unnecessary — auction_bid_reveal " +
       "auto-approves what it needs. Pass amount in token units (e.g. \"100\") or max=true. Requires OUTBE_PRIVATE_KEY.",
     {
       amount: z.string().optional().describe('token amount to approve, e.g. "100"'),
@@ -652,7 +652,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_bridge_nft",
+    "intex_bridge_send",
     "Bridge a Qualified Intex NFT from BSC to outbe (voluntary, holder-initiated) to settle there. Only " +
       "works once the series is Qualified — Issued cannot bridge, and Called is auto-bridged by the system, " +
       "not via this tool. The bridge burns your token directly (role-gated), so no approval is needed. " +
@@ -685,10 +685,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // --- Settlement + Promis (outbe IntexFactory, signed) ----------------------
   server.tool(
-    "intex_settle",
+    "auction_bid_settle",
     "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is minted later via " +
-      "intex_mine_promis). Defaults to your own wallet; pass holder only if that holder authorized you via " +
-      "intex_set_authorized_settler. Allowed when the series is Qualified (voluntary) or Called (forced, " +
+      "intex_promis_mine). Defaults to your own wallet; pass holder only if that holder authorized you via " +
+      "auction_settler_set. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
       "settle/mine itself — Issued is freely transferable on BSC, so move it there first. Requires OUTBE_PRIVATE_KEY.",
@@ -704,7 +704,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_set_authorized_settler",
+    "auction_settler_set",
     "Authorize another wallet to settle your position in a series. Call this from the holder wallet before " +
       "that wallet can settle on your behalf. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, settler: z.string().describe("0x address to authorize"), network: networkArg.optional(), wait: waitArg },
@@ -718,8 +718,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "intex_mine_promis",
-    "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run intex_settle " +
+    "intex_promis_mine",
+    "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run auction_bid_settle " +
       "first). The proof-of-work nonce is computed locally; you give only series and amount. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, network, wait }) => {
