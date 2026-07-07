@@ -5,7 +5,7 @@
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::constants::{
-    CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, FLOOR_PRICE_NUM,
+    CALL_PRICE_NUM, CALL_THRESHOLD_DAYS, CALL_WINDOW_DAYS, COMMIT_BOND_MINOR, FLOOR_PRICE_NUM,
     INTEX_CALL_PERIOD_SECONDS, MATURITY_PERIOD_SECONDS,
 };
 use crate::schema::IntexFactoryContract;
@@ -23,6 +23,8 @@ pub struct IntexParams {
     pub intex_call_period_secs: u32,
     pub call_price_num: u64,
     pub floor_price_num: u64,
+    /// Commit-entry bond on the target-chain auction (payment-token 18-dec minor units).
+    pub commit_bond_minor: u128,
 }
 
 impl IntexParams {
@@ -34,10 +36,12 @@ impl IntexParams {
         intex_call_period_secs: INTEX_CALL_PERIOD_SECONDS,
         call_price_num: CALL_PRICE_NUM,
         floor_price_num: FLOOR_PRICE_NUM,
+        commit_bond_minor: COMMIT_BOND_MINOR,
     };
 
     /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
-    /// so window/threshold stay in whole days.
+    /// so window/threshold stay in whole days. The bond drops to 100 wCOEN so
+    /// test bidders are not forced to mint 100M per commit.
     pub const DEV: Self = Self {
         maturity_period_secs: 24 * 3600,
         call_window_days: 3,
@@ -45,6 +49,7 @@ impl IntexParams {
         intex_call_period_secs: 3 * 24 * 3600,
         call_price_num: 110,
         floor_price_num: 105,
+        commit_bond_minor: 100 * 10u128.pow(18),
     };
 
     pub fn from_selector(selector: u8) -> Result<Self> {

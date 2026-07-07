@@ -39,7 +39,7 @@ fn default_config() -> AuctionConfig {
         call_trigger: IntexCallTrigger::default(),
         min_intex_bid_rate: 100,
         min_intex_bid_quantity: 0,
-        commit_bond_minor: 7_000_000_000_000_000_000, // 7e18, distinct sentinel for wire asserts
+        commit_bond_minor: 0, // populated at start_auction from the genesis IntexParams profile
         entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13, reference ccy (feeds floor/call)
     }
 }
@@ -55,9 +55,11 @@ fn start_auction_sets_started_stage() {
             contract.read_stage(SERIES_ID).unwrap(),
             AuctionStage::Started
         );
-        // Persisted config round-trips the commit bond alongside the rest.
+        // Persisted config carries the commit bond folded in from the genesis profile.
         let cfg = contract.read_auction_config(SERIES_ID).unwrap();
-        assert_eq!(cfg.commit_bond_minor, default_config().commit_bond_minor);
+        let iparams = outbe_intexfactory::read_params(&s).unwrap();
+        assert!(iparams.commit_bond_minor > 0, "profile carries a bond");
+        assert_eq!(cfg.commit_bond_minor, iparams.commit_bond_minor);
     });
 }
 

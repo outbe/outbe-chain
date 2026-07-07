@@ -70,6 +70,7 @@ pub fn start_auction(
         threshold_days: iparams.call_threshold_days,
         intex_call_period: iparams.intex_call_period_secs,
     };
+    config.commit_bond_minor = iparams.commit_bond_minor;
 
     contract.write_auction_config(series_id, &config)?;
     contract.write_stage(series_id, AuctionStage::Started)?;
