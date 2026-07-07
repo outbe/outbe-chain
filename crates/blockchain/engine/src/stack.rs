@@ -4332,14 +4332,20 @@ where
                             let epoch_boundary_height =
                                 activation_height.max(target.planned_activation_height);
                             if let Some(ref keys_dir) = args.keys_dir {
-                                save_pending_dkg_state(
-                                    keys_dir,
-                                    &activated_signing_share,
-                                    &activated_polynomial,
-                                    &canonical_output,
-                                    &key_backend,
-                                )
-                                .wrap_err("failed to durably save pending DKG state before activation")?;
+                                // A shareless VERIFIER activation (C1) has no private
+                                // share to persist; only the boundary snapshot is saved.
+                                if let Some(share) = activated_signing_share.as_ref() {
+                                    save_pending_dkg_state(
+                                        keys_dir,
+                                        share,
+                                        &activated_polynomial,
+                                        &canonical_output,
+                                        &key_backend,
+                                    )
+                                    .wrap_err(
+                                        "failed to durably save pending DKG state before activation",
+                                    )?;
+                                }
                                 save_pending_dkg_boundary(
                                     keys_dir,
                                     &PendingDkgBoundarySnapshot {
@@ -4353,7 +4359,7 @@ where
                             vrf_material_version = activated_vrf_material_version;
                             polynomial = activated_polynomial;
                             last_dkg_output = Some(canonical_output.clone());
-                            signing_share = Some(activated_signing_share);
+                            signing_share = activated_signing_share;
                             vrf_materials.activate(
                                 vrf_material_version,
                                 polynomial.clone(),
@@ -5793,10 +5799,22 @@ where
     )?;
     let canonical_polynomial = canonical_output.public().clone();
 
+    // Startup live-join runs `run_initial_dkg` in chain-finalized mode, so a finalize
+    // failure can return a shareless (verifier) result. A startup joiner that can only
+    // verify should instead use the `ThresholdMaterial::VerifierOnly` startup path
+    // (provisioned public polynomial), so here we require a share. (Follow-up: make
+    // `StartupLiveJoinResult.signing_share` optional → VerifierOnly for symmetric
+    // startup resilience.)
+    let signing_share = complete.share.ok_or_else(|| {
+        eyre::eyre!(
+            "startup live-join DKG completed without a signing share; join as a verifier via a \
+             provisioned public polynomial instead"
+        )
+    })?;
     if let Some(ref keys_dir) = args.keys_dir {
         save_dkg_state(
             keys_dir,
-            &complete.share,
+            &signing_share,
             &canonical_polynomial,
             &canonical_output,
             key_backend,
@@ -5804,7 +5822,7 @@ where
     }
 
     Ok(StartupLiveJoinResult {
-        signing_share: complete.share,
+        signing_share,
         polynomial: canonical_polynomial,
         output: canonical_output,
         activated_at_height,
@@ -6100,7 +6118,14 @@ async fn obtain_threshold_material(
     .wrap_err("DKG ceremony failed")?;
 
     let polynomial = dkg_result.output.public().clone();
-    let signing_share = dkg_result.share;
+    // Genesis bootstrap has NO chain carrier to authenticate a shareless verifier
+    // polynomial, so completing without a share is fatal (a broken founding committee
+    // must not be silently accepted). Only the chain-finalized reshare path may return
+    // `None` → verifier; genesis passes no finalized-log receiver, so A5 keeps finalize
+    // fatal and this is always `Some`.
+    let signing_share = dkg_result.share.ok_or_else(|| {
+        eyre::eyre!("initial genesis DKG completed without a signing share; cannot bootstrap")
+    })?;
     info!(
         vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
         "initial DKG ceremony completed; threshold material ready"
