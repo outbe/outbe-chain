@@ -25,6 +25,7 @@ pub mod tee_bootstrap;
 pub mod time;
 pub mod units;
 pub mod validators;
+pub mod zero_fee;
 
 pub use header::{
     OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
