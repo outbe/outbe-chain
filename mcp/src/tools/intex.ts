@@ -751,7 +751,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "intex_set_authorized_settler. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
-      "settle/mine itself — Issued is freely transferable on BSC, so move it there first. Requires OUTBE_PRIVATE_KEY.",
+      "settle/mine itself — Issued is transferable on BSC only while the series is Issued/Qualified (Called " +
+      "freezes transfers), so move it before the call. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, holder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, holder, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
