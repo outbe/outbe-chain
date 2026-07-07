@@ -98,21 +98,21 @@ OUTBE_RPC=https://rpc.testnet.outbe.net \
 
 ## Tools
 
-**Chain RPC** — `chain_info`, `get_block`, `get_transaction`, `get_transaction_receipt`.
+**Chain RPC** — `chain_info`, `block_get`, `transaction_get`, `transaction_receipt_get`.
 
 **Generic view** — `contract_call { contract, method, args[] }`: any view/pure method
 on any precompile, decoded. `contract` is a registry name or a `0x` address.
 
 **Convenience reads** (decoded) — `tribute_get`, `tributes_by_owner`, `tributes_by_day`,
-`tribute_day_totals`, `nod_get`, `nods_by_owner`, `gem_get`, `gems_by_owner`,
+`worldwide_day_totals`, `nod_get`, `nods_by_owner`, `gem_get`, `gems_by_owner`,
 `gratis_balance`, `promis_balance`,
-`fidelity_index`, `agentreward_claimable`, `offering_days`, `worldwide_day`,
-`oracle_pairs`, `oracle_rate`, `oracle_vwap`, `validators`, `validator`,
-`staking_info`, `rewards_pending`.
+`fidelity_index`, `agentreward_claimable`, `worldwide_days_offering`, `worldwide_day_get`,
+`currency_pairs`, `currency_rate`, `currency_rate_vwap`, `validators`, `validator_get`,
+`staking_info`, `rewards_claimable`.
 
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
-`staking_unstake`, `staking_claim_unbonded`, `rewards_claim`, `agentreward_claim`,
-`oracle_delegate_feeder`, `oracle_submit_vote`. Amounts are whole COEN strings (`"100"`,
+`staking_unstake`, `staking_unbonded_claim`, `rewards_claim`, `agentreward_claim`,
+`oracle_feeder_delegate`, `oracle_vote_submit`. Amounts are whole COEN strings (`"100"`,
 `"1.5"`), scaled to 1e18 minor units internally. Transactions are EIP-1559 (type 2) with
 an explicit gas limit (`tribute_offer` can't be `eth_estimateGas`-simulated because the
 payload is decrypted inside the enclave during execution).
@@ -133,31 +133,31 @@ precompile tools above, the router is a regular deployed contract used across
 several networks. The supported networks live in the `NETWORKS` table in
 `src/intent/registry.ts`
 
-- `intent_open_order { origin, destination, input_token, output_token, amount_in, … }`
+- `intent_order_open { origin, destination, input_token, output_token, amount_in, … }`
   — approves the input (or sends native value) and calls `open`; returns the
   deterministic `orderId`. Amounts are whole-token decimals (input decimals read
   on origin, output on destination). Needs `OUTBE_PRIVATE_KEY`.
-- `intent_track_order { order_id, chain }` — deterministic lifecycle snapshot:
+- `intent_order_track { order_id, chain }` — deterministic lifecycle snapshot:
   derives a coarse `phase` (`OPENED → CLAIMED → FILLED → SETTLED`, plus
   `REFUNDED`/`EXPIRED`) with a `next` hint. No event scan; poll it (e.g. via
   `/loop`) to follow progress.
-- `intent_refund_order { order_id, chain }` — refunds an expired, still-`OPENED`
+- `intent_order_refund { order_id, chain }` — refunds an expired, still-`OPENED`
   order to the sender; cross-chain refunds quote the LayerZero fee automatically,
   same-chain refunds are free. Needs `OUTBE_PRIVATE_KEY`.
 
 **Example prompts:** 
 
 - *"Open an intent order: swap 1 USDT on bsc-testnet for 20 COEN on
-  outbe-testnet."* → `intent_open_order { origin: "bsc-testnet", destination:
+  outbe-testnet."* → `intent_order_open { origin: "bsc-testnet", destination:
   "outbe-testnet", input_token: "USDT", output_token: "COEN", amount_in: "1",
   amount_out: "20" }`
 - *"Reverse it: 10 COEN on outbe-testnet → 0.1 USDT on bsc-testnet."* →
   `origin: "outbe-testnet", input_token: "COEN", amount_in: "10",
   destination: "bsc-testnet", output_token: "USDT", amount_out: "0.1"`
 - *"Where is order 0xafa4…d55e? It was opened on bsc-testnet."* →
-  `intent_track_order { order_id: "0xafa4…d55e", chain: "bsc-testnet" }`
+  `intent_order_track { order_id: "0xafa4…d55e", chain: "bsc-testnet" }`
 - *"Refund my expired order 0xafa4…d55e (opened on bsc-testnet)."* →
-  `intent_refund_order { order_id: "0xafa4…d55e", chain: "bsc-testnet" }`
+  `intent_order_refund { order_id: "0xafa4…d55e", chain: "bsc-testnet" }`
 
 Tips: tokens are symbols (`USDT`/`USDT0`→`USD`, `wCOEN`→`COEN`) or a raw `0x`
 address;
@@ -182,15 +182,15 @@ tools resolve networks from the `NETWORKS` table in `src/intex/registry.ts`
 (`bsc-testnet`, `outbe-testnet`); addresses are keyed per network. View tools work
 without a key; signing tools need `OUTBE_PRIVATE_KEY`.
 
-**Auction (BSC)** — `intex_active_auctions` (all auctions + current stage),
-`intex_auction_info` (one series: stage, schedule, params, result),
-`intex_my_bids` (your commit/reveal status), `intex_commit_bid`, `intex_reveal_bid`,
-`intex_cancel_commit`.
+**Auction (BSC)** — `auctions_active` (all auctions + current stage),
+`auction_info` (one series: stage, schedule, params, result),
+`auction_bids_by_owner` (your commit/reveal status), `auction_bid_commit`, `auction_bid_reveal`,
+`auction_bid_cancel`.
 
 **Bid funding (BSC)** — `intex_payment_allowance` (stablecoin allowance to the
-escrow + balance), `intex_approve_payment`.
+escrow + balance), `intex_payment_approve`.
 
-**NFT** — `intex_my_holdings` (owned token ids, balances, status),
+**NFT** — `intex_holdings_by_owner` (owned token ids, balances, status),
 `intex_series_balance` (issued/settled balance for one series). Reads BSC by
 default; pass `network: outbe-testnet` to read the bridged side.
 
@@ -198,13 +198,13 @@ default; pass `network: outbe-testnet` to read the bridged side.
 state), `intex_series_list`.
 
 **Bridge BSC→outbe (Qualified only)** — `intex_bridge_quote` (native fee),
-`intex_bridge_nft`. The bridge burns the token directly (role-gated), so no
+`intex_bridge_send`. The bridge burns the token directly (role-gated), so no
 approval step is needed. Bridging is voluntary and only allowed once a series is
 **Qualified**; *Issued* cannot bridge, and *Called* is auto-bridged by the system
 (not via these tools).
 
-**Settlement + Promis (outbe)** — `intex_settle` (step 1: pay strike, Issued→Settled),
-`intex_mine_promis` (step 2: Settled→Promis), `intex_set_authorized_settler`,
+**Settlement + Promis (outbe)** — `auction_bid_settle` (step 1: pay strike, Issued→Settled),
+`intex_promis_mine` (step 2: Settled→Promis), `auction_settler_set`,
 `intex_promis_balance`.
 
 Series lifecycle is **Issued → Qualified → Called**: bids stay sealed through
@@ -220,22 +220,22 @@ on-chain, and the assistant only remembers them within a session. `price` is in
 payment-token units (e.g. `"1.5"`); the tools scale it by the token decimals, so
 you never deal with raw integers. Commit needs no approval — reveal pulls
 `quantity*price` into the escrow and **auto-approves** the allowance if it is
-short, reporting the approval so the spend is never silent. `intex_mine_promis`
+short, reporting the approval so the spend is never silent. `intex_promis_mine`
 grinds the proof-of-work nonce locally (SHA256, 1-byte difficulty) — you pass only
 series and amount.
 
 **Example prompts:**
 
-- *"What Intex auctions are active and what stage are they in?"* → `intex_active_auctions`
+- *"What Intex auctions are active and what stage are they in?"* → `auctions_active`
 - *"Commit 5 Intexes at price 1.5 in series 42."* →
-  `intex_commit_bid { series: 42, quantity: 5, price: "1.5" }`
+  `auction_bid_commit { series: 42, quantity: 5, price: "1.5" }`
 - *"Reveal my bid in series 42: 5 at 1.5."* →
-  `intex_reveal_bid { series: 42, quantity: 5, price: "1.5" }` (auto-approves first if needed)
-- *"Show my Intex NFTs."* → `intex_my_holdings`
+  `auction_bid_reveal { series: 42, quantity: 5, price: "1.5" }` (auto-approves first if needed)
+- *"Show my Intex NFTs."* → `intex_holdings_by_owner`
 - *"Bridge my series 42 NFT to outbe."* (only once Qualified) →
-  `intex_bridge_nft { series: 42, amount: "5" }`
-- *"Settle series 42 and mine Promis."* → `intex_settle { series: 42, amount: "5" }`
-  then `intex_mine_promis { series: 42, amount: "5" }`
+  `intex_bridge_send { series: 42, amount: "5" }`
+- *"Settle series 42 and mine Promis."* → `auction_bid_settle { series: 42, amount: "5" }`
+  then `intex_promis_mine { series: 42, amount: "5" }`
 
 ## Notes
 
