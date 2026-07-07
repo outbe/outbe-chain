@@ -24,7 +24,7 @@ fn holder() -> Address {
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 21 * 24 * 60 * 60;
+const CALL_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
