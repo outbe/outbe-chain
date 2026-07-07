@@ -348,8 +348,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IERC1155Bridgeable
     /// @dev Bridge crosschainBurn gating:
     ///      - Settled token ids are soulbound — always reverts.
-    ///      - Series state `Issued` (initial): bridge is disallowed.
-    ///      - Series state `Qualified`: bridge allowed for `RELAYER_ROLE`.
+    ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
+    ///        (voluntary, holder-initiated moves while the series is tradable).
     ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`
     ///        (the system bridge that migrates balances during the call window).
     function crosschainBurn(address from, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
@@ -360,13 +360,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
 
-        IIntexNFT1155.IntexState state = data.state;
-        if (state == IIntexNFT1155.IntexState.Issued) {
-            revert BridgeStateForbidden(tokenId, uint8(state));
-        }
-        if (state == IIntexNFT1155.IntexState.Called) {
+        if (data.state == IIntexNFT1155.IntexState.Called) {
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
-                revert BridgeStateForbidden(tokenId, uint8(state));
+                revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
             // Bridge moves are confined to the call window: once `calledAt + callTrigger.intexCallPeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise
@@ -386,8 +382,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge crosschainMint mirrors `crosschainBurn`. Same state gates apply: `Issued` is always rejected,
-    ///      `Called` is reserved for `SYSTEM_RELAYER_ROLE`.
+    /// @dev Bridge crosschainMint mirrors `crosschainBurn`. Same state gates apply: `Issued`/`Qualified`
+    ///      are open to `RELAYER_ROLE`, `Called` is reserved for `SYSTEM_RELAYER_ROLE`.
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
@@ -396,13 +392,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 
-        IIntexNFT1155.IntexState state = data.state;
-        if (state == IIntexNFT1155.IntexState.Issued) {
-            revert BridgeStateForbidden(tokenId, uint8(state));
-        }
-        if (state == IIntexNFT1155.IntexState.Called) {
+        if (data.state == IIntexNFT1155.IntexState.Called) {
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
-                revert BridgeStateForbidden(tokenId, uint8(state));
+                revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
             // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline. Without this a
             // `crosschainMint` after `expireSeries` drained the series could re-inflate `totalSupply`
@@ -623,16 +615,17 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return super.uri(tokenId);
     }
 
-    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens and maintains the
-    ///         owned-series / series-holder enumeration indexes.
+    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called
+    ///         series, and maintains the owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
-    ///          * Issued token ids are transferable in every series state
-    ///            (Issued, Qualified, Called). Bridge gating is separate and lives in
-    ///            `crosschainBurn` / `crosschainMint`.
+    ///          * Issued token ids are transferable while the series is Issued or Qualified.
+    ///            A Called series freezes holder-to-holder transfers: the settlement
+    ///            obligation stays with the holder and cannot be passed on. Bridge gating
+    ///            is separate and lives in `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).
     /// @param ids Array of token IDs.
@@ -641,8 +634,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IntexNFT1155Storage storage $ = _s();
         if (from != address(0) && to != address(0)) {
             for (uint256 i = 0; i < ids.length; i++) {
-                if ($.seriesData[ids[i]].status == IIntexNFT1155.IntexStatus.Settled) {
+                IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
+                if (data.status == IIntexNFT1155.IntexStatus.Settled) {
                     revert SoulboundSettled(ids[i]);
+                }
+                if (data.state == IIntexNFT1155.IntexState.Called) {
+                    revert TransferOnCalledForbidden(ids[i]);
                 }
             }
         }

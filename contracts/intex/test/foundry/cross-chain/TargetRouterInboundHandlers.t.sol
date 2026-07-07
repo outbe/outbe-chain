@@ -277,7 +277,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             floorPriceMinor: FLOOR_PRICE_MINOR,
             callPriceMinor: ENTRY_PRICE,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
-            minIntexBidQuantity: 1
+            minIntexBidQuantity: 1,
+            commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
         auction.auctionStart(SERIES_ID, schedule, params);

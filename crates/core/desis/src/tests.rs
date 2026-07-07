@@ -39,6 +39,7 @@ fn default_config() -> AuctionConfig {
         call_trigger: IntexCallTrigger::default(),
         min_intex_bid_rate: 100,
         min_intex_bid_quantity: 0,
+        commit_bond_minor: 0, // populated at start_auction from the genesis IntexParams profile
         entry_price_minor: U256::from(10_000_000_000_000u128), // 1e13, reference ccy (feeds floor/call)
     }
 }
@@ -54,6 +55,11 @@ fn start_auction_sets_started_stage() {
             contract.read_stage(SERIES_ID).unwrap(),
             AuctionStage::Started
         );
+        // Persisted config carries the commit bond folded in from the genesis profile.
+        let cfg = contract.read_auction_config(SERIES_ID).unwrap();
+        let iparams = outbe_intexfactory::read_params(&s).unwrap();
+        assert!(iparams.commit_bond_minor > 0, "profile carries a bond");
+        assert_eq!(cfg.commit_bond_minor, iparams.commit_bond_minor);
     });
 }
 
@@ -622,6 +628,7 @@ fn clear_rate_escrow_scales_by_basis() {
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
+            commit_bond_minor: 0,
             entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; escrow basis = promis_load)
         };
         runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();

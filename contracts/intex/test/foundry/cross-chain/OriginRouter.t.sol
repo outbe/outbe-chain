@@ -98,7 +98,8 @@ contract OriginRouterTest is CrossChainTest {
             intexCallPeriod: 0,
             callWindowDays: 0,
             callThresholdDays: 0,
-            minIntexBidQuantity: 1
+            minIntexBidQuantity: 1,
+            commitBondMinor: 0
         });
     }
 

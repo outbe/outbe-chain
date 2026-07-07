@@ -33,6 +33,8 @@ impl DesisContract<'_> {
             },
             min_intex_bid_rate: self.config_min_bid_rate.read(&series_id)?,
             min_intex_bid_quantity: self.config_min_bid_quantity.read(&series_id)? as u16,
+            commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&series_id)?)
+                .map_err(|_| crate::DesisError::InvalidSeriesId(series_id))?,
             entry_price_minor: self.config_entry_price.read(&series_id)?,
         })
     }
@@ -54,6 +56,8 @@ impl DesisContract<'_> {
             .write(&series_id, cfg.min_intex_bid_rate)?;
         self.config_min_bid_quantity
             .write(&series_id, u32::from(cfg.min_intex_bid_quantity))?;
+        self.config_commit_bond_minor
+            .write(&series_id, U256::from(cfg.commit_bond_minor))?;
         self.config_entry_price
             .write(&series_id, cfg.entry_price_minor)
     }

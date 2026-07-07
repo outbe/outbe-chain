@@ -38,9 +38,12 @@ pub const CALL_PRICE_NUM: u64 = 228;
 pub const CALL_PRICE_DEN: u64 = 100;
 
 /// Forced-settlement deadline after a series is Called, in seconds.
-pub const INTEX_CALL_PERIOD_SECONDS: u32 = 21 * 24 * 3600;
+pub const INTEX_CALL_PERIOD_SECONDS: u32 = 7 * 24 * 3600;
 
 /// Call-trigger evaluation window: most recent completed days scanned for breaches.
 pub const CALL_WINDOW_DAYS: u16 = 30;
 /// Call-trigger threshold: breach-days within the window required to force-call.
-pub const CALL_THRESHOLD_DAYS: u16 = 20;
+pub const CALL_THRESHOLD_DAYS: u16 = 21;
+
+/// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
+pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);

@@ -24,6 +24,7 @@ sol! {
             uint16 callWindowDays;
             uint16 callThresholdDays;
             uint16 minIntexBidQuantity;
+            uint128 commitBondMinor;
         }
 
         function sendAuctionStageStart(AuctionStageStartParams calldata params)
