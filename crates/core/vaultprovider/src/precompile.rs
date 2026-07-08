@@ -1,18 +1,16 @@
 //! ABI dispatch for the vaultprovider precompile at `VAULT_PROVIDER_ADDRESS`.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::types::StorageSet;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::api::IVaultProvider;
 use crate::runtime;
 use crate::schema::VaultProviderContract;
-
-sol!("../../../contracts/precompiles/src/IVaultProvider.sol");
 
 pub fn dispatch(
     storage: StorageHandle<'_>,
@@ -138,12 +136,6 @@ pub fn dispatch(
 
                 // --- views over external state ---
                 sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
-
-                // --- VaultV2 gate hooks: only the provider itself is authorized ---
-                canReceiveShares(c) => view(c, |c| Ok(c.account == VAULT_PROVIDER_ADDRESS)),
-                canSendShares(c) => view(c, |c| Ok(c.account == VAULT_PROVIDER_ADDRESS)),
-                canReceiveAssets(c) => view(c, |c| Ok(c.account == VAULT_PROVIDER_ADDRESS)),
-                canSendAssets(c) => view(c, |c| Ok(c.account == VAULT_PROVIDER_ADDRESS)),
             }
         },
     )

@@ -6,14 +6,16 @@ use thiserror::Error;
 pub enum CredisFactoryError {
     #[error("invalid asset address")]
     InvalidAsset,
-    #[error("invalid vault provider address")]
-    InvalidVaultProvider,
     #[error("invalid bundle account address")]
     InvalidBundleAccount,
     #[error("anadosis amount is zero")]
     InvalidAmount,
     #[error("caller is not the position bundleAccount")]
     UnauthorizedCaller,
+    #[error("reclaim commitment must be non-zero")]
+    InvalidReclaimCommitment,
+    #[error("denomination is not eligible for credis")]
+    DenomNotCredisEligible,
     #[error("position is already fully paid")]
     PositionCompleted,
     #[error("address has overdue anadosis")]

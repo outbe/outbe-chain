@@ -8,7 +8,6 @@ interface ICredis {
 
     struct Position {
         uint256 positionId;
-        address vaultProvider;
         address asset;
         address bundleAccount;
         uint256 totalAnadosisAmount;

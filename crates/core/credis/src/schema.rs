@@ -21,27 +21,24 @@ pub struct Position {
     pub bundle_account: Address,
 
     #[attribute(order = 1)]
-    pub vault_provider: Address,
-
-    #[attribute(order = 2)]
     pub asset: Address,
 
-    #[attribute(order = 3)]
+    #[attribute(order = 2)]
     pub total_anadosis_amount: U256,
 
-    #[attribute(order = 4)]
+    #[attribute(order = 3)]
     pub outstanding_anadosis_amount: U256,
 
-    #[attribute(order = 5)]
+    #[attribute(order = 4)]
     pub total_gratis_amount: U256,
 
-    #[attribute(order = 6)]
+    #[attribute(order = 5)]
     pub outstanding_gratis_amount: U256,
 
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub next_anadosis_number: u32,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub created_at: u64,
 
     /// Original Credis amount (principal) in the issuance currency, before the
@@ -93,27 +90,27 @@ pub struct Anadosis {
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
 pub struct CredisContract {
-    /// slots 0..8: position head record keyed by position_id (9 slots).
+    /// slots 0..7: position head record keyed by position_id (8 slots).
     #[attribute(order = 0)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, Position>,
 
-    /// slots 9..13: anadosis record keyed by anadosis_key (5 slots).
+    /// slots 8..12: anadosis record keyed by anadosis_key (5 slots).
     #[attribute(order = 1)]
     pub anadosis_records: outbe_primitives::storage::dsl::Map<B256, Anadosis>,
 
-    /// slot 14: per-account count of positions ever created.
+    /// slot 13: per-account count of positions ever created.
     #[attribute(order = 2)]
     pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// slot 15: per-account index — keccak(addr ++ idx_be32) → position_id.
+    /// slot 14: per-account index — keccak(addr ++ idx_be32) → position_id.
     #[attribute(order = 3)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 16: total positions ever created (for getAllPositions iteration).
+    /// slot 15: total positions ever created (for getAllPositions iteration).
     #[attribute(order = 4)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 17: dense index — index → position_id.
+    /// slot 16: dense index — index → position_id.
     #[attribute(order = 5)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 }

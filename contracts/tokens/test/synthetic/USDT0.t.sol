@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test} from "forge-std/Test.sol";
+import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
+
+import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {WCOEN} from "../../src/synthetic/WCOEN.sol";
+import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
+
+contract USDT0Test is Test {
+    MockERC7786Bridge internal gateway;
+    ERC7786TokenBridge internal tokenBridge;
+    USDT0 internal token;
+
+    function setUp() public {
+        gateway = new MockERC7786Bridge(block.chainid);
+        token = new USDT0("USDT0", "USDT0", 6, address(this));
+        tokenBridge = new ERC7786TokenBridge(
+            address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
+        );
+    }
+
+    function test_Decimals_IsSix() public view {
+        assertEq(token.decimals(), 6);
+    }
+
+    function test_MetadataAndDecimals_AreConstructorConfigured() public {
+        WCOEN wcoen = new WCOEN("Wrapped COEN", "WCOEN", 18, address(this));
+
+        assertEq(wcoen.name(), "Wrapped COEN");
+        assertEq(wcoen.symbol(), "WCOEN");
+        assertEq(wcoen.decimals(), 18);
+    }
+
+    function test_SupportsERC7802() public view {
+        assertTrue(token.supportsInterface(type(IERC7802).interfaceId));
+    }
+
+    function test_SetTokenBridge_OwnerCanRotate() public {
+        token.setTokenBridge(address(tokenBridge));
+        ERC7786TokenBridge nextBridge = new ERC7786TokenBridge(
+            address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit ConfigurableERC7802.TokenBridgeUpdated(address(tokenBridge), address(nextBridge));
+        token.setTokenBridge(address(nextBridge));
+        assertEq(token.tokenBridge(), address(nextBridge));
+    }
+
+    function test_RotatedTokenBridge_ReplacesMintPermission() public {
+        address alice = makeAddr("alice");
+        ERC7786TokenBridge nextBridge = new ERC7786TokenBridge(
+            address(token), address(gateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
+        );
+
+        token.setTokenBridge(address(tokenBridge));
+        token.setTokenBridge(address(nextBridge));
+
+        vm.prank(address(tokenBridge));
+        vm.expectRevert(abi.encodeWithSelector(ConfigurableERC7802.UnauthorizedTokenBridge.selector, address(tokenBridge)));
+        token.crosschainMint(alice, 100);
+
+        vm.prank(address(nextBridge));
+        token.crosschainMint(alice, 100);
+        assertEq(token.balanceOf(alice), 100);
+    }
+
+    function test_CrosschainMintAndBurn_OnlyTokenBridge() public {
+        address alice = makeAddr("alice");
+
+        vm.expectRevert(abi.encodeWithSelector(ConfigurableERC7802.UnauthorizedTokenBridge.selector, address(this)));
+        token.crosschainMint(alice, 100);
+
+        token.setTokenBridge(address(tokenBridge));
+
+        vm.prank(address(tokenBridge));
+        token.crosschainMint(alice, 100);
+        assertEq(token.balanceOf(alice), 100);
+
+        vm.prank(address(tokenBridge));
+        token.crosschainBurn(alice, 40);
+        assertEq(token.balanceOf(alice), 60);
+    }
+}

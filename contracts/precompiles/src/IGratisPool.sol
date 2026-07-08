@@ -28,6 +28,9 @@ interface IGratisPool {
     /// @notice `true` iff `nullifierHash` has been consumed by any spend.
     function isSpent(uint256 nullifierHash) external view returns (bool);
 
+    /// @notice The supported denomination ids paired with their amounts.
+    function supportedDenoms() external view returns (uint8[] memory ids, uint256[] memory amounts);
+
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

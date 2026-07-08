@@ -87,6 +87,13 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         return bundleBalance[owner][token];
     }
 
+    /// @notice The registered bundle tokens for `account`.
+    /// @dev Used by BundleSpendProtectorHook to enforce the reserve invariant across every bundled
+    ///      token in one pass, without needing to parse them out of the execution calldata.
+    function bundleTokensOf(address account) external view override returns (address[] memory) {
+        return bundleTokens[account];
+    }
+
     /// @notice Returns true if `token` is a registered bundle token for `account`.
     function isBundleToken(address account, address token) public view returns (bool) {
         address[] memory tokens = bundleTokens[account];
