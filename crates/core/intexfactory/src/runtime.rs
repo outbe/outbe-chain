@@ -3,11 +3,12 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_intex::IntexState;
+use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::config;
 use crate::constants::{
@@ -248,20 +249,15 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
+            spender: VAULT_PROVIDER_ADDRESS,
             amount: received,
         }
         .abi_encode()
         .into(),
     )?;
 
-    let shares = outbe_vaultprovider::api::deposit_liquidity(
-        storage.clone(),
-        INTEX_FACTORY_ADDRESS,
-        payment_token,
-        received,
-        outbe_vaultprovider::api::LiquiditySource::IntexStrikePrice,
-    )?;
+    // Deposit into the reserve vault via the provider's Solidity ABI.
+    let shares = outbe_vaultprovider::api::deposit_liquidity(storage, payment_token, received)?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -308,7 +304,14 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
     // TODO pick up the asset ERC20 address properly
-    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
+    let ret = storage.staticcall(
+        VAULT_PROVIDER_ADDRESS,
+        IVaultProvider::assetAtCall { index: U256::ZERO }
+            .abi_encode()
+            .into(),
+    )?;
+    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }

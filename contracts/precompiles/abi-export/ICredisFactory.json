@@ -7,6 +7,11 @@
         "name": "positionId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "reclaimCommitment",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -55,11 +60,6 @@
             "name": "proof",
             "type": "bytes",
             "internalType": "bytes"
-          },
-          {
-            "name": "reclaimCommitment",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }

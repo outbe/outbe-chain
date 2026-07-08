@@ -18,10 +18,6 @@ fn bob() -> Address {
     address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
 }
 
-fn vault() -> Address {
-    address!("0x0000000000000000000000000000000000000777")
-}
-
 fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
@@ -79,7 +75,6 @@ fn create_position_populates_all_10_anadosis_records() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100_000u64),
                 U256::from(50_000u64),
@@ -89,7 +84,6 @@ fn create_position_populates_all_10_anadosis_records() {
 
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.bundle_account, alice());
-        assert_eq!(position.vault_provider, vault());
         assert_eq!(position.asset, asset());
         assert_eq!(position.total_anadosis_amount, U256::from(100_000u64));
         assert_eq!(position.outstanding_anadosis_amount, U256::from(100_000u64));
@@ -115,7 +109,6 @@ fn create_position_rejects_duplicate() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1000u64),
                 U256::ZERO,
@@ -126,7 +119,6 @@ fn create_position_rejects_duplicate() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1000u64),
                 U256::ZERO,
@@ -145,7 +137,6 @@ fn create_position_rejects_zero_amount() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::ZERO,
                 U256::ZERO,
@@ -164,7 +155,6 @@ fn create_position_grows_address_index() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1000u64),
                 U256::ZERO,
@@ -175,7 +165,6 @@ fn create_position_grows_address_index() {
             .create_position(
                 other_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(2000u64),
                 U256::ZERO,
@@ -206,7 +195,6 @@ fn anadosis_amount_equal_split_without_remainder() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::ZERO,
@@ -231,7 +219,6 @@ fn anadosis_amount_remainder_absorbed_in_last_anadosis() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(105u64),
                 U256::from(53u64), // gratis 53 / 10 = 5 r3 → anadosis 1..9 = 5, anadosis 10 = 8
@@ -277,7 +264,6 @@ fn make_next_anadosis_advances_pointer() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100_000u64),
                 U256::from(50_000u64),
@@ -289,7 +275,6 @@ fn make_next_anadosis_advances_pointer() {
             let result = credis.make_next_anadosis(id, due_date_for(n)).unwrap();
             assert_eq!(result.anadosis_number, n);
             assert_eq!(result.bundle_account, alice());
-            assert_eq!(result.vault_provider, vault());
             assert_eq!(result.asset, asset());
             assert_eq!(result.paid_at, due_date_for(n));
         }
@@ -309,7 +294,6 @@ fn make_next_anadosis_decrements_outstanding() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::from(50u64),
@@ -333,7 +317,6 @@ fn make_next_anadosis_accepted_before_due_date() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1_000u64),
                 U256::ZERO,
@@ -358,7 +341,6 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1_000u64),
                 U256::ZERO,
@@ -371,7 +353,6 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
             .create_position(
                 other_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1_000u64),
                 U256::ZERO,
@@ -408,7 +389,6 @@ fn get_anadosis_rejects_anadosis_number_zero() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1_000u64),
                 U256::ZERO,
@@ -428,7 +408,6 @@ fn get_anadosis_rejects_anadosis_number_above_cap() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(1_000u64),
                 U256::ZERO,
@@ -462,7 +441,6 @@ fn has_overdue_anadosis_reflects_past_due_unpaid_anadosis() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::ZERO,
@@ -491,7 +469,6 @@ fn get_outstanding_amount_sums_across_positions() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::ZERO,
@@ -502,7 +479,6 @@ fn get_outstanding_amount_sums_across_positions() {
             .create_position(
                 other_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(50u64),
                 U256::ZERO,
@@ -532,7 +508,6 @@ fn precompile_get_position_returns_full_record() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100_000u64),
                 U256::from(50_000u64),
@@ -596,7 +571,6 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::ZERO,
@@ -623,7 +597,6 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 U256::from(100u64),
                 U256::ZERO,

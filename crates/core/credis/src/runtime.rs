@@ -19,7 +19,6 @@ pub struct AnadosisResult {
     pub anadosis_amount: U256,
     pub gratis_amount: U256,
     pub paid_at: u64,
-    pub vault_provider: Address,
     pub asset: Address,
     pub bundle_account: Address,
 }
@@ -42,12 +41,10 @@ impl CredisContract<'_> {
 
     /// Creates a position and returns the derived
     /// `position_id = keccak256(commitment || bundle_account)`.
-    #[allow(clippy::too_many_arguments)]
     pub fn create_position(
         &mut self,
-        commitment: U256,
+        nullifier_hash: U256,
         bundle_account: Address,
-        vault_provider: Address,
         asset: Address,
         anadosis_amount: U256,
         gratis_amount: U256,
@@ -57,7 +54,7 @@ impl CredisContract<'_> {
             return Err(CredisError::InvalidAmount.into());
         }
 
-        let position_id = CredisContract::position_id(commitment, bundle_account);
+        let position_id = CredisContract::position_id(nullifier_hash, bundle_account);
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }
@@ -65,7 +62,6 @@ impl CredisContract<'_> {
         let position = Position {
             position_id,
             bundle_account,
-            vault_provider,
             asset,
             total_anadosis_amount: anadosis_amount,
             outstanding_anadosis_amount: anadosis_amount,
@@ -141,7 +137,6 @@ impl CredisContract<'_> {
             anadosis_amount: anadosis.anadosis_amount,
             gratis_amount: anadosis.gratis_amount,
             paid_at: anadosis.paid_at,
-            vault_provider: position.vault_provider,
             asset: position.asset,
             bundle_account: position.bundle_account,
         })

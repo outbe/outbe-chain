@@ -25,18 +25,15 @@ import {
 import {
   ACTION_REQUEST_CREDIS,
   buildMerkleProof,
-  commitmentHash,
   fieldToHex32,
   nullifierHash,
   proveUnpledge,
   receiverBinding,
-  toField,
 } from "./shielded.js";
 import {
   deleteTicket,
   findLatestTicket,
   readTicket,
-  writeTicket,
   type Ticket,
 } from "./ticket.js";
 
@@ -176,14 +173,9 @@ async function main() {
   const denomId = ticket.denomId;
   const leafIndex = ticket.leafIndex;
 
-  // Fresh reclaim commitment material — the credisfactory persists the
-  // reclaim_commitment with the position and inserts it back into the pool
-  // when the borrower finishes paying all anadosis installments. Only the
-  // holder of (reclaimSecret, reclaimNullifierSecret) can later unpledge it.
-  const reclaimSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const reclaimNullifierSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const reclaimCommitment = await commitmentHash(reclaimSecret, reclaimNullifierSecret, denomId);
-
+  // Reclaim is no longer supplied here — it moved to per-installment
+  // `anadosis` calls. Each payment generates its own reclaim note (worth one
+  // tenth of the pledge) and inserts it into the anadosis pool immediately.
   console.log("=== Request Credis (shielded) ===");
   console.log(`Env:               ${envName} (${envPath})`);
   console.log(`RPC:               ${rpcUrl}`);
@@ -199,9 +191,6 @@ async function main() {
   console.log(`Denom:             ${denomId} = ${formatToken(denom.amount, gratisMeta.decimals, gratisMeta.symbol)}`);
   console.log(`Commitment (old):  ${fieldToHex32(commitment)}`);
   console.log(`Leaf index (old):  ${leafIndex}`);
-  console.log(`Reclaim secret:    ${fieldToHex32(reclaimSecret)}`);
-  console.log(`Reclaim nullSecr:  ${fieldToHex32(reclaimNullifierSecret)}`);
-  console.log(`Reclaim commit:    ${fieldToHex32(reclaimCommitment)}`);
   console.log(`Chain ID:          ${network.chainId}`);
 
   // Pre-flight: cheap on-chain checks before paying for proof generation.
@@ -256,16 +245,16 @@ async function main() {
   console.log(`  Rebuilt root matches on-chain currentRoot: ${fieldToHex32(merkle.root)}`);
 
   // receiver_binding for ACTION_REQUEST_CREDIS:
-  //   target = bundleAccount, nonce = reclaim_commitment.
-  // The reclaim_commitment is folded in so a mempool front-runner cannot swap
-  // their own reclaim leg and capture the eventual unpledge. Matches
+  //   target = bundleAccount, nonce = 0.
+  // Reclaim moved to per-installment pay_anadosis, so there is no reclaim leg
+  // to bind here; the binding still pins the loan to bundleAccount. Matches
   // crates/core/gratispool/src/state.rs::receiver_binding and
   // crates/core/credisfactory/src/runtime.rs::request_credis.
   const binding = await receiverBinding(
     ACTION_REQUEST_CREDIS,
     smartAccountAddr,
     network.chainId,
-    reclaimCommitment,
+    0n,
   );
 
   console.log("\nGenerating UltraHonkKeccak spend proof (this typically takes 3-8s)...");
@@ -290,7 +279,6 @@ async function main() {
   console.log("\nSending requestCredis tx...");
   const tx = await credisFactory.requestCredis(
     erc20Address,
-    vaultProviderAddress,
     smartAccountAddr,
     {
       merkleRoot: merkle.root,
@@ -298,7 +286,6 @@ async function main() {
       denomId,
       receiverBinding: binding,
       proof: ethers.hexlify(proof),
-      reclaimCommitment,
     },
   );
   console.log(`  TX hash: ${tx.hash}`);
@@ -369,24 +356,10 @@ async function main() {
   deleteTicket(usedTicketPath);
   console.log(`\nOriginal ticket deleted: ${usedTicketPath}`);
 
-  // Persist the reclaim secret material. The reclaim_commitment will only be
-  // appended to the pool when the borrower finishes all anadosis installments,
-  // so leafIndex/root are unknown at this point — use sentinels and let the
-  // unpledge flow rediscover them from on-chain CommitmentInserted events.
-  const reclaimTicketPath = writeTicket({
-    denomId,
-    secret: fieldToHex32(reclaimSecret),
-    nullifierSecret: fieldToHex32(reclaimNullifierSecret),
-    commitment: fieldToHex32(reclaimCommitment),
-    leafIndex: -1, // sentinel: not yet inserted into the pool
-    root: "0x" + "00".repeat(32),
-    blockNumber: receipt.blockNumber,
-    txHash: receipt.hash,
-    chainId: network.chainId.toString(),
-    createdAt: new Date().toISOString(),
-  });
-  console.log(`Reclaim ticket written: ${reclaimTicketPath}`);
-  console.log("  (leafIndex = -1 until the credis position completes and pay_anadosis inserts the reclaim commitment.)");
+  console.log("\nReclaim is now per-installment: run `npm run user-pays-anadosis <positionId>`");
+  console.log("for each installment — it generates and inserts that installment's reclaim note");
+  console.log("(worth one tenth of the pledge) and writes a ticket you can unpledge immediately");
+  console.log("via `npm run unpledge-gratis-fast`.");
 }
 
 main().catch((error) => {

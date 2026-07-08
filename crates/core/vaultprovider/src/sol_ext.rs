@@ -3,7 +3,7 @@
 //! These are the external contract interfaces the vaultprovider runtime
 //! invokes via `StorageHandle::call` / `StorageHandle::staticcall`. They are
 //! NOT the precompile's own inbound ABI (which lives in
-//! `precompile.rs::IVaultProvider`).
+//! `api.rs::IVaultProvider`).
 //!
 //! The Solidity original used OpenZeppelin `SafeERC20` (`forceApprove`,
 //! `safeTransferFrom`); here those become plain ERC-20 `approve` / `transferFrom`

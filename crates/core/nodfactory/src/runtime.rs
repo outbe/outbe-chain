@@ -133,14 +133,8 @@ pub fn mine_gratis(
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
-        // 3) Vault pulls and deposits into the vault.
-        outbe_vaultprovider::api::deposit_liquidity(
-            storage.clone(),
-            NOD_FACTORY_ADDRESS,
-            asset,
-            cost,
-            outbe_vaultprovider::api::LiquiditySource::NodCostPrice,
-        )?;
+        // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
+        outbe_vaultprovider::api::deposit_liquidity(storage, asset, cost)?;
     }
 
     nod_api::remove_nod(storage, &item)?;

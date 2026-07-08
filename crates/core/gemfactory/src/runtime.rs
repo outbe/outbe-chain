@@ -2,12 +2,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
+use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::constants::{FLOOR_MARKUP_PERCENT, SRA_COEFFICIENT_PERCENT};
 use crate::errors::GemFactoryError;
@@ -123,19 +124,14 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     storage.call(asset, U256::ZERO, transfer.into())?;
 
     let approve = IERC20::approveCall {
-        spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
+        spender: VAULT_PROVIDER_ADDRESS,
         amount,
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    outbe_vaultprovider::api::deposit_liquidity(
-        storage.clone(),
-        GEM_FACTORY_ADDRESS,
-        asset,
-        amount,
-        outbe_vaultprovider::api::LiquiditySource::GemSettle,
-    )?;
+    // Deposit into the reserve vault via the provider's Solidity ABI.
+    outbe_vaultprovider::api::deposit_liquidity(storage, asset, amount)?;
 
     Ok(())
 }
@@ -145,7 +141,14 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
 /// the resolved stablecoin asset. Reverts with `InvalidAsset` if the vault
 /// returns the zero address (mis-configured registry).
 fn read_reserve_asset(storage: &StorageHandle<'_>) -> Result<Address> {
-    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
+    let ret = storage.staticcall(
+        VAULT_PROVIDER_ADDRESS,
+        IVaultProvider::assetAtCall { index: U256::ZERO }
+            .abi_encode()
+            .into(),
+    )?;
+    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+        .map_err(|_| GemFactoryError::InvalidAsset)?;
     if asset.is_zero() {
         return Err(GemFactoryError::InvalidAsset.into());
     }

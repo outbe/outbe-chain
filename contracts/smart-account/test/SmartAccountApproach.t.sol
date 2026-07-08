@@ -5,6 +5,7 @@ import {BaseAATest} from "./BaseAATest.sol";
 import {CallerHook} from "src/kernel/CallerHook.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
 import {IEntryPoint} from "@zerodev/kernel/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
@@ -191,30 +192,121 @@ contract SmartAccountApproach is BaseAATest {
         assertEq(token.balanceOf(smartAccount), 1250e18, "SA should have 1250 tokens");
     }
 
-    // OIP-00075: cover batch and approval call types in BundleSpendProtectorHook.
-    // The hook previously gated only CALLTYPE_SINGLE + IERC20.transfer, so a CALLTYPE_BATCH
-    // move and the approve/transferFrom allowance path bypassed the freeBalance reserve.
+    // OIP-00075: the hook enforces the reserve as a post-execution invariant (owner may remove at
+    // most freeBalance of a bundled token, and may leave no standing allowance on it), covering
+    // SINGLE, BATCH, and the "approve + atomic pull" repayment shape uniformly and address-agnostically.
 
-    /// @dev Batch path is a conservative full reject: a batch moving a bundled token at all is
-    ///      blocked, even for an amount within freeBalance. preCheck reads balanceOf once before
-    ///      the batch, so per-sub-call gating would be bypassable by splitting the move.
-    function test_BundleSpendProtector_BlocksBatchTransferOfBundledToken() external {
+    /// @dev A batch move within freeBalance is allowed — postCheck checks the NET balance after the
+    ///      whole batch, so splitting a move across sub-calls cannot bypass the reserve, and there
+    ///      is no need to reject batches wholesale (the prior over-conservative behavior).
+    function test_BundleSpendProtector_AllowsBatchTransferWithinFree() external {
         address smartAccount = _setupBundledAccountWithFree(); // total=1400, bundle=1200, free=200
 
         Execution[] memory execs = new Execution[](1);
         execs[0] = Execution({
             target: address(token),
             value: 0,
-            // 100 <= free 200, yet a batch move of a bundled token is rejected outright
-            callData: abi.encodeWithSelector(token.transfer.selector, recipient.addr, 100e18)
+            callData: abi.encodeWithSelector(token.transfer.selector, recipient.addr, 100e18) // 100 <= free 200
         });
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
         entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
 
-        assertEq(token.balanceOf(recipient.addr), 0, "batch transfer of bundled token must be blocked");
+        assertEq(token.balanceOf(recipient.addr), 100e18, "batch transfer within free should pass");
+        assertEq(token.balanceOf(smartAccount), 1300e18, "SA balance should drop by the free amount");
+    }
+
+    /// @dev A batch move exceeding freeBalance breaks the reserve invariant and is rejected.
+    function test_BundleSpendProtector_BlocksBatchTransferOverFree() external {
+        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: address(token),
+            value: 0,
+            callData: abi.encodeWithSelector(token.transfer.selector, recipient.addr, 300e18) // 300 > free 200
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.balanceOf(recipient.addr), 0, "batch transfer over free must be blocked");
         assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked batch");
+    }
+
+    /// @dev The sanctioned repayment shape: `[approve(puller, amt), puller.pull(...)]` where the
+    ///      pull consumes the allowance via transferFrom within the same op. MockPuller is a generic
+    ///      stand-in for the factory precompiles (credis/gem/nod/intex) so the hook needs no address
+    ///      knowledge. Within free, it passes and leaves no residual allowance.
+    function test_BundleSpendProtector_AllowsApproveConsumedWithinFree() external {
+        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        MockPuller puller = new MockPuller();
+
+        Execution[] memory execs = new Execution[](2);
+        execs[0] = Execution({
+            target: address(token),
+            value: 0,
+            callData: abi.encodeWithSelector(token.approve.selector, address(puller), 150e18)
+        });
+        execs[1] = Execution({
+            target: address(puller),
+            value: 0,
+            callData: abi.encodeWithSelector(MockPuller.pull.selector, address(token), smartAccount, 150e18)
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.balanceOf(address(puller)), 150e18, "puller should have pulled 150 within free");
+        assertEq(token.balanceOf(smartAccount), 1250e18, "SA balance should drop by the pulled amount");
+        assertEq(token.allowance(smartAccount, address(puller)), 0, "no residual allowance should remain");
+    }
+
+    /// @dev Same shape but the pulled amount exceeds freeBalance → reserve invariant broken → rejected.
+    function test_BundleSpendProtector_BlocksApproveConsumedOverFree() external {
+        address smartAccount = _setupBundledAccountWithFree(); // free = 200
+        MockPuller puller = new MockPuller();
+
+        Execution[] memory execs = new Execution[](2);
+        execs[0] = Execution({
+            target: address(token),
+            value: 0,
+            callData: abi.encodeWithSelector(token.approve.selector, address(puller), 250e18)
+        });
+        execs[1] = Execution({
+            target: address(puller),
+            value: 0,
+            callData: abi.encodeWithSelector(MockPuller.pull.selector, address(token), smartAccount, 250e18)
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.balanceOf(address(puller)), 0, "pull over free must be blocked");
+        assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked pull");
+        assertEq(token.allowance(smartAccount, address(puller)), 0, "allowance rolled back after revert");
+    }
+
+    /// @dev A standalone (unconsumed) approve in a batch leaves a standing allowance a grantee could
+    ///      later drain via an unhooked transferFrom → rejected by the no-standing-allowance rule.
+    function test_BundleSpendProtector_BlocksUnconsumedBatchApprove() external {
+        address smartAccount = _setupBundledAccountWithFree();
+        address spender = makeAddr("spender");
+
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: address(token), value: 0, callData: abi.encodeWithSelector(token.approve.selector, spender, 50e18)
+        });
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
+        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+
+        assertEq(token.allowance(smartAccount, spender), 0, "unconsumed batch approve must be blocked");
     }
 
     /// @dev A batch that touches only non-bundled (free) tokens still executes. Paired with the
@@ -327,5 +419,15 @@ contract SmartAccountApproach is BaseAATest {
             ExecLib.encode(CALLTYPE_BATCH, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
         bytes memory inner = abi.encodeWithSelector(Kernel.execute.selector, mode, ExecLib.encodeBatch(execs));
         return abi.encodePacked(Kernel.executeUserOp.selector, inner);
+    }
+}
+
+/// @dev Generic stand-in for the "caller approves, precompile pulls" factory flows
+///      (credis/gem/nod/intex). `pull` consumes the caller-granted allowance via transferFrom,
+///      exactly as those precompiles do — letting the tests exercise the consumed-approve path
+///      without deploying the real precompiles.
+contract MockPuller {
+    function pull(address token, address from, uint256 amount) external {
+        require(IERC20(token).transferFrom(from, address(this), amount), "pull failed");
     }
 }

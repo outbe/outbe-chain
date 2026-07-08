@@ -11,15 +11,36 @@ export const DEFAULT_GRATIS_POOL_ADDRESS = "0x0000000000000000000000000000000000
 export const DEFAULT_CREDIS_FACTORY_ADDRESS = "0x0000000000000000000000000000000000001009";
 export const DEFAULT_CREDIS_ADDRESS = "0x000000000000000000000000000000000000100A";
 
-// Ids are 1-based: `denomId = 0` is intentionally invalid on-chain so the
-// zero-initialised default of a Solidity `uint8` field does not silently
-// alias the first denomination. Mirrors `crates/core/gratispool/src/
-// constants.rs::denomination`.
-export const GRATIS_DENOMINATIONS: { id: number; amount: bigint }[] = [
-  { id: 1, amount: 100n * 10n ** 18n },
-  { id: 2, amount: 1_000n * 10n ** 18n },
-  { id: 3, amount: 10_000n * 10n ** 18n },
+// Gratis denomination ladder. Ids are assigned in ascending amount order and
+// must match `crates/core/gratispool/src/constants.rs::DenomAmount`.
+//
+// `id = 0` is intentionally invalid on-chain. `id = 1` (Gratis0_1, 0.1 GRATIS)
+// is a RESERVED anadosis-only sub-rung: `pledgeGratis` rejects it. It exists
+// only as the destination for a single anadosis installment's reclaim note —
+// one decade below the pledge denom, worth `pledge_amount / 10`.
+export const GRATIS_DENOMINATIONS: { id: number; amount: bigint; pledgeable: boolean }[] = [
+  { id: 1, amount: 1n * 10n ** 17n, pledgeable: false }, // Gratis0_1 — reserved (anadosis only)
+  { id: 2, amount: 1n * 10n ** 18n, pledgeable: true }, // Gratis1
+  { id: 3, amount: 10n * 10n ** 18n, pledgeable: true }, // Gratis10
+  { id: 4, amount: 100n * 10n ** 18n, pledgeable: true }, // Gratis100
+  { id: 5, amount: 1_000n * 10n ** 18n, pledgeable: true }, // Gratis1k
+  { id: 6, amount: 10_000n * 10n ** 18n, pledgeable: true }, // Gratis10k
 ];
+
+// Resolve the anadosis (one-decade-down) denomination for a per-installment
+// reclaim note by its amount. The amount equals `pledge_amount / 10`, which is
+// exactly the `gratisAmount` reported by `getNextAnadosis`. The reclaim
+// commitment MUST be computed with the returned `id`, or the note is inserted
+// but permanently unspendable (the chain stores it opaquely).
+export function anadosisDenomByAmount(amount: bigint): { id: number; amount: bigint } {
+  const d = GRATIS_DENOMINATIONS.find((x) => x.amount === amount);
+  if (!d) {
+    throw new Error(
+      `No denomination in the ladder matches anadosis amount ${amount}; cannot build the reclaim note.`,
+    );
+  }
+  return d;
+}
 
 export interface TokenMeta {
   decimals: number;

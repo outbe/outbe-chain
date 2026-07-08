@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum GratisFactoryError {
     #[error("fidelity index not eligible")]
     FidelityNotEligible,
+    #[error("denomination is reserved and cannot be pledged")]
+    DenomNotPledgeable,
 }
 
 impl From<GratisFactoryError> for PrecompileError {
