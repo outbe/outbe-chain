@@ -135,3 +135,12 @@ pub fn get_exchange_rate(storage: StorageHandle, base: &str, quote: &str) -> Res
     let (rate, _, _) = oracle.get_exchange_rate(base, quote)?;
     Ok(rate)
 }
+
+/// Annualized refinancing rate (1e18 scaled) for an ISO 4217 code, read from the
+/// reference-currency collection. Reverts when the code is not a registered
+/// reference currency or carries no (non-zero) rate. Called by the Credis
+/// Factory at issuance to pin the Anadosis refinancing rate.
+pub fn get_refinancing_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.get_refinancing_rate(iso_code)
+}

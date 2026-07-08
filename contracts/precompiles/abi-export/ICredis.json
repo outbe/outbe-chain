@@ -77,6 +77,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -194,6 +209,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -311,6 +341,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

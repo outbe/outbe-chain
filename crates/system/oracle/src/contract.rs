@@ -3,6 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_macros::contract;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes, StorageVec};
+pub use outbe_primitives::units::SCALE_1E18;
 
 /// EVM storage layout for the Oracle contract.
 ///
@@ -177,10 +178,7 @@ pub struct OracleContract {
     // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
-}
 
-/// 1e18 scale factor for fixed-point arithmetic.
-///
-/// Re-exported from [`outbe_primitives::units::SCALE_1E18`] so the oracle
-/// shares the canonical scale constant with the rest of the chain.
-pub use outbe_primitives::units::SCALE_1E18;
+    // Reference-currency refinancing rates
+    pub reference_refinancing_rate: Mapping<u16, U256>,
+}

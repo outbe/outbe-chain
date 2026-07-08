@@ -24,6 +24,8 @@ pub enum CredisFactoryError {
     OracleRateTooSmall,
     #[error("oracle conversion overflow")]
     OracleConversionOverflow,
+    #[error("asset isoCode() call returned undecodable data")]
+    AssetIsoUndecodable,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

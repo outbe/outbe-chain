@@ -81,6 +81,8 @@ fn create_position_populates_all_10_anadosis_records() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100_000u64),
                 U256::from(50_000u64),
                 CREATED_AT,
@@ -108,6 +110,68 @@ fn create_position_populates_all_10_anadosis_records() {
 }
 
 #[test]
+fn create_position_applies_refinancing_rate_to_total_debt() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        // BRD example: principal 1000, refinancing rate 4.5% (45e15), term 10
+        // months -> total_debt = 1000 * (1 + 0.045 * 10/12) = 1037.5 -> 1037.
+        let principal = U256::from(1000u64);
+        let rate = U256::from(45_000_000_000_000_000u128); // 0.045 @ 1e18
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                vault(),
+                asset(),
+                840,
+                rate,
+                principal,
+                U256::from(500u64),
+                CREATED_AT,
+            )
+            .unwrap();
+
+        let position = credis.get_position(position_id).unwrap();
+        assert_eq!(position.credis_principal, principal);
+        assert_eq!(position.refinancing_rate, rate);
+        assert_eq!(position.issuance_currency, 840);
+        assert_eq!(position.total_anadosis_amount, U256::from(1037u64));
+        assert_eq!(position.outstanding_anadosis_amount, U256::from(1037u64));
+
+        // The 10 installments sum exactly to the total debt.
+        let mut sum = U256::ZERO;
+        for n in 1..=NUMBER_OF_ANADOSIS {
+            sum += credis.get_anadosis(position_id, n).unwrap().anadosis_amount;
+        }
+        assert_eq!(sum, U256::from(1037u64));
+    });
+}
+
+#[test]
+fn create_position_zero_rate_matches_principal() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let principal = U256::from(1_234u64);
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                vault(),
+                asset(),
+                840,
+                U256::ZERO,
+                principal,
+                U256::ZERO,
+                CREATED_AT,
+            )
+            .unwrap();
+        let position = credis.get_position(position_id).unwrap();
+        assert_eq!(position.total_anadosis_amount, principal);
+        assert_eq!(position.credis_principal, principal);
+    });
+}
+
+#[test]
 fn create_position_rejects_duplicate() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
@@ -117,6 +181,8 @@ fn create_position_rejects_duplicate() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -128,6 +194,8 @@ fn create_position_rejects_duplicate() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -147,6 +215,8 @@ fn create_position_rejects_zero_amount() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::ZERO,
                 U256::ZERO,
                 CREATED_AT,
@@ -166,6 +236,8 @@ fn create_position_grows_address_index() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -177,6 +249,8 @@ fn create_position_grows_address_index() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(2000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -208,6 +282,8 @@ fn anadosis_amount_equal_split_without_remainder() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -233,6 +309,8 @@ fn anadosis_amount_remainder_absorbed_in_last_anadosis() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(105u64),
                 U256::from(53u64), // gratis 53 / 10 = 5 r3 → anadosis 1..9 = 5, anadosis 10 = 8
                 CREATED_AT,
@@ -279,6 +357,8 @@ fn make_next_anadosis_advances_pointer() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100_000u64),
                 U256::from(50_000u64),
                 CREATED_AT,
@@ -311,6 +391,8 @@ fn make_next_anadosis_decrements_outstanding() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::from(50u64),
                 CREATED_AT,
@@ -335,6 +417,8 @@ fn make_next_anadosis_accepted_before_due_date() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -360,6 +444,8 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -373,6 +459,8 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -410,6 +498,8 @@ fn get_anadosis_rejects_anadosis_number_zero() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -430,6 +520,8 @@ fn get_anadosis_rejects_anadosis_number_above_cap() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(1_000u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -464,6 +556,8 @@ fn has_overdue_anadosis_reflects_past_due_unpaid_anadosis() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -493,6 +587,8 @@ fn get_outstanding_amount_sums_across_positions() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -504,6 +600,8 @@ fn get_outstanding_amount_sums_across_positions() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(50u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -534,6 +632,8 @@ fn precompile_get_position_returns_full_record() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100_000u64),
                 U256::from(50_000u64),
                 CREATED_AT,
@@ -598,6 +698,8 @@ fn precompile_has_overdue_uses_storage_timestamp() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
                 CREATED_AT,
@@ -625,6 +727,8 @@ fn precompile_has_overdue_uses_storage_timestamp() {
                 alice(),
                 vault(),
                 asset(),
+                840,
+                U256::ZERO,
                 U256::from(100u64),
                 U256::ZERO,
                 CREATED_AT,
