@@ -12,7 +12,7 @@ Solidity smart contracts for the Outbe
 | Project | Description | Solc | Toolchain |
 | --- | --- | --- | --- |
 | [intent](./intent) | ERC-7683 cross-chain intent settlement with an auction-based solver selection mechanism (LayerZero). | 0.8.30 | Forge + soldeer |
-| [oft](./oft) | Outbe stablecoin bridge flow built on LayerZero OFT v2 (adapters & tokens). | 0.8.30 | Forge + soldeer |
+| [tokens](./tokens) | Outbe stablecoin bridge flow built on ERC-7786 adapters and ERC-7802 tokens. | 0.8.30 | Forge + soldeer |
 | [vault](./vault) | Non-custodial ERC-4626 vault provider, based on Morpho Vaults V2. | 0.8.30 | Forge + soldeer |
 | [smart-account](./smart-account) | ERC-4337 smart-account solution built on the ZeroDev Kernel. | 0.8.30 | Forge + soldeer |
 | [precompiles](./precompiles) | Solidity interfaces for the outbe-chain stateful precompiles (e.g. Oracle). | 0.8.30 | Forge |
