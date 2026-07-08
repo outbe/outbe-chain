@@ -8,7 +8,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {IERC7786TokenReceiver} from "../../src/interfaces/IERC7786TokenReceiver.sol";
 import {USDT} from "../../src/native/USDT.sol";
-import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 /// @dev Records the hook invocation; configurable to misbehave.
@@ -67,7 +67,7 @@ contract ERC7786TokenBridgeComposedTest is Test {
     MockERC7786Bridge internal outbeGateway;
 
     USDT internal usdt;
-    USDT0 internal usdt0;
+    BridgeableERC20Stable internal usdt0;
     ERC7786TokenBridge internal bnbUsdtBridge;
     ERC7786TokenBridge internal outbeUsdt0Bridge;
 
@@ -80,7 +80,7 @@ contract ERC7786TokenBridgeComposedTest is Test {
         outbeGateway.setRemoteBridge(BNB, bnbGateway);
 
         usdt = new USDT();
-        usdt0 = new USDT0("USDT0", "USDT0", 6, address(this));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, address(this));
 
         bnbUsdtBridge = new ERC7786TokenBridge(
             address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock

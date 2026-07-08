@@ -10,7 +10,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/native/USDT.sol";
-import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
 /// @title USDT0Deploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(BNB) <> USDT0(Outbe).
@@ -27,6 +27,7 @@ contract USDT0Deploy is Script {
     error MissingCode(address target);
     error UnauthorizedSigner(address signer, address expectedOwner);
     error InvalidDecimals(uint256 decimals_);
+    error InvalidIsoCode(uint256 isoCode_);
     error DomainTooLarge(uint256 chainId);
     error InvalidRemoteTokenBridge();
     error Create2FactoryDeploymentFailed(bytes32 salt, address expected);
@@ -54,6 +55,12 @@ contract USDT0Deploy is Script {
         return uint8(decimals_);
     }
 
+    function _getIsoCode() internal view returns (uint16) {
+        uint256 isoCode_ = vm.envOr("TOKEN_ISO_CODE", uint256(840));
+        if (isoCode_ > type(uint16).max) revert InvalidIsoCode(isoCode_);
+        return uint16(isoCode_);
+    }
+
     function _getTokenSalt() internal pure returns (bytes32) {
         return keccak256(bytes(string("USDT0")));
     }
@@ -67,7 +74,10 @@ contract USDT0Deploy is Script {
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(USDT0).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(
+            type(BridgeableERC20Stable).creationCode,
+            abi.encode(name_, symbol_, decimals_, _getIsoCode(), vm.envAddress("DEPLOYER_ADDRESS"))
+        );
     }
 
     function _getBridgeCreationCode(address token_) internal view returns (bytes memory) {
@@ -125,9 +135,7 @@ contract USDT0Deploy is Script {
 
         if (configuredBridge == address(0)) {
             tokenBridge = address(
-                new ERC7786TokenBridge(
-                    sourceToken, localBridge, owner, ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-                )
+                new ERC7786TokenBridge(sourceToken, localBridge, owner, ERC7786TokenBridge.TokenBridgeMode.LockUnlock)
             );
         } else {
             tokenBridge = configuredBridge;
@@ -142,8 +150,9 @@ contract USDT0Deploy is Script {
     }
 
     function predictOutbe() external view returns (address token, address tokenBridge) {
-        TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals());
+        TargetDeployment memory target = _predictTarget(
+            vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals()
+        );
         _logTarget(target);
         return (target.token, target.tokenBridge);
     }
@@ -151,8 +160,9 @@ contract USDT0Deploy is Script {
     function deployTarget() external returns (address token, address tokenBridge) {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals());
+        TargetDeployment memory target = _predictTarget(
+            vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals()
+        );
 
         _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
 
@@ -174,17 +184,13 @@ contract USDT0Deploy is Script {
 
     function configureSourceRemote() external {
         _configureRemote(
-            vm.envAddress("BSC_USDT_BRIDGE"),
-            vm.envUint("OUTBE_CHAIN_ID"),
-            vm.envAddress("OUTBE_USDT0_BRIDGE")
+            vm.envAddress("BSC_USDT_BRIDGE"), vm.envUint("OUTBE_CHAIN_ID"), vm.envAddress("OUTBE_USDT0_BRIDGE")
         );
     }
 
     function configureTargetRemote() external {
         _configureRemote(
-            vm.envAddress("OUTBE_USDT0_BRIDGE"),
-            vm.envUint("BSC_CHAIN_ID"),
-            vm.envAddress("BSC_USDT_BRIDGE")
+            vm.envAddress("OUTBE_USDT0_BRIDGE"), vm.envUint("BSC_CHAIN_ID"), vm.envAddress("BSC_USDT_BRIDGE")
         );
     }
 
@@ -192,7 +198,7 @@ contract USDT0Deploy is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        USDT0 bridgeableToken = USDT0(token);
+        BridgeableERC20Stable bridgeableToken = BridgeableERC20Stable(token);
         address currentBridge = bridgeableToken.tokenBridge();
         if (currentBridge == tokenBridge) return;
 

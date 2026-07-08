@@ -10,7 +10,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
-import {WCOEN as SyntheticWCOEN} from "../../src/synthetic/WCOEN.sol";
+import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 
 /// @title WCOENDeploy
 /// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
@@ -97,7 +97,9 @@ contract WCOENDeploy is Script {
         view
         returns (bytes memory)
     {
-        return abi.encodePacked(type(SyntheticWCOEN).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS")));
+        return abi.encodePacked(
+            type(SyntheticWCOEN).creationCode, abi.encode(name_, symbol_, decimals_, vm.envAddress("DEPLOYER_ADDRESS"))
+        );
     }
 
     function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
@@ -121,7 +123,8 @@ contract WCOENDeploy is Script {
         } else {
             source.tokenSalt = _getSourceTokenSalt();
             source.tokenCreationCode = type(NativeWCOEN).creationCode;
-            source.token = Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
+            source.token =
+                Create2.computeAddress(source.tokenSalt, keccak256(source.tokenCreationCode), CREATE2_FACTORY);
         }
 
         source.bridgeSalt = _getSourceBridgeSalt();
@@ -176,8 +179,9 @@ contract WCOENDeploy is Script {
     }
 
     function predictTarget() external view returns (address token, address tokenBridge) {
-        TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
+        TargetDeployment memory target = _predictTarget(
+            vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals()
+        );
         _logTarget(target);
         return (target.token, target.tokenBridge);
     }
@@ -185,8 +189,9 @@ contract WCOENDeploy is Script {
     function deployTarget() external returns (address token, address tokenBridge) {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        TargetDeployment memory target =
-            _predictTarget(vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals());
+        TargetDeployment memory target = _predictTarget(
+            vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals()
+        );
 
         _requireCode(vm.envAddress("BRIDGE_ADDRESS"));
 
@@ -208,17 +213,13 @@ contract WCOENDeploy is Script {
 
     function configureSourceRemote() external {
         _configureRemote(
-            vm.envAddress("OUTBE_WCOEN_BRIDGE"),
-            vm.envUint("BSC_CHAIN_ID"),
-            vm.envAddress("BSC_WCOEN_BRIDGE")
+            vm.envAddress("OUTBE_WCOEN_BRIDGE"), vm.envUint("BSC_CHAIN_ID"), vm.envAddress("BSC_WCOEN_BRIDGE")
         );
     }
 
     function configureTargetRemote() external {
         _configureRemote(
-            vm.envAddress("BSC_WCOEN_BRIDGE"),
-            vm.envUint("OUTBE_CHAIN_ID"),
-            vm.envAddress("OUTBE_WCOEN_BRIDGE")
+            vm.envAddress("BSC_WCOEN_BRIDGE"), vm.envUint("OUTBE_CHAIN_ID"), vm.envAddress("OUTBE_WCOEN_BRIDGE")
         );
     }
 
