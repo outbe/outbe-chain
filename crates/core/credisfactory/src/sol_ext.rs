@@ -18,7 +18,7 @@ sol! {
 
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
-    // Mirrors contracts/precompiles/src/IReferenceCurrency.sol. Implemented by
+    // Mirrors contracts/tokens/src/interfaces/IReferenceCurrency.sol. Implemented by
     // asset tokens so the factory can derive the position's issuance currency.
     interface IReferenceCurrency {
         function isoCode() external view returns (uint16);

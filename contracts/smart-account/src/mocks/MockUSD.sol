@@ -31,7 +31,7 @@ contract MockUSD is ERC20, Ownable {
     }
 
     /// @notice ISO 4217 numeric currency code for this asset (USD = 840).
-    /// @dev Implements `IReferenceCurrency` (contracts/precompiles/src/IReferenceCurrency.sol);
+    /// @dev Implements `IReferenceCurrency` (contracts/tokens/src/interfaces/IReferenceCurrency.sol);
     ///      the Credis Factory calls this to derive the position's issuance currency.
     /// @return The ISO 4217 numeric code (840 = USD).
     function isoCode() external pure returns (uint16) {

@@ -6,6 +6,25 @@ run = "forge soldeer install"
 description = "Build Solidity contracts using forge"
 run = "forge build"
 
+[tasks.export-abi]
+description = "Export contracts ABI (auto-discovers src/interfaces/I*.sol)"
+depends = ["build"]
+run = '''
+echo 'Exporting ABI for smart contracts'
+mkdir -p ./abi-export
+rm -rf ./abi-export/*.json
+for sol_file in ./src/interfaces/I*.sol; do
+  contract=$(basename "$sol_file" .sol)
+  file=$(ls -1 ./out/${contract}.sol/${contract}.json ./out/${contract}.sol/${contract}.*.json 2>/dev/null | tail -1)
+  if [ -n "$file" ]; then
+    jq -r '.abi' "$file" > ./abi-export/${contract}.json
+    echo "  exported ${contract}"
+  else
+    echo "  WARNING: no compiled artifact for ${contract}" >&2
+  fi
+done
+'''
+
 [tasks.test]
 description = "Test Solidity contracts using forge"
 run = "forge test"

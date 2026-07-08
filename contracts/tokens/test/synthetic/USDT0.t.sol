@@ -6,6 +6,7 @@ import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 
 import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {IReferenceCurrency} from "../../src/interfaces/IReferenceCurrency.sol";
 import {USDT0} from "../../src/synthetic/USDT0.sol";
 import {WCOEN} from "../../src/synthetic/WCOEN.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
@@ -37,6 +38,12 @@ contract USDT0Test is Test {
 
     function test_SupportsERC7802() public view {
         assertTrue(token.supportsInterface(type(IERC7802).interfaceId));
+    }
+
+    /// @dev The Credis Factory reads `isoCode()` on the disbursed asset to pin the
+    ///      position's issuance currency; USDT0 must report USD (ISO 4217 numeric 840).
+    function test_IsoCode_IsUsd() public view {
+        assertEq(IReferenceCurrency(address(token)).isoCode(), 840);
     }
 
     function test_SetTokenBridge_OwnerCanRotate() public {
