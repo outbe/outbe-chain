@@ -80,7 +80,10 @@ contract WCOENDeploy is Script {
         return keccak256(bytes(string("BSC_WCOEN_BRIDGE")));
     }
 
-    function _getSourceBridgeCreationCode(address token_) internal view returns (bytes memory) {
+    // Creation-code helpers and everything that calls them cannot be `view`: with
+    // `dynamic_test_linking` on, `type(T).creationCode` compiles to a state-modifying
+    // `vm.getCode()` cheatcode call.
+    function _getSourceBridgeCreationCode(address token_) internal returns (bytes memory) {
         return abi.encodePacked(
             type(ERC7786TokenBridge).creationCode,
             abi.encode(
@@ -94,7 +97,6 @@ contract WCOENDeploy is Script {
 
     function _getTargetTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
         internal
-        view
         returns (bytes memory)
     {
         return abi.encodePacked(
@@ -102,7 +104,7 @@ contract WCOENDeploy is Script {
         );
     }
 
-    function _getTargetBridgeCreationCode(address token_) internal view returns (bytes memory) {
+    function _getTargetBridgeCreationCode(address token_) internal returns (bytes memory) {
         return abi.encodePacked(
             type(ERC7786TokenBridge).creationCode,
             abi.encode(
@@ -114,7 +116,7 @@ contract WCOENDeploy is Script {
         );
     }
 
-    function _predictSource() internal view returns (SourceDeployment memory source) {
+    function _predictSource() internal returns (SourceDeployment memory source) {
         address configuredToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));
         source.tokenFromEnv = configuredToken != address(0);
 
@@ -135,7 +137,6 @@ contract WCOENDeploy is Script {
 
     function _predictTarget(string memory name_, string memory symbol_, uint8 decimals_)
         internal
-        view
         returns (TargetDeployment memory target)
     {
         target.tokenSalt = _getTargetTokenSalt();
@@ -155,7 +156,7 @@ contract WCOENDeploy is Script {
         if (!success || expected.code.length == 0) revert Create2FactoryDeploymentFailed(salt, expected);
     }
 
-    function predictSource() external view returns (address sourceToken, address tokenBridge) {
+    function predictSource() external returns (address sourceToken, address tokenBridge) {
         SourceDeployment memory source = _predictSource();
         _logSource(source);
         return (source.token, source.tokenBridge);
@@ -178,7 +179,7 @@ contract WCOENDeploy is Script {
         return (source.token, source.tokenBridge);
     }
 
-    function predictTarget() external view returns (address token, address tokenBridge) {
+    function predictTarget() external returns (address token, address tokenBridge) {
         TargetDeployment memory target = _predictTarget(
             vm.envOr("TOKEN_NAME", string("WCOEN")), vm.envOr("TOKEN_SYMBOL", string("WCOEN")), _getDecimals()
         );

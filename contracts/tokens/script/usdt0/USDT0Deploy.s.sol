@@ -69,9 +69,11 @@ contract USDT0Deploy is Script {
         return keccak256(bytes(string("USDT0_BRIDGE")));
     }
 
+    // Creation-code helpers and everything that calls them cannot be `view`: with
+    // `dynamic_test_linking` on, `type(T).creationCode` compiles to a state-modifying
+    // `vm.getCode()` cheatcode call.
     function _getTokenCreationCode(string memory name_, string memory symbol_, uint8 decimals_)
         internal
-        view
         returns (bytes memory)
     {
         return abi.encodePacked(
@@ -80,7 +82,7 @@ contract USDT0Deploy is Script {
         );
     }
 
-    function _getBridgeCreationCode(address token_) internal view returns (bytes memory) {
+    function _getBridgeCreationCode(address token_) internal returns (bytes memory) {
         return abi.encodePacked(
             type(ERC7786TokenBridge).creationCode,
             abi.encode(
@@ -94,7 +96,6 @@ contract USDT0Deploy is Script {
 
     function _predictTarget(string memory name_, string memory symbol_, uint8 decimals_)
         internal
-        view
         returns (TargetDeployment memory target)
     {
         target.tokenSalt = _getTokenSalt();
@@ -149,7 +150,7 @@ contract USDT0Deploy is Script {
         console2.log("BSC_USDT_BRIDGE=", tokenBridge);
     }
 
-    function predictOutbe() external view returns (address token, address tokenBridge) {
+    function predictOutbe() external returns (address token, address tokenBridge) {
         TargetDeployment memory target = _predictTarget(
             vm.envOr("TOKEN_NAME", string("USDT0")), vm.envOr("TOKEN_SYMBOL", string("USDT0")), _getDecimals()
         );
