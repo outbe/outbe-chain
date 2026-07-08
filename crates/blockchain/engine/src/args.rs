@@ -132,6 +132,23 @@ pub struct ConsensusArgs {
         default_value_t = 60
     )]
     pub tee_bootstrap_timeout_secs: u64,
+
+    /// Run as a FOLLOWER: cold-sync finalized blocks from this upstream node and
+    /// verify them against the committee (anchored on the genesis validator set,
+    /// read from the node's own genesis state), instead of running the consensus
+    /// engine. The lightweight full-node path. Mutually exclusive with
+    /// `--validator`.
+    #[arg(long = "upstream", value_name = "URL", conflicts_with = "is_validator")]
+    pub upstream: Option<String>,
+
+    /// Dev only: follow without verifying consensus certificates (EL-only sync).
+    /// Requires `--upstream`.
+    #[arg(
+        long = "upstream.nocertify",
+        default_value_t = false,
+        requires = "upstream"
+    )]
+    pub upstream_nocertify: bool,
 }
 
 impl ConsensusArgs {
@@ -141,6 +158,16 @@ impl ConsensusArgs {
     /// - `--consensus.signing-key` without `--validator` → warning (ignored key)
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
+        // Follower mode (`--upstream`) is the lightweight full-node path and must
+        // not be combined with validator/consensus participation. (clap's
+        // `conflicts_with` also enforces this on the CLI; this covers programmatic
+        // construction and gives a clear message.)
+        if self.upstream.is_some() && self.is_validator {
+            eyre::bail!("--upstream (follower mode) is mutually exclusive with --validator");
+        }
+        if self.upstream_nocertify && self.upstream.is_none() {
+            eyre::bail!("--upstream.nocertify requires --upstream");
+        }
         if self.is_validator && self.signing_key.is_none() {
             eyre::bail!(
                 "--validator requires --consensus.signing-key. \
@@ -263,12 +290,42 @@ mod tests {
             bls_passphrase: None,
             tee_enclave_socket: None,
             tee_bootstrap_timeout_secs: 60,
+            upstream: None,
+            upstream_nocertify: false,
         }
     }
 
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
+    }
+
+    #[test]
+    fn test_follower_upstream_ok_without_validator() {
+        let mut args = default_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn test_follower_upstream_conflicts_with_validator() {
+        let mut args = default_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        args.is_validator = true;
+        args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+        let err = args.validate().unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "error: {err}");
+    }
+
+    #[test]
+    fn test_nocertify_requires_upstream() {
+        let mut args = default_args();
+        args.upstream_nocertify = true;
+        let err = args.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("--upstream.nocertify requires --upstream"),
+            "error: {err}"
+        );
     }
 
     #[test]

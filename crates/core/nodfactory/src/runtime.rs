@@ -13,7 +13,6 @@ use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
 use outbe_nod::api as nod_api;
-use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
@@ -37,9 +36,6 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
     let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
 
     let issued_at = storage.timestamp()?.to::<u64>();
-    let unlocks_at = issued_at
-        .checked_add(UNLOCK_PERIOD_SECONDS)
-        .ok_or(NodFactoryError::NodLocked)?;
 
     let item = NodItemState {
         nod_id,
@@ -51,7 +47,6 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
         bucket_key,
         cost_amount_minor: params.cost_amount_minor,
         issuance_currency: params.issuance_currency,
-        unlocks_at,
         reference_currency: params.reference_currency,
         issued_at,
     };
@@ -74,7 +69,7 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
     Ok(nod_id)
 }
 
-/// Atomic mine-gratis path: validate ownership + unlock + PoW + bucket
+/// Atomic mine-gratis path: validate ownership + PoW + bucket
 /// qualification, pull `cost_amount_minor` from the caller as a vault
 /// deposit (when non-zero), burn the Nod (emitting `NodBurned`), then
 /// delegate the matching gratis mint to `gratisfactory` (which mints to the
@@ -102,11 +97,6 @@ pub fn mine_gratis(
     let item = nod_api::get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     if caller != item.owner {
         return Err(NodFactoryError::NotOwner.into());
-    }
-
-    let now = storage.timestamp()?.to::<u64>();
-    if now < item.unlocks_at {
-        return Err(NodFactoryError::NodLocked.into());
     }
 
     validate_pow(nod_id, nonce)?;

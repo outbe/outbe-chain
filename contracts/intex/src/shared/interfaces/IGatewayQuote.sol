@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 /**
  * @dev Fee-quoting extension for ERC-7786 gateways (not part of the ERC-7786 core, which leaves fee discovery to the
- * transport). Mirrors the interface exposed by the `crosschain` hub's `ERC7786Bridge`, so the intex messengers can
+ * transport). Mirrors the interface exposed by the `crosschain` hub's `ERC7786Bridge`, so the intex routers can
  * ask the bridge for the native fee before sending. Vendored because OpenZeppelin does not ship it.
  */
 interface IGatewayQuote {

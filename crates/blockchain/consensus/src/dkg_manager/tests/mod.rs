@@ -22,6 +22,105 @@ use commonware_utils::TryCollect as _;
 
 use super::*;
 
+/// PHASE 0 de-risk spike: a node that NEVER ran DKG can rebuild an epoch's
+/// finalization verifier from the boundary outcome carried in the block
+/// (`extra_data`) — using only public data — and verify a real finalization
+/// certificate signed by that epoch's committee. This is the load-bearing
+/// assumption of the `--upstream` follower (committee-chaining trust model).
+#[test]
+fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalization() {
+    use crate::digest::Digest as OutbeDigest;
+    use crate::hybrid::{bls_batch_verification_rng, HybridScheme};
+    use commonware_consensus::simplex::types::{Finalization, Proposal, Subject};
+    use commonware_consensus::types::{Round, View};
+    use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
+    use commonware_cryptography::certificate::Scheme as _;
+    use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
+    use commonware_utils::ordered::{Quorum as _, Set as OrderedSet};
+    use std::num::NonZeroU32;
+
+    // A committee (4 → N3f1 quorum 3) runs the DKG. We keep the secret shares
+    // (to sign) AND the full public Output (to put on-chain in the boundary).
+    let mut keys: Vec<bls12381::PrivateKey> = (0..4u8)
+        .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
+        .collect();
+    keys.sort_by_key(|k| k.public_key().encode());
+    let participants: OrderedSet<bls12381::PublicKey> =
+        keys.iter().map(|k| k.public_key()).try_collect().unwrap();
+    let dkg = crate::bls::bootstrap_dkg_for_participants(participants.clone()).unwrap();
+
+    // 1. The chain writes the full DKG output into the boundary block.
+    let outcome_bytes = encode_outcome(Epoch::new(5), &dkg.output, false);
+
+    // 2. NON-PARTICIPANT decode: rebuild the Output from the block bytes alone
+    //    (mirrors `boundary_outcome_polynomial_hash`'s ODKO framing).
+    const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
+    assert_eq!(&outcome_bytes[0..4], b"ODKO");
+    let len = u32::from_be_bytes(outcome_bytes[14..18].try_into().unwrap()) as usize;
+    let body = &outcome_bytes[HEADER_LEN..HEADER_LEN + len];
+    let cfg = (
+        NonZeroU32::new(crate::bls::MAX_VALIDATORS).unwrap(),
+        ModeVersion::v0(),
+    );
+    let recovered = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
+    let recovered_participants = recovered.players().clone();
+    let recovered_polynomial = recovered.public().clone();
+    assert_eq!(
+        recovered_participants, participants,
+        "boundary roundtrip must preserve the committee participant set"
+    );
+
+    // 3. Build the verifier ONLY from boundary-decoded public data.
+    let ns = config::outbe_app_namespace();
+    let verifier =
+        HybridScheme::<MinSig>::verifier(&ns, recovered_participants, recovered_polynomial)
+            .unwrap();
+
+    // 4. The committee signs a finalization (using their secret shares).
+    let signers: Vec<HybridScheme<MinSig>> = keys
+        .iter()
+        .map(|key| {
+            let idx = participants.index(&key.public_key()).unwrap();
+            HybridScheme::signer(
+                &ns,
+                participants.clone(),
+                key.clone(),
+                dkg.polynomial.clone(),
+                dkg.shares[idx.get() as usize].clone(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(b"phase0-spike").as_ref()));
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(5), View::new(2)),
+        View::new(1),
+        digest,
+    );
+    let subject = Subject::Finalize {
+        proposal: &proposal,
+    };
+    let attestations: Vec<_> = signers
+        .iter()
+        .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
+        .collect();
+    let certificate = verifier
+        .assemble::<_, N3f1>(attestations, &Sequential)
+        .unwrap();
+    let finalization = Finalization {
+        proposal,
+        certificate,
+    };
+
+    // 5. Verify the cert with the boundary-reconstructed verifier.
+    let mut rng = bls_batch_verification_rng();
+    assert!(
+        finalization.verify(&mut rng, &verifier, &Sequential),
+        "PHASE 0 GREEN: non-participant rebuilt the epoch verifier from the boundary \
+         outcome and verified a real finalization certificate"
+    );
+}
+
 #[allow(clippy::type_complexity)]
 fn run_test_dkg_complete() -> (
     Vec<bls12381::PrivateKey>,
@@ -725,6 +824,70 @@ fn dealer_log_size_within_extra_data_for_n128() {
         "encoded artifact size {} must fit OUTBE_MAX_EXTRA_DATA_SIZE {}",
         encoded.len(),
         outbe_primitives::consensus::OUTBE_MAX_EXTRA_DATA_SIZE
+    );
+}
+
+#[tokio::test]
+async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
+    // The producer-side gate for Path A: a committee pre-announce is accepted only
+    // if its carried outcome byte-matches THIS node's own reconstructed DKG output
+    // for the incoming epoch — and is fail-closed when no pending boundary exists.
+    let (keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
+    let validator_set = ValidatorSet {
+        public_keys: keys.iter().map(|k| k.public_key()).collect(),
+        addresses: vec![
+            address!("0x1111111111111111111111111111111111111111"),
+            address!("0x2222222222222222222222222222222222222222"),
+            address!("0x3333333333333333333333333333333333333333"),
+        ],
+        p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let artifact = build_boundary_artifact(BoundaryArtifactInput {
+        epoch: Epoch::new(0),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 0,
+        freeze_height: 0,
+        planned_activation_height: 0,
+        vrf_material_version: 0,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+    })
+    .unwrap();
+
+    let manager = Mailbox::new();
+    // Fail-closed BEFORE any pending boundary exists.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(0), artifact.outcome.as_ref())
+            .await
+            .is_err(),
+        "pre-announce must be rejected when the node has no pending boundary"
+    );
+
+    manager.note_recovered_pending_boundary(artifact.clone());
+
+    // Matching outcome + epoch -> accepted.
+    manager
+        .verify_preannounce_outcome(Epoch::new(0), artifact.outcome.as_ref())
+        .await
+        .unwrap();
+    // Forged outcome -> rejected.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(0), b"forged-dkg-outcome")
+            .await
+            .is_err(),
+        "a pre-announce whose outcome differs from the local DKG output must be rejected"
+    );
+    // Wrong epoch -> rejected.
+    assert!(
+        manager
+            .verify_preannounce_outcome(Epoch::new(1), artifact.outcome.as_ref())
+            .await
+            .is_err(),
+        "a pre-announce epoch that does not match the pending boundary must be rejected"
     );
 }
 

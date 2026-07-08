@@ -224,6 +224,72 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
     });
 }
 
+/// `advance_active_worldwide_days` (the 12:00 UTC `wwd_advance_noon` Cycle
+/// trigger handler) must walk the status machine forward exactly like the
+/// midnight path — including the FORMING→OFFERING side effects (tribute day
+/// unseal) — but must NOT create a new worldwide day and must NOT settle a
+/// READY one; day creation and settlement stay midnight-owned in
+/// `start_metadosis`.
+#[test]
+fn advance_active_worldwide_days_advances_status_without_creating_or_settling() {
+    with_storage(|storage| {
+        let wwd = outbe_common::WorldwideDay::new(20260302u32);
+        let forming_start = wwd.start_timestamp();
+        let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let offering_entry = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
+        let offering_end = offering_entry + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        let scheduled = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                forming_start,
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        drop(metadosis);
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.seal_day(wwd).unwrap();
+        drop(tribute);
+
+        let advance = |block_number: u64, timestamp: u64| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
+                storage.clone(),
+            );
+            crate::runtime::advance_active_worldwide_days(&ctx).unwrap();
+        };
+
+        // At the offering-entry edge the day opens and the tribute day
+        // unseals — offers stop reverting `not in OFFERING status`.
+        advance(2, offering_entry);
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
+        let tribute = TributeContract::new(storage.clone());
+        assert!(!tribute.is_day_sealed(wwd).unwrap());
+
+        // Advancing did not create any other worldwide day.
+        let active = metadosis.active_wwd.read_all().unwrap();
+        assert_eq!(active, vec![wwd], "advance must not create worldwide days");
+        drop(metadosis);
+
+        // Past scheduled-process time the walk parks the day at READY and
+        // leaves it active: settlement belongs to `start_metadosis` only.
+        advance(3, scheduled);
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);
+        assert_eq!(
+            metadosis.active_wwd.read_all().unwrap(),
+            vec![wwd],
+            "advance must not settle or retire a READY day"
+        );
+    });
+}
+
 #[test]
 fn test_missing_previous_vwap_results_in_red_day() {
     with_storage(|storage| {
@@ -678,7 +744,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
 fn no_tributes_green_day_clears_started_auction() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 64]),
     );
     StorageHandle::enter(&mut storage, |storage| {
@@ -736,7 +802,7 @@ fn no_tributes_green_day_clears_started_auction() {
 fn no_day_limit_green_day_still_empty_clears_started_auction() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_MESSENGER_ADDRESS,
+        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 64]),
     );
     StorageHandle::enter(&mut storage, |storage| {

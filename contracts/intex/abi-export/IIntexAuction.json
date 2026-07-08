@@ -98,6 +98,11 @@
               "name": "callPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "commitBondMinor",
+              "type": "uint128",
+              "internalType": "uint128"
             }
           ]
         }
@@ -113,6 +118,24 @@
           "name": "seriesId",
           "type": "uint32",
           "internalType": "uint32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "claimCommitBond",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -273,6 +296,11 @@
                   "name": "callPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
+                },
+                {
+                  "name": "commitBondMinor",
+                  "type": "uint128",
+                  "internalType": "uint128"
                 }
               ]
             },
@@ -444,6 +472,11 @@
                   "name": "callPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
+                },
+                {
+                  "name": "commitBondMinor",
+                  "type": "uint128",
+                  "internalType": "uint128"
                 }
               ]
             },
@@ -835,6 +868,22 @@
         },
         {
           "name": "minIntexBidRate",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "CommitBondNotYetClaimable",
+      "inputs": [
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "nowTs",
           "type": "uint32",
           "internalType": "uint32"
         }

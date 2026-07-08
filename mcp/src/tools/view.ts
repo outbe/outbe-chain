@@ -56,7 +56,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "tribute_day_totals",
+    "worldwide_day_totals",
     "Aggregate Tribute totals for a WorldwideDay (count, nominal amount, sealed).",
     { worldwide_day: wwd },
     handler(async ({ worldwide_day }) =>
@@ -132,7 +132,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "fidelity_rcfi",
+    "fidelity_index",
     "Fidelity RCFI (Retention Component of Fidelity Index) for an account, in decayed days.",
     { account: addr },
     handler(async ({ account }) => ok(await view(ctx, "fidelity", "getRcfi", [account]))),
@@ -149,7 +149,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   // --- Metadosis / WorldwideDay ---------------------------------------------
   server.tool(
-    "offering_days",
+    "worldwide_days_offering",
     "WorldwideDays currently in OFFERING status (the days a tribute offer can target).",
     {},
     handler(async () => {
@@ -161,7 +161,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "worldwide_day",
+    "worldwide_day_get",
     "Full lifecycle state of a WorldwideDay (status, type, period timestamps, VWAP).",
     { worldwide_day: wwd },
     handler(async ({ worldwide_day }) =>
@@ -171,14 +171,14 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   // --- Oracle ----------------------------------------------------------------
   server.tool(
-    "oracle_pairs",
+    "currency_pairs",
     "All oracle price pairs (pairId, base, quote, active).",
     {},
     handler(async () => ok(await view(ctx, "oracle", "getPairs", []))),
   );
 
   server.tool(
-    "oracle_rate",
+    "currency_rate",
     "Latest exchange rate for a base/quote pair.",
     { base: z.string(), quote: z.string() },
     handler(async ({ base, quote }) =>
@@ -187,7 +187,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "oracle_vwap",
+    "currency_rate_vwap",
     "VWAP for a base/quote pair. With lookback_seconds uses the rolling window; otherwise the day VWAP.",
     {
       base: z.string(),
@@ -219,7 +219,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "validator",
+    "validator_get",
     "Full validator record by address (stake, status, miss counters, epoch heights).",
     { address: addr },
     handler(async ({ address }) =>
@@ -241,7 +241,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "rewards_pending",
+    "rewards_claimable",
     "Pending validator rewards for an address (in COEN).",
     { validator: addr },
     handler(async ({ validator }) => ok(await view(ctx, "rewards", "pendingRewards", [validator]))),

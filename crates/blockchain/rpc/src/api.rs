@@ -133,6 +133,22 @@ pub struct SyncStatusInfo {
     pub connected_peers: u32,
 }
 
+/// Response type for `getFinalization`: the finalized certificate + block for a
+/// height, as hex of their commonware-codec encodings. A follower's resolver
+/// reconstructs the marshal delivery as the decoded `finalizationHex` followed
+/// by the decoded `blockHex`, then verifies the certificate against the epoch
+/// committee. Hex (0x-prefixed) keeps the wire JSON-friendly; the bytes are NOT
+/// trusted by the caller — verification happens against the committee, not this
+/// RPC.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinalizationProof {
+    /// Hex of the `commonware_codec::Encode` finalization certificate.
+    pub finalization_hex: String,
+    /// Hex of the `commonware_codec::Encode` finalized `ConsensusBlock`.
+    pub block_hex: String,
+}
+
 /// Outbe custom RPC namespace.
 ///
 /// Provides read-only access to validator infrastructure state.
@@ -196,6 +212,14 @@ pub trait OutbeApi {
     /// Returns the node's sync status.
     #[method(name = "syncStatus")]
     async fn sync_status(&self) -> jsonrpsee::core::RpcResult<SyncStatusInfo>;
+
+    /// Returns the finalized certificate + block at `height` (hex-encoded), for
+    /// `--upstream` followers to backfill and verify. Served only by nodes
+    /// running consensus (validators) or a follower that has itself synced the
+    /// height; otherwise errors. The caller verifies the certificate against the
+    /// epoch committee — this RPC is a bytes transport, not a trust root.
+    #[method(name = "getFinalization")]
+    async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 }
 
 #[cfg(test)]

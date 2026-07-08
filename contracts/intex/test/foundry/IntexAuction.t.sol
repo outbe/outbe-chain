@@ -79,7 +79,8 @@ contract AuctionTest is Test {
             floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexAuction.IntexCallTrigger({windowDays: 0, thresholdDays: 0, intexCallPeriod: 0}),
-            minIntexBidQuantity: minIntexBidQuantity
+            minIntexBidQuantity: minIntexBidQuantity,
+            commitBondMinor: 0
         });
     }
 

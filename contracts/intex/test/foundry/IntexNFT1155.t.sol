@@ -277,17 +277,18 @@ contract IntexNFT1155Test is Test {
         nft.crosschainBurn(user, TOKEN_ID_1, 5);
     }
 
-    function test_CrosschainBurn_RevertsInIssuedState() public {
+    function test_CrosschainBurnAndMint_AllowedInIssuedState() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
         nft.mint(user, 10, SERIES_ID_1);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.BridgeStateForbidden.selector, TOKEN_ID_1, uint8(IIntexNFT1155.IntexState.Issued)
-            )
-        );
-        nft.crosschainBurn(user, TOKEN_ID_1, 1);
+        // Voluntary bridging is open while the series is tradable (Issued): burn out...
+        nft.crosschainBurn(user, TOKEN_ID_1, 4);
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+
+        // ...and mint in (the destination side of the same hop).
+        nft.crosschainMint(user2, TOKEN_ID_1, 4);
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 4);
         vm.stopPrank();
     }
 
@@ -375,15 +376,22 @@ contract IntexNFT1155Test is Test {
         vm.prank(user2);
         nft.safeTransferFrom(user2, user, TOKEN_ID_1, 5, "");
 
+        // Still transferable in Qualified state.
+        vm.prank(bridger);
+        nft.markQualified(SERIES_ID_1);
+        vm.prank(user);
+        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 2, "");
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 2);
+
         // Mark as called.
         vm.prank(bridger);
         nft.markCalled(SERIES_ID_1);
 
-        // Issued tokens stay transferable in Called state — only bridge is gated by series state.
+        // Called freezes holder-to-holder transfers: the settlement obligation
+        // stays with the holder and cannot be passed on.
         vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 3);
     }
 
     function test_TransferRestrictionsIssued() public {
@@ -461,11 +469,15 @@ contract IntexNFT1155Test is Test {
         amounts[0] = 5;
         amounts[1] = 5;
 
-        // Issued tokens are transferable regardless of series state (Issued/Qualified/Called);
-        // soulbound rules only block Settled token ids.
+        // A batch containing a Called series id reverts atomically.
         vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
+
+        // The non-Called series still transfers on its own.
+        vm.prank(user);
+        nft.safeTransferFrom(user, user2, TOKEN_ID_2, 5, "");
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 0);
         assertEq(nft.balanceOf(user2, TOKEN_ID_2), 5);
     }
 

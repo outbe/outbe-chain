@@ -81,13 +81,29 @@ contract EscrowConservationHandler is Test {
         try escrow.settleVaultOwed(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
+    function lockBond(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
+        uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
+        vm.prank(auction);
+        try escrow.lockCommitBond(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
+    }
+
+    function releaseBond(uint256 seriesSeed, uint256 bidderSeed) external {
+        vm.prank(auction);
+        try escrow.releaseCommitBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+    }
+
+    function claimAbandonedBond(uint256 seriesSeed, uint256 bidderSeed) external {
+        try escrow.claimAbandonedCommitBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+    }
+
     function warp(uint256 secondsSeed) external {
         skip(bound(secondsSeed, 1 hours, 10 days));
     }
 }
 
-/// @dev The sum of every live series' `totalLocked` equals the single pooled ERC6909 balance
-///      the adapter holds in The Compact, across randomized lock/finalize/claim/settle actions.
+/// @dev The sum of every live series' `totalLocked` plus every live commit bond equals the single
+///      pooled ERC6909 balance the adapter holds in The Compact, across randomized
+///      lock/finalize/claim/settle/bond actions.
 contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
@@ -100,6 +116,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     address internal auction = address(3);
 
     uint32[] internal seriesIds;
+    address[] internal bidders;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
@@ -114,10 +131,9 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         escrow.wire(auction, address(compact), address(provider), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        address[] memory bidders = new address[](3);
-        bidders[0] = address(0xB1);
-        bidders[1] = address(0xB2);
-        bidders[2] = address(0xB3);
+        bidders.push(address(0xB1));
+        bidders.push(address(0xB2));
+        bidders.push(address(0xB3));
         for (uint256 i = 0; i < bidders.length; i++) {
             paymentToken.mint(bidders[i], 1e24);
             vm.prank(bidders[i]);
@@ -130,13 +146,16 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
         handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, seriesIds);
 
-        bytes4[] memory selectors = new bytes4[](6);
+        bytes4[] memory selectors = new bytes4[](9);
         selectors[0] = EscrowConservationHandler.lock.selector;
         selectors[1] = EscrowConservationHandler.finalize.selector;
         selectors[2] = EscrowConservationHandler.retry.selector;
         selectors[3] = EscrowConservationHandler.claim.selector;
         selectors[4] = EscrowConservationHandler.settleOwed.selector;
         selectors[5] = EscrowConservationHandler.warp.selector;
+        selectors[6] = EscrowConservationHandler.lockBond.selector;
+        selectors[7] = EscrowConservationHandler.releaseBond.selector;
+        selectors[8] = EscrowConservationHandler.claimAbandonedBond.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -147,7 +166,14 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
             (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesIds[i]);
             sumTotalLocked += totalLocked;
         }
+        // Commit bonds share the pooled lockId with bid escrow but are accounted separately.
+        uint256 sumBonds;
+        for (uint256 i = 0; i < seriesIds.length; i++) {
+            for (uint256 j = 0; j < bidders.length; j++) {
+                sumBonds += escrow.getCommitBond(seriesIds[i], bidders[j]).amount;
+            }
+        }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());
-        assertEq(sumTotalLocked, pooled, "sum(totalLocked) != pooled Compact balance");
+        assertEq(sumTotalLocked + sumBonds, pooled, "sum(totalLocked) + sum(bonds) != pooled Compact balance");
     }
 }

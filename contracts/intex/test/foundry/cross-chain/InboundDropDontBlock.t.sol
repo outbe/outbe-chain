@@ -4,9 +4,9 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
-import {IOriginMessenger} from "@contracts/origin/interfaces/IOriginMessenger.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -16,7 +16,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @notice Desis stub that reverts `NotReady` on `processBidsBatch` until `enable()` is called — a stand-in for an
-///         inbound prerequisite that has not yet landed. Advertises `IDesis` via ERC-165 so `OriginMessenger.wire`
+///         inbound prerequisite that has not yet landed. Advertises `IDesis` via ERC-165 so `OriginRouter.wire`
 ///         accepts it.
 contract GatedDesis {
     error NotReady();
@@ -51,7 +51,7 @@ contract GatedDesis {
 }
 
 /// @title InboundRevertAndRedeliverTest
-/// @notice Under ERC-7786 the messengers no longer swallow a failed inbound (there is no ORDERED lane to keep
+/// @notice Under ERC-7786 the routers no longer swallow a failed inbound (there is no ORDERED lane to keep
 ///         moving). A premature message — one whose on-chain prerequisite has not yet landed — REVERTS, the bridge
 ///         rolls back, and the transport redelivers it later. Once the prerequisite lands, re-delivering the same
 ///         message SUCCEEDS. This preserves the old out-of-order resilience with the new revert-and-redeliver
@@ -63,8 +63,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
 
     uint32 internal constant SERIES_ID = 20250101;
 
-    TargetMessenger internal bnbMessenger;
-    OriginMessenger internal outbeMessenger;
+    TargetRouter internal bnbRouter;
+    OriginRouter internal outbeRouter;
     GatedDesis internal desis;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
@@ -79,30 +79,30 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbMessenger = DeployProxy.targetMessenger(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeMessenger = DeployProxy.originMessenger(address(bridge), admin, BNB_CHAIN_ID);
+        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
 
-        bnbMessenger.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeMessenger)));
-        outbeMessenger.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbMessenger)));
+        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
         // TM drives the local Intex on markCalled.
-        bnbMessenger.wire(address(auction), address(intex), admin, admin);
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbMessenger));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbMessenger));
+        bnbRouter.wire(address(auction), address(intex), admin, admin);
+        auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        outbeMessenger.wire(address(desis), intexFactory);
+        outbeRouter.wire(address(desis), intexFactory);
     }
 
     function _deliverToTM(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, address(outbeMessenger), address(bnbMessenger), packet);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
     function _deliverToOM(bytes memory packet) internal {
-        _deliver(BNB_CHAIN_ID, address(bnbMessenger), address(outbeMessenger), packet);
+        _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     // ---------------------------------------------------------------
-    // TargetMessenger — premature MARK_CALLED reverts, then redeliver succeeds
+    // TargetRouter — premature MARK_CALLED reverts, then redeliver succeeds
     // ---------------------------------------------------------------
 
     /// @notice MARK_CALLED for a series the BNB intex has never seen reverts deterministically
@@ -133,11 +133,11 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginMessenger — premature BIDS_BATCH reverts, then redeliver succeeds
+    // OriginRouter — premature BIDS_BATCH reverts, then redeliver succeeds
     // ---------------------------------------------------------------
 
     /// @notice A BIDS_BATCH whose downstream (Desis) prerequisite has not landed reverts; once Desis is ready,
-    ///         re-delivering the same batch succeeds. The messenger no longer drops it to keep a lane moving.
+    ///         re-delivering the same batch succeeds. The router no longer drops it to keep a lane moving.
     function test_OM_PrematureBidsBatch_RevertsThenRedeliverSucceeds() public {
         bytes memory bids = BridgeMsgCodec.encodeBidsBatch(
             42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
@@ -151,8 +151,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         desis.enable();
 
         // Redelivery of the identical batch now lands (BidsBatchReceived).
-        vm.expectEmit(true, true, false, true, address(outbeMessenger));
-        emit IOriginMessenger.BidsBatchReceived(BNB_CHAIN_ID, 42, 0);
+        vm.expectEmit(true, true, false, true, address(outbeRouter));
+        emit IOriginRouter.BidsBatchReceived(BNB_CHAIN_ID, 42, 0);
         _deliverToOM(bids);
     }
 }

@@ -24,7 +24,7 @@ fn holder() -> Address {
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
-const CALL_PERIOD: u32 = 21 * 24 * 60 * 60;
+const CALL_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -39,9 +39,9 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_MESSENGER_ADDRESS,
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, f)
@@ -80,7 +80,7 @@ fn issue_creates_series_in_registry() {
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
                 window_days: 30,
-                threshold_days: 20,
+                threshold_days: 21,
                 intex_call_period: CALL_PERIOD,
             }
         );
@@ -170,9 +170,9 @@ fn settle_rejects_expired_deadline() {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginMessenger: send* calls return bytes32 sendId (32 bytes); the value is ignored.
+    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_MESSENGER_ADDRESS,
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
@@ -520,7 +520,7 @@ fn try_call_marks_called_when_threshold_met() {
         let mut f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
-        // All 30 window days above the trigger (threshold is 20).
+        // All 30 window days above the trigger (threshold is 21).
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -549,13 +549,13 @@ fn try_call_skips_when_below_threshold() {
         let today = WorldwideDay::from_timestamp(scan_ts).previous_date_key();
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         let calm = U256::from(EXPECTED_TRIGGER); // equal: strict `>` is not a breach
-                                                 // 19 breach days + 11 calm days; threshold is 20.
+                                                 // 20 breach days + 10 calm days; threshold is 21.
         let mut d = today;
-        for _ in 0..19 {
+        for _ in 0..20 {
             set_vwap(&oracle, d, pair_id, breach);
             d = d.previous_date_key();
         }
-        for _ in 0..11 {
+        for _ in 0..10 {
             set_vwap(&oracle, d, pair_id, calm);
             d = d.previous_date_key();
         }
@@ -576,8 +576,8 @@ fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
         // Seed the series directly with threshold 27 (above the 21d maturity),
-        // since the protocol default (20) is below maturity and a qualified
-        // series would always have >= 21 completed post-issuance days.
+        // since the protocol default (21) does not exceed maturity and a
+        // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
             outbe_intex::CreateSeriesParams {
@@ -621,11 +621,11 @@ fn try_call_excludes_pre_issuance_days() {
 }
 
 // ---------------------------------------------------------------------
-// LZ notification failure: state transition must survive messenger outage
+// Cross-chain notification failure: state transition must survive router outage
 // ---------------------------------------------------------------------
 
 /// Seed a series directly in the registry + bin index, bypassing issue()
-/// so tests can omit the OriginMessenger stub.
+/// so tests can omit the OriginRouter stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     outbe_intex::api::create_series(
         s,
@@ -653,8 +653,8 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
 }
 
 #[test]
-fn qualify_survives_lz_messenger_failure() {
-    // No OriginMessenger stub: notify_lz_qualified fails silently.
+fn qualify_survives_router_failure() {
+    // No OriginRouter stub: notify_qualified fails silently.
     // The Issued -> Qualified transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
@@ -686,8 +686,8 @@ fn qualify_survives_lz_messenger_failure() {
 }
 
 #[test]
-fn call_survives_lz_messenger_failure() {
-    // No OriginMessenger stub: notify_lz_called fails silently.
+fn call_survives_router_failure() {
+    // No OriginRouter stub: notify_called fails silently.
     // The Qualified -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));

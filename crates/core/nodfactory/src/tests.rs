@@ -1,7 +1,6 @@
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
-use outbe_nod::constants::UNLOCK_PERIOD_SECONDS;
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::math::tree_math;
@@ -14,10 +13,6 @@ use crate::runtime;
 
 /// Reference timestamp used as the baseline "issue time" in test fixtures.
 const T_NOW: u64 = 1_700_000_000;
-
-/// Timestamp safely past `T_NOW + UNLOCK_PERIOD_SECONDS`, used as the
-/// "mining time" for tests that exercise `mine_gratis`.
-const T_AFTER_UNLOCK: u64 = T_NOW + UNLOCK_PERIOD_SECONDS + 1;
 
 fn sample_params() -> NodIssueParams {
     NodIssueParams {
@@ -145,7 +140,7 @@ fn test_mine_gratis_requires_qualification() {
         (nod_id, nonce, params)
     });
 
-    provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
         let err = factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
             .unwrap_err();
@@ -165,7 +160,7 @@ fn test_mine_gratis_with_valid_pow() {
         (nod_id, nonce, params)
     });
 
-    provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
         let gratis =
             factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO).unwrap();
@@ -178,8 +173,6 @@ fn test_mine_gratis_with_valid_pow() {
 
 #[test]
 fn test_mine_gratis_wrong_owner_fails() {
-    // Wrong-owner check fires before the unlock check, so the locked period
-    // does not affect this test.
     with_storage(|storage| {
         let params = sample_params();
         let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
@@ -209,48 +202,12 @@ fn test_mine_gratis_invalid_pow_fails() {
         qualify_params(&storage, &params);
     });
 
-    provider.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
         assert!(
             factory_api::mine_gratis(&storage, params.owner, nod_id, bad_nonce, Address::ZERO)
                 .is_err()
         );
-    });
-}
-
-#[test]
-fn test_mine_gratis_rejects_when_locked() {
-    let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    // Boundary check: at exactly `unlocks_at - 1` mining must fail with
-    // `NodLocked`; at `unlocks_at` it must succeed (assuming bucket
-    // qualification and valid PoW).
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-        let nod = NodContract::new(s);
-        let stored = nod.get_item(nod_id).unwrap().unwrap();
-        assert_eq!(stored.unlocks_at, T_NOW + UNLOCK_PERIOD_SECONDS);
-    });
-
-    // One second before unlock — locked.
-    storage.set_timestamp(U256::from(T_NOW + UNLOCK_PERIOD_SECONDS - 1));
-    StorageHandle::enter(&mut storage, |s| {
-        let err =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
-        assert!(err.to_string().contains("locked"), "expected locked: {err}");
-    });
-
-    // At unlock — mining succeeds.
-    storage.set_timestamp(U256::from(T_NOW + UNLOCK_PERIOD_SECONDS));
-    StorageHandle::enter(&mut storage, |s| {
-        let gratis =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
-        assert_eq!(gratis, params.gratis_load_minor);
     });
 }
 
@@ -289,7 +246,7 @@ fn test_nods_by_owner_sparse_after_mine() {
         qualify_params(&s, &p1);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO).unwrap();
 
@@ -313,7 +270,7 @@ fn test_mine_gratis_atomic_burn_and_gratis_mint() {
         qualify_params(&s, &params);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let gratis_load =
             factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
@@ -368,7 +325,7 @@ fn test_mine_gratis_supply_invariant() {
         assert_eq!(nod.total_supply().unwrap(), 2);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let load1 = factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO).unwrap();
         let nod = NodContract::new(s.clone());
@@ -392,7 +349,7 @@ fn test_precompile_mine_gratis_burns_and_mints() {
         qualify_params(&s, &params);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let call = INodFactory::mineGratisCall {
             nodId: nod_id,
@@ -449,7 +406,7 @@ fn test_set_clear_does_not_corrupt_root() {
         nod_mut.set_qualified(bk, true).unwrap();
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         // Mining the only NOD in the bucket deletes the bucket; the bin
         // stays marked because we don't touch the bin-tree on mine.
@@ -483,7 +440,7 @@ fn test_mine_gratis_pays_cost_amount() {
         qualify_params(&s, &params);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let gratis = factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
@@ -508,7 +465,7 @@ fn test_mine_gratis_rejects_zero_asset_when_cost_nonzero() {
         qualify_params(&s, &params);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let err =
             factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
@@ -538,7 +495,7 @@ fn test_mine_gratis_skips_payment_when_cost_zero() {
         qualify_params(&s, &params);
     });
 
-    storage.set_timestamp(U256::from(T_AFTER_UNLOCK));
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let gratis =
             factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();

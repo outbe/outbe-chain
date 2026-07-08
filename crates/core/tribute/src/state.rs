@@ -31,13 +31,14 @@ impl TributeContract<'_> {
             .get_tribute(token_id)?
             .ok_or(TributeError::TributeNotFound)?;
         Ok(format!(
-            "data:application/json;utf8,{{\"name\":\"Tribute 0x{:064x}\",\"description\":\"Outbe Tribute\",\"attributes\":[{{\"trait_type\":\"owner\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"nominal_amount_minor\",\"value\":\"{}\"}}]}}",
+            "data:application/json;utf8,{{\"name\":\"Tribute 0x{:064x}\",\"description\":\"Outbe Tribute\",\"attributes\":[{{\"trait_type\":\"owner\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"nominal_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"reference_currency\",\"value\":\"{}\"}}]}}",
             tribute.token_id,
             tribute.owner,
             tribute.worldwide_day,
             tribute.issuance_currency,
             tribute.issuance_amount_minor,
             tribute.nominal_amount_minor,
+            tribute.reference_currency,
         ))
     }
 

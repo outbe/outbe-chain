@@ -18,6 +18,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 pub enum TriggerId {
     EmissionLimit1 = 0,
     IntexCallDaily = 1,
+    WwdAdvanceNoon = 2,
 }
 
 impl TriggerId {
@@ -77,6 +78,21 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // dependency on the parent block's settlement accounting.
         requires_accounting_window: false,
         handler: outbe_intexfactory::called::run_daily,
+    },
+    TriggerSpec {
+        id: TriggerId::WwdAdvanceNoon.as_u32(),
+        label: "wwd_advance_noon",
+        period_seconds: 86_400,
+        // WWD forming/offering window edges land at 12:00 UTC
+        // (`forming_end = forming_start(10:00 UTC) + 50h`); with only the
+        // midnight tick every 12:00 transition was applied ~12h late.
+        start_offset_seconds: 43_200,
+        // Pure status-window walk over active WorldwideDays: reads
+        // Metadosis windows and the Oracle, never the parent block's
+        // settlement accounting. Day creation and READY settlement stay
+        // on the midnight `emission_limit_1` trigger.
+        requires_accounting_window: false,
+        handler: outbe_metadosis::runtime::advance_active_worldwide_days,
     },
 ];
 

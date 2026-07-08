@@ -98,11 +98,6 @@
             "internalType": "uint16"
           },
           {
-            "name": "unlocksAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
             "name": "referenceCurrency",
             "type": "uint16",
             "internalType": "uint16"

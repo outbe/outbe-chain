@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
@@ -24,11 +25,12 @@ contract BridgeMsgCodecGoldenTest is Test {
             0xCAFEBABE,
             0x5678,
             0x9ABC,
-            0xABCD
+            0xABCD,
+            0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01
         );
         assertEq(
             encoded,
-            hex"0104112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe56789abcabcd"
+            hex"0104112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe56789abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff01"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START);
     }
@@ -61,23 +63,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     // reorder lands a value in the wrong field and fails an assertion.
 
     function test_RoundTrip_AuctionStageStart_AllFields() public view {
-        (
-            uint32 seriesId,
-            uint32 commitEnd,
-            uint32 revealEnd,
-            uint32 issuanceEnd,
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint128 promisLoadMinor,
-            uint32 minIntexBidRate,
-            uint64 entryPrice,
-            uint64 floorPriceMinor,
-            uint64 callPriceMinor,
-            uint32 intexCallPeriod,
-            uint16 callWindowDays,
-            uint16 callThresholdDays,
-            uint16 minIntexBidQuantity
-        ) = this.exposedDecodeAuctionStageStart(
+        (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) = BridgeMsgCodec.decodeAuctionParams(
             BridgeMsgCodec.encodeAuctionStageStart(
                 0x11223344,
                 0x55667788,
@@ -93,24 +79,26 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0xCAFEBABE,
                 0x5678,
                 0x9ABC,
-                0xABCD
+                0xABCD,
+                0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01
             )
         );
         assertEq(seriesId, 0x11223344, "seriesId");
-        assertEq(commitEnd, 0x55667788, "commitEnd");
-        assertEq(revealEnd, 0x99AABBCC, "revealEnd");
-        assertEq(issuanceEnd, 0xDDEEFF00, "issuanceEnd");
-        assertEq(issuanceCurrency, 0xC1C2, "issuanceCurrency");
-        assertEq(referenceCurrency, 0xD1D2, "referenceCurrency");
-        assertEq(promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
-        assertEq(minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
-        assertEq(entryPrice, 0x1122334455667788, "entryPrice");
-        assertEq(floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
-        assertEq(callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
-        assertEq(intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
-        assertEq(callWindowDays, 0x5678, "callWindowDays");
-        assertEq(callThresholdDays, 0x9ABC, "callThresholdDays");
-        assertEq(minIntexBidQuantity, 0xABCD, "minIntexBidQuantity");
+        assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
+        assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
+        assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
+        assertEq(params.issuanceCurrency, 0xC1C2, "issuanceCurrency");
+        assertEq(params.referenceCurrency, 0xD1D2, "referenceCurrency");
+        assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
+        assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
+        assertEq(params.entryPriceMinor, 0x1122334455667788, "entryPrice");
+        assertEq(params.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
+        assertEq(params.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
+        assertEq(params.callTrigger.intexCallPeriod, 0xCAFEBABE, "intexCallPeriod");
+        assertEq(params.callTrigger.windowDays, 0x5678, "callWindowDays");
+        assertEq(params.callTrigger.thresholdDays, 0x9ABC, "callThresholdDays");
+        assertEq(params.minIntexBidQuantity, 0xABCD, "minIntexBidQuantity");
+        assertEq(params.commitBondMinor, 0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01, "commitBondMinor");
     }
 
     function test_RoundTrip_AuctionResult_AllFields() public view {
@@ -260,30 +248,6 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     // External calldata wrappers for the internal decoders.
-
-    function exposedDecodeAuctionStageStart(bytes calldata p)
-        external
-        pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            uint128,
-            uint32,
-            uint64,
-            uint64,
-            uint64,
-            uint32,
-            uint16,
-            uint16,
-            uint16
-        )
-    {
-        return BridgeMsgCodec.decodeAuctionStageStart(p);
-    }
 
     function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {
         return BridgeMsgCodec.decodeAuctionResult(p);

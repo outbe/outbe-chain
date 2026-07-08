@@ -147,7 +147,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "staking_claim_unbonded",
+    "staking_unbonded_claim",
     "Claim unbonded stake after the unbonding period. Requires OUTBE_PRIVATE_KEY.",
     { wait: z.boolean().optional() },
     handler(({ wait }) =>
@@ -174,7 +174,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
 
   // --- oracle ----------------------------------------------------------------
   server.tool(
-    "oracle_delegate_feeder",
+    "oracle_feeder_delegate",
     "Delegate oracle feeder consent to an address. Requires OUTBE_PRIVATE_KEY (validator).",
     { feeder: addr, wait: z.boolean().optional() },
     handler(({ feeder, wait }) =>
@@ -183,7 +183,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "oracle_submit_vote",
+    "oracle_vote_submit",
     "Submit oracle exchange-rate votes. `tuples`: [{base, quote, exchangeRate, volume}] with rate/volume as " +
       "integer minor strings (1e18 scale). Requires OUTBE_PRIVATE_KEY (validator).",
     {

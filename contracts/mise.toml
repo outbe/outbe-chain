@@ -5,8 +5,8 @@
 
 [env]
 # Self-contained Forge sub-projects (soldeer deps, forge toolchain).
-FORGE_PROJECTS = "intent oft vault smart-account precompiles"
-# Sub-projects that export ABIs (oft excluded; intex uses yarn).
+FORGE_PROJECTS = "intent tokens vault smart-account precompiles"
+# Sub-projects that export ABIs (tokens excluded; intex uses yarn).
 ABI_PROJECTS = "intent vault smart-account precompiles"
 
 [tasks.install]

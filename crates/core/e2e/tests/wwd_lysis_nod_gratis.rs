@@ -258,13 +258,6 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
     assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
     let item = nod.get_item(nods[0]).unwrap().unwrap();
 
-    // Advance simulated block time past `unlocks_at` so the precompile's
-    // 21-day lock check passes. The lifecycle ticks only cover the WWD's
-    // ~14h state machine and do not naturally reach the unlock horizon.
-    storage
-        .set_block_timestamp(U256::from(item.unlocks_at + 1))
-        .unwrap();
-
     let nonce = find_valid_nonce(item.nod_id);
     let balance_before = Gratis::new(storage.clone()).balance_of(owner).unwrap();
 

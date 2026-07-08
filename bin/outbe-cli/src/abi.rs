@@ -195,7 +195,6 @@ sol! {
             uint256 costAmountMinor,
             bool isQualified,
             uint32 settlementToken,
-            uint64 unlocksAt,
         );
 
         // backward compatibility

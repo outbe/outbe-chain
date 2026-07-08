@@ -544,6 +544,33 @@ impl Mailbox {
         Ok(())
     }
 
+    /// Validate a committee pre-announce's `outcome` against this node's locally
+    /// reconstructed DKG output for the incoming epoch. Mirrors
+    /// [`Self::verify_pending_boundary_artifact`] but for the slim
+    /// `CommitteePreAnnounce` carrier (epoch + outcome bytes only, no full
+    /// `DkgBoundaryArtifact`). Fail-closed: errors if this node has no pending
+    /// boundary to compare against, so an unvalidated pre-announce is never
+    /// accepted onto a finalized block.
+    pub async fn verify_preannounce_outcome(&self, epoch: Epoch, outcome: &[u8]) -> Result<()> {
+        let expected = self
+            .with_state(|state| state.pending_boundary.clone())
+            .ok_or_else(|| {
+                eyre::eyre!("no pending DKG boundary artifact to validate committee pre-announce")
+            })?;
+        ensure!(
+            expected.epoch == epoch.get(),
+            "committee pre-announce epoch {} does not match pending boundary epoch {}",
+            epoch.get(),
+            expected.epoch
+        );
+        ensure!(
+            expected.outcome.as_ref() == outcome,
+            "committee pre-announce outcome does not match local DKG output for epoch {}",
+            epoch.get()
+        );
+        Ok(())
+    }
+
     pub async fn verify_dealer_log(
         &self,
         epoch: Epoch,
@@ -699,6 +726,10 @@ impl Mailbox {
                     }
                 }
             }
+            // A committee pre-announce is a follower-facing carrier of an already-
+            // reconstructed outcome; it does not commit a boundary or feed the local
+            // DKG ceremony, so the boundary/dealer-log tracker ignores it.
+            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => {}
             None => {}
         });
     }
@@ -860,7 +891,7 @@ fn hash_target_set(
     alloy_primitives::keccak256(bytes)
 }
 
-fn encode_outcome(
+pub(crate) fn encode_outcome(
     epoch: Epoch,
     output: &Output<MinSig, bls12381::PublicKey>,
     is_full_dkg: bool,
@@ -923,27 +954,33 @@ pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
 /// that epoch. Deterministic and panic-free; safe to call in the executor over
 /// the already-consensus-validated boundary `outcome`.
 pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
+    match decode_boundary_outcome(outcome) {
+        Some(output) => public_polynomial_hash(output.public()),
+        None => B256::ZERO,
+    }
+}
+
+/// Decode the ODKO-wrapped boundary `outcome` into the full DKG [`Output`]
+/// (public polynomial + players). Returns `None` when the outcome is not a
+/// decodable full-output ODKO record (e.g. a group-key-only bootstrap outcome).
+///
+/// This is the public-data path a `follow`-mode node uses to reconstruct an
+/// epoch's committee (`output.players()`) and verifier polynomial
+/// (`output.public()`) from a finalized boundary block, without ever having run
+/// the DKG ceremony. Deterministic and panic-free.
+pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
     use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
     // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
     const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
     if outcome.len() < HEADER_LEN || &outcome[0..4] != b"ODKO" {
-        return B256::ZERO;
+        return None;
     }
-    let Ok(len_bytes) = <[u8; 4]>::try_from(&outcome[14..18]) else {
-        return B256::ZERO;
-    };
+    let len_bytes = <[u8; 4]>::try_from(&outcome[14..18]).ok()?;
     let len = u32::from_be_bytes(len_bytes) as usize;
-    let Some(body) = outcome.get(HEADER_LEN..HEADER_LEN + len) else {
-        return B256::ZERO;
-    };
-    let Some(max) = NonZeroU32::new(crate::bls::MAX_VALIDATORS) else {
-        return B256::ZERO;
-    };
+    let body = outcome.get(HEADER_LEN..HEADER_LEN + len)?;
+    let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)?;
     let cfg = (max, ModeVersion::v0());
-    match Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg) {
-        Ok(output) => public_polynomial_hash(output.public()),
-        Err(_) => B256::ZERO,
-    }
+    Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).ok()
 }
 
 #[cfg(test)]
