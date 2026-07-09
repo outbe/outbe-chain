@@ -211,7 +211,6 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 ///   Caller is responsible for normalization — integer-division truncation must
 ///   be absorbed before this call.
 /// - `p`: population counts per FI group
-/// - `_l`: tree height (unused)
 /// - `nt`: total tribute count
 /// - `f_fp`: target fraction in fixed-point (SCALE-based)
 /// - `fmax_fp`: maximum fraction in fixed-point (SCALE-based)
@@ -230,7 +229,6 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 pub fn calc_fraction_distribution_fp(
     y_fp: &[U256],
     p: &[u64],
-    _l: usize,
     nt: usize,
     f_fp: U256,
     fmax_fp: U256,
@@ -485,7 +483,7 @@ mod tests {
         let f_fp = F_FP_DEFAULT;
         let fmax_fp = F_MAX_FP;
 
-        let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, fmax_fp).unwrap();
+        let result = calc_fraction_distribution_fp(&y_fp, &p, 10, f_fp, fmax_fp).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], f_fp);
     }
@@ -498,7 +496,7 @@ mod tests {
         let f_fp = F_FP_DEFAULT;
         let fmax_fp = F_MAX_FP;
 
-        let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, fmax_fp).unwrap();
+        let result = calc_fraction_distribution_fp(&y_fp, &p, 10, f_fp, fmax_fp).unwrap();
         assert_eq!(result.len(), 2);
         // Both fractions should be positive and <= fmax
         for &frac in &result {
