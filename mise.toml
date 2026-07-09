@@ -218,6 +218,19 @@ done
 echo "e2e: ALL SCENARIOS PASS"
 """
 
+# The same suite driven by the Rust cucumber harness (`crates/testing/e2e-harness`)
+# instead of the shell scripts: it owns the localnet processes and enclave
+# containers itself, giving every scenario its own data dir and port block.
+# Extra flags pass straight through, e.g.
+#   mise run e2e-rust -- --tee none --validators 6 --no-cleanup --debug
+[tasks.e2e-rust]
+description = "Run the Rust cucumber e2e harness (gramine-mock TEE, all features)"
+run = """
+cargo build --bin outbe-chain --bin outbe-cli --bin outbe-keygen
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock
+"""
+
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #
 
 # Hardware SGX smoke: build + sign + run the enclave under gramine-sgx and

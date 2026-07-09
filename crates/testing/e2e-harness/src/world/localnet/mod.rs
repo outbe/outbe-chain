@@ -25,8 +25,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use eyre::{bail, Result, WrapErr};
 
@@ -236,21 +235,6 @@ impl Localnet {
         }
         fs::remove_dir_all(&self.cfg.dir)
             .wrap_err_with(|| format!("wiping data dir {}", self.dir()))
-    }
-
-    /// Pre-run reset: shut everything down AND wipe the data dir so the next
-    /// bootstrap starts from a clean slate.
-    pub fn cleanup(&mut self) -> Result<()> {
-        // Only a prior scenario on this run's (unique) subdir can leave state that
-        // a same-port rebind must wait out (TIME_WAIT). On a run's first boot the
-        // subdir doesn't exist yet, so there is nothing to settle for.
-        let reclaiming = self.cfg.dir.exists();
-        self.shutdown();
-        self.wipe()?;
-        if reclaiming {
-            sleep(Duration::from_secs(1));
-        }
-        Ok(())
     }
 
     /// Post-run teardown: shut down all nodes + enclave containers, leaving the

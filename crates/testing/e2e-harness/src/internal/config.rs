@@ -38,9 +38,13 @@ pub(crate) struct Config {
     /// Per-node port blocks. A node's block is allocated on first use, so indices
     /// past the committee (joiner, followers) resolve without pre-declaration.
     pub ports: Ports,
-    /// A stable, data-dir-derived tag that scopes this run's enclave containers
-    /// (`outbe-tee-gramine-<tag>-<i>`) and teardown sweep — independent of ports.
+    /// A stable, run-dir-derived tag that scopes this run's enclave containers
+    /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep —
+    /// independent of ports.
     pub run_tag: String,
+    /// This scenario's 1-based id, or `0` for the run-level config (which only
+    /// sweeps, and never names a container).
+    pub scenario: usize,
     /// Enclave mode the localnet runs with.
     pub tee_mode: TeeMode,
     /// Whether script/docker/process steps run under `sudo`.
@@ -66,6 +70,7 @@ impl Config {
             validators: env.validators,
             ports: env.ports.clone(),
             run_tag: dir_tag(&env.data_dir),
+            scenario: 0,
             tee_mode: env.tee_mode,
             sudo: env.sudo,
             debug: env.debug,
@@ -85,6 +90,7 @@ impl Config {
     pub fn for_scenario(env: &Environment, id: usize) -> Self {
         let mut cfg = Self::resolve(env);
         cfg.dir = env.data_dir.join(format!("scenario-{id}"));
+        cfg.scenario = id;
         cfg
     }
 
@@ -134,10 +140,14 @@ impl Config {
         self.ports.port(Service::Tee, i)
     }
 
-    /// Enclave container name for validator index `i`. Tagged by the data-dir run
-    /// tag (not a port offset) so the teardown sweep can reconstruct it.
+    /// Enclave container name for validator index `i`.
+    ///
+    /// Scoped by run tag *and* scenario, so two scenarios never contend for the
+    /// same docker name — the same isolation their dirs and ports already have.
+    /// The teardown sweep matches on the `outbe-tee-gramine-<run_tag>-` prefix,
+    /// which still covers every scenario's containers.
     pub fn tee_container(&self, i: usize) -> String {
-        format!("outbe-tee-gramine-{}-{}", self.run_tag, i)
+        format!("outbe-tee-gramine-{}-s{}-{}", self.run_tag, self.scenario, i)
     }
 
     /// Per-validator data dir: `<dir>/validator-<i>`.
@@ -221,5 +231,19 @@ mod tests {
         assert_eq!(scenario.run_tag, run.run_tag);
         assert!(scenario.dir.starts_with(&run.dir));
         assert_eq!(scenario.validator_dir(2), scenario.dir.join("validator-2"));
+    }
+
+    /// Two scenarios never name the same container, and the run-level sweep
+    /// prefix (`Localnet::shutdown`) still matches both.
+    #[test]
+    fn tee_containers_are_scenario_scoped_but_sweepable() {
+        let env = Environment::default();
+        let s1 = Config::for_scenario(&env, 1);
+        let s2 = Config::for_scenario(&env, 2);
+        assert_ne!(s1.tee_container(0), s2.tee_container(0));
+
+        let sweep = format!("outbe-tee-gramine-{}-", Config::resolve(&env).run_tag);
+        assert!(s1.tee_container(0).starts_with(&sweep));
+        assert!(s2.tee_container(3).starts_with(&sweep));
     }
 }

@@ -30,7 +30,8 @@ pub(crate) fn boot_localnet(world: &mut World, window: u64, tuning: &[(&str, Str
     let committee_size = world.validators.size();
     world.state.voting_window = window;
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
-    world.localnet.cleanup().expect("cleanup localnet");
+    // No pre-bootstrap reset: the scenario owns a fresh `scenario-<n>` dir and a
+    // fresh block of ports, so there is nothing of its own to reclaim.
     world
         .localnet
         .bootstrap(committee_size, tuning)
