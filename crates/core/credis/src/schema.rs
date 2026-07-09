@@ -40,6 +40,21 @@ pub struct Position {
 
     #[attribute(order = 7)]
     pub created_at: u64,
+
+    /// Original Credis amount (principal) in the issuance currency, before the
+    /// refinancing-rate markup. `total_anadosis_amount` holds principal + interest.
+    #[attribute(order = 9)]
+    pub credis_principal: U256,
+
+    /// Annualized refinancing rate (1e18 scaled) read from the Oracle and pinned
+    /// at issuance for the lifetime of this schedule.
+    #[attribute(order = 10)]
+    pub refinancing_rate: U256,
+
+    /// Issuance currency as an ISO 4217 numeric code (e.g., 840 = USD), derived
+    /// from the disbursed asset's `isoCode()` at issuance.
+    #[attribute(order = 11)]
+    pub issuance_currency: u16,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.

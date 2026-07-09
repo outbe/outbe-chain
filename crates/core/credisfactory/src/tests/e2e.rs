@@ -37,6 +37,27 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     oracle
         .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
         .unwrap();
+    // Seed the refinancing rate for USD (840); the factory reads it after the
+    // asset self-reports its ISO code via `isoCode()`.
+    oracle
+        .reference_refinancing_rate
+        .write(&ISSUANCE_ISO, refi_rate())
+        .unwrap();
+}
+
+/// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
+const ISSUANCE_ISO: u16 = 840;
+
+/// Refinancing rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
+fn refi_rate() -> U256 {
+    U256::from(43_000_000_000_000_000u128)
+}
+
+/// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
+fn iso_word(iso: u16) -> Bytes {
+    let mut b = vec![0u8; 32];
+    b[30..32].copy_from_slice(&iso.to_be_bytes());
+    Bytes::from(b)
 }
 
 /// Gives `account` a positive RCFI by recording a gratis cohort acquired one
@@ -92,6 +113,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -148,11 +170,19 @@ fn full_request_pay_reclaim_unpledge_flow() {
             / (U256::from(1_000_000_000_000u128) * one_e18());
         assert_eq!(amount_stables, expected_stables);
 
-        // Position created with the right backing.
+        // Position created with the right backing. The loan disbursed is the
+        // principal (`amount_stables`); the repayment schedule carries the
+        // refinancing-rate markup: total_debt = principal * (1 + rate*10/12).
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.bundle_account, alice());
-        assert_eq!(position.total_anadosis_amount, amount_stables);
+        assert_eq!(position.credis_principal, amount_stables);
+        assert_eq!(position.refinancing_rate, refi_rate());
+        assert_eq!(position.issuance_currency, ISSUANCE_ISO);
+        let multiplier =
+            one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
+        let expected_total_debt = amount_stables * multiplier / one_e18();
+        assert_eq!(position.total_anadosis_amount, expected_total_debt);
         assert_eq!(position.total_gratis_amount, pledge_amount);
 
         // 3) Pay each installment with a distinct reclaim note and immediately
@@ -227,6 +257,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis10;
         let denom_id = denom.id();
@@ -311,6 +342,7 @@ fn request_credis_rejects_overdue_anadosis() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -416,6 +448,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
@@ -465,6 +498,7 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
