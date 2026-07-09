@@ -21,6 +21,9 @@ import {
   loadEnv,
   requireEnv, formatToken,
   anadosisDenomByAmount,
+  ownerPermissionId,
+  permissionNonceKey,
+  encodePermissionSignature,
 } from "./utils.js";
 import { commitmentHash, fieldToHex32, toField } from "./shielded.js";
 import { writeTicket } from "./ticket.js";
@@ -49,7 +52,6 @@ const ccaAddress = requireEnv("CCA_ADDRESS", envContext);
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
-const ecdsaValidatorAddress = requireEnv("ECDSA_VALIDATOR_ADDRESS", envContext);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
 const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
@@ -223,10 +225,9 @@ async function main() {
 
   // ── Build batch UserOp: approve + anadosis ────────────────────────────
 
-  // nonceKey = mode(0x00) | vType(0x00=ROOT) | ecdsaValidatorAddress(20 bytes) | parallelKey(0x0000)
-  const validatorHex = ecdsaValidatorAddress.slice(2).toLowerCase();
-  const nonceKeyHex = "0000" + validatorHex + "0000";
-  const nonceKey = BigInt("0x" + nonceKeyHex);
+  // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
+  // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
+  const nonceKey = permissionNonceKey(ownerPermissionId());
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);
 
@@ -281,10 +282,10 @@ async function main() {
     signature: "0x",
   };
 
-  // Sign with user key — root validation
+  // Kernel v4 permission signature: abi.encode(bytes[]{ policy slice (empty), owner ECDSA sig }).
   const userOpHash = await entryPoint.getUserOpHash(op);
   const sig = await userWallet.signMessage(ethers.getBytes(userOpHash));
-  op.signature = sig;
+  op.signature = encodePermissionSignature(sig);
 
   // ── Pre-simulate the inner execute() so a precompile revert surfaces here
   // rather than being swallowed by handleOps (which catches inner reverts and

@@ -25,9 +25,17 @@ ABIs and runs typechain; `npx tsc --noEmit` is clean.
 Contract bindings come from this repo's own ABIs. `npm run generate-types` first
 runs `scripts/prepare-abis.mjs`, which copies the required JSONs out of
 `../../contracts/precompiles/abi-export/`
-and `../../contracts/account-abstraction/{abi-export,out}/` into a local
+and `../../contracts/smart-account/abi-export/` into a local
 `abi/` directory, then typechain generates ethers v6 factories into
 `src/contracts/`. Both directories are gitignored and regenerated on every build.
+
+The smart-account stack runs on **ZeroDev Kernel v4 / EntryPoint v0.9**. Because
+Kernel v4 models the account owner as a *permission* (not a plain root validator),
+owner and CCA UserOps use the permission nonce type and the Kernel v4
+`PermissionSignature` (`abi.encode(bytes[])`) format — see the helpers in
+`src/utils.ts` (`ownerPermissionId` / `ccaPermissionId` / `permissionNonceKey` /
+`encodePermissionSignature`). Redeploy the v4 smart-account stack (new bytecode →
+new addresses) and regenerate the deployment env before running these scripts.
 
 ### First-run quickstart
 
