@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 interface IGovernance {
-    // --- normative texts (kind tag in events: 0 = OIP, 1 = GIP) ---
+    // --- proposal types (OIP / GIP have their own events) ---
 
     struct Oip {
         uint256 id;
@@ -27,13 +27,14 @@ interface IGovernance {
 
     event MetaCanonUpdated(uint64 indexed version, bytes32 hash);
     event CanonUpdated(uint64 indexed version, bytes32 hash);
-    event ProposalSubmitted(
-        uint256 indexed id, uint8 indexed kind, address indexed author, bytes32 textHash
-    );
-    event ProposalTextUpdated(uint256 indexed id, uint8 indexed kind, bytes32 textHash);
-    event ProposalStatusChanged(
-        uint256 indexed id, uint8 indexed kind, uint8 oldStatus, uint8 newStatus
-    );
+
+    event OipSubmitted(uint256 indexed id, address indexed author, bytes32 textHash);
+    event OipTextUpdated(uint256 indexed id, bytes32 textHash);
+    event OipStatusChanged(uint256 indexed id, uint8 oldStatus, uint8 newStatus);
+
+    event GipSubmitted(uint256 indexed id, address indexed author, bytes32 textHash);
+    event GipTextUpdated(uint256 indexed id, bytes32 textHash);
+    event GipStatusChanged(uint256 indexed id, uint8 oldStatus, uint8 newStatus);
 
     // --- canon / meta-canon: read ---
     function getMetaCanon() external view returns (string memory text, uint64 version, bytes32 hash);

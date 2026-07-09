@@ -3,6 +3,12 @@ use outbe_primitives::error::Result;
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
+// Per-kind event types, imported by name so the macro can name them with a
+// transparent `:ident` fragment (a `:path` fragment cannot sit in struct-literal
+// position).
+use crate::precompile::IGovernance::{
+    GipStatusChanged, GipSubmitted, GipTextUpdated, OipStatusChanged, OipSubmitted, OipTextUpdated,
+};
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
@@ -23,7 +29,7 @@ fn validate_text(text: &str) -> Result<()> {
 
 /// Generates the submit / update-text / set-status methods for one proposal
 /// kind. OIP and GIP share this exact logic over separate typed maps and id
-/// counters; only the storage target and the event `kind` tag differ.
+/// counters; only the storage target and the per-kind event types differ.
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
@@ -32,7 +38,9 @@ macro_rules! impl_proposal_ops {
         record = $record:ident,
         map = $map:ident,
         counter = $counter:ident,
-        kind = $kind:expr $(,)?
+        submitted_event = $submitted_event:ident,
+        text_event = $text_event:ident,
+        status_event = $status_event:ident $(,)?
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
@@ -52,9 +60,8 @@ macro_rules! impl_proposal_ops {
             };
             self.$map.create(&record)?;
             self.$counter.write(next)?;
-            self.emit(IGovernance::ProposalSubmitted {
+            self.emit($submitted_event {
                 id,
-                kind: $kind,
                 author,
                 textHash: text_hash,
             })?;
@@ -82,9 +89,8 @@ macro_rules! impl_proposal_ops {
             record.updated_block = block;
             // Full-record update; the text slot compare-skips when unchanged.
             self.$map.update(&record)?;
-            self.emit(IGovernance::ProposalTextUpdated {
+            self.emit($text_event {
                 id,
-                kind: $kind,
                 textHash: text_hash,
             })?;
             Ok(())
@@ -112,9 +118,8 @@ macro_rules! impl_proposal_ops {
             let entry = self.$map.entry(id);
             entry.status().write(new_status)?;
             entry.updated_block().write(block)?;
-            self.emit(IGovernance::ProposalStatusChanged {
+            self.emit($status_event {
                 id,
-                kind: $kind,
                 oldStatus: current,
                 newStatus: new_status,
             })?;
@@ -179,7 +184,9 @@ impl GovernanceContract<'_> {
         record = Oip,
         map = oips,
         counter = next_oip_id,
-        kind = 0u8,
+        submitted_event = OipSubmitted,
+        text_event = OipTextUpdated,
+        status_event = OipStatusChanged,
     );
 
     impl_proposal_ops!(
@@ -189,6 +196,8 @@ impl GovernanceContract<'_> {
         record = Gip,
         map = gips,
         counter = next_gip_id,
-        kind = 1u8,
+        submitted_event = GipSubmitted,
+        text_event = GipTextUpdated,
+        status_event = GipStatusChanged,
     );
 }
