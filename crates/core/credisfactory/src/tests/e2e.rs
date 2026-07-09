@@ -257,6 +257,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |storage| {
         let denom = DenomAmount::Gratis10;
         let denom_id = denom.id();

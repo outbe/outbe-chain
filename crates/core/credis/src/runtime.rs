@@ -84,7 +84,7 @@ impl CredisContract<'_> {
 
         let total_debt = Self::total_debt(credis_principal, refinancing_rate)?;
 
-        let position = Position {
+        self.create_position_record(&Position {
             position_id,
             bundle_account,
             asset,
@@ -97,19 +97,17 @@ impl CredisContract<'_> {
             credis_principal,
             refinancing_rate,
             issuance_currency,
-        };
-        self.create_position_record(&position)?;
+        })?;
 
         for n in 1..=NUMBER_OF_ANADOSIS {
-            let anadosis = Anadosis {
+            self.create_anadosis_record(&Anadosis {
                 anadosis_key: CredisContract::anadosis_key(position_id, n),
                 anadosis_number: n,
                 due_date: current_time + (n as u64) * SECONDS_PER_MONTH,
                 anadosis_amount: Self::split_amount(total_debt, n),
                 gratis_amount: Self::split_amount(gratis_amount, n),
                 paid_at: 0,
-            };
-            self.create_anadosis_record(&anadosis)?;
+            })?;
         }
 
         self.append_to_address_index(bundle_account, position_id)?;

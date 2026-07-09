@@ -115,7 +115,6 @@ fn create_position_applies_refinancing_rate_to_total_debt() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 840,
                 rate,
@@ -150,7 +149,6 @@ fn create_position_zero_rate_matches_principal() {
             .create_position(
                 test_commitment(),
                 alice(),
-                vault(),
                 asset(),
                 840,
                 U256::ZERO,
