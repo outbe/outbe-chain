@@ -117,6 +117,30 @@ fn governance_full_lifecycle_via_dispatch() {
         assert!(diff.contains("-line b"), "diff: {diff}");
         assert!(diff.contains("+line B"), "diff: {diff}");
 
+        // an invalid diff base (only 0 = canon, 1 = meta-canon) reverts
+        let bad_base = IGovernance::getGipDiffCall {
+            id: gip_id,
+            base: 2,
+        };
+        assert!(gov_dispatch(
+            storage.clone(),
+            &bad_base.abi_encode(),
+            OUTSIDER,
+            U256::ZERO
+        )
+        .is_err());
+        let bad_base = IGovernance::getOipDiffCall {
+            id: oip_id,
+            base: 7,
+        };
+        assert!(gov_dispatch(
+            storage.clone(),
+            &bad_base.abi_encode(),
+            OUTSIDER,
+            U256::ZERO
+        )
+        .is_err());
+
         // counts reflect the separate sequences
         let out = gov_dispatch(
             storage.clone(),
