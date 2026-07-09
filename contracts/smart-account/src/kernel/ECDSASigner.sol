@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SignerBase} from "@zerodev/kernel/sdk/moduleBase/SignerBase.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
+import {SignerBase} from "kernel-7579-plugins/base/SignerBase.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
 
 contract ECDSASigner is SignerBase {
     mapping(address => uint256) public usedIds;
     mapping(bytes32 id => mapping(address wallet => address)) public signer;
 
-    function isInitialized(address wallet) external view override returns (bool) {
+    // Not part of the kernel-7579-plugins `IModule`; plain declaration (no `override`).
+    function isInitialized(address wallet) external view returns (bool) {
         return usedIds[wallet] > 0;
     }
 

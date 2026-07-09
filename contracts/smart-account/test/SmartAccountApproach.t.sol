@@ -7,12 +7,10 @@ import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
-import {IEntryPoint} from "@zerodev/kernel/interfaces/IEntryPoint.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
-import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
-import {CALLTYPE_BATCH, EXECTYPE_DEFAULT} from "@zerodev/kernel/types/Constants.sol";
-import {ExecMode, ExecModeSelector, ExecModePayload} from "@zerodev/kernel/types/Types.sol";
-import {Execution} from "@zerodev/kernel/types/Structs.sol";
+import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {LibERC7579} from "solady/accounts/LibERC7579.sol";
+import {Execution} from "@zerodev/kernel/interfaces/IERC7579Account.sol";
 
 contract SmartAccountApproach is BaseAATest {
     function test_UserCanSendEth_CcaCantWithdraw() external {
@@ -31,13 +29,12 @@ contract SmartAccountApproach is BaseAATest {
         assertEq(address(smartAccount).balance, 1.3 ether, "smart account should have 1.3 ETH");
 
         // Perform UserOp: send 1 ETH from smart account to recipient, signed by user
-        bytes memory callData = abi.encodeWithSelector(
-            Kernel.execute.selector, _execMode(), ExecLib.encodeSingle(recipient.addr, 1 ether, hex"")
-        );
+        bytes memory callData =
+            abi.encodeWithSelector(Kernel.execute.selector, _execMode(), _single(recipient.addr, 1 ether, hex""));
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         // Check final balances
         assertEq(user.addr.balance, 5.7 ether, "user EOA should still have 5.7 ETH");
@@ -46,14 +43,14 @@ contract SmartAccountApproach is BaseAATest {
 
         // Malicious check: CCA cannot withdraw from smart account
         bytes memory maliciousCallData = abi.encodeWithSelector(
-            Kernel.execute.selector, _execMode(), ExecLib.encodeSingle(cca.addr, address(smartAccount).balance, hex"")
+            Kernel.execute.selector, _execMode(), _single(cca.addr, address(smartAccount).balance, hex"")
         );
 
         PackedUserOperation[] memory maliciousOps = new PackedUserOperation[](1);
         maliciousOps[0] = _buildUserOp(smartAccount, maliciousCallData, cca.privKey);
 
         vm.expectRevert(abi.encodeWithSelector(IEntryPoint.FailedOp.selector, 0, "AA24 signature error"));
-        entrypoint.handleOps(maliciousOps, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(maliciousOps, payable(ENTRYPOINT_BENEFICIARY));
     }
 
     function test_UserCanTopUpErc20_AndWithdrawToRecipient() external {
@@ -75,14 +72,12 @@ contract SmartAccountApproach is BaseAATest {
         bytes memory callData = abi.encodeWithSelector(
             Kernel.execute.selector,
             _execMode(),
-            ExecLib.encodeSingle(
-                address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 300e18)
-            )
+            _single(address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 300e18))
         );
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         // Check final token balances
         assertEq(token.balanceOf(user.addr), 500e18, "user should still have 500 tokens");
@@ -161,14 +156,12 @@ contract SmartAccountApproach is BaseAATest {
             abi.encodeWithSelector(
                 Kernel.execute.selector,
                 _execMode(),
-                ExecLib.encodeSingle(
-                    address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 300e18)
-                )
+                _single(address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 300e18))
             )
         );
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, callData300, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         // Transfer was blocked: recipient has no tokens, smart account still has 1400
         assertEq(token.balanceOf(recipient.addr), 0, "recipient should have 0 tokens after blocked transfer");
@@ -180,13 +173,11 @@ contract SmartAccountApproach is BaseAATest {
             abi.encodeWithSelector(
                 Kernel.execute.selector,
                 _execMode(),
-                ExecLib.encodeSingle(
-                    address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 150e18)
-                )
+                _single(address(token), 0, abi.encodeWithSelector(token.transfer.selector, recipient.addr, 150e18))
             )
         );
         ops[0] = _buildUserOp(smartAccount, callData150, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(recipient.addr), 150e18, "recipient should have 150 tokens");
         assertEq(token.balanceOf(smartAccount), 1250e18, "SA should have 1250 tokens");
@@ -211,7 +202,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(recipient.addr), 100e18, "batch transfer within free should pass");
         assertEq(token.balanceOf(smartAccount), 1300e18, "SA balance should drop by the free amount");
@@ -230,7 +221,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(recipient.addr), 0, "batch transfer over free must be blocked");
         assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked batch");
@@ -258,7 +249,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(address(puller)), 150e18, "puller should have pulled 150 within free");
         assertEq(token.balanceOf(smartAccount), 1250e18, "SA balance should drop by the pulled amount");
@@ -284,7 +275,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(address(puller)), 0, "pull over free must be blocked");
         assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked pull");
@@ -304,7 +295,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.allowance(smartAccount, spender), 0, "unconsumed batch approve must be blocked");
     }
@@ -326,7 +317,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, _batchCallData(execs), user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(freeToken.balanceOf(recipient.addr), 500e18, "batch over a non-bundled token should pass");
         assertEq(freeToken.balanceOf(smartAccount), 0, "SA free-token balance should have moved out");
@@ -344,13 +335,13 @@ contract SmartAccountApproach is BaseAATest {
             abi.encodeWithSelector(
                 Kernel.execute.selector,
                 _execMode(),
-                ExecLib.encodeSingle(address(token), 0, abi.encodeWithSelector(token.approve.selector, spender, 50e18))
+                _single(address(token), 0, abi.encodeWithSelector(token.approve.selector, spender, 50e18))
             )
         );
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.allowance(smartAccount, spender), 0, "approve of bundled token must be blocked");
     }
@@ -371,7 +362,7 @@ contract SmartAccountApproach is BaseAATest {
             abi.encodeWithSelector(
                 Kernel.execute.selector,
                 _execMode(),
-                ExecLib.encodeSingle(
+                _single(
                     address(token),
                     0,
                     abi.encodeWithSelector(token.transferFrom.selector, smartAccount, recipient.addr, 250e18)
@@ -381,7 +372,7 @@ contract SmartAccountApproach is BaseAATest {
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = _buildUserOp(smartAccount, callData, user.privKey);
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         assertEq(token.balanceOf(recipient.addr), 0, "transferFrom over free must be blocked by the hook");
         assertEq(token.balanceOf(smartAccount), 1400e18, "SA balance unchanged after blocked transferFrom");
@@ -415,9 +406,10 @@ contract SmartAccountApproach is BaseAATest {
     ///      ExecLib.encodeBatch (abi.encode(Execution[])) so it decodes via LibERC7579 exactly as
     ///      the hook reads it.
     function _batchCallData(Execution[] memory execs) private pure returns (bytes memory) {
-        ExecMode mode =
-            ExecLib.encode(CALLTYPE_BATCH, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
-        bytes memory inner = abi.encodeWithSelector(Kernel.execute.selector, mode, ExecLib.encodeBatch(execs));
+        bytes32 mode =
+            LibERC7579.encodeMode(LibERC7579.CALLTYPE_BATCH, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
+        // ERC-7579 batch execution calldata = abi.encode(Execution[]); decodes via LibERC7579 as the hook reads it.
+        bytes memory inner = abi.encodeWithSelector(Kernel.execute.selector, mode, abi.encode(execs));
         return abi.encodePacked(Kernel.executeUserOp.selector, inner);
     }
 }
