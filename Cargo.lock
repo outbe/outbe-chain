@@ -6883,6 +6883,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-common",
  "outbe-evm",
+ "outbe-governance",
  "outbe-gratis",
  "outbe-metadosis",
  "outbe-nod",
