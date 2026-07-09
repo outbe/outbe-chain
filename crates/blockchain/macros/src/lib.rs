@@ -201,6 +201,24 @@ fn is_deprecated_type(ty: &Type) -> bool {
     is_ident_type(ty, &["Deprecated"])
 }
 
+/// Variable-length record field types, stored via `StorageBytes` (EVM string
+/// layout) at the field's per-key mapping slot. Each occupies one slot in the
+/// record's linear layout (the length/base slot); the payload spills into a
+/// keccak-derived data run, so it never collides with sibling fields.
+#[derive(Clone, Copy, PartialEq)]
+enum BytesLikeKind {
+    String,
+    Bytes,
+}
+
+fn bytes_like_record_kind(ty: &Type) -> Option<BytesLikeKind> {
+    match last_type_ident(ty).as_deref() {
+        Some("String") => Some(BytesLikeKind::String),
+        Some("Bytes") => Some(BytesLikeKind::Bytes),
+        _ => None,
+    }
+}
+
 fn unwrap_single_generic_type(ty: &Type) -> Option<Type> {
     let args = type_args(ty)?;
     match args.first() {
@@ -741,8 +759,60 @@ fn generate_storage_record(
 
     for (field, offset) in non_key_fields.iter().zip(non_key_offsets.iter()) {
         let fname = &field.name;
-        let storage_ty = record_field_inner_storage_type(&field.ty);
         let offset_lit = *offset;
+
+        // Variable-length String/Bytes fields: stored via StorageBytes at the
+        // field's per-key mapping slot. read/write/delete route through the
+        // StorageBytes handle; the accessor exposes that handle directly so
+        // callers can touch the text without loading the whole record.
+        if let Some(kind) = bytes_like_record_kind(&field.ty) {
+            if field.name == exists_field_ident {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "exists_field cannot be a String/Bytes field (no single-word existence check)",
+                ));
+            }
+            let bytes_handle = |base: proc_macro2::TokenStream, key: proc_macro2::TokenStream| {
+                quote! {
+                    ::outbe_primitives::storage::types::Mapping::<#key_ty, ::outbe_primitives::storage::types::StorageBytes>::new(
+                        #base + ::alloy_primitives::U256::from(#offset_lit),
+                        entry.address(),
+                        entry.storage(),
+                    ).get_bytes(#key)
+                }
+            };
+            let entry_handle =
+                bytes_handle(quote! { entry.base_slot() }, quote! { entry.key_ref() });
+            let read_expr = match kind {
+                BytesLikeKind::String => quote! { #entry_handle.read_string()? },
+                BytesLikeKind::Bytes => {
+                    quote! { ::alloy_primitives::Bytes::from(#entry_handle.read()?) }
+                }
+            };
+            let write_bytes = match kind {
+                BytesLikeKind::String => quote! { value.#fname.as_bytes() },
+                BytesLikeKind::Bytes => quote! { value.#fname.as_ref() },
+            };
+            load_fields.push(quote! { #fname: #read_expr });
+            write_fields.push(quote! { #entry_handle.write_if_changed(#write_bytes)?; });
+            delete_fields.push(quote! { #entry_handle.clear()?; });
+
+            accessor_trait_methods.push(quote! {
+                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage>;
+            });
+            accessor_impl_methods.push(quote! {
+                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage> {
+                    ::outbe_primitives::storage::types::Mapping::<#key_ty, ::outbe_primitives::storage::types::StorageBytes>::new(
+                        self.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
+                        self.address(),
+                        self.storage(),
+                    ).get_bytes(self.key_ref())
+                }
+            });
+            continue;
+        }
+
+        let storage_ty = record_field_inner_storage_type(&field.ty);
         let mapping_read = quote! {
             ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
                 entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),

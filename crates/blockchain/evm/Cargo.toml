@@ -25,6 +25,7 @@ outbe-vaultprovider.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
 outbe-tributefactory.workspace = true
+outbe-governance.workspace = true
 outbe-teeregistry.workspace = true
 outbe-tee.workspace = true
 outbe-agentreward.workspace = true

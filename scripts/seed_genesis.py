@@ -170,6 +170,10 @@ GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
 # liquidity source/target registry (see `seed_vault_provider`). Mirrors the Rust
 # constant `outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`.
 VAULT_PROVIDER_ADDRESS = "0000000000000000000000000000000000001017"
+# Governance precompile. Genesis seeds the authorities set (validator addresses,
+# the PoC write-gate) and the canon / meta-canon texts at version 1. Mirrors the
+# Rust constant `outbe_primitives::addresses::GOVERNANCE_ADDRESS`.
+GOVERNANCE_ADDRESS = "0000000000000000000000000000000000001018"
 VALIDATOR_SET_ADDRESS = "000000000000000000000000000000000000ee00"
 SLASH_INDICATOR_ADDRESS = "000000000000000000000000000000000000ee01"
 STAKING_ADDRESS = "000000000000000000000000000000000000ee02"
@@ -214,6 +218,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
     CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
+    GOVERNANCE_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
     ZEROFEE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
@@ -1101,6 +1106,66 @@ def seed_accounting_progress(storage: StorageBuilder):
     storage.set_slot(0, 0)
 
 
+def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
+    """
+    Governance storage layout. All seeded fields are one slot each and precede
+    the two record maps in the schema, so their slot indices are stable no matter
+    how the Oip/Gip record types grow (a `Map<K, Record>` reserves
+    `Record::SLOTS` contiguous base slots). The Rust-side
+    `storage_layout_matches_seeder` test pins these indices.
+
+      slot 0:  meta_canon text        (StorageBytes; long data at keccak256(0))
+      slot 1:  meta_canon_version     (u64)
+      slot 2:  meta_canon_hash        (B256 = keccak256(text))
+      slot 3:  meta_canon_revisions   Map<u64, B256>
+      slot 4:  canon text             (StorageBytes; long data at keccak256(4))
+      slot 5:  canon_version          (u64)
+      slot 6:  canon_hash             (B256)
+      slot 7:  canon_revisions        Map<u64, B256>
+      slot 8:  next_oip_id            (u64, default 0 — not seeded)
+      slot 9:  next_gip_id            (u64, default 0 — not seeded)
+      slot 10: authorities            Map<Address, bool>  (PoC write-gate)
+      slot 11: oips                   Map<U256, Oip>   (not seeded; empty)
+      slot 17: gips                   Map<U256, Gip>   (not seeded; empty)
+
+    Authorities are seeded with every genesis validator address — with an empty
+    authorities set nobody could ever write the canon, so this is mandatory. The
+    canon / meta-canon texts are seeded from `canon_dir/{metacanon.md,canon.md}`
+    at version 1 when present; when absent the texts stay empty and any authority
+    performs the first `updateCanon` post-genesis (version 0 -> 1).
+
+    Returns `(n_authorities, meta_seeded, canon_seeded)`.
+    """
+    n_auth = 0
+    for v in validators:
+        storage.set_mapping(10, address_bytes(v["address"]), 1)  # bool true
+        n_auth += 1
+
+    def _seed_text(text_slot: int, version_slot: int, hash_slot: int,
+                   revisions_base: int, data: bytes):
+        write_storage_bytes(storage, text_slot, data)
+        storage.set_slot(version_slot, 1)
+        h = keccak256(data)
+        storage.set_raw_slot_hex(hash_slot, "0x" + h.hex())
+        storage.set_mapping_b256(revisions_base, u64_bytes(1), h)
+
+    meta_seeded = False
+    canon_seeded = False
+    if canon_dir and os.path.isdir(canon_dir):
+        meta_path = os.path.join(canon_dir, "metacanon.md")
+        canon_path = os.path.join(canon_dir, "canon.md")
+        if os.path.isfile(meta_path):
+            with open(meta_path, "rb") as f:
+                _seed_text(0, 1, 2, 3, f.read())
+            meta_seeded = True
+        if os.path.isfile(canon_path):
+            with open(canon_path, "rb") as f:
+                _seed_text(4, 5, 6, 7, f.read())
+            canon_seeded = True
+
+    return n_auth, meta_seeded, canon_seeded
+
+
 def seed_oracle(storage: StorageBuilder, config: dict):
     """
     Oracle storage layout:
@@ -1351,6 +1416,13 @@ def main():
              "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
     )
     parser.add_argument(
+        "--canon-dir",
+        help="Directory holding metacanon.md and canon.md to seed into the "
+             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
+             "When absent, the canon texts start empty and an authority sets them "
+             "post-genesis.",
+    )
+    parser.add_argument(
         "--worldwide-day",
         type=int,
         help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
@@ -1471,6 +1543,27 @@ def main():
             f"{len(staking_storage.entries)} storage entries"
         )
         print(f"  Rewards: {len(rewards_storage.entries)} storage entries")
+
+    # Governance: seed the authorities write-gate (validator addresses) and the
+    # canon / meta-canon texts. Authorities are mandatory — an empty set means no
+    # address can ever write the canon. Canon texts default to <script-dir>/canon.
+    canon_dir = args.canon_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "canon"
+    )
+    governance_storage = StorageBuilder()
+    n_auth, meta_seeded, canon_seeded = seed_governance(
+        governance_storage, validators, canon_dir
+    )
+    if governance_storage.entries:
+        alloc[GOVERNANCE_ADDRESS].setdefault("storage", {}).update(
+            governance_storage.entries
+        )
+    print(
+        f"  Governance: {n_auth} authorities, "
+        f"meta-canon={'seeded' if meta_seeded else 'empty'}, "
+        f"canon={'seeded' if canon_seeded else 'empty'}, "
+        f"{len(governance_storage.entries)} storage entries"
+    )
 
     # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded — independent
     # of validator count — because the executor needs the marker bytecode +

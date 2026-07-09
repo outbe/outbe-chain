@@ -148,6 +148,84 @@ contract, not ad-hoc per-module APIs:
   (`storage.contract::<T>()` / `ctx.contract::<T>()`), never implicit context or
   process globals; facades are short-lived and never escape the execution scope.
 
+## Governance (canon, meta-canon, OIP, GIP)
+
+The **Governance** precompile at `0x0000000000000000000000000000000000001018`
+(ABI: `contracts/precompiles/src/IGovernance.sol`) is the on-chain registry of
+the normative texts and improvement proposals. It is a first slice of the AI
+governance subsystem; the semantic membrane and agent decision loop land in later
+phases.
+
+**Objects**
+
+| Object | Shape | Mutation |
+|---|---|---|
+| **meta-canon** | one structured text, versioned, keccak-hashed | full overwrite; no status model |
+| **canon** | one structured text, versioned, keccak-hashed | full overwrite; no status model |
+| **OIP** (Outbe Improvement Proposal) | record: `author, status, blocks, text_hash, text` | submit / edit text / set status |
+| **GIP** (Governance Improvement Proposal) | same shape as OIP, separate map & id sequence | submit / edit text / set status |
+
+The canon/meta-canon each store only their **current** version plus a
+`version → hash` revision map (old texts are not retained). Proposal **status**
+follows `Draft → Approved | Rejected | Rework`, `Rework → Draft` (author
+resubmission), `Approved → Implemented`; `Rejected`/`Implemented` are terminal.
+Proposal text is editable only while `Draft` or `Rework`, and only by its author.
+
+**Write authorization (PoC scaffolding).** `updateCanon`, `updateMetaCanon`, and
+`setOip/GipStatus` are gated by an on-chain `authorities` set, seeded at genesis
+with the validator addresses (any single validator can write — the semi-closed
+club of the prototype). `submitOip`/`submitGip` and all reads are open. This gate
+is a stand-in for the not-yet-built decision pipeline (membrane → agents →
+negative-control window) and is retired when that lands.
+
+**Read** (view calls, e.g. via `cast`; `$G = 0x…1018`):
+
+```bash
+cast call $G "getCanon()(string,uint64,bytes32)"
+cast call $G "getMetaCanon()(string,uint64,bytes32)"
+cast call $G "getOip(uint256)((uint256,uint8,address,uint64,uint64,bytes32,string))" 1
+cast call $G "oipCount()(uint64)"
+# unified diff of a proposal's text vs a base (0 = canon, 1 = meta-canon)
+cast call $G "getGipDiff(uint256,uint8)(string)" 1 0
+cast call $G "isAuthority(address)(bool)" 0xVALIDATOR
+```
+
+**Write** (transactions):
+
+```bash
+# canon / meta-canon — authorities only, full overwrite (returns new version)
+cast send $G "updateCanon(string)(uint64)"      "$(cat canon.md)"
+cast send $G "updateMetaCanon(string)(uint64)"  "$(cat metacanon.md)"
+
+# proposals — anyone may submit (returns id); author edits text while Draft/Rework
+cast send $G "submitOip(string)(uint256)"  "$(cat my-oip.md)"
+cast send $G "updateOipText(uint256,string)" 1 "$(cat my-oip-v2.md)"
+cast send $G "submitGip(string)(uint256)"  "$(cat my-gip.md)"
+
+# status — authorities drive the lifecycle (Draft→Approved→Implemented, …);
+# the author alone may resubmit Rework→Draft
+cast send $G "setOipStatus(uint256,uint8)" 1 1   # → Approved
+cast send $G "setOipStatus(uint256,uint8)" 1 4   # → Implemented
+```
+
+Status codes: `0 Draft · 1 Approved · 2 Rejected · 3 Rework · 4 Implemented`.
+
+**Genesis seeding.** `scripts/seed_genesis.py` seeds the `authorities` set from
+`validators.json` and the initial canon/meta-canon texts from
+`scripts/canon/{canon.md,metacanon.md}` at version 1:
+
+```bash
+python3 scripts/seed_genesis.py \
+  --genesis genesis.json --seed scripts/seed-testnet.json \
+  --validators validators.json --canon-dir scripts/canon \
+  --output genesis-seeded.json
+```
+
+`--canon-dir` defaults to `scripts/canon`; if the files are absent the texts
+start empty and an authority performs the first `updateCanon` post-genesis.
+Proposal text is stored in-record via the storage DSL's `String`/`Bytes` record
+fields (`crates/blockchain/macros`), capped at 128 KiB per text.
+
 ## Emission Model
 
 Validator daily emission is delivered as **gems** (`Genesis` gems for the first
