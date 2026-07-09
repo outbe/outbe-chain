@@ -1,11 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Ctx } from "../chain.js";
-import { CONTRACTS } from "../registry.js";
+import { CONTRACTS, proposalStatusName } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const addr = z.string().describe("0x-prefixed address");
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
+
+/** Attach the human-readable proposal status name (statusCode -> {code, name}). */
+function annotateProposal(p: unknown): Record<string, unknown> {
+  const r = { ...(p as Record<string, unknown>) };
+  const code = Number(r.statusCode);
+  delete r.statusCode;
+  return { ...r, status: { code, name: proposalStatusName(code) } };
+}
 
 export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
@@ -245,5 +253,74 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     "Pending validator rewards for an address (in COEN).",
     { validator: addr },
     handler(async ({ validator }) => ok(await view(ctx, "rewards", "pendingRewards", [validator]))),
+  );
+
+  // --- Governance (canon, meta-canon, OIP, GIP) — read-only -----------------
+  server.tool(
+    "metacanon_get",
+    "The meta-canon: current text + version + keccak hash (constitutional layer regulating the canon).",
+    {},
+    handler(async () => ok(await view(ctx, "governance", "getMetaCanon", []))),
+  );
+
+  server.tool(
+    "canon_get",
+    "The canon: current text + version + keccak hash (active protocol norms).",
+    {},
+    handler(async () => ok(await view(ctx, "governance", "getCanon", []))),
+  );
+
+  const proposalId = z.string().describe("Proposal id (decimal or 0x hex), 1-based");
+
+  server.tool(
+    "oip_get",
+    "One Outbe Improvement Proposal by id: author, status, blocks, text hash, and full text.",
+    { id: proposalId },
+    handler(async ({ id }) =>
+      ok(annotateProposal(await view(ctx, "governance", "getOip", [BigInt(id)]))),
+    ),
+  );
+
+  server.tool(
+    "gip_get",
+    "One Governance Improvement Proposal by id: author, status, blocks, text hash, and full text.",
+    { id: proposalId },
+    handler(async ({ id }) =>
+      ok(annotateProposal(await view(ctx, "governance", "getGip", [BigInt(id)]))),
+    ),
+  );
+
+  server.tool(
+    "oip_list",
+    "List all OIPs (metadata only — id, status, author, blocks, text hash; omits the full text). Ids run 1..oipCount.",
+    {},
+    handler(async () => {
+      const count = Number(await view(ctx, "governance", "oipCount", []));
+      const oips: unknown[] = [];
+      for (let i = 1; i <= count; i++) {
+        const { text: _text, ...meta } = (await view(ctx, "governance", "getOip", [
+          BigInt(i),
+        ])) as Record<string, unknown>;
+        oips.push(annotateProposal(meta));
+      }
+      return ok({ count, oips });
+    }),
+  );
+
+  server.tool(
+    "gip_list",
+    "List all GIPs (metadata only — id, status, author, blocks, text hash; omits the full text). Ids run 1..gipCount.",
+    {},
+    handler(async () => {
+      const count = Number(await view(ctx, "governance", "gipCount", []));
+      const gips: unknown[] = [];
+      for (let i = 1; i <= count; i++) {
+        const { text: _text, ...meta } = (await view(ctx, "governance", "getGip", [
+          BigInt(i),
+        ])) as Record<string, unknown>;
+        gips.push(annotateProposal(meta));
+      }
+      return ok({ count, gips });
+    }),
   );
 }

@@ -284,6 +284,27 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function registeredCount() view returns (uint256)",
     ]),
   },
+
+  governance: {
+    address: A("0x0000000000000000000000000000000000001018"),
+    note: "Governance (canon, meta-canon, OIP, GIP)",
+    // `statusCode` (not `status`) so it bypasses the WorldwideDay status
+    // humanizer in format.ts; the proposal status name is attached in view.ts.
+    abi: parseAbi([
+      "struct Proposal { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; string text; }",
+      "function getMetaCanon() view returns (string text, uint64 version, bytes32 hash)",
+      "function getCanon() view returns (string text, uint64 version, bytes32 hash)",
+      "function getMetaCanonRevisionHash(uint64 version) view returns (bytes32)",
+      "function getCanonRevisionHash(uint64 version) view returns (bytes32)",
+      "function getOip(uint256 id) view returns (Proposal)",
+      "function getGip(uint256 id) view returns (Proposal)",
+      "function oipCount() view returns (uint64)",
+      "function gipCount() view returns (uint64)",
+      "function getOipDiff(uint256 id, uint8 base) view returns (string)",
+      "function getGipDiff(uint256 id, uint8 base) view returns (string)",
+      "function isAuthority(address who) view returns (bool)",
+    ]),
+  },
 };
 
 /** Resolve a contract by registry name or raw 0x address. */
@@ -319,6 +340,19 @@ export const WWD_STATUS = [
 ] as const;
 
 export const DAY_TYPE = ["UNKNOWN", "GREEN", "RED"] as const;
+
+// Governance proposal status (crates/core/governance/src/status.rs).
+export const PROPOSAL_STATUS = [
+  "Draft",
+  "Approved",
+  "Rejected",
+  "Rework",
+  "Implemented",
+] as const;
+
+export function proposalStatusName(v: number): string {
+  return PROPOSAL_STATUS[v] ?? `UNKNOWN(${v})`;
+}
 
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).
 export const GEM_STATE = ["Issued", "Qualified", "Settled"] as const;
