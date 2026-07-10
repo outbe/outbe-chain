@@ -112,9 +112,10 @@ on any precompile, decoded. `contract` is a registry name or a `0x` address.
 
 **Governance reads** (canon / meta-canon / proposals) — `metacanon_get`, `canon_get`,
 `oip_get { id }`, `gip_get { id }`, `oip_list`, `gip_list`. `*_get` returns the full
-text + status. `*_list` is index-backed (no full-collection scan): give `author`
-(their proposals) or `status` = `accepted` (Approved or Implemented) | `rejected`;
-it returns proposal metadata only (omits the text body).
+text + status. `*_list` is index-backed and **paginated**: give `author` (their
+proposals) or `status` = `accepted` (Approved or Implemented) | `rejected`, plus
+optional `offset` (default 0) / `limit` (default 100, max 1000); it returns
+`{ total, offset, limit, … }` with proposal metadata only (omits the text body).
 
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
 `staking_unstake`, `staking_unbonded_claim`, `rewards_claim`, `agentreward_claim`,

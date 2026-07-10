@@ -23,6 +23,19 @@ pub(crate) fn author_index_key(author: Address, index: u32) -> B256 {
     keccak256(buf)
 }
 
+/// Hard cap on how many items a single paginated read returns, so a caller
+/// cannot ask for an unbounded page.
+pub const MAX_PAGE: u32 = 1000;
+
+/// Clamp an `(offset, limit)` request against a bucket of `total` items,
+/// returning the half-open `[start, end)` index range to read.
+fn page_bounds(total: u32, offset: U256, limit: U256) -> (u32, u32) {
+    let start = offset.min(U256::from(total)).to::<u32>();
+    let take = limit.min(U256::from(MAX_PAGE)).to::<u32>();
+    let end = start.saturating_add(take).min(total);
+    (start, end)
+}
+
 impl GovernanceContract<'_> {
     // --- meta-canon / canon reads ---
 
@@ -107,59 +120,104 @@ impl GovernanceContract<'_> {
         })
     }
 
-    // --- index-backed listings (read only the relevant bucket) ---
+    // --- index-backed listings (paginated: read only the [offset, offset+limit)
+    //     slice of the relevant bucket; counts let callers size the pages) ---
 
-    pub fn oips_by_author(&self, author: Address) -> Result<Vec<ProposalMeta>> {
-        let n = self.oip_author_count.read(&author)?;
-        let mut out = Vec::with_capacity(n as usize);
-        for i in 0..n {
+    pub fn oip_count_by_author(&self, author: Address) -> Result<u32> {
+        self.oip_author_count.read(&author)
+    }
+
+    pub fn gip_count_by_author(&self, author: Address) -> Result<u32> {
+        self.gip_author_count.read(&author)
+    }
+
+    pub fn oips_by_author(
+        &self,
+        author: Address,
+        offset: U256,
+        limit: U256,
+    ) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.oip_author_count.read(&author)?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
             let id = self.oip_author_ids.read(&author_index_key(author, i))?;
             out.push(self.oip_meta(id)?);
         }
         Ok(out)
     }
 
-    pub fn gips_by_author(&self, author: Address) -> Result<Vec<ProposalMeta>> {
-        let n = self.gip_author_count.read(&author)?;
-        let mut out = Vec::with_capacity(n as usize);
-        for i in 0..n {
+    pub fn gips_by_author(
+        &self,
+        author: Address,
+        offset: U256,
+        limit: U256,
+    ) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.gip_author_count.read(&author)?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
             let id = self.gip_author_ids.read(&author_index_key(author, i))?;
             out.push(self.gip_meta(id)?);
         }
         Ok(out)
     }
 
-    /// OIPs that reached Approved or Implemented.
-    pub fn accepted_oips(&self) -> Result<Vec<ProposalMeta>> {
-        self.oip_accepted
-            .read_all()?
-            .into_iter()
-            .map(|id| self.oip_meta(id))
-            .collect()
+    /// Count of OIPs that reached Approved or Implemented.
+    pub fn accepted_oip_count(&self) -> Result<u32> {
+        self.oip_accepted.len()
+    }
+    pub fn accepted_gip_count(&self) -> Result<u32> {
+        self.gip_accepted.len()
+    }
+    pub fn rejected_oip_count(&self) -> Result<u32> {
+        self.oip_rejected.len()
+    }
+    pub fn rejected_gip_count(&self) -> Result<u32> {
+        self.gip_rejected.len()
     }
 
-    /// GIPs that reached Approved or Implemented.
-    pub fn accepted_gips(&self) -> Result<Vec<ProposalMeta>> {
-        self.gip_accepted
-            .read_all()?
-            .into_iter()
-            .map(|id| self.gip_meta(id))
-            .collect()
+    /// OIPs that reached Approved or Implemented (paginated).
+    pub fn accepted_oips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.oip_accepted.len()?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
+            if let Some(id) = self.oip_accepted.at(i)? {
+                out.push(self.oip_meta(id)?);
+            }
+        }
+        Ok(out)
     }
 
-    pub fn rejected_oips(&self) -> Result<Vec<ProposalMeta>> {
-        self.oip_rejected
-            .read_all()?
-            .into_iter()
-            .map(|id| self.oip_meta(id))
-            .collect()
+    /// GIPs that reached Approved or Implemented (paginated).
+    pub fn accepted_gips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.gip_accepted.len()?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
+            if let Some(id) = self.gip_accepted.at(i)? {
+                out.push(self.gip_meta(id)?);
+            }
+        }
+        Ok(out)
     }
 
-    pub fn rejected_gips(&self) -> Result<Vec<ProposalMeta>> {
-        self.gip_rejected
-            .read_all()?
-            .into_iter()
-            .map(|id| self.gip_meta(id))
-            .collect()
+    pub fn rejected_oips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.oip_rejected.len()?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
+            if let Some(id) = self.oip_rejected.at(i)? {
+                out.push(self.oip_meta(id)?);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn rejected_gips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
+        let (start, end) = page_bounds(self.gip_rejected.len()?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
+            if let Some(id) = self.gip_rejected.at(i)? {
+                out.push(self.gip_meta(id)?);
+            }
+        }
+        Ok(out)
     }
 }

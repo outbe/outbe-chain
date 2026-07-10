@@ -290,56 +290,70 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
-  // Index-backed listing (metadata only — omits the full text). Exactly one of
-  // `author` / `status` must be given; each maps to a dedicated on-chain index
-  // (getByAuthor / getAccepted / getRejected), so the module returns only the
-  // matching ids — no full-collection scan.
+  // Index-backed, PAGINATED listing (metadata only — omits the full text).
+  // Exactly one of `author` / `status` must be given; each maps to a dedicated
+  // on-chain index (getByAuthor / getAccepted / getRejected). Returns `total`
+  // (the whole bucket size) plus the requested `[offset, offset+limit)` page.
   const listFilter = {
     author: z.string().optional().describe("0x address — list this author's proposals"),
     status: z
       .enum(["accepted", "rejected"])
       .optional()
       .describe("'accepted' (Approved or Implemented) or 'rejected'"),
+    offset: z.number().int().min(0).optional().describe("page start (default 0)"),
+    limit: z.number().int().min(1).max(1000).optional().describe("page size (default 100, max 1000)"),
   };
 
   async function listProposals(
     kind: "Oip" | "Gip",
-    args: { author?: string; status?: "accepted" | "rejected" },
-  ): Promise<unknown[]> {
+    args: { author?: string; status?: "accepted" | "rejected"; offset?: number; limit?: number },
+  ): Promise<{ total: number; offset: number; limit: number; items: unknown[] }> {
     const { author, status } = args;
     if ((author === undefined) === (status === undefined)) {
       throw new Error("provide exactly one of `author` or `status` (accepted|rejected)");
     }
-    let metas: unknown[];
+    const offset = args.offset ?? 0;
+    const limit = args.limit ?? 100;
+    let listFn: string;
+    let countFn: string;
+    let pageArgs: unknown[];
     if (author !== undefined) {
-      metas = (await view(ctx, "governance", `get${kind}sByAuthor`, [author])) as unknown[];
-    } else if (status === "accepted") {
-      metas = (await view(ctx, "governance", `getAccepted${kind}s`, [])) as unknown[];
+      listFn = `get${kind}sByAuthor`;
+      countFn = `${kind.toLowerCase()}CountByAuthor`;
+      pageArgs = [author, offset, limit];
     } else {
-      metas = (await view(ctx, "governance", `getRejected${kind}s`, [])) as unknown[];
+      const cap = status === "accepted" ? "Accepted" : "Rejected";
+      listFn = `get${cap}${kind}s`;
+      countFn = `${status}${kind}Count`; // acceptedOipCount / rejectedGipCount ...
+      pageArgs = [offset, limit];
     }
-    return metas.map(annotateProposal);
+    const countCallArgs = author !== undefined ? [author] : [];
+    const [metas, total] = await Promise.all([
+      view(ctx, "governance", listFn, pageArgs) as Promise<unknown[]>,
+      view(ctx, "governance", countFn, countCallArgs),
+    ]);
+    return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
   }
 
   server.tool(
     "oip_list",
-    "List OIPs by index (metadata only — omits the full text). Give `author` (their OIPs) " +
-      "or `status` = accepted | rejected.",
+    "List OIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+      "(their OIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const oips = await listProposals("Oip", args);
-      return ok({ count: oips.length, oips });
+      const { total, offset, limit, items } = await listProposals("Oip", args);
+      return ok({ total, offset, limit, oips: items });
     }),
   );
 
   server.tool(
     "gip_list",
-    "List GIPs by index (metadata only — omits the full text). Give `author` (their GIPs) " +
-      "or `status` = accepted | rejected.",
+    "List GIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+      "(their GIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const gips = await listProposals("Gip", args);
-      return ok({ count: gips.length, gips });
+      const { total, offset, limit, items } = await listProposals("Gip", args);
+      return ok({ total, offset, limit, gips: items });
     }),
   );
 }

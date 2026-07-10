@@ -63,10 +63,23 @@ interface IGovernance {
     function setOipStatus(uint256 id, uint8 newStatus) external;
     function oipCount() external view returns (uint64);
     function getOipDiff(uint256 id, uint8 base) external view returns (string memory);
-    // index-backed listings (metadata only): by author, accepted, rejected
-    function getOipsByAuthor(address author) external view returns (ProposalMeta[] memory);
-    function getAcceptedOips() external view returns (ProposalMeta[] memory);
-    function getRejectedOips() external view returns (ProposalMeta[] memory);
+    // index-backed listings (metadata only, paginated [offset, offset+limit)):
+    // by author, accepted, rejected. Companion *Count getters size the pages.
+    function getOipsByAuthor(address author, uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function getAcceptedOips(uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function getRejectedOips(uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function oipCountByAuthor(address author) external view returns (uint256);
+    function acceptedOipCount() external view returns (uint256);
+    function rejectedOipCount() external view returns (uint256);
 
     // --- proposals: GIP ---
     function submitGip(string calldata text) external returns (uint256 id);
@@ -75,10 +88,23 @@ interface IGovernance {
     function setGipStatus(uint256 id, uint8 newStatus) external;
     function gipCount() external view returns (uint64);
     function getGipDiff(uint256 id, uint8 base) external view returns (string memory);
-    // index-backed listings (metadata only): by author, accepted, rejected
-    function getGipsByAuthor(address author) external view returns (ProposalMeta[] memory);
-    function getAcceptedGips() external view returns (ProposalMeta[] memory);
-    function getRejectedGips() external view returns (ProposalMeta[] memory);
+    // index-backed listings (metadata only, paginated [offset, offset+limit)):
+    // by author, accepted, rejected. Companion *Count getters size the pages.
+    function getGipsByAuthor(address author, uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function getAcceptedGips(uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function getRejectedGips(uint256 offset, uint256 limit)
+        external
+        view
+        returns (ProposalMeta[] memory);
+    function gipCountByAuthor(address author) external view returns (uint256);
+    function acceptedGipCount() external view returns (uint256);
+    function rejectedGipCount() external view returns (uint256);
 
     // --- authorities (PoC scaffolding) ---
     function isAuthority(address who) external view returns (bool);

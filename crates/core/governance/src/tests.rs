@@ -360,7 +360,9 @@ fn author_index_lists_own_proposals() {
         gov.submit_oip(AUTHOR, "b").unwrap(); // id 2
         gov.submit_oip(OTHER, "c").unwrap(); // id 3
 
-        let mine = gov.oips_by_author(AUTHOR).unwrap();
+        let mine = gov
+            .oips_by_author(AUTHOR, U256::ZERO, U256::from(1000))
+            .unwrap();
         assert_eq!(mine.len(), 2);
         assert_eq!(
             mine.iter().map(|m| m.id).collect::<Vec<_>>(),
@@ -368,12 +370,17 @@ fn author_index_lists_own_proposals() {
         );
         assert!(mine.iter().all(|m| m.author == AUTHOR));
 
-        let theirs = gov.oips_by_author(OTHER).unwrap();
+        let theirs = gov
+            .oips_by_author(OTHER, U256::ZERO, U256::from(1000))
+            .unwrap();
         assert_eq!(theirs.len(), 1);
         assert_eq!(theirs[0].id, U256::from(3));
 
         // unknown author → empty
-        assert!(gov.oips_by_author(AUTH).unwrap().is_empty());
+        assert!(gov
+            .oips_by_author(AUTH, U256::ZERO, U256::from(1000))
+            .unwrap()
+            .is_empty());
     });
 }
 
@@ -382,8 +389,18 @@ fn author_index_is_per_kind() {
     with_governance(|gov| {
         gov.submit_oip(AUTHOR, "oip").unwrap();
         gov.submit_gip(AUTHOR, "gip").unwrap();
-        assert_eq!(gov.oips_by_author(AUTHOR).unwrap().len(), 1);
-        assert_eq!(gov.gips_by_author(AUTHOR).unwrap().len(), 1);
+        assert_eq!(
+            gov.oips_by_author(AUTHOR, U256::ZERO, U256::from(1000))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            gov.gips_by_author(AUTHOR, U256::ZERO, U256::from(1000))
+                .unwrap()
+                .len(),
+            1
+        );
     });
 }
 
@@ -400,12 +417,12 @@ fn accepted_index_includes_approved_and_implemented_once() {
         gov.set_oip_status(AUTH, a, status::IMPLEMENTED).unwrap(); // still accepted, not duplicated
         gov.set_oip_status(AUTH, b, status::REJECTED).unwrap();
 
-        let accepted = gov.accepted_oips().unwrap();
+        let accepted = gov.accepted_oips(U256::ZERO, U256::from(1000)).unwrap();
         assert_eq!(accepted.len(), 1, "Approved->Implemented must appear once");
         assert_eq!(accepted[0].id, a);
         assert_eq!(accepted[0].status, status::IMPLEMENTED);
 
-        let rejected = gov.rejected_oips().unwrap();
+        let rejected = gov.rejected_oips(U256::ZERO, U256::from(1000)).unwrap();
         assert_eq!(rejected.len(), 1);
         assert_eq!(rejected[0].id, b);
     });
@@ -419,8 +436,16 @@ fn rework_then_approve_lands_in_accepted() {
         gov.set_oip_status(AUTHOR, a, status::DRAFT).unwrap(); // author resubmit
         gov.set_oip_status(AUTH, a, status::APPROVED).unwrap();
 
-        assert_eq!(gov.accepted_oips().unwrap().len(), 1);
-        assert!(gov.rejected_oips().unwrap().is_empty());
+        assert_eq!(
+            gov.accepted_oips(U256::ZERO, U256::from(1000))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(gov
+            .rejected_oips(U256::ZERO, U256::from(1000))
+            .unwrap()
+            .is_empty());
     });
 }
 
@@ -432,10 +457,87 @@ fn accepted_rejected_are_per_kind() {
         gov.set_oip_status(AUTH, o, status::APPROVED).unwrap();
         gov.set_gip_status(AUTH, g, status::REJECTED).unwrap();
 
-        assert_eq!(gov.accepted_oips().unwrap().len(), 1);
-        assert!(gov.accepted_gips().unwrap().is_empty());
-        assert!(gov.rejected_oips().unwrap().is_empty());
-        assert_eq!(gov.rejected_gips().unwrap().len(), 1);
+        assert_eq!(
+            gov.accepted_oips(U256::ZERO, U256::from(1000))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(gov
+            .accepted_gips(U256::ZERO, U256::from(1000))
+            .unwrap()
+            .is_empty());
+        assert!(gov
+            .rejected_oips(U256::ZERO, U256::from(1000))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            gov.rejected_gips(U256::ZERO, U256::from(1000))
+                .unwrap()
+                .len(),
+            1
+        );
+    });
+}
+
+// ------------------------------------------------------------ pagination ---
+
+#[test]
+fn author_listing_is_paginated() {
+    with_governance(|gov| {
+        for i in 0..5u32 {
+            gov.submit_oip(AUTHOR, &format!("p{i}")).unwrap(); // ids 1..=5
+        }
+        assert_eq!(gov.oip_count_by_author(AUTHOR).unwrap(), 5);
+
+        // first page of 2
+        let p0 = gov
+            .oips_by_author(AUTHOR, U256::ZERO, U256::from(2))
+            .unwrap();
+        assert_eq!(
+            p0.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![U256::from(1), U256::from(2)]
+        );
+
+        // middle page
+        let p1 = gov
+            .oips_by_author(AUTHOR, U256::from(2), U256::from(2))
+            .unwrap();
+        assert_eq!(
+            p1.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![U256::from(3), U256::from(4)]
+        );
+
+        // last partial page (only 1 left)
+        let p2 = gov
+            .oips_by_author(AUTHOR, U256::from(4), U256::from(2))
+            .unwrap();
+        assert_eq!(
+            p2.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![U256::from(5)]
+        );
+
+        // offset past the end → empty
+        assert!(gov
+            .oips_by_author(AUTHOR, U256::from(99), U256::from(2))
+            .unwrap()
+            .is_empty());
+    });
+}
+
+#[test]
+fn accepted_listing_is_paginated() {
+    with_governance(|gov| {
+        for _ in 0..4 {
+            let id = gov.submit_oip(AUTHOR, "x").unwrap();
+            gov.set_oip_status(AUTH, id, status::APPROVED).unwrap();
+        }
+        assert_eq!(gov.accepted_oip_count().unwrap(), 4);
+
+        let page = gov.accepted_oips(U256::from(1), U256::from(2)).unwrap();
+        assert_eq!(page.len(), 2); // items 2 and 3 of the bucket
+        let last = gov.accepted_oips(U256::from(3), U256::from(10)).unwrap();
+        assert_eq!(last.len(), 1); // clamped to what's left
     });
 }
 

@@ -107,16 +107,31 @@ pub fn dispatch(
             }),
             getOipsByAuthor(c) => view(c, |c| {
                 Ok(gov
-                    .oips_by_author(c.author)?
+                    .oips_by_author(c.author, c.offset, c.limit)?
                     .into_iter()
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
-            getAcceptedOips(_) => metadata::<IGovernance::getAcceptedOipsCall>(|| {
-                Ok(gov.accepted_oips()?.into_iter().map(meta_to_sol).collect())
+            getAcceptedOips(c) => view(c, |c| {
+                Ok(gov
+                    .accepted_oips(c.offset, c.limit)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
             }),
-            getRejectedOips(_) => metadata::<IGovernance::getRejectedOipsCall>(|| {
-                Ok(gov.rejected_oips()?.into_iter().map(meta_to_sol).collect())
+            getRejectedOips(c) => view(c, |c| {
+                Ok(gov
+                    .rejected_oips(c.offset, c.limit)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
+            }),
+            oipCountByAuthor(c) => view(c, |c| Ok(U256::from(gov.oip_count_by_author(c.author)?))),
+            acceptedOipCount(_) => metadata::<IGovernance::acceptedOipCountCall>(|| {
+                Ok(U256::from(gov.accepted_oip_count()?))
+            }),
+            rejectedOipCount(_) => metadata::<IGovernance::rejectedOipCountCall>(|| {
+                Ok(U256::from(gov.rejected_oip_count()?))
             }),
 
             // --- GIP ---
@@ -143,16 +158,31 @@ pub fn dispatch(
             }),
             getGipsByAuthor(c) => view(c, |c| {
                 Ok(gov
-                    .gips_by_author(c.author)?
+                    .gips_by_author(c.author, c.offset, c.limit)?
                     .into_iter()
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
-            getAcceptedGips(_) => metadata::<IGovernance::getAcceptedGipsCall>(|| {
-                Ok(gov.accepted_gips()?.into_iter().map(meta_to_sol).collect())
+            getAcceptedGips(c) => view(c, |c| {
+                Ok(gov
+                    .accepted_gips(c.offset, c.limit)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
             }),
-            getRejectedGips(_) => metadata::<IGovernance::getRejectedGipsCall>(|| {
-                Ok(gov.rejected_gips()?.into_iter().map(meta_to_sol).collect())
+            getRejectedGips(c) => view(c, |c| {
+                Ok(gov
+                    .rejected_gips(c.offset, c.limit)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
+            }),
+            gipCountByAuthor(c) => view(c, |c| Ok(U256::from(gov.gip_count_by_author(c.author)?))),
+            acceptedGipCount(_) => metadata::<IGovernance::acceptedGipCountCall>(|| {
+                Ok(U256::from(gov.accepted_gip_count()?))
+            }),
+            rejectedGipCount(_) => metadata::<IGovernance::rejectedGipCountCall>(|| {
+                Ok(U256::from(gov.rejected_gip_count()?))
             }),
 
             // --- authorities ---

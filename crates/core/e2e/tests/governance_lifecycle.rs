@@ -158,7 +158,11 @@ fn governance_full_lifecycle_via_dispatch() {
         // authored by AUTHOR; both return ProposalMeta[] with no text.
         let out = gov_dispatch(
             storage.clone(),
-            &IGovernance::getAcceptedOipsCall {}.abi_encode(),
+            &IGovernance::getAcceptedOipsCall {
+                offset: U256::ZERO,
+                limit: U256::from(10),
+            }
+            .abi_encode(),
             OUTSIDER,
             U256::ZERO,
         )
@@ -170,7 +174,12 @@ fn governance_full_lifecycle_via_dispatch() {
 
         let out = gov_dispatch(
             storage.clone(),
-            &IGovernance::getOipsByAuthorCall { author: AUTHOR }.abi_encode(),
+            &IGovernance::getOipsByAuthorCall {
+                author: AUTHOR,
+                offset: U256::ZERO,
+                limit: U256::from(10),
+            }
+            .abi_encode(),
             OUTSIDER,
             U256::ZERO,
         )
@@ -182,7 +191,11 @@ fn governance_full_lifecycle_via_dispatch() {
         // nobody rejected → empty
         let out = gov_dispatch(
             storage.clone(),
-            &IGovernance::getRejectedOipsCall {}.abi_encode(),
+            &IGovernance::getRejectedOipsCall {
+                offset: U256::ZERO,
+                limit: U256::from(10),
+            }
+            .abi_encode(),
             OUTSIDER,
             U256::ZERO,
         )
