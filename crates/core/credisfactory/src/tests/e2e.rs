@@ -130,9 +130,7 @@ fn full_request_pay_reclaim_unpledge_flow() {
         );
 
         // Mint Alice enough Gratis to pledge.
-        Gratis::new(storage.clone())
-            .mine(alice(), pledge_amount)
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), pledge_amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
@@ -265,9 +263,7 @@ fn anadosis_inserts_per_installment_reclaim_note() {
         let anadosis_denom = denom.anadosis_denomination().unwrap();
         assert_eq!(anadosis_denom, DenomAmount::Gratis1);
 
-        Gratis::new(storage.clone())
-            .mine(alice(), pledge_amount)
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), pledge_amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
@@ -347,9 +343,7 @@ fn request_credis_rejects_overdue_anadosis() {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
         let amount = denom.amount();
-        Gratis::new(storage.clone())
-            .mine(alice(), amount * U256::from(2u64))
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount * U256::from(2u64)).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
@@ -453,7 +447,7 @@ fn pay_anadosis_rejects_non_owner_caller() {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
         let amount = denom.amount();
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
@@ -503,7 +497,7 @@ fn pay_anadosis_rejects_zero_reclaim_commitment() {
         let denom = DenomAmount::Gratis1;
         let denom_id = denom.id();
         let amount = denom.amount();
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 

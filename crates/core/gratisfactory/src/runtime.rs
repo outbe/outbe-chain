@@ -4,9 +4,9 @@
 //! (`outbe_gratispool`):
 //!
 //! Also owns the gratis mint/burn orchestration. `mine` wraps
-//! `outbe_gratis::Gratis::mine`, records the Fidelity acquisition cohort
+//! `outbe_gratis::api::mine`, records the Fidelity acquisition cohort
 //! (`cohort_in`), and emits `GratisMined`. `mine_coen` is the symmetric
-//! sale path: it wraps `outbe_gratis::Gratis::burn`, records the Fidelity
+//! sale path: it wraps `outbe_gratis::api::burn`, records the Fidelity
 //! sale cohort (`cohort_out`), mints native COEN 1:1, and emits `CoenMined`.
 //! Keeping both here puts the token movement and Fidelity bookkeeping in one
 //! place.
@@ -15,7 +15,7 @@ use alloy_primitives::{Address, U256};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
-use outbe_gratis::Gratis;
+use outbe_gratis::api as gratis;
 use outbe_gratispool::api as pool;
 use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
@@ -47,8 +47,7 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::DenomNotPledgeable.into());
     }
     let (new_root, leaf_index, amount) = pool::add_commitment(storage.clone(), denom, commitment)?;
-    let mut gratis = Gratis::new(storage);
-    gratis.pledge(caller, amount)?;
+    gratis::pledge(storage, caller, amount)?;
     Ok((new_root, leaf_index, amount))
 }
 
@@ -63,14 +62,12 @@ pub fn unpledge_gratis(
     caller: Address,
 ) -> Result<U256> {
     let amount = pool::verify_and_spend_for_unpledge(storage.clone(), caller, args)?;
-    let mut gratis = Gratis::new(storage);
-    gratis.unpledge(caller, amount)?;
+    gratis::unpledge(storage, caller, amount)?;
     Ok(amount)
 }
 
 pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
-    let mut gratis = Gratis::new(storage.clone());
-    gratis.mine(account, amount)?;
+    gratis::mine(storage.clone(), account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
@@ -87,8 +84,7 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
 }
 
 pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
-    let mut gratis = Gratis::new(storage.clone());
-    gratis.burn(account, amount)?;
+    gratis::burn(storage.clone(), account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_out(storage.clone(), account, amount, now)?;

@@ -47,9 +47,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let amount = DenomAmount::Gratis1.amount();
-        Gratis::new(storage.clone())
-            .mine(alice(), amount * U256::from(2u64))
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount * U256::from(2u64)).unwrap();
         seed_fidelity(storage.clone(), alice());
 
         let pledge_call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
@@ -119,9 +117,7 @@ fn pledge_duplicate_commitment_reverts() {
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let amount = DenomAmount::Gratis1.amount();
-        Gratis::new(storage.clone())
-            .mine(alice(), amount * U256::from(2u64))
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount * U256::from(2u64)).unwrap();
         seed_fidelity(storage.clone(), alice());
 
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
@@ -146,7 +142,7 @@ fn unpledge_releases_escrow_back_to_pledger() {
         let amount = denom.amount();
 
         // Alice pledges.
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         let secret = U256::from(0xAAu64);
         let null_s = U256::from(0xBBu64);
@@ -273,7 +269,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         // Seed gratis to burn plus an active Fidelity cohort of the SAME size
         // acquired a year ago, so it has positive RCFI now and is fully
         // consumed by the sale.
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
         outbe_fidelity::api::cohort_in(
             storage.clone(),
             alice(),
@@ -315,9 +311,7 @@ fn mine_coen_rejects_insufficient_balance() {
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         // Alice holds 100 gratis but tries to convert 200.
-        Gratis::new(storage.clone())
-            .mine(alice(), U256::from(100u64))
-            .unwrap();
+        outbe_gratis::api::mine(storage.clone(), alice(), U256::from(100u64)).unwrap();
 
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(
             IGratisFactory::mineCoenCall {
