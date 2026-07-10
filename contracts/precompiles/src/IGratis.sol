@@ -33,6 +33,11 @@ interface IGratis {
     // gratis-specific — confidential pledged amount, returned as ciphertext.
     function pledgedOf(address account) external view returns (bytes memory);
 
+    // Current modify-auth replay counter for `account` — the value a write's
+    // authorization (`mac`) must bind and that must be passed as `opNonce`.
+    // Public: it is a per-account write counter, not a balance.
+    function opNonceOf(address account) external view returns (uint64);
+
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

@@ -1,14 +1,8 @@
 import { ethers, Wallet } from "ethers";
-import {
-  IGratis__factory,
-  IGratisFactory__factory,
-  IGratisPool__factory,
-} from "./contracts/index.js";
+import { IGratis__factory, IGratisFactory__factory } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
   DEFAULT_GRATIS_FACTORY_ADDRESS,
-  DEFAULT_GRATIS_POOL_ADDRESS,
-  GRATIS_DENOMINATIONS,
   formatToken,
   formatTokenDiff,
   fetchTokenMeta,
@@ -17,35 +11,19 @@ import {
   requireEnv,
 } from "./utils.js";
 import {
-  commitmentHash,
-  toField,
-  fieldToHex32,
-} from "./shielded.js";
+  deriveGratisKeys,
+  decryptBalance,
+  decryptPledged,
+  modifyMac,
+  pledgeSecret,
+  GratisOp,
+} from "./confidential.js";
 import { writeTicket } from "./ticket.js";
 
-// Parse CLI args: [denomId] [envName]
-// denomId defaults to 2 (Gratis1, the smallest *pledgeable* denomination).
-// id 0 is invalid and id 1 (Gratis0_1) is the reserved anadosis-only sub-rung
-// that `pledgeGratis` rejects — see `utils.ts::GRATIS_DENOMINATIONS`.
-const denomId = process.argv[2] !== undefined ? Number(process.argv[2]) : 2;
+// CLI: [amountGratis] [envName]. Amount defaults to "1" GRATIS (raw amount —
+// the denomination ladder is gone with the TEE migration).
+const amountArg = process.argv[2] || "1";
 const envName = process.argv[3] || DEFAULT_ENV;
-
-const denom = (() => {
-  const d = GRATIS_DENOMINATIONS.find((x) => x.id === denomId);
-  if (!d) {
-    console.error(
-      `Unknown denomId ${denomId}. Valid: ${GRATIS_DENOMINATIONS.map((x) => x.id).join(", ")}`,
-    );
-    process.exit(1);
-  }
-  if (!d.pledgeable) {
-    console.error(
-      `denomId ${denomId} is reserved (anadosis-only) and cannot be pledged. Pledgeable ids: ${GRATIS_DENOMINATIONS.filter((x) => x.pledgeable).map((x) => x.id).join(", ")}`,
-    );
-    process.exit(1);
-  }
-  return d;
-})();
 
 const { envPath } = loadEnv(import.meta.url, envName);
 
@@ -54,130 +32,99 @@ const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
-const gratisPoolAddress = process.env["GRATIS_POOL_ADDRESS"] || DEFAULT_GRATIS_POOL_ADDRESS;
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new Wallet(userPrivateKey, provider);
   const gratis = IGratis__factory.connect(gratisAddress, wallet);
   const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
-  const gratisPool = IGratisPool__factory.connect(gratisPoolAddress, provider);
 
   const gratisMeta = await fetchTokenMeta(gratis);
+  const amount = ethers.parseUnits(amountArg, gratisMeta.decimals);
+  const { chainId } = await provider.getNetwork();
 
-  // Fresh 32-byte secrets reduced into the BN254 scalar field. This matches the
-  // on-chain `state.rs::u256_to_fr` reduction.
-  const secret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const nullifierSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const commitment = await commitmentHash(secret, nullifierSecret, denomId);
+  // Fetch the user's enclave-derived confidential keys (view + modify) so we can
+  // read the encrypted balance and authorize the write.
+  const keys = await deriveGratisKeys(provider, userAddress);
 
-  console.log("=== Pledge Gratis (shielded) ===");
-  console.log(`Env:           ${envName} (${envPath})`);
-  console.log(`RPC:           ${rpcUrl}`);
-  console.log(`User:          ${userAddress}`);
-  console.log(`Gratis:        ${gratisAddress} (${gratisMeta.symbol}, ${gratisMeta.decimals} decimals)`);
-  console.log(`Factory:       ${gratisFactoryAddress}`);
-  console.log(`Pool:          ${gratisPoolAddress}`);
-  console.log(`Denom:         ${denomId} = ${formatToken(denom.amount, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`Secret:        ${fieldToHex32(secret)}`);
-  console.log(`NullifierSecr: ${fieldToHex32(nullifierSecret)}`);
-  console.log(`Commitment:    ${fieldToHex32(commitment)}`);
+  const opNonce = await gratis.opNonceOf(userAddress);
+  const balanceBefore = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const pledgedBefore = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));
 
-  const gratisBalance = await gratis.balanceOf(userAddress);
-  if (gratisBalance < denom.amount) {
+  console.log("=== Pledge Gratis (confidential / TEE) ===");
+  console.log(`Env:        ${envName} (${envPath})`);
+  console.log(`RPC:        ${rpcUrl}`);
+  console.log(`User:       ${userAddress}`);
+  console.log(`Gratis:     ${gratisAddress} (${gratisMeta.symbol})`);
+  console.log(`Factory:    ${gratisFactoryAddress}`);
+  console.log(`Amount:     ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`Op-nonce:   ${opNonce}`);
+
+  console.log("\n=== State BEFORE (decrypted with the view key) ===");
+  console.log(`  Balance:  ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledged:  ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+
+  if (balanceBefore < amount) {
     console.error(
-      `Insufficient Gratis balance: have ${formatToken(gratisBalance, gratisMeta.decimals, gratisMeta.symbol)}, need ${formatToken(denom.amount, gratisMeta.decimals, gratisMeta.symbol)}`,
+      `Insufficient Gratis balance: have ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}, need ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)}`,
     );
     process.exit(1);
   }
 
-  const [balanceBefore, pledgedBefore, pledgedTotalBefore, leafCountBefore, rootBefore] =
-    await Promise.all([
-      gratis.balanceOf(userAddress),
-      gratis.pledgedOf(userAddress),
-      gratis.pledgedTotalSupply(),
-      gratisPool.leafCount(denomId),
-      gratisPool.currentRoot(denomId),
-    ]);
+  // Authorize the pledge with the modify key, bound to the current op-nonce.
+  const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Pledge, amount, opNonce, chainId);
 
-  console.log("\n=== State BEFORE ===");
-  console.log(`  User balance:    ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  User pledged:    ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged total:   ${formatToken(pledgedTotalBefore, gratisMeta.decimals, gratisMeta.symbol)} (system-wide)`);
-  console.log(`  Pool leafCount:  ${leafCountBefore} (denom ${denomId})`);
-  console.log(`  Pool root:       ${fieldToHex32(rootBefore)}`);
-
-  console.log("\nSending pledgeGratis tx...");
-  const tx = await gratisFactory.pledgeGratis(denomId, commitment);
+  console.log("\nSending pledgeGratis(amount, mac, opNonce)...");
+  const tx = await gratisFactory.pledgeGratis(amount, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("pledgeGratis tx receipt missing");
   console.log(`  Block:   ${receipt.blockNumber}`);
-  console.log(`  Gas:     ${receipt.gasUsed}`);
 
-  // Decode the CommitmentInserted event from the pool to capture leafIndex + new root.
-  const poolIface = IGratisPool__factory.createInterface();
-  const inserted = receipt.logs
-    .filter((l) => l.address.toLowerCase() === gratisPoolAddress.toLowerCase())
+  // Capture the confidential pledge handle from the GratisPledged event.
+  const factoryIface = IGratisFactory__factory.createInterface();
+  const pledged = receipt.logs
+    .filter((l) => l.address.toLowerCase() === gratisFactoryAddress.toLowerCase())
     .map((l) => {
       try {
-        return poolIface.parseLog({ topics: l.topics as string[], data: l.data });
+        return factoryIface.parseLog({ topics: l.topics as string[], data: l.data });
       } catch {
         return null;
       }
     })
-    .find((p) => p?.name === "CommitmentInserted");
+    .find((p) => p?.name === "GratisPledged");
+  if (!pledged) throw new Error("GratisPledged event not found in receipt");
+  const handle = pledged.args.pledgeHandle as string;
 
-  if (!inserted) {
-    throw new Error("CommitmentInserted event not found in receipt");
-  }
+  // The bearer secret the user hands to the CCA to request credis later.
+  const secret = pledgeSecret(keys.modifyKey, handle);
 
-  const eventCommitment = BigInt(inserted.args.commitment);
-  const eventLeafIndex = Number(inserted.args.leafIndex);
-  const eventRoot = BigInt(inserted.args.newRoot);
+  const balanceAfter = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const pledgedAfter = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));
 
-  if (eventCommitment !== commitment) {
-    throw new Error(
-      `Poseidon parity mismatch: sent commitment ${fieldToHex32(commitment)} but on-chain event recorded ${fieldToHex32(eventCommitment)}. Off-chain Poseidon does not agree with the runtime — abort before any unpledge would silently fail.`,
-    );
-  }
-
-  const [balanceAfter, pledgedAfter, pledgedTotalAfter, leafCountAfter] =
-    await Promise.all([
-      gratis.balanceOf(userAddress),
-      gratis.pledgedOf(userAddress),
-      gratis.pledgedTotalSupply(),
-      gratisPool.leafCount(denomId),
-    ]);
-
-  console.log("\n=== State AFTER ===");
-  console.log(`  User balance:    ${formatToken(balanceAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  User pledged:    ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged total:   ${formatToken(pledgedTotalAfter, gratisMeta.decimals, gratisMeta.symbol)} (system-wide)`);
-  console.log(`  Pool leafCount:  ${leafCountAfter} (denom ${denomId})`);
-  console.log(`  Pool root:       ${fieldToHex32(eventRoot)}`);
-  console.log(`  Leaf index:      ${eventLeafIndex}`);
+  console.log("\n=== State AFTER (decrypted with the view key) ===");
+  console.log(`  Balance:       ${formatToken(balanceAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledged:       ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledge handle: ${handle}`);
 
   console.log("\n=== CHANGES ===");
   console.log(`  Balance:  ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
   console.log(`  Pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
 
-  const network = await provider.getNetwork();
   const ticketPath = writeTicket({
-    denomId,
-    secret: fieldToHex32(secret),
-    nullifierSecret: fieldToHex32(nullifierSecret),
-    commitment: fieldToHex32(commitment),
-    leafIndex: eventLeafIndex,
-    root: fieldToHex32(eventRoot),
+    pledgeHandle: handle,
+    pledgeSecret: ethers.hexlify(secret),
+    amount: amount.toString(),
+    opNonce: Number(opNonce),
     blockNumber: receipt.blockNumber,
     txHash: receipt.hash,
-    chainId: network.chainId.toString(),
+    chainId: chainId.toString(),
     createdAt: new Date().toISOString(),
   });
 
   console.log(`\nTicket written: ${ticketPath}`);
-  console.log("Run `npm run unpledge-gratis-fast` to spend this commitment.");
+  console.log("Hand the pledgeSecret to the CCA, then run `npm run request-credis`.");
+  console.log("(Or `npm run unpledge-gratis-fast` to directly reclaim this unspent pledge.)");
 }
 
 main().catch((error) => {

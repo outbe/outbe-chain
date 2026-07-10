@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare-abis": "node scripts/prepare-abis.mjs",
-    "write-vk": "tsx src/_writevk.ts",
-    "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json' && npm run write-vk",
+    "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json'",
     "build": "npm run generate-types && tsc",
     "clean": "rm -rf dist abi src/contracts",
     "info": "tsx src/0-info.ts",
@@ -18,19 +17,15 @@
     "request-credis": "tsx src/3-request-credis.ts",
     "cca-simulate-purchase": "tsx src/4-cca-simulate-purchase.ts",
     "user-sa-withdraw": "tsx src/4.1-user-sa-withdraw.ts",
-    "user-pays-anadosis": "tsx src/5-user-pays-anadosis.ts",
-    "unpledge-gratis": "tsx src/6-user-unpledge-gratis.ts"
+    "user-pays-anadosis": "tsx src/5-user-pays-anadosis.ts"
   },
   "dependencies": {
-    "@aztec/bb.js": "5.0.0-nightly.20260522",
-    "@noir-lang/noir_js": "1.0.0-beta.22",
-    "circomlibjs": "^0.1.7",
+    "@noble/curves": "^1.6.0",
     "dotenv": "^16.3.0",
     "ethers": "^6.13.0"
   },
   "devDependencies": {
     "@typechain/ethers-v6": "^0.5.1",
-    "@types/circomlibjs": "^0.1.6",
     "@types/node": "^20.0.0",
     "tsx": "^4.7.0",
     "typechain": "^8.3.2",

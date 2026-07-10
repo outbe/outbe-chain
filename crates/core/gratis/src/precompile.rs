@@ -39,6 +39,7 @@ pub fn dispatch(
             // Confidential reads — return ciphertext; decrypt client-side.
             balanceOf(c) => view(c, |c| gratis.balance_ct_of(c.account).map(Bytes::from)),
             pledgedOf(c) => view(c, |c| gratis.pledged_ct_of(c.account).map(Bytes::from)),
+            opNonceOf(c) => view(c, |c| gratis.op_nonce_of(c.account)),
 
             // Non-transferable surface.
             allowance(c) => view(c, |_c| Ok(U256::ZERO)),
