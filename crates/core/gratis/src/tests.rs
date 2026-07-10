@@ -194,9 +194,10 @@ fn pledge_request_credis_and_pay_anadosis_flow() {
         // secret from her modify key + the public handle and binds it to `bundle`.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let credis_amount =
+        let (credis_amount, eoa) =
             api::pledge_to_bundle(storage.clone(), handle, bundle(), spend).unwrap();
         assert_eq!(credis_amount, amount);
+        assert_eq!(eoa, alice(), "pledger EOA surfaced for the position");
 
         // A wrong bundle binding is rejected (front-running defense).
         let bad = spend_auth_mac(&pledge_secret(&mk, handle), bundle());

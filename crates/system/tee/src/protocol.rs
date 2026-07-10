@@ -209,6 +209,11 @@ pub struct GratisOpResult {
     /// Pledged amount surfaced for credis (`PledgeToBundle`) or the installment
     /// amount released (`UnlockToEoa`); zero otherwise.
     pub gratis_amount: U256,
+    /// The original pledger EOA, revealed to the host by `PledgeToBundle` so the
+    /// credis position can store it for the later `UnlockToEoa`. (Accepted
+    /// linkage-visibility tradeoff — see the `apply_unlock_to_eoa` TODO. Zero for
+    /// other ops.)
+    pub pledger_eoa: Address,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
     /// The account's next modify-auth nonce (for the host to persist).

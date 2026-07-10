@@ -44,7 +44,6 @@ members = [
     "crates/core/promislimit",
     "crates/core/tributefactory",
     "crates/core/gratisfactory",
-    "crates/core/gratispool",
     "crates/core/e2e",
     "crates/core/common",
     # binaries
@@ -122,7 +121,6 @@ outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }
 outbe-gratisfactory = { path = "crates/core/gratisfactory" }
-outbe-gratispool = { path = "crates/core/gratispool" }
 outbe-e2e = { path = "crates/core/e2e" }
 outbe-common = { path = "crates/core/common" }
 

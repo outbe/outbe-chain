@@ -6835,10 +6835,11 @@ dependencies = [
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratisfactory",
- "outbe-gratispool",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
@@ -6982,7 +6983,6 @@ dependencies = [
  "outbe-gemfactory",
  "outbe-gratis",
  "outbe-gratisfactory",
- "outbe-gratispool",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-metadosis",
@@ -7107,22 +7107,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-gratispool"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ark-bn254 0.6.0",
- "ark-ff 0.6.0",
- "outbe-macros",
- "outbe-poseidon",
- "outbe-primitives",
- "outbe-zk-backend",
- "outbe-zk-canonical",
  "thiserror 2.0.18",
 ]
 

@@ -100,13 +100,14 @@ pub fn unpledge(
 // --- Credis-driven ---
 
 /// requestCredis: consume `pledge_handle` for `bundle` (authorized by
-/// `spend_auth`) and return the pledged gratis amount.
+/// `spend_auth`). Returns `(gratis_amount, pledger_eoa)` — the EOA is surfaced so
+/// the credis position can store it for the later per-installment unlock.
 pub fn pledge_to_bundle(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
     spend_auth: [u8; 32],
-) -> Result<U256> {
+) -> Result<(U256, Address)> {
     runtime::pledge_to_bundle(storage, pledge_handle, bundle, spend_auth)
 }
 

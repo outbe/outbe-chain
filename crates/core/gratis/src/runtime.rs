@@ -251,14 +251,15 @@ pub(crate) fn unpledge(
 }
 
 /// requestCredis: consume `pledge_handle` for a credis request, binding it to
-/// `bundle`. Returns the pledged gratis amount so credis can size the position.
-/// Authorized by `spend_auth` (not a modify key).
+/// `bundle`. Returns `(gratis_amount, pledger_eoa)` so credis can size the
+/// position and store the EOA for the later unlock. Authorized by `spend_auth`
+/// (not a modify key).
 pub(crate) fn pledge_to_bundle(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
     spend_auth: [u8; 32],
-) -> Result<U256> {
+) -> Result<(U256, Address)> {
     let gratis = Gratis::new(storage.clone());
     let req = GratisOpRequest {
         op: GratisOp::PledgeToBundle,
@@ -277,7 +278,7 @@ pub(crate) fn pledge_to_bundle(
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     gratis.write_pledge_record_ct(pledge_handle, &result.new_pledge_record)?;
-    Ok(result.gratis_amount)
+    Ok((result.gratis_amount, result.pledger_eoa))
 }
 
 /// payAnadosis: release one installment of pledged collateral from

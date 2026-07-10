@@ -299,6 +299,7 @@ fn base_result() -> GratisOpResult {
         new_pledge_record: Vec::new(),
         pledge_handle: B256::ZERO,
         gratis_amount: U256::ZERO,
+        pledger_eoa: Address::ZERO,
         event_amount: U256::ZERO,
         next_op_nonce: 0,
         inputs_canonical_hash: B256::ZERO,
@@ -483,6 +484,9 @@ fn apply_pledge_to_bundle(state_key: &[u8; 32], req: &GratisOpRequest) -> Result
     let mut r = base_result();
     r.new_pledge_record = write_record(state_key, handle, rver, &record)?;
     r.gratis_amount = record.amount;
+    // Reveal the pledger EOA so the credis position can store it for the later
+    // per-installment unlock (accepted linkage-visibility tradeoff).
+    r.pledger_eoa = record.eoa;
     r.event_amount = record.amount;
     Ok(r)
 }

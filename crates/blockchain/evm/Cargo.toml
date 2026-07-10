@@ -10,7 +10,6 @@ publish.workspace = true
 outbe-primitives.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
-outbe-gratispool.workspace = true
 outbe-promis.workspace = true
 outbe-promisfactory.workspace = true
 outbe-tribute.workspace = true
