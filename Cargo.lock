@@ -7104,8 +7104,9 @@ dependencies = [
  "alloy-sol-types",
  "outbe-fidelity",
  "outbe-gratis",
- "outbe-gratispool",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "thiserror 2.0.18",
 ]
 
@@ -7290,6 +7291,8 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",

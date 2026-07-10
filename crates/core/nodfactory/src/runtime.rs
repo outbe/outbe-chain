@@ -93,6 +93,7 @@ pub fn mine_gratis(
     nod_id: U256,
     nonce: U256,
     asset: Address,
+    auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = nod_api::get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     if caller != item.owner {
@@ -148,7 +149,7 @@ pub fn mine_gratis(
         },
     )?;
 
-    outbe_gratisfactory::api::mine(storage.clone(), caller, item.gratis_load_minor)?;
+    outbe_gratisfactory::api::mine(storage.clone(), caller, item.gratis_load_minor, auth)?;
 
     Ok(item.gratis_load_minor)
 }

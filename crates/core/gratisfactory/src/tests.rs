@@ -1,15 +1,19 @@
-use alloy_primitives::{address, Address, Bytes, U256};
+//! Confidential gratisfactory tests driven by the in-process enclave engine
+//! (`outbe_gratis::enclave_client::test_enclave`). Balances/pledged amounts are
+//! asserted by decrypting the ciphertext with the account's view key exactly as a
+//! client would; writes carry a `ModifyAuth` bound to the account's op-nonce.
+
+use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
-use outbe_gratis::Gratis;
-use outbe_gratispool::constants::{DenomAmount, ACTION_UNPLEDGE};
-use outbe_gratispool::schema::GratisPoolContract;
-use outbe_gratispool::verifier::with_verifier_outcome;
-use outbe_gratispool::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
-use outbe_primitives::addresses::CREDIS_ADDRESS;
+use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_tee::protocol::{GratisOp, ModifyAuth};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
@@ -20,12 +24,40 @@ const CREATED_AT: u64 = 1_700_000_000;
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
+fn chain_b256() -> B256 {
+    B256::from(U256::from(CHAIN_ID))
+}
 
-/// Gives `account` a positive RCFI by recording a gratis cohort acquired one
-/// year before the test's block time. `pledge_gratis` gates on
-/// `get_rcfi(caller) > 0`, so any test that expects a pledge to pass the
-/// fidelity check must seed this first (and the storage timestamp must be set
-/// so `get_rcfi` reads a non-zero `now`).
+/// Build the modify authorization a client holding `owner`'s modify key sends for
+/// `op` on `amount` at `op_nonce`.
+fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
+    let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+    ModifyAuth {
+        mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
+        op_nonce,
+    }
+}
+
+fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::balance_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_balance(&vk, a, &blob).unwrap()
+}
+
+fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_pledged(&vk, a, &blob).unwrap()
+}
+
+/// Give `account` a positive Fidelity index so `pledge_gratis` clears the
+/// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     outbe_fidelity::api::cohort_in(
@@ -37,210 +69,158 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     .unwrap();
 }
 
-fn dispatch_call_bytes(call: IGratisFactory::IGratisFactoryCalls) -> Bytes {
-    Bytes::from(call.abi_encode())
+/// Run `f` in a fresh storage scope with the in-process enclave installed and the
+/// block time set (so Fidelity reads a non-zero `now`).
+fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    test_enclave::install();
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    let out = StorageHandle::enter(&mut storage, |s| f(s.clone()));
+    test_enclave::uninstall();
+    out
+}
+
+fn pledge_call(a: ModifyAuth, amount: U256) -> Bytes {
+    Bytes::from(
+        IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
+            amount,
+            mac: FixedBytes(a.mac),
+            opNonce: a.op_nonce,
+        })
+        .abi_encode(),
+    )
 }
 
 #[test]
-fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let amount = DenomAmount::Gratis1.amount();
-        outbe_gratis::api::mine(storage.clone(), alice(), amount * U256::from(2u64)).unwrap();
+fn pledge_debits_balance_and_credits_pledged_ledger() {
+    with_env(|storage| {
+        let amount = U256::from(1000u64);
+        let seed = amount * U256::from(2u64);
+        outbe_gratis::api::mine(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mine, alice(), seed, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
 
-        let pledge_call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: DenomAmount::Gratis1.id(),
-                commitment: U256::from(0xA1u64),
-            },
-        ));
-        dispatch(storage.clone(), &pledge_call, alice(), U256::ZERO).unwrap();
+        // Pledge at op-nonce 1 (mine advanced it from 0).
+        let out = dispatch(
+            storage.clone(),
+            &pledge_call(auth(GratisOp::Pledge, alice(), amount, 1), amount),
+            alice(),
+            U256::ZERO,
+        )
+        .unwrap();
+        let handle = IGratisFactory::pledgeGratisCall::abi_decode_returns(&out).unwrap();
+        assert_ne!(handle, B256::ZERO, "a pledge handle is returned");
 
-        // Caller debited; per-pledger ledger credited; escrow holds amount.
-        let gratis = Gratis::new(storage.clone());
-        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
-        assert_eq!(gratis.balance_of(CREDIS_ADDRESS).unwrap(), amount);
-        assert_eq!(gratis.pledged_of(alice()).unwrap(), amount);
-
-        // Commitment landed in the pool tree.
-        let pool = GratisPoolContract::new(storage);
-        assert_eq!(pool.leaf_count(DenomAmount::Gratis1.id()).unwrap(), 1);
+        // Balance debited, per-account pledged ledger + aggregate credited.
+        assert_eq!(view_balance(&storage, alice()), amount);
+        assert_eq!(view_pledged(&storage, alice()), amount);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            amount
+        );
     });
 }
 
 #[test]
-fn pledge_unknown_denom_reverts() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        // Seed fidelity so the pledge clears the RCFI gate and reaches the
-        // denomination check we're actually asserting here.
+fn pledge_rejects_wrong_op_nonce() {
+    with_env(|storage| {
+        let amount = U256::from(1000u64);
+        outbe_gratis::api::mine(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mine, alice(), amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
 
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: 99,
-                commitment: U256::from(0xA2u64),
-            },
-        ));
-        let err = dispatch(storage, &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("denomination id out of range"));
+        // op-nonce is 1 after the mine; a stale/forged 5 must be rejected.
+        let err = dispatch(
+            storage.clone(),
+            &pledge_call(auth(GratisOp::Pledge, alice(), amount, 5), amount),
+            alice(),
+            U256::ZERO,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("op nonce"), "got: {err}");
     });
 }
 
 #[test]
-fn pledge_rejects_reserved_denom() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        // Seed fidelity so the pledge clears the RCFI gate and reaches the
-        // pledgeability check. `Gratis0_1` is reserved as the anadosis-only
-        // reclaim destination and must never accept a direct pledge.
+fn unpledge_returns_collateral_to_pledger() {
+    with_env(|storage| {
+        let amount = U256::from(1000u64);
+        outbe_gratis::api::mine(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mine, alice(), amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
+        let handle = runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+        )
+        .unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
 
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: DenomAmount::Gratis0_1.id(),
-                commitment: U256::from(0xA6u64),
-            },
-        ));
-        let err = dispatch(storage, &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("reserved and cannot be pledged"));
-    });
-}
-
-#[test]
-fn pledge_duplicate_commitment_reverts() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let amount = DenomAmount::Gratis1.amount();
-        outbe_gratis::api::mine(storage.clone(), alice(), amount * U256::from(2u64)).unwrap();
-        seed_fidelity(storage.clone(), alice());
-
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: DenomAmount::Gratis1.id(),
-                commitment: U256::from(0xA3u64),
-            },
-        ));
+        // Direct unpledge (credis rejected) at op-nonce 2.
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::unpledgeGratis(
+                IGratisFactory::unpledgeGratisCall {
+                    amount,
+                    pledgeHandle: handle,
+                    mac: FixedBytes(auth(GratisOp::Unpledge, alice(), amount, 2).mac),
+                    opNonce: 2,
+                },
+            )
+            .abi_encode(),
+        );
         dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        let err = dispatch(storage, &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("commitment already exists"));
-    });
-}
 
-#[test]
-fn unpledge_releases_escrow_back_to_pledger() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis1;
-        let denom_id = denom.id();
-        let amount = denom.amount();
-
-        // Alice pledges.
-        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
-        seed_fidelity(storage.clone(), alice());
-        let secret = U256::from(0xAAu64);
-        let null_s = U256::from(0xBBu64);
-        let commitment = commitment_hash(secret, null_s, denom).unwrap();
-        // pledge_gratis returns the post-insert Merkle root; reuse it as the
-        // spend proof's public input instead of re-reading from state.
-        let (pledge_root, _, _) =
-            runtime::pledge_gratis(storage.clone(), alice(), denom_id, commitment).unwrap();
-
-        // Alice spends the pool commitment back to herself. The per-account
-        // pledged ledger is keyed by `account`, so the unpledge destination
-        // must match the pledger in the current PoC; the shielded part of
-        // the design is the on-chain link between commitment and depositor,
-        // not the destination address.
-        let args = outbe_gratispool::SpendArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(null_s).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(ACTION_UNPLEDGE, alice(), CHAIN_ID, U256::ZERO)
-                .unwrap(),
-            proof: vec![0x00; 32],
-        };
-        let returned = with_verifier_outcome(true, || {
-            runtime::unpledge_gratis(storage.clone(), &args, alice()).unwrap()
-        });
-        assert_eq!(returned, amount);
-
-        // Gratis landed back at Alice; escrow drained; per-pledger ledger zero.
-        let gratis = Gratis::new(storage);
-        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
-        assert_eq!(gratis.balance_of(CREDIS_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(gratis.pledged_of(alice()).unwrap(), U256::ZERO);
-    });
-}
-
-#[test]
-fn supports_interface() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::supportsInterface(
-            IGratisFactory::supportsInterfaceCall {
-                interfaceId: alloy_primitives::FixedBytes(ERC165_INTERFACE_ID),
-            },
-        ));
-        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        assert!(IGratisFactory::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
-
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::supportsInterface(
-            IGratisFactory::supportsInterfaceCall {
-                interfaceId: alloy_primitives::FixedBytes([0xde, 0xad, 0xbe, 0xef]),
-            },
-        ));
-        let out = dispatch(storage, &call, alice(), U256::ZERO).unwrap();
-        assert!(!IGratisFactory::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
-    });
-}
-
-#[test]
-fn rejects_msg_value() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::pledgeGratis(
-            IGratisFactory::pledgeGratisCall {
-                denomId: 1,
-                commitment: U256::from(0xA5u64),
-            },
-        ));
-        let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
-        assert!(err.to_string().contains("non-payable"));
+        assert_eq!(view_balance(&storage, alice()), amount);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
     });
 }
 
 #[test]
 fn mine_mints_gratis_and_records_fidelity_cohort() {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
+    with_env(|storage| {
         let amount = U256::from(1_000u64);
-        // No cohort yet: RCFI a year out is zero. Asserting this up front is what
-        // makes the post-mine `> 0` check prove `mine` recorded the cohort
-        // (rather than it having pre-existed).
         let later = CREATED_AT + ONE_YEAR_SECS;
         let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .compute_fidelity_index(alice(), later)
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        runtime::mine(storage.clone(), alice(), amount).unwrap();
+        runtime::mine(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mine, alice(), amount, 0),
+        )
+        .unwrap();
 
-        // Gratis minted to the recipient and into total supply.
-        let gratis = Gratis::new(storage.clone());
-        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
-        assert_eq!(gratis.total_supply().unwrap(), amount);
+        assert_eq!(view_balance(&storage, alice()), amount);
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            amount
+        );
 
-        // The acquisition cohort was recorded at the current block time, so the
-        // aged RCFI a year later is now positive. If `mine` stopped calling
-        // `cohort_in`, this would stay zero and fail.
+        // The acquisition cohort was recorded, so aged RCFI a year later is positive.
         let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
             .compute_fidelity_index(alice(), later)
             .unwrap();
@@ -250,26 +230,33 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
 
 #[test]
 fn mine_rejects_zero_amount() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::mine(storage, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("amount must be positive"));
+    with_env(|storage| {
+        let err = runtime::mine(
+            storage.clone(),
+            alice(),
+            U256::ZERO,
+            auth(GratisOp::Mine, alice(), U256::ZERO, 0),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("amount must be positive"),
+            "got: {err}"
+        );
     });
 }
 
 #[test]
 fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
+    with_env(|storage| {
         let amount = U256::from(1_000u64);
-
-        // Seed gratis to burn plus an active Fidelity cohort of the SAME size
-        // acquired a year ago, so it has positive RCFI now and is fully
-        // consumed by the sale.
-        outbe_gratis::api::mine(storage.clone(), alice(), amount).unwrap();
+        outbe_gratis::api::mine(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mine, alice(), amount, 0),
+        )
+        .unwrap();
         outbe_fidelity::api::cohort_in(
             storage.clone(),
             alice(),
@@ -282,22 +269,26 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
             .unwrap();
         assert!(rcfi_before > U256::ZERO);
 
-        // mineCoen on the gratisfactory precompile.
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(
-            IGratisFactory::mineCoenCall { amount },
-        ));
+        // mineCoen burns gratis (op = Burn) at op-nonce 1.
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                amount,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
         let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
         let minted = IGratisFactory::mineCoenCall::abi_decode_returns(&out).unwrap();
         assert_eq!(minted, amount);
 
-        // Gratis fully burned; native COEN minted 1:1 to the seller.
-        let gratis = Gratis::new(storage.clone());
-        assert_eq!(gratis.balance_of(alice()).unwrap(), U256::ZERO);
-        assert_eq!(gratis.total_supply().unwrap(), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(storage.balance(alice()).unwrap(), amount);
 
-        // The active cohort was fully sold via cohort_out, so RCFI is now zero.
-        // If the sale hook were dropped, this would stay positive and fail.
         let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
             .get_fidelity_index(alice())
             .unwrap();
@@ -307,25 +298,77 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
 
 #[test]
 fn mine_coen_rejects_insufficient_balance() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        // Alice holds 100 gratis but tries to convert 200.
-        outbe_gratis::api::mine(storage.clone(), alice(), U256::from(100u64)).unwrap();
+    with_env(|storage| {
+        outbe_gratis::api::mine(
+            storage.clone(),
+            alice(),
+            U256::from(100u64),
+            auth(GratisOp::Mine, alice(), U256::from(100u64), 0),
+        )
+        .unwrap();
 
-        let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(
-            IGratisFactory::mineCoenCall {
-                amount: U256::from(200u64),
-            },
-        ));
-        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("insufficient balance"));
-
-        // No native COEN minted, gratis untouched (atomic revert).
-        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
-        assert_eq!(
-            Gratis::new(storage.clone()).balance_of(alice()).unwrap(),
-            U256::from(100u64)
+        let amount = U256::from(200u64);
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                amount,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
         );
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("insufficient balance"),
+            "got: {err}"
+        );
+
+        // Atomic revert: no COEN minted, gratis untouched.
+        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), U256::from(100u64));
+    });
+}
+
+#[test]
+fn supports_interface() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::supportsInterface(
+                IGratisFactory::supportsInterfaceCall {
+                    interfaceId: FixedBytes(ERC165_INTERFACE_ID),
+                },
+            )
+            .abi_encode(),
+        );
+        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        assert!(IGratisFactory::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
+
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::supportsInterface(
+                IGratisFactory::supportsInterfaceCall {
+                    interfaceId: FixedBytes([0xde, 0xad, 0xbe, 0xef]),
+                },
+            )
+            .abi_encode(),
+        );
+        let out = dispatch(storage, &call, alice(), U256::ZERO).unwrap();
+        assert!(!IGratisFactory::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
+    });
+}
+
+#[test]
+fn rejects_msg_value() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
+                amount: U256::from(1u64),
+                mac: FixedBytes([0u8; 32]),
+                opNonce: 0,
+            })
+            .abi_encode(),
+        );
+        let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
+        assert!(err.to_string().contains("non-payable"), "got: {err}");
     });
 }
