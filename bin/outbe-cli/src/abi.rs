@@ -124,6 +124,7 @@ sol! {
             bytes nonce,
             uint256 ephemeralPubkey,
             uint16 referenceCurrency,
+            bool excludeFromIntexIssuance,
             bytes zkProof,
             bytes zkVerificationKey,
             bytes zkPublicKey,

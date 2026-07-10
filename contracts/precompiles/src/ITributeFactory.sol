@@ -12,6 +12,7 @@ interface ITributeFactory {
         bytes calldata nonce,
         uint256 ephemeralPubkey,
         uint16 referenceCurrency,
+        bool excludeFromIntexIssuance,
         bytes calldata zkProof,
         bytes calldata zkVerificationKey,
         bytes calldata zkPublicKey,

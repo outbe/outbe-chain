@@ -24,6 +24,11 @@
         "internalType": "uint16"
       },
       {
+        "name": "excludeFromIntexIssuance",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "zkProof",
         "type": "bytes",
         "internalType": "bytes"

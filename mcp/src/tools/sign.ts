@@ -48,11 +48,16 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
       worldwide_day: z.number().int().optional().describe("YYYYMMDD; default = first OFFERING day"),
       amount: coen.optional(),
       currency: z.number().int().optional().describe("ISO 4217 numeric, default 840 (USD)"),
+      exclude_from_intex_issuance: z
+        .boolean()
+        .optional()
+        .describe("exclude the resulting Tribute from Intex issuance (default false)"),
       wait: z.boolean().optional().describe("wait for the receipt (default true)"),
     },
-    handler(async ({ worldwide_day, amount, currency, wait }) => {
+    handler(async ({ worldwide_day, amount, currency, exclude_from_intex_issuance, wait }) => {
       if (!ctx.account) throw new Error("set OUTBE_PRIVATE_KEY to submit offers");
       const cur = currency ?? 840;
+      const excludeFromIntex = exclude_from_intex_issuance ?? false;
       const amt = amount ?? "100";
 
       const tee = resolveContract("teeregistry");
@@ -96,6 +101,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         bytesToHex(enc.nonce),
         enc.ephemeralPubkey,
         cur,
+        excludeFromIntex,
         "0x" as Hex,
         "0x" as Hex,
         "0x" as Hex,
@@ -110,6 +116,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         worldwide_day: day,
         currency: cur,
         amount_base: amt,
+        exclude_from_intex_issuance: excludeFromIntex,
         creator: ctx.account.address,
       };
       if (wait === false) return ok({ ...meta, status: "submitted" });
