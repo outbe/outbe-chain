@@ -10,7 +10,9 @@ use outbe_primitives::units::SCALE_1E18;
 use outbe_common::pow;
 use outbe_vaultprovider::api::IVaultProvider;
 
-use crate::constants::{FLOOR_MARKUP_PERCENT, SRA_COEFFICIENT_PERCENT};
+use outbe_gem::GEM_CALL_PERIOD_SECONDS;
+
+use crate::constants::{FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, SRA_COEFFICIENT_PERCENT};
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemTypes};
@@ -43,6 +45,7 @@ pub fn mint_gem(
     let issued_at = storage.timestamp()?.to::<u64>();
     let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
+    let call_threshold = call_threshold_with_markup(entry_price)?;
 
     let params = GemAddParams {
         owner,
@@ -51,6 +54,7 @@ pub fn mint_gem(
         entry_price,
         cost_amount,
         floor_price,
+        call_threshold,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -87,8 +91,18 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
     if item.owner != caller {
         return Err(GemFactoryError::NotGemOwner.into());
     }
-    if item.state != GemState::Qualified as u8 {
-        return Err(GemFactoryError::InvalidState.into());
+    // Settlement is allowed from Qualified (voluntary) or Called (forced). A
+    // Called gem must settle before its notice period lapses.
+    match item.state {
+        s if s == GemState::Qualified as u8 => {}
+        s if s == GemState::Called as u8 => {
+            let now = storage.timestamp()?.to::<u64>();
+            let deadline = u64::from(item.called_at) + u64::from(GEM_CALL_PERIOD_SECONDS);
+            if now > deadline {
+                return Err(GemFactoryError::DeadlineExpired.into());
+            }
+        }
+        _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
@@ -253,6 +267,15 @@ fn compute_cost(entry: U256, load: U256, percent: u64) -> Result<U256> {
 fn floor_with_markup(coen_rate: U256) -> Result<U256> {
     let acc = coen_rate
         .checked_mul(U256::from(FLOOR_MARKUP_PERCENT))
+        .ok_or(GemFactoryError::Overflow)?;
+    Ok(acc / U256::from(100u64))
+}
+
+/// Call Threshold = `entry × (1 + Call Rate)` = `entry × GEM_CALL_MARKUP_PERCENT
+/// / 100`. Entry equals the issuance-time coen rate in the single-currency case.
+fn call_threshold_with_markup(entry_price: U256) -> Result<U256> {
+    let acc = entry_price
+        .checked_mul(U256::from(GEM_CALL_MARKUP_PERCENT))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
 }

@@ -22,15 +22,19 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         entry_price: params.entry_price,
         cost_amount: params.cost_amount,
         floor_price: params.floor_price,
+        call_threshold: params.call_threshold,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         state: params.initial_state as u8,
         issued_at: params.issued_at,
+        called_at: 0,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)
 }
 
+/// Burn a settled gem (promis mining). Forfeit burns of Called gems go through
+/// the internal `GemContract::burn` from the daily scan, not this entry point.
 pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     let item = gem.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;

@@ -14,6 +14,9 @@ pub enum GemFactoryError {
     #[error("invalid state for action")]
     InvalidState,
 
+    #[error("call notice period expired")]
+    DeadlineExpired,
+
     #[error("merchant flow deferred")]
     MerchantDeferred,
 

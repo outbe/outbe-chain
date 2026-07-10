@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
@@ -6,7 +7,7 @@ use outbe_primitives::{
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::constants::QUALIFIER_REFERENCE_ISO;
+use crate::constants::{GEM_CALL_WINDOW_DAYS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::GemContract;
 
 pub struct GemLifecycle;
@@ -72,4 +73,69 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         };
     }
     Ok(promoted)
+}
+
+/// Cycle daily-trigger entry: run the Called scan, discarding the count.
+pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    scan_and_call(ctx)?;
+    Ok(())
+}
+
+/// Force-call breached Qualified gems and forfeit-burn expired Called gems.
+/// Only visits the `callable_gems` index (gems in Qualified/Called state);
+/// breach counts are recomputed from the oracle VWAP history each run. Returns
+/// the number of gems mutated (called or burned).
+pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let oracle = OracleContract::new(ctx.storage.clone());
+    let pair_hash = oracle
+        .settlement_iso_to_pair
+        .read(&QUALIFIER_REFERENCE_ISO)?;
+    if pair_hash.is_zero() {
+        return Ok(0);
+    }
+    let pair_id = oracle.pair_hash_to_id.read(&pair_hash)?;
+    if pair_id == 0 {
+        return Ok(0);
+    }
+
+    // Trailing window of finalized daily VWAPs, newest first. Read once: every
+    // candidate shares pair 840, so only the per-gem Call Threshold differs.
+    let today = WorldwideDay::from_timestamp(ctx.block.timestamp).previous_date_key();
+    let mut window: Vec<(WorldwideDay, Option<U256>)> =
+        Vec::with_capacity(GEM_CALL_WINDOW_DAYS as usize);
+    let mut day = today;
+    for _ in 0..GEM_CALL_WINDOW_DAYS {
+        window.push((day, oracle.get_worldwide_day_vwap_for_pair_id(day, pair_id)?));
+        day = day.previous_date_key();
+    }
+
+    // Snapshot the callable-gem ids before mutating: a forfeit burn swap-pops
+    // the list, which would shift a live cursor mid-scan.
+    let mut gem = GemContract::new(ctx.storage.clone());
+    let count = gem.callable_gems.len()?;
+    let mut ids: Vec<U256> = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        if let Some(id) = gem.callable_gems.get(i)? {
+            ids.push(id);
+        }
+    }
+
+    let now = ctx.block.timestamp;
+    let mut mutated: u32 = 0;
+    for gem_id in ids {
+        // Isolate per-gem: a deterministic Err rolls back this gem's checkpoint
+        // and is skipped, so one bad gem never halts the daily scan. Structural
+        // reads above keep `?` so infra errors still propagate. A gem is either
+        // Qualified (call) or Called (forfeit); the inapplicable op is a no-op.
+        let res = ctx.storage.with_checkpoint(|| {
+            if gem.call(&window, gem_id, now)? {
+                return Ok(true);
+            }
+            gem.forfeit(gem_id, now)
+        });
+        if matches!(res, Ok(true)) {
+            mutated = mutated.saturating_add(1);
+        }
+    }
+    Ok(mutated)
 }

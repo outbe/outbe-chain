@@ -114,6 +114,9 @@ impl GemContract<'_> {
         // skip non-candidates without scanning the full population.
         if item.state == GemState::Issued as u8 {
             self.insert_unqualified(item.gem_id, item.floor_price)?;
+        } else if item.state == GemState::Qualified as u8 {
+            // Genesis gems are born Qualified — index them as callable gems.
+            self.insert_callable(item.gem_id)?;
         }
 
         Ok(())
@@ -121,6 +124,12 @@ impl GemContract<'_> {
 
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
         self.gem_items.delete(item.gem_id)?;
+
+        // Drop the callable-gem entry when burning a Qualified/Called gem
+        // (forfeit). Settled gems (promis mining) were never listed.
+        if item.state == GemState::Qualified as u8 || item.state == GemState::Called as u8 {
+            self.remove_callable(item.gem_id)?;
+        }
 
         let idx = self.gem_index.read(&item.gem_id)?;
         let last = self
@@ -152,7 +161,61 @@ impl GemContract<'_> {
         if item.state == GemState::Issued as u8 && new_state != GemState::Issued {
             self.remove_unqualified(gem_id, item.floor_price)?;
         }
+
+        // Maintain the callable-gem list (membership == Qualified/Called).
+        match new_state {
+            // Issued -> Qualified enters the list.
+            GemState::Qualified => self.insert_callable(gem_id)?,
+            // Qualified|Called -> Settled leaves it. An Issued -> Settled jump
+            // was never listed, so skip it.
+            GemState::Settled if item.state != GemState::Issued as u8 => {
+                self.remove_callable(gem_id)?
+            }
+            _ => {}
+        }
+
         item.state = new_state as u8;
+        self.gem_items.update(&item)?;
+        Ok(())
+    }
+
+    /// Append a gem to the dense callable-gem list.
+    fn insert_callable(&mut self, gem_id: U256) -> Result<()> {
+        let idx = self.callable_gems.len()?;
+        self.callable_gems.push(gem_id)?;
+        self.callable_gem_index.write(&gem_id, idx)?;
+        Ok(())
+    }
+
+    /// Swap-remove a gem from the callable-gem list. Caller guarantees the gem
+    /// is currently listed (state was Qualified or Called).
+    fn remove_callable(&mut self, gem_id: U256) -> Result<()> {
+        let idx = self.callable_gem_index.read(&gem_id)?;
+        let last = self
+            .callable_gems
+            .len()?
+            .checked_sub(1)
+            .ok_or(GemError::GemNotFound)?;
+        if idx != last {
+            let last_id = self.callable_gems.get(last)?.ok_or(GemError::GemNotFound)?;
+            self.callable_gems.set(idx, last_id)?;
+            self.callable_gem_index.write(&last_id, idx)?;
+        }
+        self.callable_gems.pop()?;
+        self.callable_gem_index.clear(&gem_id)?;
+        Ok(())
+    }
+
+    /// `Qualified -> Called`. Records the call timestamp used to enforce the
+    /// notice-period settlement deadline. Qualified gems are not parked in the
+    /// unqualified bin index, so there is nothing to clean up here.
+    pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u32) -> Result<()> {
+        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
+        if item.state != GemState::Qualified as u8 {
+            return Err(GemError::InvalidState.into());
+        }
+        item.state = GemState::Called as u8;
+        item.called_at = called_at;
         self.gem_items.update(&item)?;
         Ok(())
     }

@@ -19,6 +19,7 @@ pub enum TriggerId {
     EmissionLimit1 = 0,
     IntexCallDaily = 1,
     WwdAdvanceNoon = 2,
+    GemCallDaily = 3,
 }
 
 impl TriggerId {
@@ -93,6 +94,16 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // on the midnight `emission_limit_1` trigger.
         requires_accounting_window: false,
         handler: outbe_metadosis::runtime::advance_active_worldwide_days,
+    },
+    TriggerSpec {
+        id: TriggerId::GemCallDaily.as_u32(),
+        label: "gem_call_daily",
+        period_seconds: 86_400,
+        start_offset_seconds: 0,
+        // Reads finalized oracle VWAP history and force-calls / forfeit-burns
+        // gems; no dependency on the parent block's settlement accounting.
+        requires_accounting_window: false,
+        handler: outbe_gem::hooks::run_call_daily,
     },
 ];
 

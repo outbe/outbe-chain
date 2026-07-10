@@ -1,5 +1,6 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -26,6 +27,7 @@ fn sample_params(owner: Address) -> GemAddParams {
         entry_price: U256::from(500_000_000_000_000_000u128),
         cost_amount: U256::from(500_000_000_000_000_000u128),
         floor_price: U256::from(540_000_000_000_000_000u128),
+        call_threshold: U256::from(1_140_000_000_000_000_000u128),
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -295,5 +297,65 @@ fn precompile_balance_and_owner_views() {
         let bytes = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
         let total = IGem::totalSupplyCall::abi_decode_returns(&bytes).unwrap();
         assert_eq!(total, U256::from(1u64));
+    });
+}
+
+/// Build a 30-day window (newest-first) with `breach_days` entries above the
+/// gem's call threshold, the rest at zero.
+fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(WorldwideDay, Option<U256>)> {
+    let mut window = Vec::with_capacity(30);
+    let mut day = WorldwideDay::from_timestamp(now);
+    for i in 0..30 {
+        let v = if i < breach_days { breach } else { U256::ZERO };
+        window.push((day, Some(v)));
+        day = day.previous_date_key();
+    }
+    window
+}
+
+fn qualified_gem(storage: &StorageHandle) -> U256 {
+    let mut p = sample_params(ALICE);
+    // Issue well before the window so no day is skipped as pre-issuance.
+    p.issued_at = T_NOW - 100 * 86_400;
+    let gem_id = api::add_gem(storage, p).unwrap();
+    api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+    gem_id
+}
+
+#[test]
+fn call_then_forfeit_lifecycle() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_threshold;
+        let window = breach_window(T_NOW, threshold + U256::from(1u64), 20);
+
+        let mut gem = GemContract::new(storage.clone());
+        assert!(gem.call(&window, gem_id, T_NOW).unwrap());
+        let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.state, GemState::Called as u8);
+        assert_eq!(item.called_at, T_NOW as u32);
+
+        // Within the 8-day notice period: no forfeit.
+        assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400).unwrap());
+        // Past the deadline: forfeit-burned.
+        assert!(gem.forfeit(gem_id, T_NOW + 8 * 86_400 + 1).unwrap());
+        assert!(api::get_gem(storage, gem_id).unwrap().is_none());
+    });
+}
+
+#[test]
+fn call_skips_below_threshold() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let threshold = api::get_gem(storage, gem_id).unwrap().unwrap().call_threshold;
+        // 19 breach-days < 20 required.
+        let window = breach_window(T_NOW, threshold + U256::from(1u64), 19);
+
+        let mut gem = GemContract::new(storage.clone());
+        assert!(!gem.call(&window, gem_id, T_NOW).unwrap());
+        assert_eq!(
+            api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
     });
 }

@@ -7,7 +7,8 @@ use outbe_primitives::addresses::GEM_ADDRESS;
 pub enum GemState {
     Issued = 0,
     Qualified = 1,
-    Settled = 2,
+    Called = 2,
+    Settled = 3,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +19,7 @@ pub struct GemAddParams {
     pub entry_price: U256,
     pub cost_amount: U256,
     pub floor_price: U256,
+    pub call_threshold: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -58,6 +60,15 @@ pub struct GemData {
 
     #[attribute(order = 9)]
     pub issued_at: u64,
+
+    /// Coen price level (Reference Currency) whose breach arms a Call Event.
+    /// `entry_price * (1 + call_rate)`; call rate is 128% for agent gems.
+    #[attribute(order = 10)]
+    pub call_threshold: U256,
+
+    /// Block timestamp when the gem was force-called; `0` until Called.
+    #[attribute(order = 11, default = 0)]
+    pub called_at: u32,
 }
 
 #[storage_schema]
@@ -96,6 +107,17 @@ pub struct GemContract {
 
     #[attribute(order = 10)]
     pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // --- Callable-gem index: dense list of gems in Qualified or Called state,
+    // the only gems the daily Called scan needs to visit. Membership invariant:
+    // a gem is listed iff its state is Qualified or Called. Maintained by
+    // add_gem / set_state / burn. `callable_gem_index` maps gem_id -> position
+    // for O(1) swap-remove.
+    #[attribute(order = 11)]
+    pub callable_gems: outbe_primitives::storage::dsl::List<U256>,
+
+    #[attribute(order = 12)]
+    pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemContract<'_> {

@@ -18,3 +18,4 @@
 # codegraph index (local code-intelligence cache)
 /.codegraph
 /contracts/account-abstraction/lib/kernel/broadcast
+/.ruler
