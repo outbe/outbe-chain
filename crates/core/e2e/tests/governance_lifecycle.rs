@@ -153,5 +153,42 @@ fn governance_full_lifecycle_via_dispatch() {
             IGovernance::oipCountCall::abi_decode_returns(&out).unwrap(),
             1
         );
+
+        // index reads via dispatch: oip_id reached Implemented (accepted) and was
+        // authored by AUTHOR; both return ProposalMeta[] with no text.
+        let out = gov_dispatch(
+            storage.clone(),
+            &IGovernance::getAcceptedOipsCall {}.abi_encode(),
+            OUTSIDER,
+            U256::ZERO,
+        )
+        .unwrap();
+        let accepted = IGovernance::getAcceptedOipsCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].id, oip_id);
+        assert_eq!(accepted[0].status, IMPLEMENTED);
+
+        let out = gov_dispatch(
+            storage.clone(),
+            &IGovernance::getOipsByAuthorCall { author: AUTHOR }.abi_encode(),
+            OUTSIDER,
+            U256::ZERO,
+        )
+        .unwrap();
+        let mine = IGovernance::getOipsByAuthorCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].author, AUTHOR);
+
+        // nobody rejected → empty
+        let out = gov_dispatch(
+            storage.clone(),
+            &IGovernance::getRejectedOipsCall {}.abi_encode(),
+            OUTSIDER,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert!(IGovernance::getRejectedOipsCall::abi_decode_returns(&out)
+            .unwrap()
+            .is_empty());
     });
 }

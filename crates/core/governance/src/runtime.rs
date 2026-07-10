@@ -1,6 +1,8 @@
 use alloy_primitives::{keccak256, Address, U256};
 use outbe_primitives::error::Result;
 
+use crate::state::author_index_key;
+
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
 // Per-kind event types, imported by name so the macro can name them with a
@@ -40,7 +42,11 @@ macro_rules! impl_proposal_ops {
         counter = $counter:ident,
         submitted_event = $submitted_event:ident,
         text_event = $text_event:ident,
-        status_event = $status_event:ident $(,)?
+        status_event = $status_event:ident,
+        accepted = $accepted:ident,
+        rejected = $rejected:ident,
+        author_count = $author_count:ident,
+        author_ids = $author_ids:ident $(,)?
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
@@ -60,6 +66,11 @@ macro_rules! impl_proposal_ops {
             };
             self.$map.create(&record)?;
             self.$counter.write(next)?;
+            // author index (append-only): append id to the author's list.
+            let acount = self.$author_count.read(&author)?;
+            self.$author_ids
+                .write(&author_index_key(author, acount), id)?;
+            self.$author_count.write(&author, acount + 1)?;
             self.emit($submitted_event {
                 id,
                 author,
@@ -118,6 +129,14 @@ macro_rules! impl_proposal_ops {
             let entry = self.$map.entry(id);
             entry.status().write(new_status)?;
             entry.updated_block().write(block)?;
+            // accepted / rejected indexes (append-only, idempotent): Approved and
+            // Implemented count as accepted; Rejected is rejected. Terminal-forward,
+            // so no removals.
+            if new_status == status::APPROVED || new_status == status::IMPLEMENTED {
+                self.$accepted.insert(id)?;
+            } else if new_status == status::REJECTED {
+                self.$rejected.insert(id)?;
+            }
             self.emit($status_event {
                 id,
                 oldStatus: current,
@@ -187,6 +206,10 @@ impl GovernanceContract<'_> {
         submitted_event = OipSubmitted,
         text_event = OipTextUpdated,
         status_event = OipStatusChanged,
+        accepted = oip_accepted,
+        rejected = oip_rejected,
+        author_count = oip_author_count,
+        author_ids = oip_author_ids,
     );
 
     impl_proposal_ops!(
@@ -199,5 +222,9 @@ impl GovernanceContract<'_> {
         submitted_event = GipSubmitted,
         text_event = GipTextUpdated,
         status_event = GipStatusChanged,
+        accepted = gip_accepted,
+        rejected = gip_rejected,
+        author_count = gip_author_count,
+        author_ids = gip_author_ids,
     );
 }

@@ -37,6 +37,17 @@ fn gip_to_sol(g: Gip) -> IGovernance::Gip {
     }
 }
 
+fn meta_to_sol(m: crate::state::ProposalMeta) -> IGovernance::ProposalMeta {
+    IGovernance::ProposalMeta {
+        id: m.id,
+        status: m.status,
+        author: m.author,
+        createdBlock: m.created_block,
+        updatedBlock: m.updated_block,
+        textHash: m.text_hash,
+    }
+}
+
 /// Resolves a diff `base` selector to the current base text.
 /// `0 = canon`, `1 = meta-canon`.
 fn diff_base_text(gov: &GovernanceContract, base: u8) -> Result<String> {
@@ -94,6 +105,19 @@ pub fn dispatch(
                 let base = diff_base_text(&gov, c.base)?;
                 Ok(crate::diff::unified(&base, &o.text))
             }),
+            getOipsByAuthor(c) => view(c, |c| {
+                Ok(gov
+                    .oips_by_author(c.author)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
+            }),
+            getAcceptedOips(_) => metadata::<IGovernance::getAcceptedOipsCall>(|| {
+                Ok(gov.accepted_oips()?.into_iter().map(meta_to_sol).collect())
+            }),
+            getRejectedOips(_) => metadata::<IGovernance::getRejectedOipsCall>(|| {
+                Ok(gov.rejected_oips()?.into_iter().map(meta_to_sol).collect())
+            }),
 
             // --- GIP ---
             submitGip(c) => mutate(c, caller, |sender, c| gov.submit_gip(sender, &c.text)),
@@ -116,6 +140,19 @@ pub fn dispatch(
                     .ok_or(GovernanceError::ProposalNotFound)?;
                 let base = diff_base_text(&gov, c.base)?;
                 Ok(crate::diff::unified(&base, &g.text))
+            }),
+            getGipsByAuthor(c) => view(c, |c| {
+                Ok(gov
+                    .gips_by_author(c.author)?
+                    .into_iter()
+                    .map(meta_to_sol)
+                    .collect::<Vec<_>>())
+            }),
+            getAcceptedGips(_) => metadata::<IGovernance::getAcceptedGipsCall>(|| {
+                Ok(gov.accepted_gips()?.into_iter().map(meta_to_sol).collect())
+            }),
+            getRejectedGips(_) => metadata::<IGovernance::getRejectedGipsCall>(|| {
+                Ok(gov.rejected_gips()?.into_iter().map(meta_to_sol).collect())
             }),
 
             // --- authorities ---

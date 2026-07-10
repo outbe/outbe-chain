@@ -107,4 +107,26 @@ pub struct GovernanceContract {
     pub oips: outbe_primitives::storage::dsl::Map<U256, Oip>,
     #[attribute(order = 12)]
     pub gips: outbe_primitives::storage::dsl::Map<U256, Gip>,
+
+    // --- indexes (append-only), per kind: author list + accepted/rejected buckets.
+    //     Appended last so the genesis-seeded slots (<= 10) never shift. The author
+    //     list uses the tribute owner-index idiom (count map + hashed-key id map);
+    //     accepted/rejected reuse the enumerable StorageSet. Maintained O(1) on
+    //     submit / status change; filtered listing reads only the matching bucket. ---
+    #[attribute(order = 13)]
+    pub oip_author_count: outbe_primitives::storage::dsl::Map<Address, u32>,
+    #[attribute(order = 14)]
+    pub oip_author_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 15)]
+    pub oip_accepted: outbe_primitives::storage::dsl::Set<U256>,
+    #[attribute(order = 16)]
+    pub oip_rejected: outbe_primitives::storage::dsl::Set<U256>,
+    #[attribute(order = 17)]
+    pub gip_author_count: outbe_primitives::storage::dsl::Map<Address, u32>,
+    #[attribute(order = 18)]
+    pub gip_author_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 19)]
+    pub gip_accepted: outbe_primitives::storage::dsl::Set<U256>,
+    #[attribute(order = 20)]
+    pub gip_rejected: outbe_primitives::storage::dsl::Set<U256>,
 }

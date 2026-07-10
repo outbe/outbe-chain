@@ -259,8 +259,14 @@ fn storage_layout_matches_seeder() {
         // Record maps come last so growing Oip/Gip never shifts a seeded slot.
         assert_eq!(gov.oips.base_slot(), U256::from(11));
         assert_eq!(gov.gips.base_slot(), U256::from(17)); // 11 + Oip::SLOTS(6)
-                                                          // meta_canon text is at slot 0, canon text at slot 4 (adjacency: the
-                                                          // one-slot version field sits immediately after each text field).
+                                                          // Indexes are appended after gips (gips ends at 22): they never touch the
+                                                          // seeded region and thus don't affect seed_genesis.py.
+        assert_eq!(gov.oip_author_count.base_slot(), U256::from(23));
+        assert_eq!(gov.oip_author_ids.base_slot(), U256::from(24));
+        assert_eq!(gov.gip_author_count.base_slot(), U256::from(29));
+        assert_eq!(gov.gip_author_ids.base_slot(), U256::from(30));
+        // meta_canon text is at slot 0, canon text at slot 4 (adjacency: the
+        // one-slot version field sits immediately after each text field).
     });
 }
 
@@ -342,6 +348,94 @@ fn reads_python_seeder_output() {
         );
         assert!(gov.is_authority(authority).unwrap());
         assert!(!gov.is_authority(OTHER).unwrap());
+    });
+}
+
+// ------------------------------------------------- indexes: by author ---
+
+#[test]
+fn author_index_lists_own_proposals() {
+    with_governance(|gov| {
+        gov.submit_oip(AUTHOR, "a").unwrap(); // id 1
+        gov.submit_oip(AUTHOR, "b").unwrap(); // id 2
+        gov.submit_oip(OTHER, "c").unwrap(); // id 3
+
+        let mine = gov.oips_by_author(AUTHOR).unwrap();
+        assert_eq!(mine.len(), 2);
+        assert_eq!(
+            mine.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![U256::from(1), U256::from(2)]
+        );
+        assert!(mine.iter().all(|m| m.author == AUTHOR));
+
+        let theirs = gov.oips_by_author(OTHER).unwrap();
+        assert_eq!(theirs.len(), 1);
+        assert_eq!(theirs[0].id, U256::from(3));
+
+        // unknown author → empty
+        assert!(gov.oips_by_author(AUTH).unwrap().is_empty());
+    });
+}
+
+#[test]
+fn author_index_is_per_kind() {
+    with_governance(|gov| {
+        gov.submit_oip(AUTHOR, "oip").unwrap();
+        gov.submit_gip(AUTHOR, "gip").unwrap();
+        assert_eq!(gov.oips_by_author(AUTHOR).unwrap().len(), 1);
+        assert_eq!(gov.gips_by_author(AUTHOR).unwrap().len(), 1);
+    });
+}
+
+// ----------------------------------------- indexes: accepted / rejected ---
+
+#[test]
+fn accepted_index_includes_approved_and_implemented_once() {
+    with_governance(|gov| {
+        let a = gov.submit_oip(AUTHOR, "a").unwrap();
+        let b = gov.submit_oip(AUTHOR, "b").unwrap();
+        let _c = gov.submit_oip(AUTHOR, "c").unwrap(); // stays Draft
+
+        gov.set_oip_status(AUTH, a, status::APPROVED).unwrap();
+        gov.set_oip_status(AUTH, a, status::IMPLEMENTED).unwrap(); // still accepted, not duplicated
+        gov.set_oip_status(AUTH, b, status::REJECTED).unwrap();
+
+        let accepted = gov.accepted_oips().unwrap();
+        assert_eq!(accepted.len(), 1, "Approved->Implemented must appear once");
+        assert_eq!(accepted[0].id, a);
+        assert_eq!(accepted[0].status, status::IMPLEMENTED);
+
+        let rejected = gov.rejected_oips().unwrap();
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].id, b);
+    });
+}
+
+#[test]
+fn rework_then_approve_lands_in_accepted() {
+    with_governance(|gov| {
+        let a = gov.submit_oip(AUTHOR, "a").unwrap();
+        gov.set_oip_status(AUTH, a, status::REWORK).unwrap();
+        gov.set_oip_status(AUTHOR, a, status::DRAFT).unwrap(); // author resubmit
+        gov.set_oip_status(AUTH, a, status::APPROVED).unwrap();
+
+        assert_eq!(gov.accepted_oips().unwrap().len(), 1);
+        assert!(gov.rejected_oips().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn accepted_rejected_are_per_kind() {
+    with_governance(|gov| {
+        let o = gov.submit_oip(AUTHOR, "o").unwrap();
+        let g = gov.submit_gip(AUTHOR, "g").unwrap();
+        gov.set_oip_status(AUTH, o, status::APPROVED).unwrap();
+        gov.set_gip_status(AUTH, g, status::REJECTED).unwrap();
+
+        assert_eq!(gov.accepted_oips().unwrap().len(), 1);
+        assert!(gov.accepted_gips().unwrap().is_empty());
+        assert!(gov.rejected_oips().unwrap().is_empty());
+        assert_eq!(gov.rejected_gips().unwrap().len(), 1);
     });
 }
 

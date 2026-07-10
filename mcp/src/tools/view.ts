@@ -290,37 +290,56 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
+  // Index-backed listing (metadata only — omits the full text). Exactly one of
+  // `author` / `status` must be given; each maps to a dedicated on-chain index
+  // (getByAuthor / getAccepted / getRejected), so the module returns only the
+  // matching ids — no full-collection scan.
+  const listFilter = {
+    author: z.string().optional().describe("0x address — list this author's proposals"),
+    status: z
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe("'accepted' (Approved or Implemented) or 'rejected'"),
+  };
+
+  async function listProposals(
+    kind: "Oip" | "Gip",
+    args: { author?: string; status?: "accepted" | "rejected" },
+  ): Promise<unknown[]> {
+    const { author, status } = args;
+    if ((author === undefined) === (status === undefined)) {
+      throw new Error("provide exactly one of `author` or `status` (accepted|rejected)");
+    }
+    let metas: unknown[];
+    if (author !== undefined) {
+      metas = (await view(ctx, "governance", `get${kind}sByAuthor`, [author])) as unknown[];
+    } else if (status === "accepted") {
+      metas = (await view(ctx, "governance", `getAccepted${kind}s`, [])) as unknown[];
+    } else {
+      metas = (await view(ctx, "governance", `getRejected${kind}s`, [])) as unknown[];
+    }
+    return metas.map(annotateProposal);
+  }
+
   server.tool(
     "oip_list",
-    "List all OIPs (metadata only — id, status, author, blocks, text hash; omits the full text). Ids run 1..oipCount.",
-    {},
-    handler(async () => {
-      const count = Number(await view(ctx, "governance", "oipCount", []));
-      const oips: unknown[] = [];
-      for (let i = 1; i <= count; i++) {
-        const { text: _text, ...meta } = (await view(ctx, "governance", "getOip", [
-          BigInt(i),
-        ])) as Record<string, unknown>;
-        oips.push(annotateProposal(meta));
-      }
-      return ok({ count, oips });
+    "List OIPs by index (metadata only — omits the full text). Give `author` (their OIPs) " +
+      "or `status` = accepted | rejected.",
+    listFilter,
+    handler(async (args) => {
+      const oips = await listProposals("Oip", args);
+      return ok({ count: oips.length, oips });
     }),
   );
 
   server.tool(
     "gip_list",
-    "List all GIPs (metadata only — id, status, author, blocks, text hash; omits the full text). Ids run 1..gipCount.",
-    {},
-    handler(async () => {
-      const count = Number(await view(ctx, "governance", "gipCount", []));
-      const gips: unknown[] = [];
-      for (let i = 1; i <= count; i++) {
-        const { text: _text, ...meta } = (await view(ctx, "governance", "getGip", [
-          BigInt(i),
-        ])) as Record<string, unknown>;
-        gips.push(annotateProposal(meta));
-      }
-      return ok({ count, gips });
+    "List GIPs by index (metadata only — omits the full text). Give `author` (their GIPs) " +
+      "or `status` = accepted | rejected.",
+    listFilter,
+    handler(async (args) => {
+      const gips = await listProposals("Gip", args);
+      return ok({ count: gips.length, gips });
     }),
   );
 }

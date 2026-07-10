@@ -25,6 +25,16 @@ interface IGovernance {
         string text;
     }
 
+    // Listing projection — a proposal without its text body.
+    struct ProposalMeta {
+        uint256 id;
+        uint8 status;
+        address author;
+        uint64 createdBlock;
+        uint64 updatedBlock;
+        bytes32 textHash;
+    }
+
     event MetaCanonUpdated(uint64 indexed version, bytes32 hash);
     event CanonUpdated(uint64 indexed version, bytes32 hash);
 
@@ -53,6 +63,10 @@ interface IGovernance {
     function setOipStatus(uint256 id, uint8 newStatus) external;
     function oipCount() external view returns (uint64);
     function getOipDiff(uint256 id, uint8 base) external view returns (string memory);
+    // index-backed listings (metadata only): by author, accepted, rejected
+    function getOipsByAuthor(address author) external view returns (ProposalMeta[] memory);
+    function getAcceptedOips() external view returns (ProposalMeta[] memory);
+    function getRejectedOips() external view returns (ProposalMeta[] memory);
 
     // --- proposals: GIP ---
     function submitGip(string calldata text) external returns (uint256 id);
@@ -61,6 +75,10 @@ interface IGovernance {
     function setGipStatus(uint256 id, uint8 newStatus) external;
     function gipCount() external view returns (uint64);
     function getGipDiff(uint256 id, uint8 base) external view returns (string memory);
+    // index-backed listings (metadata only): by author, accepted, rejected
+    function getGipsByAuthor(address author) external view returns (ProposalMeta[] memory);
+    function getAcceptedGips() external view returns (ProposalMeta[] memory);
+    function getRejectedGips() external view returns (ProposalMeta[] memory);
 
     // --- authorities (PoC scaffolding) ---
     function isAuthority(address who) external view returns (bool);

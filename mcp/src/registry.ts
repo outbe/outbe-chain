@@ -292,6 +292,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     // humanizer in format.ts; the proposal status name is attached in view.ts.
     abi: parseAbi([
       "struct Proposal { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; string text; }",
+      "struct ProposalMeta { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; }",
       "function getMetaCanon() view returns (string text, uint64 version, bytes32 hash)",
       "function getCanon() view returns (string text, uint64 version, bytes32 hash)",
       "function getMetaCanonRevisionHash(uint64 version) view returns (bytes32)",
@@ -300,6 +301,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function getGip(uint256 id) view returns (Proposal)",
       "function oipCount() view returns (uint64)",
       "function gipCount() view returns (uint64)",
+      "function getOipsByAuthor(address author) view returns (ProposalMeta[])",
+      "function getGipsByAuthor(address author) view returns (ProposalMeta[])",
+      "function getAcceptedOips() view returns (ProposalMeta[])",
+      "function getAcceptedGips() view returns (ProposalMeta[])",
+      "function getRejectedOips() view returns (ProposalMeta[])",
+      "function getRejectedGips() view returns (ProposalMeta[])",
       "function getOipDiff(uint256 id, uint8 base) view returns (string)",
       "function getGipDiff(uint256 id, uint8 base) view returns (string)",
       "function isAuthority(address who) view returns (bool)",
