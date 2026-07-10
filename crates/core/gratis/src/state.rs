@@ -1,14 +1,13 @@
-//! Low-level ledger access for the Gratis token.
+//! Low-level storage access for the confidential Gratis token.
 //!
-//! This layer answers *how is Gratis storage read and mutated locally*:
-//! metadata, balance/supply/pledge reads, and the internal balance-move
-//! transition. Business orchestration (mint/burn/pledge/unpledge and event
-//! emission) lives in [`crate::runtime`]; the cross-crate surface is
-//! [`crate::api`].
+//! CRUD over the encrypted blob slots, the plaintext aggregates, and the
+//! modify-auth replay counter. Ciphertext is read/written verbatim — this layer
+//! never decrypts. Business orchestration (building enclave requests, applying
+//! the returned receipt, emitting events) lives in [`crate::runtime`]; the
+//! cross-crate surface is [`crate::api`].
 
-use alloy_primitives::{Address, U256};
-use outbe_primitives::addresses::CREDIS_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use alloy_primitives::{Address, B256, U256};
+use outbe_primitives::error::Result;
 
 use crate::schema::Gratis;
 
@@ -27,65 +26,62 @@ impl Gratis<'_> {
         18
     }
 
-    // --- View functions ---
+    // --- Plaintext aggregates (non-attributable) ---
 
     pub fn total_supply(&self) -> Result<U256> {
         self.total_supply.read()
     }
 
-    pub fn balance_of(&self, account: Address) -> Result<U256> {
-        self.balances.read(&account)
-    }
-
-    /// Aggregate amount currently held in the credis escrow. Read directly
-    /// from the balances map; no separate scalar is maintained.
     pub fn pledged_total_supply(&self) -> Result<U256> {
-        self.balances.read(&CREDIS_ADDRESS)
+        self.pledged_total_supply.read()
     }
 
-    /// Amount currently pledged by `account` and held in the credis escrow on
-    /// their behalf. The sum of `pledged_of` across all accounts equals
-    /// `pledged_total_supply()`.
-    pub fn pledged_of(&self, account: Address) -> Result<U256> {
-        self.pledged_balances.read(&account)
+    // --- Ciphertext reads (returned verbatim; the view-key holder decrypts) ---
+
+    /// Encrypted balance blob for `account` (`version(8) || AEAD-ct`); empty if
+    /// the account has never held a balance.
+    pub fn balance_ct_of(&self, account: Address) -> Result<Vec<u8>> {
+        self.balance_ct.get_bytes(&account).read()
     }
 
-    // --- Local state transitions ---
-
-    /// Internal account-to-account transfer. No supply change. Not exposed via
-    /// the precompile (gratis is non-transferable from user-land); reserved for
-    /// the pledge/unpledge escrow moves in [`crate::runtime`].
-    pub(crate) fn transfer_gratis(
-        &mut self,
-        from: Address,
-        to: Address,
-        amount: U256,
-    ) -> Result<()> {
-        if amount.is_zero() {
-            return Err(PrecompileError::Revert("amount must be positive".into()));
-        }
-        if from.is_zero() || to.is_zero() {
-            return Err(PrecompileError::Revert("invalid address".into()));
-        }
-
-        let from_balance = self.balances.read(&from)?;
-        if from_balance < amount {
-            return Err(PrecompileError::Revert("insufficient balance".into()));
-        }
-
-        let to_balance = self.balances.read(&to)?;
-        let new_to_balance = checked_add(to_balance, amount, "gratis balance overflow")?;
-
-        self.balances.write(&from, from_balance - amount)?;
-        self.balances.write(&to, new_to_balance)?;
-
-        Ok(())
+    /// Encrypted pledged-ledger blob for `account`.
+    pub fn pledged_ct_of(&self, account: Address) -> Result<Vec<u8>> {
+        self.pledged_ct.get_bytes(&account).read()
     }
-}
 
-/// Overflow-checked `U256` addition for balance / supply accounting paths.
-/// Raises a fatal precompile error on wrap instead of silently truncating.
-pub(crate) fn checked_add(left: U256, right: U256, context: &'static str) -> Result<U256> {
-    left.checked_add(right)
-        .ok_or_else(|| PrecompileError::Revert(context.into()))
+    /// The account's current modify-auth replay counter (the value a client must
+    /// bind into its next write authorization).
+    pub fn op_nonce_of(&self, account: Address) -> Result<u64> {
+        self.op_nonce.read(&account)
+    }
+
+    pub(crate) fn pledge_record_ct_of(&self, handle: B256) -> Result<Vec<u8>> {
+        self.pledge_records.get_bytes(&handle).read()
+    }
+
+    // --- Writers (all `&self`; storage mutates through interior mutability) ---
+
+    pub(crate) fn write_balance_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
+        self.balance_ct.get_bytes(&account).write(blob)
+    }
+
+    pub(crate) fn write_pledged_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
+        self.pledged_ct.get_bytes(&account).write(blob)
+    }
+
+    pub(crate) fn write_pledge_record_ct(&self, handle: B256, blob: &[u8]) -> Result<()> {
+        self.pledge_records.get_bytes(&handle).write(blob)
+    }
+
+    pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {
+        self.op_nonce.write(&account, nonce)
+    }
+
+    pub(crate) fn set_total_supply(&self, value: U256) -> Result<()> {
+        self.total_supply.write(value)
+    }
+
+    pub(crate) fn set_pledged_total_supply(&self, value: U256) -> Result<()> {
+        self.pledged_total_supply.write(value)
+    }
 }

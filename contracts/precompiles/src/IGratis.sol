@@ -19,7 +19,9 @@ interface IGratis {
     function decimals() external view returns (uint8);
     function totalSupply() external view returns (uint256);
     function pledgedTotalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
+    // Confidential balance: returns the account's ciphertext blob
+    // (version || AEAD-ct). Decrypt off-chain with the account's view key.
+    function balanceOf(address account) external view returns (bytes memory);
 
     // ERC-20 transfer surface — gratis is non-transferable.
     // `allowance` returns 0; the others revert.
@@ -28,8 +30,8 @@ interface IGratis {
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 
-    // gratis-specific
-    function pledgedOf(address account) external view returns (uint256);
+    // gratis-specific — confidential pledged amount, returned as ciphertext.
+    function pledgedOf(address account) external view returns (bytes memory);
 
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

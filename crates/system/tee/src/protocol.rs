@@ -106,6 +106,121 @@ pub struct ParticipantAnnounce {
     pub enc_sig: Vec<u8>,
 }
 
+/// A Gratis write operation the enclave applies over encrypted per-account state.
+///
+/// The op determines the sign of the aggregate deltas the host applies to the
+/// public `total_supply` / `pledged_total_supply` scalars, and which ciphertext
+/// slots move (balance vs pledged vs pledge-record).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GratisOp {
+    /// Mint `amount` to `account` (credit balance; `total_supply += amount`).
+    Mine,
+    /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
+    Burn,
+    /// Move `amount` from `account`'s balance into its pledged ledger and open a
+    /// pledge record (`pledged_total_supply += amount`).
+    Pledge,
+    /// Move `amount` from `account`'s pledged ledger back to its balance directly
+    /// (`pledged_total_supply -= amount`). Owner-driven unpledge (e.g. credis
+    /// rejected); does not touch a pledge record.
+    Unpledge,
+    /// Consume a pledge record for a credis request: verify `spend_auth`, mark it
+    /// spent, bind it to `bundle_account`, and return the pledged `gratis_amount`
+    /// so credis can size the position. No balance/pledged move.
+    PledgeToBundle,
+    /// Release one anadosis installment of pledged collateral back to the original
+    /// EOA's balance (`pledged_total_supply -= release`); decrements the record's
+    /// remaining installments.
+    UnlockToEoa,
+}
+
+/// Proof that the caller holds the account's modify key, without revealing it.
+///
+/// `mac = HMAC-SHA256(modify_key, "outbe/gratis/modify/v1" ‖ account ‖ op_tag ‖
+/// amount ‖ op_nonce ‖ chain_id)`, recomputed inside the enclave (which
+/// re-derives `modify_key` from the resident state key + account). `op_nonce` is
+/// the account's monotonic on-chain replay counter, so a captured tuple cannot be
+/// replayed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModifyAuth {
+    pub mac: [u8; 32],
+    pub op_nonce: u64,
+}
+
+/// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
+/// blobs + versions from committed storage and forwards them verbatim; the
+/// enclave decrypts, enforces invariants, and re-encrypts deterministically.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GratisOpRequest {
+    pub op: GratisOp,
+    pub chain_id: B256,
+    /// Balance-owning account (the EOA). For `UnlockToEoa` this is the original
+    /// pledger the enclave credits; the host learns it from the credis position.
+    pub account: Address,
+    // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
+    // visible in calldata (only cumulative balances are encrypted). To also hide
+    // amounts, carry a client-encrypted amount blob here (like `EncryptedTributeOffer`)
+    // and decrypt it inside the enclave — heavier ABI + a client encrypt step.
+    pub amount: U256,
+    /// Current balance blob (`version(8 BE) ‖ ciphertext`), self-versioning so no
+    /// separate version slot is needed. Empty when the account has no state yet.
+    pub current_balance: Vec<u8>,
+    /// Current pledged-ledger blob (same `version ‖ ct` shape). Empty if none.
+    pub current_pledged: Vec<u8>,
+    /// Existing pledge-record blob (`version ‖ ct`); empty for `Pledge`.
+    pub current_pledge_record: Vec<u8>,
+    /// Modify-key authorization (required for Mine/Burn/Pledge/Unpledge; ignored
+    /// for the credis-driven `PledgeToBundle`/`UnlockToEoa`).
+    pub modify_auth: ModifyAuth,
+    /// Number of anadosis installments; recorded in a new pledge record so
+    /// `UnlockToEoa` can release exactly `amount/installments` each call.
+    pub installments: u32,
+    /// Pledge handle identifying the record (set for `PledgeToBundle`/`UnlockToEoa`).
+    pub pledge_handle: Option<B256>,
+    /// Destination bundle account (set for `PledgeToBundle`).
+    pub bundle_account: Option<Address>,
+    /// Spend authorization binding the pledge to `bundle_account`
+    /// (`HMAC(pledge_secret, "credis" ‖ bundle_account ‖ op_nonce)`), set for
+    /// `PledgeToBundle`.
+    pub spend_auth: Option<[u8; 32]>,
+}
+
+/// Outcome of a single Gratis op.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GratisOpStatus {
+    Applied,
+    Rejected { reason: String },
+}
+
+/// Public result of an `ApplyGratisOp`: the new ciphertext blobs to store verbatim
+/// plus the plaintext receipt the host needs (aggregate deltas, event amount,
+/// pledge linkage). Per-account plaintext balances never appear here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GratisOpResult {
+    pub status: GratisOpStatus,
+    /// New balance blob (`version ‖ ct`) to store verbatim.
+    pub new_balance: Vec<u8>,
+    /// New pledged-ledger blob (`version ‖ ct`) to store verbatim.
+    pub new_pledged: Vec<u8>,
+    /// New/updated pledge-record blob (`version ‖ ct`); empty unless the op touches one.
+    pub new_pledge_record: Vec<u8>,
+    /// Deterministic pledge handle for a `Pledge` (zero otherwise).
+    pub pledge_handle: B256,
+    /// Pledged amount surfaced for credis (`PledgeToBundle`) or the installment
+    /// amount released (`UnlockToEoa`); zero otherwise.
+    pub gratis_amount: U256,
+    /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
+    pub event_amount: U256,
+    /// The account's next modify-auth nonce (for the host to persist).
+    pub next_op_nonce: u64,
+    /// Diagnostic hash of the canonical request inputs; the host recomputes it to
+    /// detect enclave non-determinism, then discards.
+    pub inputs_canonical_hash: B256,
+    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the
+    /// host verifies it against the pinned enclave attestation key, then discards.
+    pub attestation_tag: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
     /// Callable BEFORE the Noise handshake (unauthenticated). `nonce` provides
@@ -219,6 +334,22 @@ pub enum EnclaveRequest {
     /// for storing it in `TeeRegistry` as a consensus-validated artifact. Returns
     /// `SealedOfferKeyForRegistry`. The newcomer opens it with `IngestTributeOfferHandoff`.
     SealOfferKeyForRegistry { recipient_x25519: [u8; 32] },
+
+    /// Apply a Gratis write op over encrypted per-account state. The enclave
+    /// derives the resident `gratis_state_key` from the same group signature as
+    /// the offer key, decrypts the supplied blobs, enforces balance invariants +
+    /// modify-key authorization, and re-encrypts deterministically. This is a
+    /// consensus path (called inside precompile `dispatch`, re-executed by every
+    /// validator).
+    ApplyGratisOp { request: Box<GratisOpRequest> },
+
+    /// Off-chain key delivery: derive `account`'s view + modify keys from the
+    /// resident state key and seal them to the requester's ephemeral X25519 key.
+    /// NOT a consensus path — served only over RPC, never during block execution.
+    DeriveAccountKeys {
+        account: Address,
+        requester_ephemeral_pubkey: [u8; 32],
+    },
 }
 
 /// Deterministic hash over the canonical batch inputs — each offer's
@@ -372,7 +503,86 @@ pub enum EnclaveResponse {
         /// attestation key, then discards. Never written to state.
         attestation_tag: Vec<u8>,
     },
+    /// Result of an `ApplyGratisOp`: new ciphertexts + plaintext receipt.
+    GratisOpApplied {
+        result: Box<GratisOpResult>,
+    },
+    /// Result of `DeriveAccountKeys`: `AEAD(ECDHE(enclave, requester_ephemeral),
+    /// view_key ‖ modify_key)` sealed to the requester. Opaque to the host.
+    AccountKeysSealed {
+        account: Address,
+        sealed: Vec<u8>,
+        nonce: [u8; 12],
+        enclave_ephemeral_pubkey: [u8; 32],
+    },
     Error {
         message: String,
     },
+}
+
+/// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by
+/// the enclave (returned in `GratisOpResult`) and the host (recomputed from the
+/// request it sent and compared — a mismatch is enclave non-determinism).
+/// Length-prefixed to be unambiguous. Diagnostic only — never written to state.
+pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
+    fn push_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+        buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+        buf.extend_from_slice(b);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    buf.push(req.op as u8);
+    buf.extend_from_slice(req.chain_id.as_slice());
+    buf.extend_from_slice(req.account.as_slice());
+    buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
+    push_bytes(&mut buf, &req.current_balance);
+    push_bytes(&mut buf, &req.current_pledged);
+    push_bytes(&mut buf, &req.current_pledge_record);
+    buf.extend_from_slice(&req.modify_auth.mac);
+    buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
+    buf.extend_from_slice(&req.installments.to_be_bytes());
+    // Optional linkage fields: length/flag-prefixed so presence is unambiguous.
+    match req.pledge_handle {
+        Some(h) => {
+            buf.push(1);
+            buf.extend_from_slice(h.as_slice());
+        }
+        None => buf.push(0),
+    }
+    match req.bundle_account {
+        Some(a) => {
+            buf.push(1);
+            buf.extend_from_slice(a.as_slice());
+        }
+        None => buf.push(0),
+    }
+    match req.spend_auth {
+        Some(s) => {
+            buf.push(1);
+            buf.extend_from_slice(&s);
+        }
+        None => buf.push(0),
+    }
+    alloy_primitives::keccak256(buf)
+}
+
+/// Domain-separated preimage the enclave signs (Ed25519 attestation key) and the
+/// host verifies, binding the canonical inputs hash to the produced result so the
+/// host can prove the result came from the attested enclave. SHARED so the byte
+/// layouts cannot drift. Local-only — never written to chain state.
+pub fn gratis_op_attestation_preimage(
+    inputs_canonical_hash: B256,
+    result: &GratisOpResult,
+) -> Vec<u8> {
+    // Hash the ciphertext-bearing result fields deterministically. serde_json of a
+    // fixed-field struct is deterministic (declaration order, no maps/floats); we
+    // exclude the tag itself to avoid self-reference.
+    let mut probe = result.clone();
+    probe.attestation_tag = Vec::new();
+    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
+    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v1");
+    buf.extend_from_slice(inputs_canonical_hash.as_slice());
+    buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&result_json);
+    buf
 }

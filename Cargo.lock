@@ -7092,6 +7092,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -7438,6 +7440,7 @@ dependencies = [
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-staking",
+ "outbe-tee",
  "outbe-validatorset",
  "reth-ethereum",
  "serde",

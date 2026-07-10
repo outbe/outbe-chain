@@ -22,9 +22,9 @@ use reth_ethereum::storage::{
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
-    ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo,
-    ValidatorDetailInfo, ValidatorInfo,
+    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo,
+    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -119,6 +119,41 @@ where
         + Sync
         + 'static,
 {
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+    ) -> RpcResult<GratisKeysSealed> {
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+        // Off-chain key delivery via the process-global enclave client (no state).
+        let response = outbe_tee::try_with_enclave(|client| {
+            client.request(&EnclaveRequest::DeriveAccountKeys {
+                account,
+                requester_ephemeral_pubkey: ephemeral_pubkey.0,
+            })
+        })
+        .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
+        .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;
+        match response {
+            EnclaveResponse::AccountKeysSealed {
+                sealed,
+                nonce,
+                enclave_ephemeral_pubkey,
+                ..
+            } => Ok(GratisKeysSealed {
+                sealed: sealed.into(),
+                nonce: nonce.to_vec().into(),
+                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
+            }),
+            EnclaveResponse::Error { message } => {
+                Err(internal_err(format!("enclave error: {message}")))
+            }
+            other => Err(internal_err(format!(
+                "unexpected enclave response: {other:?}"
+            ))),
+        }
+    }
+
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
