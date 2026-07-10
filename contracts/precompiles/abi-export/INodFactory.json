@@ -17,6 +17,16 @@
         "name": "asset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [

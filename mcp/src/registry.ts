@@ -76,15 +76,15 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis ERC-20",
+    note: "Gratis — confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
     abi: parseAbi([
       "function name() view returns (string)",
       "function symbol() view returns (string)",
       "function decimals() view returns (uint8)",
       "function totalSupply() view returns (uint256)",
       "function pledgedTotalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (uint256 balanceMinor)",
-      "function pledgedOf(address account) view returns (uint256 pledgedMinor)",
+      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
+      "function pledgedOf(address account) view returns (bytes pledgedCiphertext)",
       "function allowance(address owner, address spender) view returns (uint256)",
     ]),
   },
