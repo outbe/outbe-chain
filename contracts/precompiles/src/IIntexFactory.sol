@@ -24,8 +24,8 @@ interface IIntexFactory {
     /// @notice Distribute auction proceeds (native COEN, sent as msg.value) to
     ///         the contributing tribute owners of `seriesId`, proportional to
     ///         each owner's Tribute Nominal Amount. Callable only by the
-    ///         OriginMessenger. Pays the first chunk in this call; any remainder
-    ///         is drained over later blocks by the begin-block hook.
+    ///         OriginRouter. Registers the distribution; every payout is drained
+    ///         over later blocks by the begin-block hook.
     function distribute(uint32 seriesId) external payable;
 
     /// @notice A new series was created from a cleared auction.

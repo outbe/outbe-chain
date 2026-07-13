@@ -207,15 +207,25 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
     let count = outbe_intex::api::contributor_count(storage, series_id)?;
     let end = progress.cursor.saturating_add(limit).min(count);
 
+    // A zero denominator would panic on divide; begin-block panics halt the chain (not checkpoint-isolated),
+    // so fail as an isolated Err instead.
+    if progress.total_nominal.is_zero() {
+        return Err(IntexFactoryError::NoContributors(series_id).into());
+    }
+
     let mut paid = progress.paid_so_far;
     for i in progress.cursor..end {
         let (owner, nominal) = outbe_intex::api::contributor_at(storage, series_id, i)?;
         // The final contributor absorbs the rounding remainder so the sum of
-        // payouts equals `amount` exactly.
+        // payouts equals `amount` exactly. checked_mul: isolated Err over a silent wrap.
         let share = if i == count - 1 {
             progress.amount - paid
         } else {
-            progress.amount * nominal / progress.total_nominal
+            progress
+                .amount
+                .checked_mul(nominal)
+                .ok_or(IntexFactoryError::DistributionOverflow(series_id))?
+                / progress.total_nominal
         };
         storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
         paid += share;

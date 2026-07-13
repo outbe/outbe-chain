@@ -37,6 +37,8 @@ pub enum IntexFactoryError {
     NoContributors(u32),
     #[error("no in-flight distribution for series {0}")]
     NoDistribution(u32),
+    #[error("distribution payout math overflow for series {0}")]
+    DistributionOverflow(u32),
 }
 
 impl From<IntexFactoryError> for PrecompileError {
