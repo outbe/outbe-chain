@@ -64,6 +64,14 @@ contract DeployOutbe is BaseScript {
                 InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "IntexNFT1155Bridge"))
             );
 
+        // Proceeds route (creator-reward): unwrap inbound WCOEN and hand the native to the factory precompile.
+        // Skipped when the WCOEN bridge env is unset.
+        address wcoenBridge = vm.envOr("OUTBE_WCOEN_BRIDGE", address(0));
+        address wcoenToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));
+        if (wcoenBridge != address(0) && wcoenToken != address(0)) {
+            OriginRouter(payable(router)).setProceedsRoute(wcoenBridge, wcoenToken);
+        }
+
         vm.stopBroadcast();
 
         console.log("Create3Factory:", address(factory));
