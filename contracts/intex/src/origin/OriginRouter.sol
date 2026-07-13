@@ -501,6 +501,8 @@ contract OriginRouter is
 
     /// @dev Hand native proceeds to the factory precompile; park them for retry on failure.
     function _distributeOrPark(uint32 seriesId, uint128 amount) private {
+        // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park write is safe.
+        // slither-disable-next-line reentrancy-eth
         try IIntexFactory(_os().intexFactory).distribute{value: amount}(seriesId) {
             emit ProceedsDistributed(seriesId, amount);
         } catch {
