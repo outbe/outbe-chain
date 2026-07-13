@@ -705,7 +705,7 @@ contract TargetRouter is
         IERC20 token = $.escrowAdapter.paymentToken();
 
         token.forceApprove(address($.tokenBridge), amount);
-        uint256 fee = $.tokenBridge.quoteSendAndCall(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         emit ProceedsRouted(seriesId, amount);

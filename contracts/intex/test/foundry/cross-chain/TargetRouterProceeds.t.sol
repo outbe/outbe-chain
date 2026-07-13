@@ -50,7 +50,7 @@ contract MockTokenBridge {
         shouldRevert = v;
     }
 
-    function quoteSendAndCall(uint32, address, uint256, bytes calldata, uint256) external view returns (uint256) {
+    function quoteSend(uint32, address, uint256, bytes calldata, uint256) external view returns (uint256) {
         return fee;
     }
 
