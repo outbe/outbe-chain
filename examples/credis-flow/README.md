@@ -32,10 +32,12 @@ Crypto uses Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256, ChaCha20-Poly130
 plus `@noble/curves` for X25519. `npm run generate-types` stages the ABIs and runs
 typechain; `npx tsc --noEmit` is clean.
 
-> SECURITY NOTE: the demo `outbe_deriveGratisKeys` RPC does not yet authenticate
-> that the requester controls `account` — it will hand any caller that account's
-> modify key. A production RPC MUST require a signature from the account key. The
-> demo only ever requests the user's own keys.
+> AUTH: `outbe_deriveGratisKeys(account, ephemeralPubkey, signature)` requires
+> proof of control of `account` — an EIP-191 `personal_sign` over
+> `"outbe/gratis/derive-keys/v1" ‖ account ‖ ephemeralPubkey`, which the node
+> recovers and matches before asking the enclave. `deriveGratisKeys(signer)` in
+> `confidential.ts` produces it, so you sign with the account key (read-only
+> scripts like `0-info` therefore need `USER_PRIVATE_KEY` to decrypt balances).
 
 Contract bindings come from this repo's own ABIs. `npm run generate-types` first
 runs `scripts/prepare-abis.mjs`, which copies the required JSONs out of

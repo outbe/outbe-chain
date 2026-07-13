@@ -45,7 +45,7 @@ async function main() {
   const amount = BigInt(ticket.amount);
   const { chainId } = await provider.getNetwork();
 
-  const keys = await deriveGratisKeys(provider, userAddress);
+  const keys = await deriveGratisKeys(wallet);
   const opNonce = await gratis.opNonceOf(userAddress);
   const balanceBefore = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const pledgedBefore = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));

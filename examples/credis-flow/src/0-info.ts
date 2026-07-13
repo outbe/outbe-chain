@@ -1,4 +1,4 @@
-import { ethers, toBigInt } from "ethers";
+import { ethers, toBigInt, Wallet } from "ethers";
 import {
   IGratis__factory,
   ICredis__factory,
@@ -32,6 +32,9 @@ const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
 
 const rpcUrl = requireEnv("RPC_URL", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
+// Optional: needed only to sign the ownership proof that fetches the user's view
+// key (so this read-only script can decrypt their Gratis balances).
+const userPrivateKey = process.env["USER_PRIVATE_KEY"];
 const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
@@ -71,13 +74,18 @@ async function main() {
 
   const [gratisMeta, erc20Meta] = await Promise.all([fetchTokenMeta(gratis), fetchTokenMeta(token)]);
 
-  // The user's Gratis balances are confidential — fetch the view key via
-  // `outbe_deriveGratisKeys` to decrypt them. (Null if the enclave/DKG isn't up.)
+  // The user's Gratis balances are confidential. Fetching the view key requires
+  // signing an ownership proof, so it needs USER_PRIVATE_KEY; without it (or if
+  // the enclave/DKG isn't up) balances are shown as ciphertext.
   let userKeys: GratisKeys | null = null;
-  try {
-    userKeys = await deriveGratisKeys(provider, userAddress);
-  } catch (e) {
-    console.warn(`\n(!) Could not fetch Gratis view key (${(e as Error).message}); balances shown as ciphertext.`);
+  if (userPrivateKey) {
+    try {
+      userKeys = await deriveGratisKeys(new Wallet(userPrivateKey, provider));
+    } catch (e) {
+      console.warn(`\n(!) Could not fetch Gratis view key (${(e as Error).message}); balances shown as ciphertext.`);
+    }
+  } else {
+    console.warn("\n(!) USER_PRIVATE_KEY not set — Gratis balances shown as ciphertext (the account key is needed to fetch its view key).");
   }
 
   const smartAccountAddr = await saFactory.getAccountAddress(

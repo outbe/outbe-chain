@@ -108,25 +108,34 @@ export interface GratisKeys {
 }
 
 /**
- * Fetch `account`'s enclave-derived view + modify keys via the
+ * Fetch the signer's own enclave-derived view + modify keys via the
  * `outbe_deriveGratisKeys` RPC. The enclave seals them to a fresh client
  * ephemeral X25519 key (the `decrypt_share` scheme in `crypto.rs`).
  *
- * SECURITY NOTE: the current RPC does not authenticate that the requester
- * controls `account` — see the RPC TODO. For the demo we only ever request the
- * user's own keys.
+ * The RPC authenticates control of the account: we prove it with an EIP-191
+ * `personal_sign` over `"outbe/gratis/derive-keys/v1" || account || ephemeralPubkey`
+ * (recovered + matched server-side), so only the account's key holder can obtain
+ * its keys.
  */
-export async function deriveGratisKeys(
-  provider: ethers.JsonRpcProvider,
-  account: string,
-): Promise<GratisKeys> {
+export async function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
+  const provider = signer.provider as ethers.JsonRpcProvider | null;
+  if (!provider) throw new Error("deriveGratisKeys: signer must be connected to a JsonRpcProvider");
+  const account = ethers.getAddress(await signer.getAddress());
+
   const ephSecret = x25519.utils.randomPrivateKey();
   const ephPublic = x25519.getPublicKey(ephSecret);
 
+  // Ownership proof: personal_sign over the domain-tagged message (raw bytes).
+  const message = ethers.getBytes(
+    ethers.concat([utf8("outbe/gratis/derive-keys/v1"), ethers.getBytes(account), ephPublic]),
+  );
+  const signature = await signer.signMessage(message);
+
   const resp: { sealed: string; nonce: string; enclaveEphemeralPubkey: string } =
     await provider.send("outbe_deriveGratisKeys", [
-      ethers.getAddress(account),
+      account,
       ethers.hexlify(ephPublic),
+      signature,
     ]);
 
   const sealed = ethers.getBytes(resp.sealed);

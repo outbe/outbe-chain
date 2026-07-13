@@ -44,8 +44,8 @@ async function main() {
   const { chainId } = await provider.getNetwork();
 
   // Fetch the user's enclave-derived confidential keys (view + modify) so we can
-  // read the encrypted balance and authorize the write.
-  const keys = await deriveGratisKeys(provider, userAddress);
+  // read the encrypted balance and authorize the write. Signs an ownership proof.
+  const keys = await deriveGratisKeys(wallet);
 
   const opNonce = await gratis.opNonceOf(userAddress);
   const balanceBefore = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));

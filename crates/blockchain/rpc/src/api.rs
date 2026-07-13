@@ -176,11 +176,18 @@ pub trait OutbeApi {
     /// Derive the account's confidential Gratis view + modify keys inside the
     /// enclave and return them sealed to `ephemeralPubkey` (a client X25519 public
     /// key). Off-chain key delivery — it never touches consensus state.
+    ///
+    /// The caller MUST prove control of `account`: `signature` is an EIP-191
+    /// `personal_sign` over `"outbe/gratis/derive-keys/v1" ‖ account ‖
+    /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
+    /// matching signature the enclave is never asked — otherwise anyone could
+    /// obtain any account's modify key.
     #[method(name = "deriveGratisKeys")]
     async fn derive_gratis_keys(
         &self,
         account: Address,
         ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
     ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
 
     /// Returns detailed information about a single validator by address.

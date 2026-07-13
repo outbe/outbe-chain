@@ -208,7 +208,7 @@ async function main() {
   // ORIGINAL pledger's confidential Gratis balance — no reclaim note, no second
   // transaction. The user reads their own (encrypted) balance with their view key.
   const gratis = IGratis__factory.connect(gratisAddress, provider);
-  const userKeys = await deriveGratisKeys(provider, userAddress);
+  const userKeys = await deriveGratisKeys(userWallet);
   const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   console.log(
     `\nThis installment unlocks ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")} of collateral back to ${userAddress}.`,
