@@ -32,5 +32,12 @@ serde.workspace = true
 serde_json.workspace = true
 eyre.workspace = true
 
+[dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-update.workspace = true
+outbe-vote.workspace = true
+alloy-sol-types.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true
