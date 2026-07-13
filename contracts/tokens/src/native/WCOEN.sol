@@ -6,6 +6,8 @@ contract WCOEN {
     string public symbol = "WCOEN";
     uint8 public decimals = 18;
 
+    error NativeTransferFailed(address to, uint256 amount);
+
     event Approval(address indexed src, address indexed guy, uint256 wad);
     event Transfer(address indexed src, address indexed dst, uint256 wad);
     event Deposit(address indexed dst, uint256 wad);
@@ -31,7 +33,10 @@ contract WCOEN {
         require(address(this).balance >= wad);
         _totalSupply -= wad;
         balanceOf[msg.sender] -= wad;
-        payable(msg.sender).transfer(wad);
+
+        (bool success,) = payable(msg.sender).call{value: wad}("");
+        if (!success) revert NativeTransferFailed(msg.sender, wad);
+
         emit Withdrawal(msg.sender, wad);
     }
 
@@ -42,6 +47,22 @@ contract WCOEN {
     function approve(address guy, uint256 wad) public returns (bool) {
         allowance[msg.sender][guy] = wad;
         emit Approval(msg.sender, guy, wad);
+        return true;
+    }
+
+    function increaseAllowance(address guy, uint256 wad) public returns (bool) {
+        allowance[msg.sender][guy] += wad;
+        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
+        return true;
+    }
+
+    function decreaseAllowance(address guy, uint256 wad) public returns (bool) {
+        uint256 currentAllowance = allowance[msg.sender][guy];
+        require(currentAllowance >= wad);
+        unchecked {
+            allowance[msg.sender][guy] = currentAllowance - wad;
+        }
+        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
         return true;
     }
 

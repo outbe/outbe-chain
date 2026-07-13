@@ -690,6 +690,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
                 issuance_currency: 1,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
             })
             .unwrap();

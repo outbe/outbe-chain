@@ -24,6 +24,7 @@ impl TributeFactoryContract<'_> {
         nonce: &[u8],
         ephemeral_pubkey: U256,
         reference_currency: u16,
+        exclude_from_intex_issuance: bool,
     ) -> Result<U256> {
         check_currency(reference_currency)?;
 
@@ -53,6 +54,7 @@ impl TributeFactoryContract<'_> {
             nonce: nonce.to_vec(),
             ephemeral_pubkey,
             reference_currency,
+            exclude_from_intex_issuance,
             tribute_price_minor: tribute_price,
         };
         let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
@@ -98,6 +100,7 @@ impl TributeFactoryContract<'_> {
             issuance_currency: result.issuance_currency,
             nominal_amount_minor: result.nominal_amount_minor,
             reference_currency: result.reference_currency,
+            exclude_from_intex_issuance: result.exclude_from_intex_issuance,
             tribute_price_minor: result.tribute_price_minor,
         })?;
 

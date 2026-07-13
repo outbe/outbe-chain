@@ -326,6 +326,14 @@ fn run_node() -> eyre::Result<()> {
             );
         }
 
+        if let Err(error) = outbe_primitives::governance_journal::init(&consensus_storage) {
+            tracing::warn!(
+                target: "outbe::governance::journal",
+                %error,
+                "failed to initialize governance journal — events will not be persisted to a sidecar file",
+            );
+        }
+
         let runtime_config = commonware_runtime::tokio::Config::default()
             .with_tcp_nodelay(Some(true))
             .with_worker_threads(args.worker_threads)
@@ -466,6 +474,8 @@ fn run_node() -> eyre::Result<()> {
             .launch()
             .await
             .wrap_err("failed launching execution node")?;
+
+        outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::handlers::update::registry())?;
 
         if args.is_validator || args.upstream.is_some() {
             if args.upstream.is_some() {

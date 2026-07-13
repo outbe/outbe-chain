@@ -27,6 +27,9 @@ contract USDT0Deploy is Script {
         bytes bridgeCreationCode;
     }
 
+    uint256 private constant BSC_TESTNET_CHAIN_ID = 97;
+    uint256 private constant ANVIL_CHAIN_ID = 31_337;
+
     error MissingCode(address target);
     error UnauthorizedSigner(address signer, address expectedOwner);
     error OwnerMustBeMultisigContract(address owner, uint256 chainId);
@@ -35,6 +38,7 @@ contract USDT0Deploy is Script {
     error DomainTooLarge(uint256 chainId);
     error InvalidRemoteTokenBridge();
     error Create2FactoryDeploymentFailed(bytes32 salt, address expected);
+    error MockUSDTDeploymentNotAllowed(uint256 chainId);
 
     function _getPrivateKey() internal view returns (uint256) {
         return vm.parseUint(vm.envString("PRIVATE_KEY"));
@@ -165,6 +169,7 @@ contract USDT0Deploy is Script {
 
         vm.startBroadcast(pk);
         if (configuredToken == address(0)) {
+            _requireMockUSDTDeploymentAllowed();
             USDT token = new USDT();
             token.mint(initialMintRecipient, initialMint);
             sourceToken = address(token);

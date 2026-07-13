@@ -32,6 +32,7 @@ pub fn dispatch(
                         &c.nonce,
                         c.ephemeralPubkey,
                         c.referenceCurrency,
+                        c.excludeFromIntexIssuance,
                     )
                 }),
             }

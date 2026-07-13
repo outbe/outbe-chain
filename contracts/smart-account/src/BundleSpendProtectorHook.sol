@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {IHook} from "@zerodev/kernel/interfaces/IERC7579Modules.sol";
 import {MODULE_TYPE_HOOK, CALLTYPE_SINGLE, CALLTYPE_BATCH} from "@zerodev/kernel/types/Constants.sol";
 import {CallType} from "@zerodev/kernel/types/Types.sol";
-import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {ITokenBundle} from "./interfaces/ITokenBundle.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
@@ -146,7 +145,7 @@ contract BundleSpendProtectorHook is IHook {
         if (callType == CALLTYPE_SINGLE) {
             // Minimum: target(20) + value(32) + selector(4) = 56 bytes.
             if (execCalldata.length < 56) return new ApproveGrant[](0);
-            (address target,, bytes calldata innerCallData) = ExecLib.decodeSingle(execCalldata);
+            (address target,, bytes calldata innerCallData) = LibERC7579.decodeSingle(execCalldata);
             ApproveGrant[] memory grants = new ApproveGrant[](1);
             uint256 n = _appendApproveGrant(account, target, innerCallData, grants, 0);
             return _trim(grants, n);

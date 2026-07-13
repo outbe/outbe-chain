@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
-    // `zkProof`, `zkVerificationKey`, `zkPublicKey`, `zkMerkleRoot`, and
-    // `tributeOwnerL1` are ABI stubs reserved for the future ZK-verification path.
+    // `zkProof`, `zkVerificationKey`, `zkPublicKey`, and `zkMerkleRoot`
+    // are ABI stubs reserved for the future ZK-verification path.
     // Dispatch ignores them today; clients must pass well-formed bytes, but no
     // verification runs. Do not remove from the ABI without a migration plan —
     // the fields are part of the external contract surface.
@@ -12,6 +12,7 @@ interface ITributeFactory {
         bytes calldata nonce,
         uint256 ephemeralPubkey,
         uint16 referenceCurrency,
+        bool excludeFromIntexIssuance,
         bytes calldata zkProof,
         bytes calldata zkVerificationKey,
         bytes calldata zkPublicKey,
