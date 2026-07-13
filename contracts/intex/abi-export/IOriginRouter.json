@@ -1241,6 +1241,17 @@
     },
     {
       "type": "error",
+      "name": "UnauthorizedProceedsSender",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "UnexpectedProceedsSource",
       "inputs": [
         {

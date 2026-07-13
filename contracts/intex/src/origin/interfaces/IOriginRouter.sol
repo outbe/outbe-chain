@@ -87,6 +87,8 @@ interface IOriginRouter {
     error UnauthorizedProceedsCaller(address caller);
     /// @notice Proceeds arrived from an unexpected source domain.
     error UnexpectedProceedsSource(uint32 sourceDomain);
+    /// @notice Proceeds arrived from a source sender other than the registered BNB peer.
+    error UnauthorizedProceedsSender(bytes from);
     /// @notice No live parked distribution at `idx`.
     error NoParkedProceeds(uint256 idx);
 

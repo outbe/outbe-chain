@@ -49,7 +49,9 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
     address internal tokenBridge = makeAddr("tokenBridge");
     address internal stranger = makeAddr("stranger");
-    bytes internal from = abi.encodePacked("bnb-target-router");
+    address internal targetRouter = makeAddr("targetRouter");
+    // Legit source sender = the registered BNB peer (TargetRouter).
+    bytes internal from;
 
     function setUp() public {
         _setUpBridge();
@@ -62,6 +64,9 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
         origin.wire(address(desis), address(factory));
         origin.setProceedsRoute(tokenBridge, address(wcoen));
+        // Peer the proceeds hook authenticates `from` against.
+        origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetRouter));
+        from = _interop(BNB_CHAIN_ID, targetRouter);
     }
 
     function _receive(uint32 sourceDomain, uint256 amount, uint32 seriesId) internal returns (bytes4) {
@@ -138,5 +143,13 @@ contract OriginRouterProceedsTest is CrossChainTest {
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, uint32(999)));
         origin.onCrosschainTokensReceived(999, from, AMOUNT, abi.encode(SERIES_ID));
+    }
+
+    function test_RevertWhen_ProceedsSenderSpoofed() public {
+        // Permissionless bridge: a sender other than the registered BNB peer must be rejected.
+        bytes memory spoofed = _interop(BNB_CHAIN_ID, stranger);
+        vm.prank(tokenBridge);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, spoofed));
+        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, spoofed, AMOUNT, abi.encode(SERIES_ID));
     }
 }

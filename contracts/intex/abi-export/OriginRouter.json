@@ -209,7 +209,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "",
+          "name": "from",
           "type": "bytes",
           "internalType": "bytes"
         },
@@ -2024,6 +2024,17 @@
           "name": "caller",
           "type": "address",
           "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "UnauthorizedProceedsSender",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "bytes",
+          "internalType": "bytes"
         }
       ]
     },

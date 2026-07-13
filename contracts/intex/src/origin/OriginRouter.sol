@@ -5,6 +5,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
@@ -469,18 +470,22 @@ contract OriginRouter is
     /// @dev The token bridge credits WCOEN before this call; we unwrap it and hand the native to the factory
     ///      precompile, which pays the series' creators. A distribution failure parks the native for retry so
     ///      the transfer still settles (returning the magic value) instead of bricking on redelivery.
-    function onCrosschainTokensReceived(uint32 sourceDomain, bytes calldata, uint256 amount, bytes calldata extraData)
-        external
-        nonReentrant
-        returns (bytes4)
-    {
+    function onCrosschainTokensReceived(
+        uint32 sourceDomain,
+        bytes calldata from,
+        uint256 amount,
+        bytes calldata extraData
+    ) external nonReentrant returns (bytes4) {
         OriginRouterStorage storage $ = _os();
         if (msg.sender != $.tokenBridge) revert UnauthorizedProceedsCaller(msg.sender);
         if (sourceDomain != BNB_CHAIN_ID) revert UnexpectedProceedsSource(sourceDomain);
+        // The bridge is permissionless: pin the source sender to the registered BNB peer (TargetRouter), else
+        // anyone could open a distribution for any series and wipe its contributor provenance.
+        if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
 
         uint32 seriesId = abi.decode(extraData, (uint32));
         IWCOEN($.wcoen).withdraw(amount);
-        _distributeOrPark(seriesId, uint128(amount));
+        _distributeOrPark(seriesId, SafeCast.toUint128(amount));
 
         return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
     }
