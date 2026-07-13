@@ -16,6 +16,9 @@ interface ICredis {
         uint256 outstandingGratisAmount;
         uint32 nextAnadosisNumber;
         uint64 createdAt;
+        uint256 credisPrincipal;
+        uint256 refinancingRate;
+        uint16 issuanceCurrency;
     }
 
     struct Anadosis {

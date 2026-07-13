@@ -12,6 +12,9 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatTokenMeta2,
+  ccaPermissionId,
+  permissionNonceKey,
+  encodePermissionSignature,
 } from "./utils.js";
 
 const SALT = 0n;
@@ -86,14 +89,8 @@ async function main() {
 
   // ── Build and submit UserOp ───────────────────────────────────────────────
 
-  // permissionId = bytes4(keccak256(abi.encode("credis.cca", token)))
-  const permIdFull = ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(["string", "address"], ["credis.cca", erc20Address]),
-  );
-  const permId4Hex = permIdFull.slice(2, 10); // first 4 bytes hex (no 0x)
-  const identifierHex = permId4Hex + "0".repeat(32); // bytes20(bytes4) = 4 bytes + 16 zero bytes
-  const nonceKeyHex = "0002" + identifierHex + "0000"; // 24 bytes
-  const nonceKey = BigInt("0x" + nonceKeyHex);
+  // Per-token CCA permission (Kernel v4 permission validation, vType = 0x02).
+  const nonceKey = permissionNonceKey(ccaPermissionId(erc20Address));
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, ccaWallet);
 
@@ -138,10 +135,10 @@ async function main() {
     signature: "0x",
   };
 
-  // Sign with CCA key and prepend 0xFF (skip-policy-sig marker)
+  // Kernel v4 permission signature: abi.encode(bytes[]{ policy slice (empty), CCA ECDSA sig }).
   const userOpHash = await entryPoint.getUserOpHash(op);
   const sig = await ccaWallet.signMessage(ethers.getBytes(userOpHash));
-  op.signature = "0xff" + sig.slice(2);
+  op.signature = encodePermissionSignature(sig);
 
   console.log("\nSending UserOp via EntryPoint.handleOps...");
   console.log(`  Nonce:      ${nonce}`);

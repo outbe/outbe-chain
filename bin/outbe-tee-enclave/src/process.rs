@@ -106,6 +106,7 @@ fn process_one(
         issuance_currency: payload.currency,
         nominal_amount_minor,
         reference_currency: offer.reference_currency,
+        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
         tribute_price_minor: price,
         // Returned for the host's SU-hash used-marking + agent-reward routing
         // (public on-chain). Privacy-preserving markers-only form is a later
@@ -129,6 +130,7 @@ fn rejected(offer: &EncryptedTributeOffer, reason: String) -> TributeOfferResult
         issuance_currency: 0,
         nominal_amount_minor: U256::ZERO,
         reference_currency: offer.reference_currency,
+        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
         tribute_price_minor: offer.tribute_price_minor,
         su_hashes: Vec::new(),
         wallet_addresses: Vec::new(),
@@ -169,6 +171,7 @@ mod tests {
             nonce: NONCE.to_vec(),
             ephemeral_pubkey: U256::from_be_bytes(eph_pub),
             reference_currency,
+            exclude_from_intex_issuance: false,
             tribute_price_minor: price,
         }
     }
@@ -214,6 +217,31 @@ mod tests {
         assert_ne!(hash, B256::ZERO);
     }
 
+    /// The unencrypted `exclude_from_intex_issuance` ABI flag is echoed straight
+    /// back on the result (like `reference_currency`) — both on the created path
+    /// and, defensively, on the rejected path.
+    #[test]
+    fn exclude_from_intex_issuance_is_echoed() {
+        let owner = Address::repeat_byte(0xC1);
+        let price = U256::from(2u64) * SCALE_1E18;
+        let mut offer = make_tribute_offer(owner, GOOD_JSON, 840, price);
+        offer.exclude_from_intex_issuance = true;
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert_eq!(results[0].status, TributeOfferStatus::Created);
+        assert!(results[0].exclude_from_intex_issuance);
+
+        // Rejected path (zero price) still carries the flag.
+        let mut bad = make_tribute_offer(owner, GOOD_JSON, 840, U256::ZERO);
+        bad.exclude_from_intex_issuance = true;
+        let (rejected, _) = process_tribute_offer_batch(&key(), &[bad]);
+        assert!(matches!(
+            rejected[0].status,
+            TributeOfferStatus::Rejected { .. }
+        ));
+        assert!(rejected[0].exclude_from_intex_issuance);
+    }
+
     #[test]
     fn zero_price_is_rejected_not_aborted() {
         // Distinct owners so both offers are independent (one owner = at most one
@@ -240,6 +268,7 @@ mod tests {
             nonce: NONCE.to_vec(),
             ephemeral_pubkey: U256::ZERO,
             reference_currency: 840,
+            exclude_from_intex_issuance: false,
             tribute_price_minor: SCALE_1E18,
         };
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);

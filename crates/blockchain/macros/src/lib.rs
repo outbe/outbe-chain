@@ -201,24 +201,6 @@ fn is_deprecated_type(ty: &Type) -> bool {
     is_ident_type(ty, &["Deprecated"])
 }
 
-/// Variable-length record field types, stored via `StorageBytes` (EVM string
-/// layout) at the field's per-key mapping slot. Each occupies one slot in the
-/// record's linear layout (the length/base slot); the payload spills into a
-/// keccak-derived data run, so it never collides with sibling fields.
-#[derive(Clone, Copy, PartialEq)]
-enum BytesLikeKind {
-    String,
-    Bytes,
-}
-
-fn bytes_like_record_kind(ty: &Type) -> Option<BytesLikeKind> {
-    match last_type_ident(ty).as_deref() {
-        Some("String") => Some(BytesLikeKind::String),
-        Some("Bytes") => Some(BytesLikeKind::Bytes),
-        _ => None,
-    }
-}
-
 fn unwrap_single_generic_type(ty: &Type) -> Option<Type> {
     let args = type_args(ty)?;
     match args.first() {
@@ -281,7 +263,16 @@ fn storage_type_with_lifetime(ty: &Type) -> proc_macro2::TokenStream {
         }
         "Map" => {
             let args = type_args(ty).unwrap_or_default();
-            quote! { ::outbe_primitives::storage::dsl::Map<'storage, #(#args),*> }
+            if args.len() == 2 {
+                let key = &args[0];
+                let value = match &args[1] {
+                    GenericArgument::Type(inner) => storage_type_with_lifetime(inner),
+                    other => quote! { #other },
+                };
+                quote! { ::outbe_primitives::storage::dsl::Map<'storage, #key, #value> }
+            } else {
+                quote! { ::outbe_primitives::storage::dsl::Map<'storage, #(#args),*> }
+            }
         }
         "List" => {
             let inner = unwrap_single_generic_type(ty).unwrap();
@@ -325,7 +316,7 @@ fn contract_slot_count_expr(ty: &Type) -> proc_macro2::TokenStream {
     if is_dsl_map_type(ty) {
         let args = type_args(ty).unwrap_or_default();
         if let Some(GenericArgument::Type(value_ty)) = args.get(1) {
-            if is_scalar_like_type(value_ty) {
+            if is_scalar_like_type(value_ty) || is_dsl_list_type(value_ty) {
                 quote! { 1u64 }
             } else {
                 quote! { <#value_ty as ::outbe_primitives::storage::dsl::StorageRecord>::SLOTS as u64 }
@@ -355,6 +346,50 @@ fn record_field_inner_storage_type(ty: &Type) -> Type {
         return unwrap_single_generic_type(ty).unwrap_or_else(|| ty.clone());
     }
     ty.clone()
+}
+
+fn is_string_type(ty: &Type) -> bool {
+    is_ident_type(ty, &["String"])
+}
+
+fn is_vec_u8_type(ty: &Type) -> bool {
+    if last_type_ident(ty).as_deref() != Some("Vec") {
+        return false;
+    }
+    let Some(args) = type_args(ty) else {
+        return false;
+    };
+    matches!(args.first(), Some(GenericArgument::Type(inner)) if is_ident_type(inner, &["u8"]))
+}
+
+enum DynamicFieldKind {
+    String,
+    VecU8,
+}
+
+fn dynamic_field_kind(ty: &Type) -> Option<DynamicFieldKind> {
+    let inner = record_field_inner_storage_type(ty);
+    if is_string_type(&inner) {
+        Some(DynamicFieldKind::String)
+    } else if is_vec_u8_type(&inner) {
+        Some(DynamicFieldKind::VecU8)
+    } else {
+        None
+    }
+}
+
+fn dynamic_bytes_mapping_new(
+    receiver: &Ident,
+    key_ty: &Type,
+    offset_lit: u64,
+) -> proc_macro2::TokenStream {
+    quote! {
+        ::outbe_primitives::storage::types::Mapping::<#key_ty, ::outbe_primitives::storage::types::StorageBytes>::new(
+            #receiver.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
+            #receiver.address(),
+            #receiver.storage(),
+        )
+    }
 }
 
 fn compute_order_based_offsets<T, FSlot, FOrder>(
@@ -759,81 +794,70 @@ fn generate_storage_record(
 
     for (field, offset) in non_key_fields.iter().zip(non_key_offsets.iter()) {
         let fname = &field.name;
+        let storage_ty = record_field_inner_storage_type(&field.ty);
         let offset_lit = *offset;
+        let dynamic_kind = dynamic_field_kind(&field.ty);
 
-        // Variable-length String/Bytes fields: stored via StorageBytes at the
-        // field's per-key mapping slot. read/write/delete route through the
-        // StorageBytes handle; the accessor exposes that handle directly so
-        // callers can touch the text without loading the whole record.
-        if let Some(kind) = bytes_like_record_kind(&field.ty) {
-            if field.name == exists_field_ident {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "exists_field cannot be a String/Bytes field (no single-word existence check)",
-                ));
-            }
-            let bytes_handle = |base: proc_macro2::TokenStream, key: proc_macro2::TokenStream| {
-                quote! {
-                    ::outbe_primitives::storage::types::Mapping::<#key_ty, ::outbe_primitives::storage::types::StorageBytes>::new(
-                        #base + ::alloy_primitives::U256::from(#offset_lit),
-                        entry.address(),
-                        entry.storage(),
-                    ).get_bytes(#key)
-                }
-            };
-            let entry_handle =
-                bytes_handle(quote! { entry.base_slot() }, quote! { entry.key_ref() });
-            let read_expr = match kind {
-                BytesLikeKind::String => quote! { #entry_handle.read_string()? },
-                BytesLikeKind::Bytes => {
-                    quote! { ::alloy_primitives::Bytes::from(#entry_handle.read()?) }
-                }
-            };
-            let write_bytes = match kind {
-                BytesLikeKind::String => quote! { value.#fname.as_bytes() },
-                BytesLikeKind::Bytes => quote! { value.#fname.as_ref() },
-            };
-            load_fields.push(quote! { #fname: #read_expr });
-            write_fields.push(quote! { #entry_handle.write_if_changed(#write_bytes)?; });
-            delete_fields.push(quote! { #entry_handle.clear()?; });
-
-            accessor_trait_methods.push(quote! {
-                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage>;
-            });
-            accessor_impl_methods.push(quote! {
-                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage> {
-                    ::outbe_primitives::storage::types::Mapping::<#key_ty, ::outbe_primitives::storage::types::StorageBytes>::new(
-                        self.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
-                        self.address(),
-                        self.storage(),
-                    ).get_bytes(self.key_ref())
-                }
-            });
-            continue;
+        if field.name == exists_field_ident && dynamic_kind.is_some() {
+            return Err(syn::Error::new_spanned(
+                &field.name,
+                "exists_field cannot be a dynamic String or Vec<u8> record field",
+            ));
+        }
+        if is_optional_type(&field.ty) && dynamic_kind.is_some() {
+            return Err(syn::Error::new_spanned(
+                &field.name,
+                "optional dynamic String or Vec<u8> record fields are not supported",
+            ));
         }
 
-        let storage_ty = record_field_inner_storage_type(&field.ty);
-        let mapping_read = quote! {
-            ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
-                entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
-                entry.address(),
-                entry.storage(),
-            ).read(entry.key_ref())?
+        // TODO: reduce boilerplate in constructors.
+        let (mapping_read, mapping_write, mapping_delete) = match dynamic_kind {
+            Some(DynamicFieldKind::String) => {
+                let map_new =
+                    dynamic_bytes_mapping_new(&format_ident!("entry"), key_ty, offset_lit);
+                (
+                    quote! { #map_new.read_string(entry.key_ref())? },
+                    // write_if_changed: one read (SLOADs) to skip the full
+                    // rewrite (SSTOREs, ~50x per slot) when the value is equal.
+                    quote! { #map_new.get_bytes(entry.key_ref()).write_if_changed(value.#fname.as_bytes())?; },
+                    quote! { #map_new.get_bytes(entry.key_ref()).clear()?; },
+                )
+            }
+            Some(DynamicFieldKind::VecU8) => {
+                let map_new =
+                    dynamic_bytes_mapping_new(&format_ident!("entry"), key_ty, offset_lit);
+                (
+                    quote! { #map_new.get_bytes(entry.key_ref()).read()? },
+                    quote! { #map_new.get_bytes(entry.key_ref()).write_if_changed(&value.#fname)?; },
+                    quote! { #map_new.get_bytes(entry.key_ref()).clear()?; },
+                )
+            }
+            None => (
+                quote! {
+                    ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
+                        entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
+                        entry.address(),
+                        entry.storage(),
+                    ).read(entry.key_ref())?
+                },
+                quote! {
+                    ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
+                        entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
+                        entry.address(),
+                        entry.storage(),
+                    ).write(entry.key_ref(), value.#fname)?;
+                },
+                quote! {
+                    ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
+                        entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
+                        entry.address(),
+                        entry.storage(),
+                    ).get(entry.key_ref()).delete()?;
+                },
+            ),
         };
-        let mapping_write = quote! {
-            ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
-                entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
-                entry.address(),
-                entry.storage(),
-            ).write(entry.key_ref(), value.#fname)?;
-        };
-        let mapping_delete = quote! {
-            ::outbe_primitives::storage::types::Mapping::<#key_ty, #storage_ty>::new(
-                entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
-                entry.address(),
-                entry.storage(),
-            ).get(entry.key_ref()).delete()?;
-        };
+
         if is_optional_type(&field.ty) {
             accessor_trait_methods.push(quote! {
                 fn #fname(&self) -> ::outbe_primitives::storage::dsl::OptionalField<'storage, #key_ty, #storage_ty>;
@@ -846,6 +870,16 @@ fn generate_storage_record(
                         self.storage(),
                         self.key(),
                     )
+                }
+            });
+        } else if dynamic_kind.is_some() {
+            let map_new = dynamic_bytes_mapping_new(&format_ident!("self"), key_ty, offset_lit);
+            accessor_trait_methods.push(quote! {
+                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage>;
+            });
+            accessor_impl_methods.push(quote! {
+                fn #fname(&self) -> ::outbe_primitives::storage::types::StorageBytes<'storage> {
+                    #map_new.get_bytes(self.key_ref())
                 }
             });
         } else {

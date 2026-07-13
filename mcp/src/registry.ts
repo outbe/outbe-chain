@@ -25,7 +25,7 @@ const A = (hex: string): Address => getAddress(hex);
 const STRUCTS = [
   "struct NodData { uint256 nodId; address owner; uint32 worldwideDay; uint32 leagueId; uint256 floorPriceMinor; uint256 gratisLoadMinor; uint256 costOfGratisMinor; uint256 costAmountMinor; bool isQualified; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
   "struct GemData { uint256 gemId; address owner; uint8 gemType; uint8 state; uint256 gemLoad; uint256 entryPrice; uint256 costAmount; uint256 floorPrice; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
-  "struct Position { uint256 positionId; address asset; address bundleAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; }",
+  "struct Position { uint256 positionId; address asset; address bundleAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; uint256 credisPrincipal; uint256 refinancingRate; uint16 issuanceCurrency; }",
   "struct Anadosis { uint32 anadosisNumber; uint64 dueDate; uint64 paidAt; uint256 anadosisAmount; uint256 gratisAmount; }",
   "struct PledgeTicket { uint256 commitment; uint256 amount; int64 createdAtBlock; }",
   "struct ExchangeRateTuple { string base; string quote; uint256 exchangeRate; uint256 volume; }",
@@ -52,7 +52,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     address: A("0x0000000000000000000000000000000000001100"),
     note: "TributeFactory (offerTribute, enclave decrypt)",
     abi: parseAbi([
-      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot) returns (uint256 tributeId)",
+      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bool excludeFromIntexIssuance, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot) returns (uint256 tributeId)",
     ]),
   },
 
@@ -204,6 +204,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function getVoteTargets() view returns (uint32[] pairIds)",
       "function isVoteTarget(string base, string quote) view returns (bool)",
       "function getReferenceCurrencies() view returns (uint16[] isoCodes)",
+      "function getRefinancingRate(uint16 isoCode) view returns (uint256 rate)",
       "function getSettlementCount() view returns (uint32 count)",
       "function getFeederDelegation(address validator) view returns (address feeder)",
       "function getVotePenaltyCounter(address validator) view returns (uint64 success, uint64 abstain, uint64 miss)",

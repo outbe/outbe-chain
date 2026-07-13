@@ -1297,15 +1297,27 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55): hard-coded protocol default [840] = USD.
-    # Stored as a StorageVec<u16>: length at slot 55, data at keccak256(55) + index.
-    # Slot is verified by the `test_reference_currencies_slot_parity` test in
-    # `crates/system/oracle/src/tests.rs`; keep this constant in sync with the
-    # macro-assigned layout if `OracleContract` field order changes.
-    reference_currencies = [840]
+    # Reference currencies (slot 55) with their annualized refinancing rate
+    # (slot 60, mapping(iso_code => rate) 1e18 scaled). Default: USD (840) at the
+    # current SOFR (~4.30 %). The refinancing rate is read by the Credis Factory
+    # at issuance; the live data feed is out of scope (governance-updated).
+    # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
+    # data at keccak256(55) + index. Both slots are verified by the
+    # `test_reference_currencies_slot_parity` / `test_reference_refinancing_rate_slot_parity`
+    # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
+    # with the macro-assigned layout if `OracleContract` field order changes.
+    DEFAULT_USD_REFINANCING_RATE = 36_300_000_000_000_000  # 3.63% at 1e18 scale
+    reference_currencies = config.get(
+        "reference_currencies",
+        [{"iso_code": 840, "refinancing_rate": DEFAULT_USD_REFINANCING_RATE}],
+    )
     storage.set_slot(55, len(reference_currencies))
-    for i, iso_code in enumerate(reference_currencies):
+    for i, entry in enumerate(reference_currencies):
+        iso_code = parse_int(entry["iso_code"])
+        rate = parse_int(entry.get("refinancing_rate", DEFAULT_USD_REFINANCING_RATE))
         storage.set_raw_slot(data_slot(55) + i, iso_code)
+        # reference_refinancing_rate: mapping(iso_code => rate) at slot 60.
+        storage.set_mapping(60, u32_bytes(iso_code), rate)
 
 
 # --- External contracts ---

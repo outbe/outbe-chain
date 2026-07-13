@@ -97,3 +97,44 @@ export function requireEnv(name: string, context?: string): string {
   if (!val) throw new Error(`${name} is not set${context ? ` in ${context}` : ""}`);
   return val;
 }
+
+// ── Kernel v4 permission-based UserOp helpers ─────────────────────────────
+//
+// After the Kernel v4 migration every validation on the smart account is a
+// permission (the owner is `SudoPolicy + ECDSASigner`, each CCA is
+// `WithdrawalLimitPolicy + ECDSASigner`). UserOps therefore use the permission
+// nonce type (0x02) and the Kernel v4 `PermissionSignature` = `abi.encode(bytes[])`:
+// one slice per policy (empty here — our policies read from calldata, not the
+// signature) followed by the signer's ECDSA signature.
+
+/** bytes4 owner permission id = `bytes4(keccak256("credis.owner"))`. */
+export function ownerPermissionId(): string {
+  return ethers.keccak256(ethers.toUtf8Bytes("credis.owner")).slice(0, 10);
+}
+
+/** bytes4 per-token CCA permission id = `bytes4(keccak256(abi.encode("credis.cca", token)))`. */
+export function ccaPermissionId(token: string): string {
+  return ethers
+    .keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string", "address"], ["credis.cca", token]))
+    .slice(0, 10);
+}
+
+/**
+ * EntryPoint nonce key for a permission validation.
+ * Layout (top 24 bytes of userOp.nonce): `[vMode(1)=0x00 | vType(1)=0x02 | vId(20) | parallel(2)=0]`.
+ * The permission id (bytes4) occupies the high 4 bytes of the 20-byte vId.
+ */
+export function permissionNonceKey(permId4: string): bigint {
+  const permHex = permId4.replace(/^0x/, "").toLowerCase().padStart(8, "0");
+  const vId = permHex + "0".repeat(32); // bytes4 permId + 16 zero bytes = 20 bytes
+  return BigInt("0x" + "0002" + vId + "0000");
+}
+
+/**
+ * Kernel v4 `PermissionSignature` for a permission with a single policy + signer:
+ * `abi.encode(bytes[]{ "" (policy slice), ecdsaSig (signer) })`. The ECDSA signature
+ * is an eth-signed (EIP-191) signature over the userOpHash, which the ECDSASigner accepts.
+ */
+export function encodePermissionSignature(ecdsaSig: string): string {
+  return ethers.AbiCoder.defaultAbiCoder().encode(["bytes[]"], [["0x", ecdsaSig]]);
+}

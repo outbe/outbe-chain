@@ -83,6 +83,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::tee::TeeCmd,
     },
+    /// On-chain generic vote proposals.
+    Vote {
+        #[command(subcommand)]
+        cmd: commands::vote::VoteCmd,
+    },
 }
 
 #[tokio::main]
@@ -102,6 +107,7 @@ async fn main() -> Result<()> {
         Commands::Tribute { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::ZeroFee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Tee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Vote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
     }
 }
 
@@ -204,6 +210,12 @@ mod tests {
     #[test]
     fn test_cli_parse_tribute_day_totals() {
         let cli = Cli::try_parse_from(["outbe-cli", "tribute", "day-totals", "20241220"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_vote_status() {
+        let cli = Cli::try_parse_from(["outbe-cli", "vote", "status", "--proposal-id", "1"]);
         assert!(cli.is_ok());
     }
 

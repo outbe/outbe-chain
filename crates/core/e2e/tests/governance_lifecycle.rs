@@ -22,6 +22,7 @@ const AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
 
 // Status codes (mirror `outbe_governance::status`).
 const APPROVED: u8 = 1;
+const REJECTED: u8 = 2;
 const IMPLEMENTED: u8 = 4;
 
 #[test]
@@ -154,11 +155,12 @@ fn governance_full_lifecycle_via_dispatch() {
             1
         );
 
-        // index reads via dispatch: oip_id reached Implemented (accepted) and was
-        // authored by AUTHOR; both return ProposalMeta[] with no text.
+        // index reads via dispatch: oip_id reached Implemented and was authored
+        // by AUTHOR; both return ProposalMeta[] with no text.
         let out = gov_dispatch(
             storage.clone(),
-            &IGovernance::getAcceptedOipsCall {
+            &IGovernance::getOipsByStatusCall {
+                status: IMPLEMENTED,
                 offset: U256::ZERO,
                 limit: U256::from(10),
             }
@@ -167,10 +169,10 @@ fn governance_full_lifecycle_via_dispatch() {
             U256::ZERO,
         )
         .unwrap();
-        let accepted = IGovernance::getAcceptedOipsCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(accepted.len(), 1);
-        assert_eq!(accepted[0].id, oip_id);
-        assert_eq!(accepted[0].status, IMPLEMENTED);
+        let implemented = IGovernance::getOipsByStatusCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(implemented.len(), 1);
+        assert_eq!(implemented[0].id, oip_id);
+        assert_eq!(implemented[0].status, IMPLEMENTED);
 
         let out = gov_dispatch(
             storage.clone(),
@@ -191,7 +193,8 @@ fn governance_full_lifecycle_via_dispatch() {
         // nobody rejected → empty
         let out = gov_dispatch(
             storage.clone(),
-            &IGovernance::getRejectedOipsCall {
+            &IGovernance::getOipsByStatusCall {
+                status: REJECTED,
                 offset: U256::ZERO,
                 limit: U256::from(10),
             }
@@ -200,7 +203,7 @@ fn governance_full_lifecycle_via_dispatch() {
             U256::ZERO,
         )
         .unwrap();
-        assert!(IGovernance::getRejectedOipsCall::abi_decode_returns(&out)
+        assert!(IGovernance::getOipsByStatusCall::abi_decode_returns(&out)
             .unwrap()
             .is_empty());
     });

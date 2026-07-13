@@ -7,7 +7,7 @@ use outbe_credis::{AnadosisResult, CredisContract};
 use outbe_gratispool::api as pool;
 use outbe_gratispool::constants::DenomAmount;
 use outbe_gratispool::SpendArgs;
-use outbe_oracle::api::get_exchange_rate;
+use outbe_oracle::api::{get_exchange_rate, get_refinancing_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -16,7 +16,7 @@ use outbe_primitives::units::SCALE_1E18;
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
 use crate::schema::CredisFactoryContract;
-use crate::sol_ext::IERC20;
+use crate::sol_ext::{IReferenceCurrency, IERC20};
 
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
 pub const NATIVE_TOKEN: &str = "COEN";
@@ -84,6 +84,12 @@ pub fn request_credis(
 
     let amount_stables = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
 
+    // Derive the issuance currency from the disbursed asset (it self-reports its
+    // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin the matching
+    // refinancing rate read from the Oracle's reference-currency collection.
+    let issuance_currency = read_iso_code(&storage, asset)?;
+    let refinancing_rate = get_refinancing_rate(storage.clone(), issuance_currency)?;
+
     // Open the credis position. The `commitment` argument to
     // `create_position` is what builds the position_id; we use the proof's
     // `nullifier_hash` because it is globally unique (the pool already
@@ -93,6 +99,8 @@ pub fn request_credis(
         args.nullifier_hash,
         bundle_account,
         asset,
+        issuance_currency,
+        refinancing_rate,
         amount_stables,
         gratis_amount,
         current_time,
@@ -209,6 +217,18 @@ pub fn pay_anadosis(
 // ---------------------------------------------------------------------------
 // Oracle conversion (gratis 10^18 → stablecoin 10^6)
 // ---------------------------------------------------------------------------
+
+/// Reads the disbursed asset's ISO 4217 currency code via a static
+/// `IReferenceCurrency.isoCode()` sub-call. Mirrors the `staticcall` +
+/// `abi_decode_returns` pattern used by intexfactory's ERC20 reads.
+fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| CredisFactoryError::AssetIsoUndecodable.into())
+}
 
 /// Cosmos formula: `amountStables = gratisAmount * rateInt18 / (decimalsDiff * precision)`.
 fn convert_gratis_to_stables(storage: StorageHandle<'_>, gratis_amount: U256) -> Result<U256> {

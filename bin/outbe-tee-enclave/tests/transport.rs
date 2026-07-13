@@ -51,6 +51,7 @@ fn encrypt_offer(
         nonce: nonce.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
         reference_currency: 840,
+        exclude_from_intex_issuance: false,
         tribute_price_minor: price,
     }
 }

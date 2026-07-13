@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_GRATIS_ADDRESS,
   DEFAULT_GRATIS_POOL_ADDRESS,
+  DEFAULT_CREDIS_ADDRESS,
   DEFAULT_CREDIS_FACTORY_ADDRESS,
   GRATIS_DENOMINATIONS,
   TokenMeta,
@@ -58,6 +59,7 @@ const userAddress = requireEnv("USER_ADDRESS", envContext);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const gratisPoolAddress = process.env["GRATIS_POOL_ADDRESS"] || DEFAULT_GRATIS_POOL_ADDRESS;
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
+const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
 const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
@@ -277,6 +279,8 @@ async function main() {
 
   // Request credis
   console.log("\nSending requestCredis tx...");
+  // requestCredis(asset, bundleAccount, args): the asset self-reports its ISO
+  // currency via isoCode(), which the factory uses to pin the refinancing rate.
   const tx = await credisFactory.requestCredis(
     erc20Address,
     smartAccountAddr,
@@ -338,6 +342,15 @@ async function main() {
 
   if (createdPositionId !== null) {
     console.log(`\n=== Created Position ID: ${createdPositionId} ===`);
+
+    // Read back the pinned Anadosis terms: principal (disbursed loan) vs.
+    // total debt (principal + refinancing-rate markup) and the issuance currency.
+    const credis = ICredis__factory.connect(credisAddress, provider);
+    const position = await credis.getPosition(createdPositionId);
+    console.log(`  Issuance currency (ISO 4217): ${position.issuanceCurrency}`);
+    console.log(`  Refinancing rate (1e18):      ${position.refinancingRate}`);
+    console.log(`  Credis principal:             ${position.credisPrincipal}`);
+    console.log(`  Total Anadosis debt:          ${position.totalAnadosisAmount}`);
   }
 
   // State after

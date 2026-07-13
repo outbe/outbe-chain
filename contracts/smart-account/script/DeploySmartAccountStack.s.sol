@@ -10,6 +10,7 @@ import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
 import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
 import {SmartAccountFactory} from "src/SmartAccountFactory.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
+import {SudoPolicy} from "src/kernel/SudoPolicy.sol";
 
 /// @title DeploySmartAccountStack
 /// @notice Deploys Credis AA modules and SmartAccountFactory
@@ -19,7 +20,6 @@ import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 ///      3) Export the address as `export NAME=0x...` and append to the deployment file
 /// @dev Reads from env:
 ///      KERNEL_FACTORY_ADDRESS
-///      ECDSA_VALIDATOR_ADDRESS
 ///      CALLER_HOOK_ADDRESS
 ///      ECDSA_SIGNER_ADDRESS
 contract DeploySmartAccountStack is BaseScript {
@@ -28,6 +28,7 @@ contract DeploySmartAccountStack is BaseScript {
     WithdrawalLimitPolicy public withdrawalLimitPolicy;
     BundleSpendProtectorHook public bundleSpendProtectorHook;
     BundleWithdrawHook public bundleWithdrawHook;
+    SudoPolicy public sudoPolicy;
     SmartAccountFactory public smartAccountFactory;
 
     function run() public {
@@ -39,7 +40,6 @@ contract DeploySmartAccountStack is BaseScript {
         console.log("");
 
         address kernelFactory = vm.envAddress("KERNEL_FACTORY_ADDRESS");
-        address ecdsaValidator = vm.envAddress("ECDSA_VALIDATOR_ADDRESS");
         address callerHook = vm.envAddress("CALLER_HOOK_ADDRESS");
         address ecdsaSigner = vm.envAddress("ECDSA_SIGNER_ADDRESS");
 
@@ -59,10 +59,32 @@ contract DeploySmartAccountStack is BaseScript {
         _deployBundleWithdrawHook();
         console.log("");
 
-        _deploySmartAccountFactory(kernelFactory, ecdsaValidator, callerHook, ecdsaSigner);
+        _deploySudoPolicy();
+        console.log("");
+
+        _deploySmartAccountFactory(kernelFactory, callerHook, ecdsaSigner);
         console.log("");
 
         vm.stopBroadcast();
+    }
+
+    function _deploySudoPolicy() internal {
+        console.log("=== Deploying SudoPolicy ===");
+
+        bytes32 salt = generateSalt("SudoPolicy");
+        bytes memory creationCode = type(SudoPolicy).creationCode;
+        address predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
+
+        if (predicted.code.length > 0) {
+            console.log("WARNING: SudoPolicy already deployed at:", predicted);
+        } else {
+            address deployed = Create2.deploy(0, salt, creationCode);
+            require(deployed == predicted, "SudoPolicy address mismatch");
+            console.log("SudoPolicy deployed:", deployed);
+        }
+
+        sudoPolicy = SudoPolicy(predicted);
+        printAndWrite(exportLine("SUDO_POLICY_ADDRESS", vm.toString(predicted)));
     }
 
     function _writeDeploymentHeader() internal {
@@ -171,12 +193,7 @@ contract DeploySmartAccountStack is BaseScript {
         printAndWrite(exportLine("BUNDLE_WITHDRAW_HOOK_ADDRESS", vm.toString(predicted)));
     }
 
-    function _deploySmartAccountFactory(
-        address kernelFactory,
-        address ecdsaValidator,
-        address callerHook,
-        address ecdsaSigner
-    ) internal {
+    function _deploySmartAccountFactory(address kernelFactory, address callerHook, address ecdsaSigner) internal {
         console.log("=== Deploying SmartAccountFactory ===");
 
         // 1) Predict
@@ -185,7 +202,7 @@ contract DeploySmartAccountStack is BaseScript {
             type(SmartAccountFactory).creationCode,
             abi.encode(
                 kernelFactory,
-                ecdsaValidator,
+                address(sudoPolicy),
                 address(bundleModulePlugin),
                 callerHook,
                 address(bundleSpendProtectorHook),

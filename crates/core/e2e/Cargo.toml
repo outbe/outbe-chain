@@ -18,8 +18,14 @@ outbe-gratis.workspace = true
 outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
 outbe-governance.workspace = true
+outbe-update.workspace = true
+outbe-vote.workspace = true
+outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

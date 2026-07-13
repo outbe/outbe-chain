@@ -12,6 +12,9 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatTokenMeta2,
+  ownerPermissionId,
+  permissionNonceKey,
+  encodePermissionSignature,
 } from "./utils.js";
 
 const SALT = 0n;
@@ -37,7 +40,6 @@ const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
-const ecdsaValidatorAddress = requireEnv("ECDSA_VALIDATOR_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
 const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envPath);
 
@@ -67,7 +69,7 @@ async function main() {
   console.log(`User:             ${userAddress}`);
   console.log(`Bundle Account:    ${smartAccountAddr}`);
   console.log(`EntryPoint:       ${entryPointAddress}`);
-  console.log(`ECDSA Validator:  ${ecdsaValidatorAddress}`);
+  console.log(`Owner permission: ${ownerPermissionId()}`);
   console.log(`ERC20:            ${erc20Address} (${erc20Meta.symbol})`);
   console.log(`Withdraw amount:  ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
 
@@ -94,12 +96,10 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Build UserOp with root validation (user/owner) ────────────────────────
-
-  // nonceKey = mode(0x00) | vType(0x00=ROOT) | ecdsaValidatorAddress(20 bytes) | parallelKey(0x0000)
-  const validatorHex = ecdsaValidatorAddress.slice(2).toLowerCase(); // 20 bytes without 0x
-  const nonceKeyHex = "0000" + validatorHex + "0000"; // 24 bytes
-  const nonceKey = BigInt("0x" + nonceKeyHex);
+  // ── Build UserOp with the owner permission validation ─────────────────────
+  // Kernel v4 models the owner as a permission (SudoPolicy + ECDSASigner) carrying
+  // BundleSpendProtectorHook, so the UserOp uses the permission nonce type (0x02).
+  const nonceKey = permissionNonceKey(ownerPermissionId());
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);
 
@@ -144,10 +144,10 @@ async function main() {
     signature: "0x",
   };
 
-  // Sign with user key — root validation uses raw ECDSA signature (no 0xFF prefix)
+  // Kernel v4 permission signature: abi.encode(bytes[]{ policy slice (empty), owner ECDSA sig }).
   const userOpHash = await entryPoint.getUserOpHash(op);
   const sig = await userWallet.signMessage(ethers.getBytes(userOpHash));
-  op.signature = sig;
+  op.signature = encodePermissionSignature(sig);
 
   console.log("\nSending UserOp via EntryPoint.handleOps...");
   console.log(`  Nonce:      ${nonce}`);
