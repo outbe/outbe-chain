@@ -4,6 +4,20 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {WCOEN} from "../../src/native/WCOEN.sol";
 
+contract StorageWritingReceiver {
+    uint256 public received;
+
+    receive() external payable {
+        received += msg.value;
+    }
+}
+
+contract RevertingReceiver {
+    receive() external payable {
+        revert("nope");
+    }
+}
+
 contract WCOENTest is Test {
     WCOEN internal token;
 
@@ -59,5 +73,56 @@ contract WCOENTest is Test {
         assertEq(token.balanceOf(account), 0);
         assertEq(token.totalSupply(), 0);
         assertEq(address(token).balance, 0);
+    }
+
+    function test_Withdraw_SucceedsForContractRecipient() public {
+        StorageWritingReceiver recipient = new StorageWritingReceiver();
+
+        vm.deal(address(recipient), 1 ether);
+        vm.prank(address(recipient));
+        token.deposit{value: 1 ether}();
+
+        vm.prank(address(recipient));
+        token.withdraw(1 ether);
+
+        assertEq(recipient.received(), 1 ether);
+        assertEq(token.balanceOf(address(recipient)), 0);
+    }
+
+    function test_RevertWhen_WithdrawSendFails() public {
+        RevertingReceiver recipient = new RevertingReceiver();
+
+        vm.deal(address(recipient), 1 ether);
+        vm.prank(address(recipient));
+        token.deposit{value: 1 ether}();
+
+        vm.prank(address(recipient));
+        vm.expectRevert(abi.encodeWithSelector(WCOEN.NativeTransferFailed.selector, address(recipient), 1 ether));
+        token.withdraw(1 ether);
+    }
+
+    function test_IncreaseDecreaseAllowance() public {
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
+
+        vm.startPrank(alice);
+        token.approve(bob, 100);
+        token.increaseAllowance(bob, 50);
+        assertEq(token.allowance(alice, bob), 150);
+
+        token.decreaseAllowance(bob, 30);
+        assertEq(token.allowance(alice, bob), 120);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_DecreaseAllowanceBelowZero() public {
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
+
+        vm.startPrank(alice);
+        token.approve(bob, 10);
+        vm.expectRevert();
+        token.decreaseAllowance(bob, 20);
+        vm.stopPrank();
     }
 }
