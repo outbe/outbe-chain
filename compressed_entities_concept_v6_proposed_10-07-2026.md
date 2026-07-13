@@ -298,24 +298,21 @@ mine_gratis, Tribute burn/processing — reads
 canonical bodies through the standard Mongo-backed API. This is an explicit, testnet-only exception to the
 rule that MongoDB is never a state-transition input: Mongo materialization completeness/availability is a
 conscious testnet operational trust assumption, not a production security guarantee. Binding rules (fixed
-in the implementation task packet, Gate D0): strict checkpoint equality before any body-dependent
-operation; canonical query handling; per-body CES verification before use; after a successful mutation any
-further body-dependent operation on that entity is forbidden until the next finalized block (no
-canonical-body overlay exists); detected unavailability is LOCAL and graded — a global readiness failure
-(outage, checkpoint lag, missing mandatory partition baseline) gates the validator's roles entirely, while
-a single unavailable row at an aligned checkpoint affects only the reading operation/candidate — in both
-cases the proposer does not build the affected operation/block, the validator abstains from voting, the
-candidate is never consensus-invalid, and the network continues on quorum; hard production disable.
-Stage 1 additionally fixes: the Gem domain is DEFERRED — Stage 1 migrates Tribute and Nod only, while
-Gem/GemFactory/GemLifecycle remain on their existing per-record EVM storage and onboard later as a
-fork-activated new domain (§16.2); the Lysis system phase executes before user transactions and before any other
-CE-mutating system work on the same partitions (validator-verified, hard-fork-governed order); a validator
-reaches operational readiness only by bootstrapping from a `tree-with-bodies` snapshot fully covering all
-active Tribute partitions (a `tree`-only bootstrap serves as full node and never claims validator
-readiness); and post-finalization recovery of a mutated body relies on a bounded recent-version retention
-window — outside it there is NO automatic rejoin guarantee and the operator restores a complete paired
-Reth+CE+body checkpoint. Production/mainnet activation must not make validator-local Mongo an execution
-prerequisite; it requires a separately designed off-chain computation path with its own release gate.
+in the implementation task packet, Gate D0 — MINIMAL MODEL, owner re-cut 2026-07-13): every consumed
+body re-derives its identity and leaf and verifies against the CES commitment BEFORE use; a missing,
+corrupt, stale, or mismatched row deterministically FAILS the reading operation on this node; after a
+successful mutation (or partition retirement) any further body-dependent operation on that
+entity/partition is forbidden until the next block (deterministic domain revert; no canonical-body
+overlay exists); hard production disable. There is NO readiness state machine, NO coverage gate, and NO
+automatic recovery: a node with missing or wrong body data computes diverging results and falls out of
+certification (visible in metrics, not protocol state); the network continues on quorum; the operator
+recovers the node by resync or snapshot restore (runbook). Stage 1 additionally fixes: the Gem domain is
+DEFERRED — Stage 1 migrates Tribute and Nod only, while Gem/GemFactory/GemLifecycle remain on their
+existing per-record EVM storage and onboard later as a fork-activated new domain (§16.2); and the Lysis
+system phase executes before user transactions and before any other CE-mutating system work on the same
+partitions (validator-verified, hard-fork-governed order). Production/mainnet activation must not make
+validator-local Mongo an execution prerequisite; it requires a separately designed off-chain computation
+path with its own release gate.
 
 ---
 
@@ -1365,10 +1362,10 @@ The format distinguishes the following versioned profiles:
 4. Partial or lazy body bundles use distinct profile/coverage and artifact identity. They do not claim that the
    imported node is immediately capable of serving every current body.
 
-Stage 1 testnet note (Variant A): the `tree` profile never qualifies a validator as operationally ready —
-validator readiness requires `tree-with-bodies` whose declared coverage spans all present leaves of all
-active Tribute partitions (the active set is enumerated by domain-owned consensus state, not by the Root
-Catalog, whose keys are one-way hashes).
+Stage 1 testnet note (Variant A, minimal model — owner re-cut 2026-07-13): an operator bootstrapping a
+VALIDATOR uses `tree-with-bodies` (runbook guidance) — a validator with missing bodies simply computes
+diverging results and falls out of certification; no protocol readiness gate exists. `tree` bootstraps a
+proof-serving full node.
 
 Outside the explicit `full-current-body` profile, missing body bytes may remain latent until access. When a body
 is imported, returned, or used, the node derives its canonical identity, `tree_key`, and `leaf_value` and compares
@@ -1548,8 +1545,12 @@ max_ce_mutation_attempts_per_tx
 max_ce_mutation_attempts_per_block
 aggregate body/calldata/event byte limits
 deferred-seal gas charge per operation/byte/key
-max_staged_tree_bytes
 ```
+
+Amendment #7 (owner decision 2026-07-13): the staged-batch byte size is not a protocol limit — it is
+bounded constructively by the attempt caps (`attempts_cap × worst_per_op_delta`); the benchmark measures
+the worst-case batch size and heap peak at the final caps as report metrics proving the memory and 2 s
+budgets.
 
 Acceptance target under the default consensus timing contract:
 

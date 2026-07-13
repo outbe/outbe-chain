@@ -54,13 +54,13 @@ statistic, outlier policy, and minimum safety margin — is likewise fixed in T3
 
 - Criterion-based (or dedicated binary) harness generating the §15.2 workload deterministically from a seed;
   candidate-limit parameterization; concurrent proof-read + MDBX-commit load; a READ-PATH benchmark
-  component (postfix PF-B01) measuring Mongo point-read/page fetch plus per-body leaf verification at the
-  candidate read bounds.
+  component measuring Mongo point-read/partition fetch plus per-body leaf verification under the workload
+  (report metrics — reads carry no protocol bounds after the 2026-07-13 re-cut).
 - Required outputs: `max_unique_keys_per_block`, `max_ce_mutation_attempts_per_tx`,
   `max_ce_mutation_attempts_per_block`, aggregate body/calldata/event byte limits, deferred-seal gas charge
-  per operation/byte/key, `max_staged_tree_bytes` (+ §13.1 staged-batch retention bounds), the FINAL read
-  bounds (postfix PF-B01: Lysis page rows/bytes, per-block prefetch aggregate = cursor budget + lookahead,
-  point-read count/bytes per tx/block — every provisional read value benchmarked and replaced), and the final
+  per operation/byte/key, §13.1 staged-batch retention bounds (node-local cache), the MEASURED worst-case
+  staged-batch size and heap peak at the final attempt caps (REPORT metrics proving the memory/2 s budget —
+  owner decision 2026-07-13: no protocol byte limit), and the final
   per-domain `collection_shard_count` for Tribute/Nod (§9.1: selected by Q11; frozen into the genesis
   commitment scheme — changing later requires migration + new scheme, so this selection is a benchmark
   deliverable, not a T23 default; selected per the T34 protocol's versioned candidate set, objective

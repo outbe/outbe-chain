@@ -58,9 +58,7 @@ normative until the format is defined independently of the first implementation.
    Which surface in RPC/status/metrics and their numeric codes at process boundaries; the bounded
    timeout/queue budget values for the T33 I/O thread.
 10. Provisional marking is GLOBAL: every benchmark-controlled numeric — K values, body/byte limits, gas
-   profiles, staged bounds — carries `PROVISIONAL_Q11`, not only K (audit v3 P1-3). This includes the
-   READ bounds of audit-final B-10: Lysis page max rows/bytes and the point-read count/bytes reservation
-   values.
+   profiles — carries `PROVISIONAL_Q11`, not only K (audit v3 P1-3).
 
 ## Acceptance criteria
 

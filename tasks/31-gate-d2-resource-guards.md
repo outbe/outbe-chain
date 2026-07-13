@@ -2,7 +2,7 @@
 
 Status: todo
 Source: `audit_plan.md` §4 P1-0b, §8 Gate D2; concept §8.3/§15.1 (attempt cap alone does not bound a
-single huge body or staged batch)
+single huge body); owner decision 2026-07-13: staged batch is bounded constructively by attempt caps
 Depends on: T30 (schema bounds feed byte limits)
 Blocks: T07 (runtime integration onward), T10 (provisional counters + estimator), T12 (cache bounds), T20 (recovery-store bounds), T24 (Part B re-baselines the values — audit-final L-01)
 
@@ -40,9 +40,8 @@ the memory/2 s budget at the final attempt caps.)
   artifact, consumed by T07/T10/T12 ACs). TWO-STAGE RESERVE (v7 5.1.3, decided):
   Stage A (before hashing): gas sufficiency → per-operation body size → per-tx/per-block attempt slots →
   CE-byte reservation; then derive the canonical identity/tree locator;
-  Stage B (before journal/event): first-touch unique-key reservation → conservative staged-tree delta
-  reservation. A Stage B block-capacity overflow rolls back the WHOLE speculative tx including the
-  Stage A checkpoint (explicit checkpoint contract).
+  Stage B (before journal/event): first-touch unique-key reservation. A Stage B block-capacity overflow
+  rolls back the WHOLE speculative tx including the Stage A checkpoint (explicit checkpoint contract).
   BYTE CLASSIFICATION (v7 5.1.1, decided — empty-block fit rule, no new per-tx constant):
   `tx_ce_bytes > MAX_CE_BYTES_PER_BLOCK` ⇒ `TransactionLimitExceeded` (can never fit an empty block);
   `tx_ce_bytes <= cap` but `> remaining_block_bytes` ⇒ sticky `BlockCapacityExhausted` (defer). The same

@@ -68,21 +68,17 @@ was dropped.
   explicit open gate here, not silently closed.
 - Real T19↔T21 peer-recovery E2E (two live nodes: node B recovers a lost body from node A's `outbe_getBody`
   with full proof verification) — the T21-stage test uses a fake peer server; the live pairing lands here.
-- Stage 1 Variant A evidence matrix (audit v3 P1-10 — separate from the §19 ledger; every row needs a
+- Stage 1 Variant A evidence matrix (minimal model per the 2026-07-13 scope re-cut; every row needs a
   concrete artifact):
   | Variant A item | Owner |
   |---|---|
-  | all body-dependent adapters covered (matrix complete) | T33 AC1 |
-  | same-block prohibition (incl. reverted-first) | T33 AC4 |
-  | typed unavailability behavior per class (ProjectionNotReady / BodyDataUnavailable) | T33 AC2/AC7 |
-  | non-catchable outcome (adversarial catch test) | T33 AC3 |
-  | single-validator Mongo outage → local recovery | T20 AC5 / T34 scenario |
-  | finalized-candidate recovery (positive): row loss → abstain → quorum finalizes → parent-version recovery within window → finalized-block import → catch-up → role re-enable | T33 AC7b / T34 scenario |
-  | finalized-candidate recovery (negative): window expired everywhere → validator remains NOT_READY, no false rejoin, operator manual paired-restore status per runbook | T33 AC7b negative / T34 scenario |
+  | all body-dependent adapters covered (inventory complete) | T33 AC1 |
+  | data-fault fixtures: tampered/missing/stale row ⇒ operation fails | T33 AC2 |
+  | same-block prohibition (incl. reverted-first and retirement) | T33 AC3 |
+  | localnet divergence: broken node falls out, quorum continues, manual restore rejoins | T33 AC5 / T34 scenario |
   | quorum Mongo outage → accepted testnet halt | T34 scenario (soak) |
-  | no participation before readiness (fresh validator) | T22 AC1b / T28 AC1 |
-  | production hard-disable | T33 AC6 |
-  | manual paired-restore rehearsal (positive): stop → restore paired Reth+CE+body checkpoint (T34 contract) → verify → catch-up → READY → vote | **T25** soak scenario (audit-final H-03) |
+  | production hard-disable | T33 AC4 |
+  | manual paired-restore rehearsal: stop → restore → verify → catch-up → rejoin | **T25** soak scenario (audit-final H-03) |
 - Immutable release candidate (audit-final H-11; construction fixed per postfix PF-B04 — a manifest
   merged into the RC source would change the very commit it attests): the source RC is FROZEN FIRST (an
   annotated tag on the RC commit); the release manifest is an EXTERNAL, content-addressed attestation

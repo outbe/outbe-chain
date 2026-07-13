@@ -46,7 +46,7 @@ when it would also exceed block capacity. The block cap spans user and system la
   attempts-only decision — Gate D2 exists precisely so runtime integration never starts unbounded):
   T10 implements attempts+gas AND the ACTIVE provisional counters for aggregate body/calldata/event
   bytes, unique keys per block, and the system-lane policy, with values from T31 (all `PROVISIONAL_Q11`).
-  Staged-tree bytes and speculative-cache bounds are T12's slice; per-operation body limits are T07/T23's.
+  Speculative-cache bounds are T12's slice (node-local); per-operation body limits are T07/T23's.
   T24 later replaces values (and structure only if benchmark evidence requires it) with a full
   re-baseline. Requires concept §15.1 amendment #6 (temporary guard = attempts/gas + provisional D2
   bounds — APPLIED).
@@ -54,13 +54,14 @@ when it would also exceed block capacity. The block cap spans user and system la
   amendment #4 (§15.1) — APPLIED**: the constant's definition now reads "per attempted core
   mint/update/delete/retire_partition"; the charge applies per attempted core operation of all four kinds.
 
-- Neutral `resource.rs` (audit v8 P0-1/P0-2): owns the PURE `estimate_staged_delta(...)` implementation
-  (T31 formula), the Stage A/B reservation counters/checkpoints, the sticky outcomes, and the trusted
-  byte-metering seam: `CeResourceUsageDelta {invocation_calldata_bytes, body_bytes, event_bytes,
-  canonical_identity, staged_estimate}` is built ONLY by shared protocol helpers — invocation calldata is
+- Neutral `resource.rs` (audit v8 P0-1/P0-2; staged-delta estimator REMOVED — owner decision 2026-07-13,
+  staged batch is bounded constructively by attempt caps): owns the Stage A/B reservation
+  counters/checkpoints, the sticky outcomes, and the trusted byte-metering seam:
+  `CeResourceUsageDelta {invocation_calldata_bytes, body_bytes, event_bytes,
+  canonical_identity}` is built ONLY by shared protocol helpers — invocation calldata is
   metered exactly once per canonical invocation by the dispatcher/system-tx builder from actual input
   bytes; body bytes from the actual canonical slice; event bytes from the T08 canonical
-  encoder's `encoded_len`; identity/staged estimate from the shared derivation/resource path. The guard
+  encoder's `encoded_len`; identity from the shared derivation path. The guard
   never accepts caller-supplied counts; user-forgeable length inputs are unrepresentable.
   `resource.rs` also owns the executor-local seen-key/seen-collection first-touch sets (audit-final B-01)
   and exports a TYPED immutable per-block resource summary (reserved totals per bound) handed to T12
@@ -82,12 +83,12 @@ when it would also exceed block capacity. The block cap spans user and system la
 5. Charge deducted before hashing/journal/event; revert does not refund performed computation.
 6. Provisional bounds enforced per the T31 reserve/failure MATRIX (v7-completed): boundary/rejection/
    parity tests for EACH T10-owned bound at the T31 values, incl. the TWO-STAGE reserve (Stage A pre-hash:
-   gas/body-size/attempts/bytes; Stage B post-derivation: first-touch unique key + staged-delta; Stage B
+   gas/body-size/attempts/bytes; Stage B post-derivation: first-touch unique key; Stage B
    block-capacity overflow rolls back the whole speculative tx incl. Stage A), the EMPTY-BLOCK FIT byte
    classification (never-fits ⇒ `TransactionLimitExceeded`; fits-empty-but-not-remaining ⇒ sticky
    `BlockCapacityExhausted`), overlap precedence, first-touch-only unique-key counting, retryable vs
    permanent failure classes (no cursor spin on permanent errors), and included-revert/excluded-tx
-   reservation discipline.
+   reservation discipline. (Staged-delta reservation removed — constructive bound via attempt caps.)
 7. `retire_partition` attempt reserves a slot and pays the charge like the other three operations.
 8. Metering tests (audit v8 P0-2): one invocation → multiple mutations counts calldata ONCE; nested CE
    entrypoint calls each count their own actual invocation once; reverted-but-included nested work stays
@@ -111,6 +112,6 @@ operation failure needing no arbiter.)
 
 ## Files
 
-- `crates/core/compressed_entities/src/{guard.rs,resource.rs,constants.rs}` (resource.rs: estimator +
+- `crates/core/compressed_entities/src/{guard.rs,resource.rs,constants.rs}` (resource.rs:
   Stage A/B reservations + CeResourceUsageDelta metering seam)
 - `crates/blockchain/node/src/payload_builder.rs` (deferral integration)
