@@ -2,7 +2,7 @@
 
 Status: todo
 Source: `compressed_entities_concept_v6_proposed_10-07-2026.md` §12.1, §14.4, §14.5
-Depends on: T22, T33 (the validator-readiness transition scenario in AC1 — audit-final L-01)
+Depends on: T22
 Blocks: — (release gate T25 only)
 
 ## Summary
@@ -57,12 +57,10 @@ serving can live on a separate host/interface from the signer.
 
 1. End-to-end: node A exports; fresh node B FIRST syncs/restores Reth to hold H (postfix PF-B07), then
    bootstraps CE from a mirror of A via CLI, replays to head, serves
-   verifying proofs (closes T22 AC4 transport dependency). Validator-readiness transition scenario
-   (audit v5 P0-2 alignment): a fresh Variant A validator bootstraps from `tree-with-bodies` with full
-   mandatory coverage, stays out of propose/vote until Mongo readiness, then joins safely; a tree-only
-   bootstrap runs as full node, never claims validator READY, and cannot execute forward through
-   body-dependent blocks without an event tail/body source (T29 item 8, postfix PF-H04) — both exercised
-   on localnet.
+   verifying proofs (closes T22 AC4 transport dependency). Validator bootstrap scenario (minimal model per the
+   2026-07-13 re-cut): a fresh Variant A validator bootstraps Reth-first, then `tree-with-bodies` per the
+   T34 runbook and joins; a tree-only bootstrap runs as a proof-serving full node (missing bodies fail
+   reads per T29 item 5 — no readiness gate exists) — both exercised on localnet.
 2. Cross-source failover: corrupted/missing range on mirror 1 recovered from mirror 2 at a range boundary;
    final root check authoritative (closes T22 AC3 end-to-end).
 3. (Conditional — applies only if the optional `snapshot verify` is built) it rejects checkpoint/root

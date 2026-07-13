@@ -54,9 +54,8 @@ map base, slot 3 `touched_entities` StorageVec base, slot 4 pending retired-coll
   parent absent + mint REVERTED           → retire REJECTED (no pending entry).
   Never-populated ACTIVE partition (postfix PF-H09): a domain-opened partition with no catalog presence
   cannot be retired THROUGH THE CORE (the matrix's REJECTED rows — there is no leaf to remove); its
-  retirement is DOMAIN-STATE-ONLY: no core call, no `PartitionRetiredV1` event; the domain's
-  `ActiveTributePartitionsView` excludes it at the retiring checkpoint and T33's coverage comparison
-  treats it as retired.
+  retirement is DOMAIN-STATE-ONLY: no core call, no `PartitionRetiredV1` event; the domain's monotonic
+  lifecycle still forbids its reuse.
 - Per-operation body-size limit enforcement point (audit v5 P0-4 ownership): the store rejects a body
   exceeding the registered per-domain limit (value from T31/T30 registry) at `mint/update` entry — this
   is T07/T23's slice of the D2 bounds table.

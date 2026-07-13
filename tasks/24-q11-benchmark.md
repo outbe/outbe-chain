@@ -71,10 +71,9 @@ statistic, outlier policy, and minimum safety margin — is likewise fixed in T3
 - Activation-evidence report: hardware profile, dataset shape, cache state, commands, raw results, safety
   margin — reproducible from the repo.
 - Final constants PR: replace provisional values, recalibrate lane behavior, update spec §15.1/§20 and README.
-- Recovery-capacity re-baseline (audit-final H-01): Part B recomputes the recent-version archive worst
-  case (rows/bytes = final body limits × mutation caps × `RECOVERY_BODY_WINDOW` + overhead/headroom) and
-  publishes the FULL final-limit consumer matrix — T07 body limits, T20/T21 archive bounds, RPC/snapshot
-  resource bounds — nothing is left on stale provisional math.
+- Final-limit consumer matrix (audit-final H-01, narrowed after the re-cut removed the recovery
+  archive): Part B publishes the full consumer matrix — T07 body limits, RPC/snapshot resource bounds —
+  nothing is left on stale provisional math.
 - Schema-compatibility proof (audit-final M-05): a domain × operation × schema matrix proving
   `max_schema_encoded_size <= final_limit` for every Tribute/Nod operation, or an intentional
   schema/input-bound reduction with a full re-baseline.

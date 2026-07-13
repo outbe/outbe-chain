@@ -27,8 +27,8 @@ a prior raw_id (including deleted); counter/nonce writes share the mint journal.
 ## Design-first checkpoint (moved to gate T35 — audit-final B-07)
 
 The consensus-state design decisions formerly approved inside this task — body-source tables, generator
-persistent-state contracts (Nod lifetime tombstone/monotonic guard, Tribute enclave-ID uniqueness),
-`ActiveTributePartitionsView(checkpoint)`, and the WWD retirement aggregate contract — are OWNED by gate
+persistent-state contracts (Nod lifetime tombstone/monotonic guard, Tribute enclave-ID uniqueness), and
+the WWD retirement aggregate contract — are OWNED by gate
 T35 and approved BEFORE T30 freezes body schemas and generator algorithms (feasibility precedes the
 freeze). Implementation here begins only after the T35 artifact (`docs/ces-body-source-matrix.md`) is
 approved; this task implements it without re-deciding.

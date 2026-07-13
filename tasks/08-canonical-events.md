@@ -43,9 +43,8 @@ signature/topic; historical decoders remain available after upgrades.
 - Emitter-address discipline documented for consumers: only `0xEE0B`-emitted events are canonical; same
   signature from another address is ignored (enforced in T20's projector filter).
 - `PartitionRetiredV1` exists only for CORE retirement of a present collection (postfix PF-H09): a
-  never-populated active partition retires domain-state-only and emits NO canonical event — projections
-  and coverage views learn it from domain state (`ActiveTributePartitionsView`), not from the event
-  stream.
+  never-populated active partition retires domain-state-only and emits NO canonical event — the
+  projection has no row range to remove and nothing to learn.
 
 ## Out of scope
 

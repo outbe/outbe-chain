@@ -64,7 +64,8 @@ Phase 2  Seal & consensus integration
   T13 Header artifact tag 0x08 + validator equality checks             ← T12, T30
   T14 Genesis activation: A plumbing ← T04, T13, T15, T16; B testnet re-baseline ← T24B
   T15 CE-owned MDBX environment (namespaced shards + Root Catalog)     ← T03
-  T16 Finalized persistence coordinator (barrier → commit → ACK)       ← T12, T15, T32
+  T16 Finalized persistence coordinator (barrier → commit → ACK;
+      shared DB-only verification reused by T22 activation — R4)       ← T12, T15, T32
   T17 Restart matrix & crash recovery                                  ← T08, T16, T32
 
 Phase 3  Reads & projections

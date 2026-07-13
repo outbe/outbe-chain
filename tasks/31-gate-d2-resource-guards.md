@@ -4,7 +4,7 @@ Status: todo
 Source: `audit_plan.md` §4 P1-0b, §8 Gate D2; concept §8.3/§15.1 (attempt cap alone does not bound a
 single huge body); owner decision 2026-07-13: staged batch is bounded constructively by attempt caps
 Depends on: T30 (schema bounds feed byte limits)
-Blocks: T07 (runtime integration onward), T10 (provisional counters + estimator), T12 (cache bounds), T20 (recovery-store bounds), T24 (Part B re-baselines the values — audit-final L-01)
+Blocks: T07 (runtime integration onward), T10 (provisional counters), T12 (cache bounds), T24 (Part B re-baselines the values — audit-final L-01)
 
 ## Summary
 
