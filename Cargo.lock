@@ -7348,6 +7348,10 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
  "similar",
  "thiserror 2.0.18",
 ]

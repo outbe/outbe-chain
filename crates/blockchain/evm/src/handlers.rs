@@ -4,11 +4,14 @@
 //! into Vote and Update lifecycle at block processing time.
 
 pub mod vote {
+    use outbe_governance::vote_target::GovernanceVoteTarget;
     use outbe_update::vote_target::UpdateVoteTarget;
     use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
 
     static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
-    static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[&UPDATE_VOTE_TARGET];
+    static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
+    static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] =
+        &[&UPDATE_VOTE_TARGET, &GOVERNANCE_VOTE_TARGET];
     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGETS);
 
     /// Returns the compile-time vote target registry for executor wiring.
