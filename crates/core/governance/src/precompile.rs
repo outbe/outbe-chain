@@ -112,27 +112,15 @@ pub fn dispatch(
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
-            getAcceptedOips(c) => view(c, |c| {
+            getOipsByStatus(c) => view(c, |c| {
                 Ok(gov
-                    .accepted_oips(c.offset, c.limit)?
-                    .into_iter()
-                    .map(meta_to_sol)
-                    .collect::<Vec<_>>())
-            }),
-            getRejectedOips(c) => view(c, |c| {
-                Ok(gov
-                    .rejected_oips(c.offset, c.limit)?
+                    .oips_by_status(c.status, c.offset, c.limit)?
                     .into_iter()
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
             oipCountByAuthor(c) => view(c, |c| Ok(U256::from(gov.oip_count_by_author(c.author)?))),
-            acceptedOipCount(_) => metadata::<IGovernance::acceptedOipCountCall>(|| {
-                Ok(U256::from(gov.accepted_oip_count()?))
-            }),
-            rejectedOipCount(_) => metadata::<IGovernance::rejectedOipCountCall>(|| {
-                Ok(U256::from(gov.rejected_oip_count()?))
-            }),
+            oipCountByStatus(c) => view(c, |c| Ok(U256::from(gov.oip_count_by_status(c.status)?))),
 
             // --- GIP ---
             submitGip(c) => mutate(c, caller, |sender, c| gov.submit_gip(sender, &c.text)),
@@ -163,27 +151,15 @@ pub fn dispatch(
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
-            getAcceptedGips(c) => view(c, |c| {
+            getGipsByStatus(c) => view(c, |c| {
                 Ok(gov
-                    .accepted_gips(c.offset, c.limit)?
-                    .into_iter()
-                    .map(meta_to_sol)
-                    .collect::<Vec<_>>())
-            }),
-            getRejectedGips(c) => view(c, |c| {
-                Ok(gov
-                    .rejected_gips(c.offset, c.limit)?
+                    .gips_by_status(c.status, c.offset, c.limit)?
                     .into_iter()
                     .map(meta_to_sol)
                     .collect::<Vec<_>>())
             }),
             gipCountByAuthor(c) => view(c, |c| Ok(U256::from(gov.gip_count_by_author(c.author)?))),
-            acceptedGipCount(_) => metadata::<IGovernance::acceptedGipCountCall>(|| {
-                Ok(U256::from(gov.accepted_gip_count()?))
-            }),
-            rejectedGipCount(_) => metadata::<IGovernance::rejectedGipCountCall>(|| {
-                Ok(U256::from(gov.rejected_gip_count()?))
-            }),
+            gipCountByStatus(c) => view(c, |c| Ok(U256::from(gov.gip_count_by_status(c.status)?))),
 
             // --- authorities ---
             isAuthority(c) => view(c, |c| gov.is_authority(c.who)),

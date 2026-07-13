@@ -43,8 +43,7 @@ macro_rules! impl_proposal_ops {
         submitted_event = $submitted_event:ident,
         text_event = $text_event:ident,
         status_event = $status_event:ident,
-        accepted = $accepted:ident,
-        rejected = $rejected:ident,
+        by_status = $by_status:ident,
         author_count = $author_count:ident,
         author_ids = $author_ids:ident $(,)?
     ) => {
@@ -71,6 +70,8 @@ macro_rules! impl_proposal_ops {
             self.$author_ids
                 .write(&author_index_key(author, acount), id)?;
             self.$author_count.write(&author, acount + 1)?;
+            // status index: a new proposal joins the Draft bucket.
+            self.$by_status.get_set(&status::DRAFT).insert(id)?;
             self.emit($submitted_event {
                 id,
                 author,
@@ -129,14 +130,9 @@ macro_rules! impl_proposal_ops {
             let entry = self.$map.entry(id);
             entry.status().write(new_status)?;
             entry.updated_block().write(block)?;
-            // accepted / rejected indexes (append-only, idempotent): Approved and
-            // Implemented count as accepted; Rejected is rejected. Terminal-forward,
-            // so no removals.
-            if new_status == status::APPROVED || new_status == status::IMPLEMENTED {
-                self.$accepted.insert(id)?;
-            } else if new_status == status::REJECTED {
-                self.$rejected.insert(id)?;
-            }
+            // status index: move the id from its old status bucket to the new one.
+            self.$by_status.get_set(&current).remove(&id)?;
+            self.$by_status.get_set(&new_status).insert(id)?;
             self.emit($status_event {
                 id,
                 oldStatus: current,
@@ -206,8 +202,7 @@ impl GovernanceContract<'_> {
         submitted_event = OipSubmitted,
         text_event = OipTextUpdated,
         status_event = OipStatusChanged,
-        accepted = oip_accepted,
-        rejected = oip_rejected,
+        by_status = oip_by_status,
         author_count = oip_author_count,
         author_ids = oip_author_ids,
     );
@@ -222,8 +217,7 @@ impl GovernanceContract<'_> {
         submitted_event = GipSubmitted,
         text_event = GipTextUpdated,
         status_event = GipStatusChanged,
-        accepted = gip_accepted,
-        rejected = gip_rejected,
+        by_status = gip_by_status,
         author_count = gip_author_count,
         author_ids = gip_author_ids,
     );

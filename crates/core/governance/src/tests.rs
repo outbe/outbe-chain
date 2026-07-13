@@ -263,8 +263,10 @@ fn storage_layout_matches_seeder() {
                                                           // seeded region and thus don't affect seed_genesis.py.
         assert_eq!(gov.oip_author_count.base_slot(), U256::from(23));
         assert_eq!(gov.oip_author_ids.base_slot(), U256::from(24));
-        assert_eq!(gov.gip_author_count.base_slot(), U256::from(29));
-        assert_eq!(gov.gip_author_ids.base_slot(), U256::from(30));
+        assert_eq!(gov.oip_by_status.base_slot(), U256::from(25));
+        assert_eq!(gov.gip_author_count.base_slot(), U256::from(26));
+        assert_eq!(gov.gip_author_ids.base_slot(), U256::from(27));
+        assert_eq!(gov.gip_by_status.base_slot(), U256::from(28));
         // meta_canon text is at slot 0, canon text at slot 4 (adjacency: the
         // one-slot version field sits immediately after each text field).
     });
@@ -404,79 +406,76 @@ fn author_index_is_per_kind() {
     });
 }
 
-// ----------------------------------------- indexes: accepted / rejected ---
+// -------------------------------------------------- indexes: by status ---
+
+fn all(g: &GovernanceContract, status: u8) -> Vec<U256> {
+    g.oips_by_status(status, U256::ZERO, U256::from(1000))
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect()
+}
 
 #[test]
-fn accepted_index_includes_approved_and_implemented_once() {
+fn status_move_relocates_id_between_buckets() {
     with_governance(|gov| {
         let a = gov.submit_oip(AUTHOR, "a").unwrap();
         let b = gov.submit_oip(AUTHOR, "b").unwrap();
-        let _c = gov.submit_oip(AUTHOR, "c").unwrap(); // stays Draft
+        let c = gov.submit_oip(AUTHOR, "c").unwrap(); // stays Draft
 
         gov.set_oip_status(AUTH, a, status::APPROVED).unwrap();
-        gov.set_oip_status(AUTH, a, status::IMPLEMENTED).unwrap(); // still accepted, not duplicated
+        gov.set_oip_status(AUTH, a, status::IMPLEMENTED).unwrap(); // Approved -> Implemented
         gov.set_oip_status(AUTH, b, status::REJECTED).unwrap();
 
-        let accepted = gov.accepted_oips(U256::ZERO, U256::from(1000)).unwrap();
-        assert_eq!(accepted.len(), 1, "Approved->Implemented must appear once");
-        assert_eq!(accepted[0].id, a);
-        assert_eq!(accepted[0].status, status::IMPLEMENTED);
+        // each id sits in exactly its current status bucket, nowhere else
+        assert_eq!(all(gov, status::DRAFT), vec![c]);
+        assert!(all(gov, status::APPROVED).is_empty()); // a moved on to Implemented
+        assert_eq!(all(gov, status::IMPLEMENTED), vec![a]);
+        assert_eq!(all(gov, status::REJECTED), vec![b]);
 
-        let rejected = gov.rejected_oips(U256::ZERO, U256::from(1000)).unwrap();
-        assert_eq!(rejected.len(), 1);
-        assert_eq!(rejected[0].id, b);
+        // counts, and the invariant Σ = total
+        assert_eq!(gov.oip_count_by_status(status::DRAFT).unwrap(), 1);
+        assert_eq!(gov.oip_count_by_status(status::IMPLEMENTED).unwrap(), 1);
+        assert_eq!(gov.oip_count_by_status(status::REJECTED).unwrap(), 1);
+        let total: u32 = (0..=4).map(|s| gov.oip_count_by_status(s).unwrap()).sum();
+        assert_eq!(total as u64, gov.oip_count().unwrap());
     });
 }
 
 #[test]
-fn rework_then_approve_lands_in_accepted() {
+fn rework_then_approve_lands_in_approved_only() {
     with_governance(|gov| {
         let a = gov.submit_oip(AUTHOR, "a").unwrap();
         gov.set_oip_status(AUTH, a, status::REWORK).unwrap();
         gov.set_oip_status(AUTHOR, a, status::DRAFT).unwrap(); // author resubmit
         gov.set_oip_status(AUTH, a, status::APPROVED).unwrap();
 
-        assert_eq!(
-            gov.accepted_oips(U256::ZERO, U256::from(1000))
-                .unwrap()
-                .len(),
-            1
-        );
-        assert!(gov
-            .rejected_oips(U256::ZERO, U256::from(1000))
-            .unwrap()
-            .is_empty());
+        assert_eq!(all(gov, status::APPROVED), vec![a]);
+        assert!(all(gov, status::DRAFT).is_empty());
+        assert!(all(gov, status::REWORK).is_empty());
     });
 }
 
 #[test]
-fn accepted_rejected_are_per_kind() {
+fn status_buckets_are_per_kind() {
     with_governance(|gov| {
         let o = gov.submit_oip(AUTHOR, "o").unwrap();
         let g = gov.submit_gip(AUTHOR, "g").unwrap();
         gov.set_oip_status(AUTH, o, status::APPROVED).unwrap();
         gov.set_gip_status(AUTH, g, status::REJECTED).unwrap();
 
-        assert_eq!(
-            gov.accepted_oips(U256::ZERO, U256::from(1000))
-                .unwrap()
-                .len(),
-            1
-        );
-        assert!(gov
-            .accepted_gips(U256::ZERO, U256::from(1000))
-            .unwrap()
-            .is_empty());
-        assert!(gov
-            .rejected_oips(U256::ZERO, U256::from(1000))
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            gov.rejected_gips(U256::ZERO, U256::from(1000))
-                .unwrap()
-                .len(),
-            1
-        );
+        assert_eq!(gov.oip_count_by_status(status::APPROVED).unwrap(), 1);
+        assert_eq!(gov.gip_count_by_status(status::APPROVED).unwrap(), 0);
+        assert_eq!(gov.oip_count_by_status(status::REJECTED).unwrap(), 0);
+        assert_eq!(gov.gip_count_by_status(status::REJECTED).unwrap(), 1);
+    });
+}
+
+#[test]
+fn out_of_range_status_query_errors() {
+    with_governance(|gov| {
+        assert!(gov.oip_count_by_status(5).is_err());
+        assert!(gov.oips_by_status(9, U256::ZERO, U256::from(10)).is_err());
     });
 }
 
@@ -526,17 +525,21 @@ fn author_listing_is_paginated() {
 }
 
 #[test]
-fn accepted_listing_is_paginated() {
+fn status_listing_is_paginated() {
     with_governance(|gov| {
         for _ in 0..4 {
             let id = gov.submit_oip(AUTHOR, "x").unwrap();
             gov.set_oip_status(AUTH, id, status::APPROVED).unwrap();
         }
-        assert_eq!(gov.accepted_oip_count().unwrap(), 4);
+        assert_eq!(gov.oip_count_by_status(status::APPROVED).unwrap(), 4);
 
-        let page = gov.accepted_oips(U256::from(1), U256::from(2)).unwrap();
+        let page = gov
+            .oips_by_status(status::APPROVED, U256::from(1), U256::from(2))
+            .unwrap();
         assert_eq!(page.len(), 2); // items 2 and 3 of the bucket
-        let last = gov.accepted_oips(U256::from(3), U256::from(10)).unwrap();
+        let last = gov
+            .oips_by_status(status::APPROVED, U256::from(3), U256::from(10))
+            .unwrap();
         assert_eq!(last.len(), 1); // clamped to what's left
     });
 }

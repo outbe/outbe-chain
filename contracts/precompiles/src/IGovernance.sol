@@ -64,22 +64,17 @@ interface IGovernance {
     function oipCount() external view returns (uint64);
     function getOipDiff(uint256 id, uint8 base) external view returns (string memory);
     // index-backed listings (metadata only, paginated [offset, offset+limit)):
-    // by author, accepted, rejected. Companion *Count getters size the pages.
+    // by author, by status. Companion *Count getters size the pages.
     function getOipsByAuthor(address author, uint256 offset, uint256 limit)
         external
         view
         returns (ProposalMeta[] memory);
-    function getAcceptedOips(uint256 offset, uint256 limit)
-        external
-        view
-        returns (ProposalMeta[] memory);
-    function getRejectedOips(uint256 offset, uint256 limit)
+    function getOipsByStatus(uint8 status, uint256 offset, uint256 limit)
         external
         view
         returns (ProposalMeta[] memory);
     function oipCountByAuthor(address author) external view returns (uint256);
-    function acceptedOipCount() external view returns (uint256);
-    function rejectedOipCount() external view returns (uint256);
+    function oipCountByStatus(uint8 status) external view returns (uint256);
 
     // --- proposals: GIP ---
     function submitGip(string calldata text) external returns (uint256 id);
@@ -89,22 +84,17 @@ interface IGovernance {
     function gipCount() external view returns (uint64);
     function getGipDiff(uint256 id, uint8 base) external view returns (string memory);
     // index-backed listings (metadata only, paginated [offset, offset+limit)):
-    // by author, accepted, rejected. Companion *Count getters size the pages.
+    // by author, by status. Companion *Count getters size the pages.
     function getGipsByAuthor(address author, uint256 offset, uint256 limit)
         external
         view
         returns (ProposalMeta[] memory);
-    function getAcceptedGips(uint256 offset, uint256 limit)
-        external
-        view
-        returns (ProposalMeta[] memory);
-    function getRejectedGips(uint256 offset, uint256 limit)
+    function getGipsByStatus(uint8 status, uint256 offset, uint256 limit)
         external
         view
         returns (ProposalMeta[] memory);
     function gipCountByAuthor(address author) external view returns (uint256);
-    function acceptedGipCount() external view returns (uint256);
-    function rejectedGipCount() external view returns (uint256);
+    function gipCountByStatus(uint8 status) external view returns (uint256);
 
     // --- authorities (PoC scaffolding) ---
     function isAuthority(address who) external view returns (bool);

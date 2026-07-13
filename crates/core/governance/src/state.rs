@@ -1,7 +1,9 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::Result;
 
+use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
+use crate::status::is_valid_status;
 
 /// Lightweight proposal projection for listings — every field except the text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,60 +163,58 @@ impl GovernanceContract<'_> {
         Ok(out)
     }
 
-    /// Count of OIPs that reached Approved or Implemented.
-    pub fn accepted_oip_count(&self) -> Result<u32> {
-        self.oip_accepted.len()
-    }
-    pub fn accepted_gip_count(&self) -> Result<u32> {
-        self.gip_accepted.len()
-    }
-    pub fn rejected_oip_count(&self) -> Result<u32> {
-        self.oip_rejected.len()
-    }
-    pub fn rejected_gip_count(&self) -> Result<u32> {
-        self.gip_rejected.len()
+    /// Number of OIPs currently in `status` (0..=4).
+    pub fn oip_count_by_status(&self, status: u8) -> Result<u32> {
+        if !is_valid_status(status) {
+            return Err(GovernanceError::InvalidStatus.into());
+        }
+        self.oip_by_status.get_set(&status).len()
     }
 
-    /// OIPs that reached Approved or Implemented (paginated).
-    pub fn accepted_oips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.oip_accepted.len()?, offset, limit);
+    /// Number of GIPs currently in `status` (0..=4).
+    pub fn gip_count_by_status(&self, status: u8) -> Result<u32> {
+        if !is_valid_status(status) {
+            return Err(GovernanceError::InvalidStatus.into());
+        }
+        self.gip_by_status.get_set(&status).len()
+    }
+
+    /// OIPs currently in `status` (paginated).
+    pub fn oips_by_status(
+        &self,
+        status: u8,
+        offset: U256,
+        limit: U256,
+    ) -> Result<Vec<ProposalMeta>> {
+        if !is_valid_status(status) {
+            return Err(GovernanceError::InvalidStatus.into());
+        }
+        let set = self.oip_by_status.get_set(&status);
+        let (start, end) = page_bounds(set.len()?, offset, limit);
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
-            if let Some(id) = self.oip_accepted.at(i)? {
+            if let Some(id) = set.at(i)? {
                 out.push(self.oip_meta(id)?);
             }
         }
         Ok(out)
     }
 
-    /// GIPs that reached Approved or Implemented (paginated).
-    pub fn accepted_gips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.gip_accepted.len()?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            if let Some(id) = self.gip_accepted.at(i)? {
-                out.push(self.gip_meta(id)?);
-            }
+    /// GIPs currently in `status` (paginated).
+    pub fn gips_by_status(
+        &self,
+        status: u8,
+        offset: U256,
+        limit: U256,
+    ) -> Result<Vec<ProposalMeta>> {
+        if !is_valid_status(status) {
+            return Err(GovernanceError::InvalidStatus.into());
         }
-        Ok(out)
-    }
-
-    pub fn rejected_oips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.oip_rejected.len()?, offset, limit);
+        let set = self.gip_by_status.get_set(&status);
+        let (start, end) = page_bounds(set.len()?, offset, limit);
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
-            if let Some(id) = self.oip_rejected.at(i)? {
-                out.push(self.oip_meta(id)?);
-            }
-        }
-        Ok(out)
-    }
-
-    pub fn rejected_gips(&self, offset: U256, limit: U256) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.gip_rejected.len()?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            if let Some(id) = self.gip_rejected.at(i)? {
+            if let Some(id) = set.at(i)? {
                 out.push(self.gip_meta(id)?);
             }
         }
