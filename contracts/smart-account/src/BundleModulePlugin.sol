@@ -4,14 +4,8 @@ pragma solidity ^0.8.30;
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IModule} from "@zerodev/kernel/interfaces/IERC7579Modules.sol";
 import {IERC7579Account} from "@zerodev/kernel/interfaces/IERC7579Account.sol";
-import {
-    MODULE_TYPE_FALLBACK,
-    MODULE_TYPE_EXECUTOR,
-    CALLTYPE_SINGLE,
-    EXECTYPE_DEFAULT
-} from "@zerodev/kernel/types/Constants.sol";
-import {ExecMode, ExecModeSelector, ExecModePayload} from "@zerodev/kernel/types/Types.sol";
-import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
+import {MODULE_TYPE_FALLBACK, MODULE_TYPE_EXECUTOR} from "@zerodev/kernel/types/Constants.sol";
+import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {ITokenBundle} from "./interfaces/ITokenBundle.sol";
 
 contract BundleModulePlugin is IModule, ITokenBundle {
@@ -76,15 +70,23 @@ contract BundleModulePlugin is IModule, ITokenBundle {
 
         // Have the smart account (msg.sender) execute transferFrom in its own context so that
         // the ERC20 sees the smart account as the spender, not this singleton plugin.
-        ExecMode execMode =
-            ExecLib.encode(CALLTYPE_SINGLE, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
+        bytes32 execMode =
+            LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory transferCall = abi.encodeCall(IERC20.transferFrom, (sender, thisAccount, amount));
-        IERC7579Account(thisAccount).executeFromExecutor(execMode, ExecLib.encodeSingle(token, 0, transferCall));
+        // ERC-7579 single execution encoding: target(20) ‖ value(32) ‖ callData.
+        IERC7579Account(thisAccount).executeFromExecutor(execMode, abi.encodePacked(token, uint256(0), transferCall));
     }
 
     function balanceOf(address owner, address token) external view override returns (uint256) {
         // NB: this returns the whole balance i.e. for user payments and for coen buys
         return bundleBalance[owner][token];
+    }
+
+    /// @notice The registered bundle tokens for `account`.
+    /// @dev Used by BundleSpendProtectorHook to enforce the reserve invariant across every bundled
+    ///      token in one pass, without needing to parse them out of the execution calldata.
+    function bundleTokensOf(address account) external view override returns (address[] memory) {
+        return bundleTokens[account];
     }
 
     /// @notice Returns true if `token` is a registered bundle token for `account`.
@@ -114,10 +116,10 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     ///      Uses this plugin's executor registration to call executeFromExecutor, ensuring
     ///      that decreaseBundleBalance is invoked with msg.sender = smartAccount.
     function dispatchDecreaseBalance(address smartAccount, address token, uint256 amount) external {
-        ExecMode execMode =
-            ExecLib.encode(CALLTYPE_SINGLE, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
+        bytes32 execMode =
+            LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory decreaseCall = abi.encodeCall(BundleModulePlugin.decreaseBundleBalance, (token, amount));
         IERC7579Account(smartAccount)
-            .executeFromExecutor(execMode, ExecLib.encodeSingle(address(this), 0, decreaseCall));
+            .executeFromExecutor(execMode, abi.encodePacked(address(this), uint256(0), decreaseCall));
     }
 }

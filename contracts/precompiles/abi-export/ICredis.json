@@ -34,11 +34,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "asset",
             "type": "address",
             "internalType": "address"
@@ -77,6 +72,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -151,11 +161,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "asset",
             "type": "address",
             "internalType": "address"
@@ -194,6 +199,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -268,11 +288,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "vaultProvider",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "asset",
             "type": "address",
             "internalType": "address"
@@ -311,6 +326,21 @@
             "name": "createdAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "credisPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "refinancingRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

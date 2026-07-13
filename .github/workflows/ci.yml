@@ -54,6 +54,12 @@ jobs:
         with:
           install: true
           cache: true
+      # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
+      # keyed on Cargo.lock + rustc version — so must come after the toolchain
+      # install. sccache still helps on lockfile changes (per-crate granularity).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: rustup component add clippy
       - run: mise run lint
 
@@ -76,6 +82,9 @@ jobs:
         with:
           install: true
           cache: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # trybuild compile-fail tests reference std source snippets; rustc only
       # renders them when rust-src is present (mise installs rust without it).
       - run: rustup component add rust-src
@@ -114,6 +123,9 @@ jobs:
         with:
           install: true
           cache: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # The `test` job runs under llvm-cov, which does NOT execute doctests
       # (M-24). Run them explicitly so executable doc-examples are covered.
       - run: mise run test-doc
@@ -137,11 +149,16 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: rui314/setup-mold@v1
+      # sccache must precede mise so mise's from-source tool installs (run
+      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: jdx/mise-action@v2
         with:
           install: true
           cache: true
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo build --release --bin outbe-chain
       - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
         run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke
@@ -160,6 +177,9 @@ jobs:
       # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: taiki-e/install-action@cargo-udeps
       - run: cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features
 
@@ -174,6 +194,12 @@ jobs:
         with:
           install: true
           cache: true
+      # cargo tree resolves the full dep graph (downloads every crate manifest);
+      # cache the registry only — nothing is built here.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-on-failure: true
       - name: Ensure no arbitrary dep in production build
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
 
@@ -191,6 +217,11 @@ jobs:
         with:
           install: true
           cache: true
+      # cargo-deny fetches the registry index + advisory DBs; no build output.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-on-failure: true
       - run: mise run audit-deny
 
   machete:
@@ -221,6 +252,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo +nightly miri test --lib
 
   ci-success:

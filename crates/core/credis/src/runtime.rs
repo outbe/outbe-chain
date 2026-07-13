@@ -6,6 +6,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::units::SCALE_1E18;
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
@@ -19,7 +20,6 @@ pub struct AnadosisResult {
     pub anadosis_amount: U256,
     pub gratis_amount: U256,
     pub paid_at: u64,
-    pub vault_provider: Address,
     pub asset: Address,
     pub bundle_account: Address,
 }
@@ -40,52 +40,74 @@ impl CredisContract<'_> {
         }
     }
 
+    /// Total repayable debt for a position: `principal × (1 + rate × TERM / 12)`,
+    /// where `rate` is the annualized refinancing rate (1e18 scaled) and `TERM`
+    /// is [`NUMBER_OF_ANADOSIS`] months. A zero rate yields `total == principal`
+    /// (the pre-refinancing-rate behavior).
+    fn total_debt(principal: U256, refinancing_rate: U256) -> Result<U256> {
+        let term = U256::from(NUMBER_OF_ANADOSIS);
+        // multiplier = 1e18 + rate × TERM / 12  (1e18 scaled)
+        let multiplier = SCALE_1E18 + refinancing_rate * term / U256::from(12u64);
+        let scaled = principal
+            .checked_mul(multiplier)
+            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
+        Ok(scaled / SCALE_1E18)
+    }
+
     /// Creates a position and returns the derived
     /// `position_id = keccak256(commitment || bundle_account)`.
+    ///
+    /// `credis_principal` is the disbursed loan amount; the repayment schedule is
+    /// sized to `total_debt(principal, refinancing_rate)` and split across the
+    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `refinancing_rate` (1e18
+    /// scaled) and `issuance_currency` (ISO 4217) are pinned at issuance.
     #[allow(clippy::too_many_arguments)]
     pub fn create_position(
         &mut self,
-        commitment: U256,
+        nullifier_hash: U256,
         bundle_account: Address,
-        vault_provider: Address,
         asset: Address,
-        anadosis_amount: U256,
+        issuance_currency: u16,
+        refinancing_rate: U256,
+        credis_principal: U256,
         gratis_amount: U256,
         current_time: u64,
     ) -> Result<U256> {
-        if anadosis_amount.is_zero() {
+        if credis_principal.is_zero() {
             return Err(CredisError::InvalidAmount.into());
         }
 
-        let position_id = CredisContract::position_id(commitment, bundle_account);
+        let position_id = CredisContract::position_id(nullifier_hash, bundle_account);
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }
 
-        let position = Position {
+        let total_debt = Self::total_debt(credis_principal, refinancing_rate)?;
+
+        self.create_position_record(&Position {
             position_id,
             bundle_account,
-            vault_provider,
             asset,
-            total_anadosis_amount: anadosis_amount,
-            outstanding_anadosis_amount: anadosis_amount,
+            total_anadosis_amount: total_debt,
+            outstanding_anadosis_amount: total_debt,
             total_gratis_amount: gratis_amount,
             outstanding_gratis_amount: gratis_amount,
             next_anadosis_number: 1,
             created_at: current_time,
-        };
-        self.create_position_record(&position)?;
+            credis_principal,
+            refinancing_rate,
+            issuance_currency,
+        })?;
 
         for n in 1..=NUMBER_OF_ANADOSIS {
-            let anadosis = Anadosis {
+            self.create_anadosis_record(&Anadosis {
                 anadosis_key: CredisContract::anadosis_key(position_id, n),
                 anadosis_number: n,
                 due_date: current_time + (n as u64) * SECONDS_PER_MONTH,
-                anadosis_amount: Self::split_amount(anadosis_amount, n),
+                anadosis_amount: Self::split_amount(total_debt, n),
                 gratis_amount: Self::split_amount(gratis_amount, n),
                 paid_at: 0,
-            };
-            self.create_anadosis_record(&anadosis)?;
+            })?;
         }
 
         self.append_to_address_index(bundle_account, position_id)?;
@@ -94,7 +116,7 @@ impl CredisContract<'_> {
         self.emit(ICredis::PositionCreated {
             positionId: position_id,
             bundleAccount: bundle_account,
-            anadosisAmount: anadosis_amount,
+            anadosisAmount: total_debt,
         })?;
 
         Ok(position_id)
@@ -141,7 +163,6 @@ impl CredisContract<'_> {
             anadosis_amount: anadosis.anadosis_amount,
             gratis_amount: anadosis.gratis_amount,
             paid_at: anadosis.paid_at,
-            vault_provider: position.vault_provider,
             asset: position.asset,
             bundle_account: position.bundle_account,
         })

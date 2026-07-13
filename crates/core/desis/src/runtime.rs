@@ -10,13 +10,13 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
 
 use crate::constants::{
-    BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_MESSENGER_ADDRESS,
-    QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS,
+    BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO,
+    QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
-use crate::sol_ext::IOriginMessenger;
+use crate::sol_ext::IOriginRouter;
 
 // ---------------------------------------------------------------------------
 // Auction lifecycle
@@ -70,6 +70,7 @@ pub fn start_auction(
         threshold_days: iparams.call_threshold_days,
         intex_call_period: iparams.intex_call_period_secs,
     };
+    config.commit_bond_minor = iparams.commit_bond_minor;
 
     contract.write_auction_config(series_id, &config)?;
     contract.write_stage(series_id, AuctionStage::Started)?;
@@ -99,7 +100,7 @@ pub fn start_auction(
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_u64 = u64::try_from(call_price)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let stage_params = IOriginMessenger::AuctionStageStartParams {
+    let stage_params = IOriginRouter::AuctionStageStartParams {
         seriesId: series_id,
         commitEnd: commit_end,
         revealEnd: noon,
@@ -115,12 +116,13 @@ pub fn start_auction(
         callWindowDays: iparams.call_window_days,
         callThresholdDays: iparams.call_threshold_days,
         minIntexBidQuantity: min_bid_qty,
+        commitBondMinor: config.commit_bond_minor,
     };
-    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
+    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendAuctionStageStartCall {
+        IOriginRouter::sendAuctionStageStartCall {
             params: stage_params,
         }
         .abi_encode()
@@ -152,9 +154,9 @@ pub fn reveal_auction(
     }
 
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendAuctionStageRevealCall {
+        IOriginRouter::sendAuctionStageRevealCall {
             seriesId: series_id,
             isGreenDay: is_green_day,
         }
@@ -192,9 +194,9 @@ pub fn begin_clearing(
         .write(&series_id, supply_intex32)?;
 
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendAuctionStageClearingCall {
+        IOriginRouter::sendAuctionStageClearingCall {
             seriesId: series_id,
         }
         .abi_encode()
@@ -214,6 +216,7 @@ pub fn begin_clearing(
 /// `total_batches` distinct indices have arrived the stage advances to `BidsReceived` (a zero-bid flush
 /// is one empty batch that completes immediately and then clears as a no-sale). A redelivered batch (its
 /// bit already set) is an idempotent no-op, so the transport may safely re-deliver.
+#[allow(clippy::too_many_arguments)]
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -224,13 +227,13 @@ pub fn process_bids_batch(
     total_batches: u16,
     bids: Vec<BidData>,
 ) -> Result<()> {
-    require_origin_messenger(caller)?;
+    require_origin_router(caller)?;
     require_nonzero_series_id(series_id)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
     if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
-        return Err(
-            PrecompileError::Revert("processBidsBatch: invalid batch index/total".into()).into(),
-        );
+        return Err(PrecompileError::Revert(
+            "processBidsBatch: invalid batch index/total".into(),
+        ));
     }
     let mut contract = storage.contract::<DesisContract>();
 
@@ -269,8 +272,7 @@ pub fn process_bids_batch(
     if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
         return Err(PrecompileError::Revert(
             "processBidsBatch: batch total/index mismatch for generation".into(),
-        )
-        .into());
+        ));
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);
@@ -317,7 +319,7 @@ pub fn clear_auction(
     caller: Address,
     series_id: u32,
 ) -> Result<ClearingResult> {
-    require_origin_messenger(caller)?;
+    require_origin_router(caller)?;
     require_nonzero_series_id(series_id)?;
     let mut contract = storage.contract::<DesisContract>();
     require_stage(&contract, series_id, AuctionStage::BidsReceived)?;
@@ -395,9 +397,9 @@ pub fn clear_auction(
     let won_bids_count = u32::try_from(result.winners.len())
         .map_err(|_| PrecompileError::Revert("winner count exceeds u32".into()))?;
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendAuctionResultCall {
+        IOriginRouter::sendAuctionResultCall {
             seriesId: series_id,
             issuedIntexCount: result.issued_intex_count,
             auctionClearingRate: u64::from(result.clearing_rate),
@@ -410,9 +412,9 @@ pub fn clear_auction(
     // Send REFUND_INSTRUCTIONS to BNB (all bidders including losers).
     if !result.all_bidders.is_empty() {
         storage.call(
-            ORIGIN_MESSENGER_ADDRESS,
+            ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
-            IOriginMessenger::sendRefundInstructionsCall {
+            IOriginRouter::sendRefundInstructionsCall {
                 seriesId: series_id,
                 bidders: result.all_bidders.clone(),
                 refundedAmounts: result.refunded_amounts.clone(),
@@ -532,8 +534,8 @@ fn calculate_clearing(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn require_origin_messenger(caller: Address) -> Result<()> {
-    if caller != ORIGIN_MESSENGER_ADDRESS {
+fn require_origin_router(caller: Address) -> Result<()> {
+    if caller != ORIGIN_ROUTER_ADDRESS {
         return Err(DesisError::UnauthorizedOrigin(caller).into());
     }
     Ok(())

@@ -18,6 +18,8 @@ pub mod payload;
 pub mod protocol_schedule;
 pub mod reshare_artifact;
 pub mod signer;
+pub mod governance_journal;
+pub mod hook_events;
 pub mod slashing_journal;
 pub mod storage;
 pub mod system_tx;
@@ -25,6 +27,7 @@ pub mod tee_bootstrap;
 pub mod time;
 pub mod units;
 pub mod validators;
+pub mod zero_fee;
 
 pub use header::{
     OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,

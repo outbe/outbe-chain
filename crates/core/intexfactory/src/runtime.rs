@@ -3,21 +3,22 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_intex::IntexState;
+use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::config;
 use crate::constants::{
     CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
-    ORIGIN_MESSENGER_ADDRESS, POW_DIFFICULTY,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
-use crate::sol_ext::{IIntexNFT1155, IOriginMessenger, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -25,7 +26,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// Capture series identity in Intex and enroll it in the floor-bin
-/// index. The outbound LayerZero send is added with messenger wiring.
+/// index. The outbound ERC-7786 send is added with router wiring.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     // u32 timestamp; bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
@@ -93,7 +94,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
     let call_price_minor_u64 = u64::try_from(call_price_minor)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let messenger_params = IOriginMessenger::IssuanceInstructionsParams {
+    let router_params = IOriginRouter::IssuanceInstructionsParams {
         seriesId: params.series_id,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
@@ -108,12 +109,12 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         recipients: params.recipients,
         quantities: params.quantities,
     };
-    // Relay-float-funded: value 0, so the messenger self-quotes and pays the bridge fee from its float.
+    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
-        ORIGIN_MESSENGER_ADDRESS,
+        ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
-        IOriginMessenger::sendIssuanceInstructionsCall {
-            params: messenger_params,
+        IOriginRouter::sendIssuanceInstructionsCall {
+            params: router_params,
         }
         .abi_encode()
         .into(),
@@ -173,7 +174,7 @@ pub fn set_authorized_settler(
 
 /// Register an auction-proceeds distribution (native COEN, arriving as
 /// `amount` = msg.value) for the series' contributing tribute owners. Gated to
-/// the OriginMessenger. Payouts run entirely in the begin-block drain, keeping
+/// the OriginRouter. Payouts run entirely in the begin-block drain, keeping
 /// the cross-chain delivery tx light and deterministic. Reverts on no
 /// contributors, returning the native value to the caller via the tx rollback.
 pub fn distribute(
@@ -182,8 +183,8 @@ pub fn distribute(
     series_id: u32,
     amount: U256,
 ) -> Result<()> {
-    if caller != ORIGIN_MESSENGER_ADDRESS {
-        return Err(IntexFactoryError::NotOriginMessenger.into());
+    if caller != ORIGIN_ROUTER_ADDRESS {
+        return Err(IntexFactoryError::NotOriginRouter.into());
     }
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
@@ -336,20 +337,15 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS,
+            spender: VAULT_PROVIDER_ADDRESS,
             amount: received,
         }
         .abi_encode()
         .into(),
     )?;
 
-    let shares = outbe_vaultprovider::api::deposit_liquidity(
-        storage.clone(),
-        INTEX_FACTORY_ADDRESS,
-        payment_token,
-        received,
-        outbe_vaultprovider::api::LiquiditySource::IntexStrikePrice,
-    )?;
+    // Deposit into the reserve vault via the provider's Solidity ABI.
+    let shares = outbe_vaultprovider::api::deposit_liquidity(storage, payment_token, received)?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -396,7 +392,14 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
     // TODO pick up the asset ERC20 address properly
-    let asset = outbe_vaultprovider::api::asset_at(storage.clone(), 0)?;
+    let ret = storage.staticcall(
+        VAULT_PROVIDER_ADDRESS,
+        IVaultProvider::assetAtCall { index: U256::ZERO }
+            .abi_encode()
+            .into(),
+    )?;
+    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());
     }

@@ -48,11 +48,16 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
       worldwide_day: z.number().int().optional().describe("YYYYMMDD; default = first OFFERING day"),
       amount: coen.optional(),
       currency: z.number().int().optional().describe("ISO 4217 numeric, default 840 (USD)"),
+      exclude_from_intex_issuance: z
+        .boolean()
+        .optional()
+        .describe("exclude the resulting Tribute from Intex issuance (default false)"),
       wait: z.boolean().optional().describe("wait for the receipt (default true)"),
     },
-    handler(async ({ worldwide_day, amount, currency, wait }) => {
+    handler(async ({ worldwide_day, amount, currency, exclude_from_intex_issuance, wait }) => {
       if (!ctx.account) throw new Error("set OUTBE_PRIVATE_KEY to submit offers");
       const cur = currency ?? 840;
+      const excludeFromIntex = exclude_from_intex_issuance ?? false;
       const amt = amount ?? "100";
 
       const tee = resolveContract("teeregistry");
@@ -96,6 +101,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         bytesToHex(enc.nonce),
         enc.ephemeralPubkey,
         cur,
+        excludeFromIntex,
         "0x" as Hex,
         "0x" as Hex,
         "0x" as Hex,
@@ -110,6 +116,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         worldwide_day: day,
         currency: cur,
         amount_base: amt,
+        exclude_from_intex_issuance: excludeFromIntex,
         creator: ctx.account.address,
       };
       if (wait === false) return ok({ ...meta, status: "submitted" });
@@ -147,7 +154,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "staking_claim_unbonded",
+    "staking_unbonded_claim",
     "Claim unbonded stake after the unbonding period. Requires OUTBE_PRIVATE_KEY.",
     { wait: z.boolean().optional() },
     handler(({ wait }) =>
@@ -174,7 +181,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
 
   // --- oracle ----------------------------------------------------------------
   server.tool(
-    "oracle_delegate_feeder",
+    "oracle_feeder_delegate",
     "Delegate oracle feeder consent to an address. Requires OUTBE_PRIVATE_KEY (validator).",
     { feeder: addr, wait: z.boolean().optional() },
     handler(({ feeder, wait }) =>
@@ -183,7 +190,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "oracle_submit_vote",
+    "oracle_vote_submit",
     "Submit oracle exchange-rate votes. `tuples`: [{base, quote, exchangeRate, volume}] with rate/volume as " +
       "integer minor strings (1e18 scale). Requires OUTBE_PRIVATE_KEY (validator).",
     {

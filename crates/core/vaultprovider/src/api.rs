@@ -1,47 +1,56 @@
-//! In-process API for the vaultprovider precompile.
+//! Public Solidity ABI of the vaultprovider precompile, plus thin typed helpers
+//! that hide the EVM sub-call to `VAULT_PROVIDER_ADDRESS`.
 
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::{sol, SolCall};
 
-use outbe_primitives::error::Result;
+use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-use crate::runtime;
+sol!("../../../contracts/precompiles/src/IVaultProvider.sol");
 
-/// Re-exported liquidity classifiers so cross-module callers can name the
-/// deposit/withdraw discriminant without reaching into [`crate::precompile`].
-pub use crate::precompile::IVaultProvider::{LiquiditySource, LiquidityTarget};
-
-/// `depositLiquidity`. See [`runtime::deposit_liquidity`].
-///
-/// Pulls `amount` of `asset` from `caller` and deposits it into the asset's
-/// vault, returning the minted shares.
+/// `depositLiquidity`: deposit `amount` of `asset` into its reserve vault via an
+/// EVM sub-call to the vault provider, returning the minted shares.
 pub fn deposit_liquidity(
-    storage: StorageHandle<'_>,
-    caller: Address,
+    storage: &StorageHandle<'_>,
     asset: Address,
     amount: U256,
-    source: LiquiditySource,
 ) -> Result<U256> {
-    runtime::deposit_liquidity(storage, caller, asset, amount, source)
+    let ret = storage.call(
+        VAULT_PROVIDER_ADDRESS,
+        U256::ZERO,
+        IVaultProvider::depositLiquidityCall {
+            asset,
+            assetsAmount: amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IVaultProvider::depositLiquidityCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("depositLiquidity undecodable".into()))
 }
 
-/// `withdrawLiquidity`. See [`runtime::withdraw_liquidity`].
-///
-/// Redeems `amount` of `asset` from the vault and tops it up into `receiver`,
-/// returning the burned shares. `target` classifies `caller` for event tracking
-/// and must not be [`LiquidityTarget::Unknown`].
+/// `withdrawLiquidity`: redeem `amount` of `asset` from its reserve vault and top
+/// it up into `receiver` via an EVM sub-call to the vault provider, returning the
+/// burned shares.
 pub fn withdraw_liquidity(
-    storage: StorageHandle<'_>,
-    caller: Address,
+    storage: &StorageHandle<'_>,
     asset: Address,
     amount: U256,
     receiver: Address,
-    target: LiquidityTarget,
 ) -> Result<U256> {
-    runtime::withdraw_liquidity(storage, caller, asset, amount, receiver, target)
-}
-
-/// `assetAt`: the registered reserve asset at `index`. See [`runtime::asset_at`].
-pub fn asset_at(storage: StorageHandle<'_>, index: u32) -> Result<Address> {
-    runtime::asset_at(storage, index)
+    let ret = storage.call(
+        VAULT_PROVIDER_ADDRESS,
+        U256::ZERO,
+        IVaultProvider::withdrawLiquidityCall {
+            asset,
+            amount,
+            receiver,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IVaultProvider::withdrawLiquidityCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("withdrawLiquidity undecodable".into()))
 }

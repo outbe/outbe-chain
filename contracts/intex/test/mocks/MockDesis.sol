@@ -6,7 +6,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
 /// @notice Minimal stand-in that advertises the `IDesis` interface via ERC-165.
-/// @dev Lets `OriginMessenger.wire` accept it during tests without pulling in the full
+/// @dev Lets `OriginRouter.wire` accept it during tests without pulling in the full
 ///      `Desis` dependency graph. Outbound-direction tests prank the wired address; the
 ///      bid-processing path is never invoked, so the interface methods are not implemented
 ///      (we intentionally avoid `is IDesis` so the mock stays light).

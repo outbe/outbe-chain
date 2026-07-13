@@ -64,6 +64,8 @@ pub struct AuctionConfig {
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
+    /// Commit-entry bond (payment-token 18-dec minor units); 0 disables the bond.
+    pub commit_bond_minor: u128,
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
     /// Floor and call derive from it; the escrow basis is `promis_load` (not entry-derived).
     pub entry_price_minor: U256,
@@ -73,9 +75,10 @@ impl AuctionConfig {
     /// Build the demand-side config from the per-unit entry price (1e18-scaled).
     /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
     /// `min_intex_bid_rate = 0` means no bid floor. Currencies come from the
-    /// genesis ISO constants. `call_trigger` and `min_intex_bid_quantity` are left
-    /// at their defaults here and populated at auction start (`start_auction`),
-    /// where the genesis `IntexParams` and the prior-clearing count are in reach.
+    /// genesis ISO constants. `call_trigger`, `min_intex_bid_quantity` and
+    /// `commit_bond_minor` are left at their defaults here and populated at
+    /// auction start (`start_auction`), where the genesis `IntexParams` and the
+    /// prior-clearing count are in reach.
     pub fn from_entry_price(entry_price_minor: U256) -> Self {
         Self {
             issuance_currency: crate::constants::QUALIFIER_ISSUANCE_ISO,
@@ -84,6 +87,7 @@ impl AuctionConfig {
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
+            commit_bond_minor: 0,
             entry_price_minor,
         }
     }
@@ -203,6 +207,10 @@ pub struct DesisContract {
     /// series_id -> bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
     #[attribute(order = 21)]
     pub bids_arrived_mask: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// series_id -> commit-entry bond (payment-token minor units).
+    #[attribute(order = 22)]
+    pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 }
 
 impl DesisContract<'_> {

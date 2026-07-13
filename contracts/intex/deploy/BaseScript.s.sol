@@ -13,8 +13,12 @@ import {Create3Deploy} from "./Create3Deploy.sol";
 ///      (`CREATE2_FACTORY`, inherited from `Script`) at a pinned salt, so it has the same address
 ///      on every chain. Proxy addresses then depend only on `(factory, deployer, salt)`.
 abstract contract BaseScript is Script {
-    /// @notice Bump to move every deployment to a fresh set of addresses.
-    string internal constant SALT_VERSION = "v1.0.0";
+    /// @notice CREATE3 salt version. Env-overridable via `SALT_VERSION` so a test run can target a
+    ///         throwaway address set without disturbing the pinned production set; blank/unset = production.
+    function saltVersion() internal view returns (string memory version) {
+        version = vm.envOr("SALT_VERSION", string(""));
+        if (bytes(version).length == 0) version = "v2.0.0";
+    }
 
     /// @notice Pinned salt for the CREATE3 factory itself.
     bytes32 internal constant FACTORY_SALT = keccak256("outbe-intex:Create3Factory:v1.0.0");
@@ -39,7 +43,7 @@ abstract contract BaseScript is Script {
         view
         returns (address)
     {
-        return Create3Deploy.predictProxy(factory, deployer, prefix, SALT_VERSION);
+        return Create3Deploy.predictProxy(factory, deployer, prefix, saltVersion());
     }
 
     /// @notice Deploy `impl` behind a UUPS proxy through `factory`, idempotently.
@@ -50,6 +54,6 @@ abstract contract BaseScript is Script {
         address impl,
         bytes memory initData
     ) public returns (address) {
-        return Create3Deploy.deployProxy(factory, deployer, prefix, SALT_VERSION, impl, initData);
+        return Create3Deploy.deployProxy(factory, deployer, prefix, saltVersion(), impl, initData);
     }
 }

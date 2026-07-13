@@ -28,7 +28,7 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "get_block",
+    "block_get",
     "Fetch a block by number or tag (default latest). Pass `block` as a number, hex, or 'latest'/'finalized'.",
     { block: z.union([z.number(), z.string()]).optional() },
     handler(async ({ block }) => {
@@ -41,7 +41,7 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "get_transaction",
+    "transaction_get",
     "Fetch a transaction by hash.",
     { hash: z.string() },
     handler(async ({ hash }) => {
@@ -51,7 +51,7 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
-    "get_transaction_receipt",
+    "transaction_receipt_get",
     "Fetch a transaction receipt by hash, including status (success/reverted), gas used and logs.",
     { hash: z.string() },
     handler(async ({ hash }) => {

@@ -9,11 +9,11 @@ flowchart TB
     Bundler[Bundler]
 
     subgraph Onchain
-        EntryPoint[EntryPoint v0.7]
+        EntryPoint[EntryPoint v0.9]
 
         subgraph KernelAccount[Kernel Smart Account]
-            RootValidator[Root Validator<br/>ECDSAValidator]
-            RootHook[Root Hook]
+            RootValidator[Owner Permission<br/>SudoPolicy + ECDSASigner]
+            RootHook[Root Hook<br/>BundleSpendProtectorHook]
             CCAPermission[CCA Permission<br/>per bundle token]
         end
 
@@ -65,10 +65,12 @@ Authorized party that can withdraw bundle tokens on behalf of the user within co
 ## Onchain Components
 
 ### EntryPoint
-Standard ERC-4337 v0.7 contract. Receives packed user operations from the bundler, validates them against the smart account, and executes the resulting calls.
+Standard ERC-4337 v0.9 contract. Receives packed user operations from the bundler, validates them against the smart account, and executes the resulting calls. Note: v0.9's `handleOps` requires the bundler to be an EOA (`tx.origin == msg.sender`).
 
 ### Kernel Account
-ZeroDev Kernel v3.1 modular smart account. Supports ERC-7579 modules (validators, executors, hooks, fallbacks, policies). The account is initialized via `SmartAccountFactory` with all Outbe modules pre-configured.
+ZeroDev Kernel v4 modular smart account (UUPS ERC-1967 proxy). Supports ERC-7579 modules (validators, executors, hooks, fallbacks, policies, signers). The account is initialized via `SmartAccountFactory` from an ordered `Install[]` package list with all Outbe modules pre-configured.
+
+Because Kernel v4 cannot attach an execution hook to a plain root validator at init, the **owner is modelled as a permission** (`SudoPolicy` always-pass + `ECDSASigner` holding the owner key) carrying `BundleSpendProtectorHook`. The owner keeps full, root-equivalent authority; owner UserOps therefore use the permission nonce type and the Kernel v4 `PermissionSignature` (`abi.encode(bytes[])`) format.
 
 ### Outbe Kernel Modules
 

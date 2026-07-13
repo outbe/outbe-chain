@@ -1585,6 +1585,17 @@
     },
     {
       "type": "error",
+      "name": "TransferOnCalledForbidden",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ZeroAddress",
       "inputs": [
         {

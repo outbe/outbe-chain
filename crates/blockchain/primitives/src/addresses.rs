@@ -191,68 +191,17 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// handler through `StorageHandle::contract`, not via the public ABI.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
-/// Whitelist of `to` addresses accepted on the EIP-7702 sponsored
-/// (zero-fee) path enabled by [`ZEROFEE_ADDRESS`].
+/// On-chain upgrade governance precompile address.
 ///
-/// Sponsored transactions are restricted to protocol-defined system
-/// precompiles — they cannot enter arbitrary EVM execution. The
-/// whitelist replaces a global per-block sponsored-tx cap by
-/// structurally limiting the reachable code paths: an attacker with N
-/// pre-funded addresses can still burn 8 free txs each, but each tx
-/// can only invoke one of these audited entrypoints. The set is a
-/// strict subset of the registered outbe precompile table because
-/// validator-only entrypoints (rewards/staking/oracle) are not
-/// reachable through the sponsored path — those have dedicated
-/// authorization flows. Editing this list is part of the protocol
-/// contract.
-pub const SPONSORED_TARGET_WHITELIST: &[Address] = &[
-    GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS,
-    PROMIS_ADDRESS,
-    PROMIS_FACTORY_ADDRESS,
-    TRIBUTE_ADDRESS,
-    NOD_ADDRESS,
-    NOD_FACTORY_ADDRESS,
-    CREDIS_ADDRESS,
-    CREDIS_FACTORY_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS,
-    AGENT_REWARD_ADDRESS,
-    FIDELITY_ADDRESS,
-];
+/// Hosts proposal/vote state and the active protocol version. Callable
+/// dispatch is registered at `UPDATE_ADDRESS`; lifecycle activation is wired later.
+pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
 
-/// Compile-time uniqueness check on [`SPONSORED_TARGET_WHITELIST`].
+/// Generic on-chain vote precompile address.
 ///
-/// A duplicate would let the `O(n)` `contains` check silently accept
-/// the same address twice and waste cycles, but more importantly
-/// flag that an editor has copy-pasted a row by mistake. Anchoring
-/// this at compile time makes the protocol contract self-policing.
-const _: () = {
-    let list = SPONSORED_TARGET_WHITELIST;
-    let mut i = 0;
-    while i < list.len() {
-        let mut j = i + 1;
-        while j < list.len() {
-            // Compare the underlying 20-byte arrays — `Address` is
-            // `repr(transparent)` over `[u8; 20]`.
-            let a = list[i].0 .0;
-            let b = list[j].0 .0;
-            let mut k = 0;
-            let mut eq = true;
-            while k < 20 {
-                if a[k] != b[k] {
-                    eq = false;
-                    break;
-                }
-                k += 1;
-            }
-            if eq {
-                panic!("SPONSORED_TARGET_WHITELIST contains a duplicate address");
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-};
+/// Hosts reusable proposal/voting state. Callable dispatch is registered
+/// at `VOTE_ADDRESS`.
+pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
 
 /// System address used for system-only calls (block hooks).
 pub const SYSTEM_ADDRESS: Address = Address::ZERO;

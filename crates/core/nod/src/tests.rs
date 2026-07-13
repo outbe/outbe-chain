@@ -7,7 +7,6 @@ use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::constants::UNLOCK_PERIOD_SECONDS;
 use crate::precompile::INod;
 use crate::schema::NodItemState;
 use crate::{NodContract, NodIssueParams};
@@ -42,14 +41,13 @@ fn sample_params() -> NodIssueParams {
 /// Seed a Nod into the entity store at issue-time `now`.
 ///
 /// Mirrors the bookkeeping the production [`outbe_nodfactory::api::issue_nod`]
-/// performs: derives the deterministic nod id, computes the bucket key and
-/// unlock horizon, builds the `NodItemState`, and delegates the slot-write
+/// performs: derives the deterministic nod id, computes the bucket key,
+/// builds the `NodItemState`, and delegates the slot-write
 /// to `state::add_nod`. No PoW / authorization / event emission — those
 /// concerns belong to NodFactory and are exercised by NodFactory's tests.
 fn seed_nod(nod: &mut NodContract, params: &NodIssueParams, now: u64) -> U256 {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
     let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
-    let unlocks_at = now + UNLOCK_PERIOD_SECONDS;
     let item = NodItemState {
         nod_id,
         owner: params.owner,
@@ -60,7 +58,6 @@ fn seed_nod(nod: &mut NodContract, params: &NodIssueParams, now: u64) -> U256 {
         bucket_key,
         cost_amount_minor: params.cost_amount_minor,
         issuance_currency: params.issuance_currency,
-        unlocks_at,
         reference_currency: params.reference_currency,
         issued_at: now,
     };
@@ -330,11 +327,6 @@ fn test_token_uri_contains_legacy_metadata_fields() {
         assert!(json.contains("cost_of_gratis_minor"));
         assert!(json.contains("cost_amount_minor"));
         assert!(json.contains("is_qualified"));
-        let item = nod.get_item(nod_id).unwrap().unwrap();
-        assert!(json.contains(&format!(
-            "\"trait_type\":\"unlocks_at\",\"value\":{}",
-            item.unlocks_at
-        )));
         assert!(json.contains(&NodContract::format_nod_id(nod_id)));
     });
 }
@@ -507,47 +499,47 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
             nod.nod_items.base_slot(),
             alloy_primitives::U256::from(1u64)
         );
-        assert_eq!(<crate::schema::NodItemState as StorageRecord>::SLOTS, 11);
+        assert_eq!(<crate::schema::NodItemState as StorageRecord>::SLOTS, 10);
         assert_eq!(
             nod.nod_buckets.base_slot(),
-            alloy_primitives::U256::from(12u64)
+            alloy_primitives::U256::from(11u64)
         );
         assert_eq!(<crate::schema::NodBucketState as StorageRecord>::SLOTS, 5);
         assert_eq!(
             nod.owner_nod_counts.base_slot(),
-            alloy_primitives::U256::from(17u64)
+            alloy_primitives::U256::from(16u64)
         );
         assert_eq!(
             nod.owner_nod_ids.base_slot(),
-            alloy_primitives::U256::from(18u64)
+            alloy_primitives::U256::from(17u64)
         );
         // LB-style bin index slots (replaced the legacy unqualified_heap).
         assert_eq!(
             nod.bin_tree_root.slot(),
-            alloy_primitives::U256::from(19u64)
+            alloy_primitives::U256::from(18u64)
         );
         assert_eq!(
             nod.bin_tree_mid.base_slot(),
-            alloy_primitives::U256::from(20u64)
+            alloy_primitives::U256::from(19u64)
         );
         assert_eq!(
             nod.bin_tree_leaf.base_slot(),
-            alloy_primitives::U256::from(21u64)
+            alloy_primitives::U256::from(20u64)
         );
         assert_eq!(
             nod.unqualified_bin_count.base_slot(),
-            alloy_primitives::U256::from(22u64)
+            alloy_primitives::U256::from(21u64)
         );
         assert_eq!(
             nod.unqualified_bin_buckets.base_slot(),
-            alloy_primitives::U256::from(23u64)
+            alloy_primitives::U256::from(22u64)
         );
         // ERC-721 Enumerable global index. StorageVec hides its base
-        // slot, so we only pin the reverse-map slot here; slot 24 is
+        // slot, so we only pin the reverse-map slot here; slot 23 is
         // owned by `global_nod_ids` (List<U256>).
         assert_eq!(
             nod.global_nod_index.base_slot(),
-            alloy_primitives::U256::from(25u64)
+            alloy_primitives::U256::from(24u64)
         );
     });
 }

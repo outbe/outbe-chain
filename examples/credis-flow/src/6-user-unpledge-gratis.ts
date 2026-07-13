@@ -1,26 +1,53 @@
+// Step 6 — unlock a reclaimed installment's gratis (shielded).
+//
+// After paying an anadosis installment (step 5), the runtime inserts that
+// installment's reclaim commitment into the gratispool at the anadosis
+// (one-decade-down) denomination, and `5-user-pays-anadosis.ts` writes a
+// reclaim ticket for it. This script spends that ticket's nullifier to release
+// one installment's share (pledge / 10) of the escrowed gratis — immediately,
+// without waiting for the loan to finish.
+//
+// It is the shielded unpledge, identical in mechanism to the `1.1` sanity
+// script; the only difference is framing (it consumes the reclaim tickets that
+// step 5 produces). Pass an explicit ticket path or let it pick the latest.
+
 import { ethers, Wallet } from "ethers";
-import { IGratis__factory, IGratisFactory__factory } from "./contracts/index.js";
+import {
+  IGratis__factory,
+  IGratisFactory__factory,
+  IGratisPool__factory,
+} from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
   DEFAULT_GRATIS_FACTORY_ADDRESS,
-  DEFAULT_CREDIS_ADDRESS,
+  DEFAULT_GRATIS_POOL_ADDRESS,
+  GRATIS_DENOMINATIONS,
   formatToken,
-  formatTokenMeta,
   formatTokenDiff,
   fetchTokenMeta,
-  TokenMeta,
   DEFAULT_ENV,
   loadEnv,
   requireEnv,
 } from "./utils.js";
+import {
+  ACTION_UNPLEDGE,
+  buildMerkleProof,
+  fieldToHex32,
+  nullifierHash,
+  proveUnpledge,
+  receiverBinding,
+} from "./shielded.js";
+import { deleteTicket, findLatestTicket, readTicket, type Ticket } from "./ticket.js";
 
-// Parse CLI args: [secret] [envName]
-const secret = process.argv[2]
-  ? BigInt(process.argv[2])
-  : (() => { throw new Error("secret is required as 1st argument"); })();
-const envName = process.argv[3] || DEFAULT_ENV;
+// Parse CLI args: [ticketPath?] [envName?]
+let ticketPath: string | undefined;
+let envName = DEFAULT_ENV;
 
-// Load env
+for (const a of process.argv.slice(2)) {
+  if (a.endsWith(".json")) ticketPath = a;
+  else envName = a;
+}
+
 const { envPath } = loadEnv(import.meta.url, envName);
 
 const rpcUrl = requireEnv("RPC_URL", envPath);
@@ -28,83 +55,202 @@ const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
-const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
+const gratisPoolAddress = process.env["GRATIS_POOL_ADDRESS"] || DEFAULT_GRATIS_POOL_ADDRESS;
 
-interface State {
-  userGratisBalance: bigint;
-  userPledged: bigint;
-  credisGratisBalance: bigint;
-  pledgeTickets: Awaited<ReturnType<ReturnType<typeof IGratisFactory__factory.connect>["getPledgeTicketByAddress"]>>;
-}
-
-async function getState(
-  gratis: ReturnType<typeof IGratis__factory.connect>,
-  gratisFactory: ReturnType<typeof IGratisFactory__factory.connect>,
-): Promise<State> {
-  const [userGratisBalance, userPledged, credisGratisBalance, pledgeTickets] = await Promise.all([
-    gratis.balanceOf(userAddress),
-    gratis.pledgedOf(userAddress),
-    gratis.balanceOf(credisAddress),
-    gratisFactory.getPledgeTicketByAddress(userAddress),
-  ]);
-  return { userGratisBalance, userPledged, credisGratisBalance, pledgeTickets };
-}
-
-function printState(label: string, state: State, gratisMeta: TokenMeta) {
-  console.log(`\n=== ${label} ===`);
-  console.log(`  User (${userAddress}):`);
-  console.log(`    Gratis balance: ${formatTokenMeta(state.userGratisBalance, gratisMeta)}`);
-  console.log(`    Pledged:        ${formatTokenMeta(state.userPledged, gratisMeta)}`);
-  console.log(`    Pledges:        ${state.pledgeTickets.length}`);
-  for (const ticket of state.pledgeTickets) {
-    console.log(`      - commitment: ${ticket.commitment} amount: ${formatToken(ticket.amount, gratisMeta.decimals, gratisMeta.symbol)}, block: ${ticket.createdAtBlock}`);
+function loadTicket(): { ticket: Ticket; path: string } {
+  if (ticketPath) {
+    return { ticket: readTicket(ticketPath), path: ticketPath };
   }
-  console.log(`  Credis (${credisAddress}):`);
-  console.log(`    Gratis balance: ${formatTokenMeta(state.credisGratisBalance, gratisMeta)}`);
+  const latest = findLatestTicket();
+  if (!latest) {
+    console.error(
+      "No reclaim ticket found under examples/credis-flow/tickets/. Run `npm run user-pays-anadosis <positionId>` first or pass an explicit ticket path.",
+    );
+    process.exit(1);
+  }
+  return latest;
 }
 
 async function main() {
+  const { ticket, path: usedTicketPath } = loadTicket();
+  const denom = GRATIS_DENOMINATIONS.find((d) => d.id === ticket.denomId);
+  if (!denom) {
+    throw new Error(`Ticket denomId ${ticket.denomId} not in known ladder`);
+  }
+
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new Wallet(userPrivateKey, provider);
   const gratis = IGratis__factory.connect(gratisAddress, wallet);
   const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
+  const gratisPool = IGratisPool__factory.connect(gratisPoolAddress, provider);
 
-  const gratisMeta = await fetchTokenMeta(gratis);
+  const [gratisMeta, network] = await Promise.all([
+    fetchTokenMeta(gratis),
+    provider.getNetwork(),
+  ]);
 
-  console.log("=== User Unlock Gratis ===");
-  console.log(`Env:              ${envName} (${envPath})`);
-  console.log(`RPC:              ${rpcUrl}`);
-  console.log(`User:             ${userAddress}`);
-  console.log(`Gratis:           ${gratisAddress} (${gratisMeta.symbol}, ${gratisMeta.decimals} decimals)`);
-  console.log(`Factory:          ${gratisFactoryAddress}`);
-  console.log(`Credis:           ${credisAddress}`);
-  console.log(`Secret:           ${secret}`);
+  const secret = BigInt(ticket.secret);
+  const nullifierSecret = BigInt(ticket.nullifierSecret);
+  const commitment = BigInt(ticket.commitment);
+  const denomId = ticket.denomId;
+  const leafIndex = ticket.leafIndex;
 
-  // State before
-  const before = await getState(gratis, gratisFactory);
-  printState("State BEFORE", before, gratisMeta);
+  console.log("=== Unlock Reclaimed Gratis (shielded) ===");
+  console.log(`Env:           ${envName} (${envPath})`);
+  console.log(`RPC:           ${rpcUrl}`);
+  console.log(`Ticket:        ${usedTicketPath}`);
+  console.log(`User:          ${userAddress}`);
+  console.log(`Factory:       ${gratisFactoryAddress}`);
+  console.log(`Pool:          ${gratisPoolAddress}`);
+  console.log(`Denom:         ${denomId} = ${formatToken(denom.amount, gratisMeta.decimals, gratisMeta.symbol)} (one installment's share)`);
+  console.log(`Commitment:    ${fieldToHex32(commitment)}`);
+  console.log(`Leaf index:    ${leafIndex}`);
+  console.log(`Chain ID:      ${network.chainId}`);
 
-  // Unpledge (unlock) gratis
+  // Pre-flight: catch the easy failure modes before paying for proof generation.
+  const nullifier = await nullifierHash(nullifierSecret);
+  const [onChainRoot, onChainLeafCount, alreadySpent] = await Promise.all([
+    gratisPool.currentRoot(denomId),
+    gratisPool.leafCount(denomId),
+    gratisPool.isSpent(nullifier),
+  ]);
+
+  if (Number(onChainLeafCount) <= leafIndex) {
+    throw new Error(
+      `Pool leafCount ${onChainLeafCount} <= ticket.leafIndex ${leafIndex} — ticket points past the tree`,
+    );
+  }
+  if (alreadySpent) {
+    deleteTicket(usedTicketPath);
+    throw new Error(
+      `Nullifier ${fieldToHex32(nullifier)} is already spent on-chain — ticket has been deleted (cannot be unpledged a second time)`,
+    );
+  }
+
+  // Rebuild the local Merkle tree from the on-chain CommitmentInserted log.
+  console.log("\nReplaying CommitmentInserted events to rebuild the Merkle tree...");
+  const filter = gratisPool.filters["CommitmentInserted(uint8,uint256,uint32,uint256)"](denomId);
+  const events = await gratisPool.queryFilter(filter, 0, "latest");
+
+  const commitments: bigint[] = [];
+  for (const ev of events) {
+    const idx = Number(ev.args.leafIndex);
+    commitments[idx] = BigInt(ev.args.commitment);
+  }
+  for (let i = 0; i < commitments.length; i++) {
+    if (commitments[i] === undefined) {
+      throw new Error(`Missing CommitmentInserted event for leaf ${i} of denom ${denomId}`);
+    }
+  }
+  console.log(`  Replayed ${commitments.length} commitments for denom ${denomId}`);
+
+  if (commitments[leafIndex] !== commitment) {
+    throw new Error(
+      `Replayed commitment[${leafIndex}] = ${fieldToHex32(commitments[leafIndex])} does not match ticket commitment ${fieldToHex32(commitment)}`,
+    );
+  }
+
+  const merkle = await buildMerkleProof(commitments, leafIndex);
+  if (merkle.root !== BigInt(onChainRoot)) {
+    throw new Error(
+      `Locally-rebuilt root ${fieldToHex32(merkle.root)} does not match on-chain currentRoot ${fieldToHex32(BigInt(onChainRoot))} — likely Poseidon param drift between off-chain and on-chain implementations.`,
+    );
+  }
+  console.log(`  Rebuilt root matches on-chain currentRoot: ${fieldToHex32(merkle.root)}`);
+
+  // Compute receiver binding. `target = msg.sender` (the user wallet) and
+  // `nonce = 0` for the terminal unpledge action. Matches state.rs::receiver_binding.
+  const binding = await receiverBinding(
+    ACTION_UNPLEDGE,
+    userAddress,
+    network.chainId,
+    0n,
+  );
+
+  console.log("\nGenerating UltraHonkKeccak proof (this typically takes 3-8s)...");
+  const tProveStart = Date.now();
+  const proof = await proveUnpledge({
+    secret,
+    nullifierSecret,
+    denomId,
+    merklePath: merkle.siblings,
+    merkleIndex: leafIndex,
+    merkleRoot: merkle.root,
+    nullifierHashValue: nullifier,
+    receiverBindingValue: binding,
+  });
+  console.log(`  Proof generated in ${((Date.now() - tProveStart) / 1000).toFixed(2)}s (${proof.length} bytes)`);
+
+  const [balanceBefore, pledgedBefore, pledgedTotalBefore] = await Promise.all([
+    gratis.balanceOf(userAddress),
+    gratis.pledgedOf(userAddress),
+    gratis.pledgedTotalSupply(),
+  ]);
+
+  console.log("\n=== State BEFORE ===");
+  console.log(`  User balance:    ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  User pledged:    ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledged total:   ${formatToken(pledgedTotalBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+
   console.log("\nSending unpledgeGratis tx...");
-  const tx = await gratisFactory.unpledgeGratis(secret);
+  const tx = await gratisFactory.unpledgeGratis({
+    merkleRoot: merkle.root,
+    nullifierHash: nullifier,
+    denomId,
+    receiverBinding: binding,
+    proof: ethers.hexlify(proof),
+  });
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
-  console.log(`  Block:   ${receipt?.blockNumber}`);
-  console.log(`  Gas:     ${receipt?.gasUsed}`);
+  if (!receipt) throw new Error("unpledgeGratis tx receipt missing");
+  console.log(`  Block:   ${receipt.blockNumber}`);
+  console.log(`  Gas:     ${receipt.gasUsed}`);
 
-  // State after
-  const after = await getState(gratis, gratisFactory);
-  printState("State AFTER", after, gratisMeta);
+  // Decode interesting events from factory + pool.
+  const factoryIface = IGratisFactory__factory.createInterface();
+  const poolIface = IGratisPool__factory.createInterface();
+  console.log("\n=== Events ===");
+  for (const log of receipt.logs) {
+    const iface =
+      log.address.toLowerCase() === gratisFactoryAddress.toLowerCase()
+        ? factoryIface
+        : log.address.toLowerCase() === gratisPoolAddress.toLowerCase()
+          ? poolIface
+          : null;
+    if (!iface) continue;
+    try {
+      const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+      if (parsed) {
+        const argsObj: Record<string, string> = {};
+        parsed.fragment.inputs.forEach((p, i) => {
+          argsObj[p.name] = String(parsed.args[i]);
+        });
+        console.log(`  ${parsed.name}: ${JSON.stringify(argsObj)}`);
+      }
+    } catch {
+      // not our event
+    }
+  }
 
-  // Diff
+  const [balanceAfter, pledgedAfter, pledgedTotalAfter, spentAfter] = await Promise.all([
+    gratis.balanceOf(userAddress),
+    gratis.pledgedOf(userAddress),
+    gratis.pledgedTotalSupply(),
+    gratisPool.isSpent(nullifier),
+  ]);
+
+  console.log("\n=== State AFTER ===");
+  console.log(`  User balance:    ${formatToken(balanceAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  User pledged:    ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledged total:   ${formatToken(pledgedTotalAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Nullifier spent: ${spentAfter}`);
+
   console.log("\n=== CHANGES ===");
-  const balanceDiff = after.userGratisBalance - before.userGratisBalance;
-  const pledgedDiff = after.userPledged - before.userPledged;
-  const credisDiff = after.credisGratisBalance - before.credisGratisBalance;
-  console.log(`  User balance:   ${formatTokenDiff(balanceDiff, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  User pledged:   ${formatTokenDiff(pledgedDiff, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Credis balance: ${formatTokenDiff(credisDiff, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledge tickets: ${before.pledgeTickets.length} -> ${after.pledgeTickets.length}`);
+  console.log(`  Balance:  ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+
+  deleteTicket(usedTicketPath);
+  console.log(`\nTicket deleted: ${usedTicketPath} (nullifier is on-chain; the secret has no further use).`);
 }
 
 main().catch((error) => {

@@ -26,11 +26,11 @@ fn build_extended_precompiles() -> PrecompilesMap {
 }
 
 #[test]
-fn registered_address_count_is_30() {
+fn registered_address_count_is_31() {
     let count = outbe_precompile_addresses().len();
     assert_eq!(
-        count, 30,
-        "outbe registers 30 stateful precompiles (incl. Promis, PromisFactory, Intex, \
+        count, 32,
+        "outbe registers 32 stateful precompiles (incl. Promis, PromisFactory, Intex, \
          IntexFactory, Desis, and TEE registry); if this changes, update the address list in \
          `outbe_precompile_addresses()` and the dispatch match in `extend_outbe_precompiles`"
     );
@@ -108,7 +108,7 @@ fn unregistered_address_returns_none() {
 /// invoke protocol-defined entrypoints — never arbitrary EVM code.
 #[test]
 fn sponsored_whitelist_is_subset_of_registered_precompiles() {
-    use outbe_primitives::addresses::SPONSORED_TARGET_WHITELIST;
+    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
     let registered = outbe_precompile_addresses();
     for target in SPONSORED_TARGET_WHITELIST {
         assert!(
@@ -126,9 +126,10 @@ fn sponsored_whitelist_is_subset_of_registered_precompiles() {
 #[test]
 fn sponsored_whitelist_excludes_validator_entrypoints() {
     use outbe_primitives::addresses::{
-        ORACLE_ADDRESS, REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS, SPONSORED_TARGET_WHITELIST,
-        STAKING_ADDRESS, VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS,
+        ORACLE_ADDRESS, REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS,
+        VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS,
     };
+    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
     let forbidden = [
         VALIDATOR_SET_ADDRESS,
         STAKING_ADDRESS,

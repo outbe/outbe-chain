@@ -8,11 +8,11 @@
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::precompile::{dispatch, IVaultProvider};
+use crate::api::IVaultProvider;
+use crate::precompile::dispatch;
 use crate::runtime;
 use crate::schema::VaultProviderContract;
 
@@ -415,48 +415,5 @@ fn abi_withdraw_liquidity_gates_msg_sender_against_registry() {
             IVaultProvider::withdrawLiquidityCall::abi_decode_returns(&out).unwrap(),
             x
         );
-    });
-}
-
-// --- gate hooks --------------------------------------------------------------
-
-#[test]
-fn gate_hooks_authorize_only_the_provider() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        for selector in [
-            IVaultProvider::canReceiveSharesCall {
-                account: VAULT_PROVIDER_ADDRESS,
-            }
-            .abi_encode(),
-            IVaultProvider::canSendSharesCall {
-                account: VAULT_PROVIDER_ADDRESS,
-            }
-            .abi_encode(),
-            IVaultProvider::canReceiveAssetsCall {
-                account: VAULT_PROVIDER_ADDRESS,
-            }
-            .abi_encode(),
-            IVaultProvider::canSendAssetsCall {
-                account: VAULT_PROVIDER_ADDRESS,
-            }
-            .abi_encode(),
-        ] {
-            let out = dispatch(storage.clone(), &selector, stranger(), U256::ZERO).unwrap();
-            assert!(IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap());
-        }
-
-        // A non-provider account is not authorized.
-        let out = dispatch(
-            storage.clone(),
-            &IVaultProvider::canReceiveSharesCall {
-                account: stranger(),
-            }
-            .abi_encode(),
-            stranger(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert!(!IVaultProvider::canReceiveSharesCall::abi_decode_returns(&out).unwrap());
     });
 }

@@ -326,6 +326,14 @@ fn run_node() -> eyre::Result<()> {
             );
         }
 
+        if let Err(error) = outbe_primitives::governance_journal::init(&consensus_storage) {
+            tracing::warn!(
+                target: "outbe::governance::journal",
+                %error,
+                "failed to initialize governance journal — events will not be persisted to a sidecar file",
+            );
+        }
+
         let runtime_config = commonware_runtime::tokio::Config::default()
             .with_tcp_nodelay(Some(true))
             .with_worker_threads(args.worker_threads)
@@ -439,11 +447,19 @@ fn run_node() -> eyre::Result<()> {
             .extend_rpc_modules({
                 let bridge = bridge.clone();
                 let is_validator = args.is_validator;
+                let is_follower = args.upstream.is_some();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
+                    // Validators get the full bridge-backed handler.
+                    // `--upstream` followers also run a marshal and CAN serve
+                    // `outbe_getFinalization` (chaining followers), but must NOT
+                    // report validator status; they get a follower-scoped handler
+                    // that exposes only the finalization-serving capability.
                     let outbe_api = if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
+                    } else if is_follower {
+                        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
                     } else {
                         outbe_rpc::OutbeApiHandler::new(provider)
                     };
@@ -459,10 +475,18 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
-        if args.is_validator {
-            info!("outbe node launched in VALIDATOR mode");
+        outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::handlers::update::registry())?;
 
-            // Spawn consensus thread ONLY for validator mode (per Task 02 spec).
+        if args.is_validator || args.upstream.is_some() {
+            if args.upstream.is_some() {
+                info!("outbe node launched in FOLLOWER mode (--upstream)");
+            } else {
+                info!("outbe node launched in VALIDATOR mode");
+            }
+
+            // Spawn the consensus thread for validator OR follower mode; the
+            // follower branch inside `run_consensus_stack` selects the lightweight
+            // follow stack (no consensus engine).
             let consensus_handle = thread::spawn(consensus_thread_fn);
 
             let _ = node_tx.send((node, args));

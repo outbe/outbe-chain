@@ -52,7 +52,7 @@ pub fn dispatch(
                 let mut total = U256::ZERO;
                 for position in contract.get_positions_by_address(c.bundleAccount)? {
                     total = total
-                        .checked_add(position.total_anadosis_amount)
+                        .checked_add(position.credis_principal)
                         .ok_or_else(|| {
                             outbe_primitives::error::PrecompileError::Revert(
                                 "credis total sum overflow".into(),
@@ -75,7 +75,6 @@ pub fn dispatch(
 fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
     ICredis::Position {
         positionId: p.position_id,
-        vaultProvider: p.vault_provider,
         asset: p.asset,
         bundleAccount: p.bundle_account,
         totalAnadosisAmount: p.total_anadosis_amount,
@@ -84,6 +83,9 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         outstandingGratisAmount: p.outstanding_gratis_amount,
         nextAnadosisNumber: p.next_anadosis_number,
         createdAt: p.created_at,
+        credisPrincipal: p.credis_principal,
+        refinancingRate: p.refinancing_rate,
+        issuanceCurrency: p.issuance_currency,
     }
 }
 

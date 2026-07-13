@@ -29,6 +29,7 @@ fn gas_audit_tribute(
         issuance_currency: 1,
         nominal_amount_minor,
         reference_currency: 840,
+        exclude_from_intex_issuance: false,
         tribute_price_minor: U256::ZERO,
     }
 }
@@ -152,7 +153,7 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
 
 #[test]
 fn test_empty_population() {
-    let result = calc_fraction_distribution_fp(&[], &[], 10, 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&[], &[], 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result, vec![U256::ZERO]);
 }
 
@@ -160,7 +161,7 @@ fn test_empty_population() {
 fn test_single_fi_returns_target_fraction() {
     let y_fp = vec![SCALE]; // 100%
     let p = vec![5];
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], F_FP_DEFAULT, "single FI should return f");
 }
@@ -172,7 +173,7 @@ fn test_two_fi_groups() {
         SCALE * U256::from(4u64) / U256::from(10u64),
     ]; // 60/40
     let p = vec![1, 2];
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
 
@@ -200,7 +201,7 @@ fn test_three_fi_groups() {
     ];
     let p = vec![50, 30, 20];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
 
@@ -216,7 +217,7 @@ fn test_many_fi_groups() {
     let y_fp: Vec<U256> = vec![SCALE / U256::from(n as u64); n];
     let p: Vec<u64> = (1..=n as u64).collect();
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), n);
 
@@ -261,7 +262,7 @@ fn test_with_zero_population_entries() {
     let y_fp = vec![half, U256::ZERO, half];
     let p = vec![10, 0, 5];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
     let bound = F_MAX_FP * U256::from(2u64);
@@ -278,8 +279,7 @@ fn test_skewed_distribution() {
     ];
     let p = vec![900, 100];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     assert!(!result[0].is_zero());
@@ -296,8 +296,7 @@ fn test_large_nominal_distribution() {
     ];
     let p = vec![600, 400];
 
-    let result =
-        calc_fraction_distribution_fp(&y_fp, &p, 10, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     let bound = F_MAX_FP * U256::from(2u64);
@@ -338,7 +337,7 @@ fn test_normalized_f1_respects_budget_skewed_population() {
     let p = vec![100u64, 1, 1, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 103, f_fp, fmax_fp).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 103, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 4);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -350,7 +349,7 @@ fn test_normalized_f1_respects_budget_many_groups() {
     let p: Vec<u64> = (1..=n as u64).collect();
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 100, f_fp, fmax_fp).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 100, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), n);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -362,7 +361,7 @@ fn test_single_group_returns_f_without_normalization() {
     let y_fp = vec![SCALE];
     let p = vec![10];
     let f_fp = F_FP_DEFAULT;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 10, f_fp, F_MAX_FP).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, f_fp, F_MAX_FP).unwrap();
     assert_eq!(result, vec![f_fp]);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -376,7 +375,7 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     let p = vec![50u64, 5];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 55, f_fp, fmax_fp).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 55, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert_weighted_within_target(&result, &y_fp, f_fp);
     // Both fractions should still be positive (not obliterated by scale-down).
@@ -406,7 +405,7 @@ fn test_small_fi_group_survives_i256_precision() {
     let p = vec![1000u64, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 1001, f_fp, fmax_fp).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 1001, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert!(
         !result[1].is_zero(),
@@ -428,7 +427,7 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
     let p = vec![1u64, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, 2, f_fp, fmax_fp).unwrap();
+    let result = calc_fraction_distribution_fp(&y_fp, &p, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     let bound = F_MAX_FP * U256::from(2u64);
     for &f in &result {
@@ -516,6 +515,7 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
                 issuance_currency: 1,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
             })
             .unwrap();
@@ -795,6 +795,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
                 issuance_currency: 1,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
             })
             .unwrap();

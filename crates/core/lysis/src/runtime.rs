@@ -8,9 +8,6 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-/// FI tree height constant used in the distribution algorithm.
-const FI_TREE_HEIGHT: usize = 10;
-
 /// Result of a lysis execution.
 pub struct LysisResult {
     pub nod_ids: Vec<U256>,
@@ -229,7 +226,7 @@ pub(crate) fn compute_fi_fraction_map(
     let fmax_fp = f_fp * U256::from(2u64);
 
     // 6. Run distribution algorithm (pure integer)
-    let fractions = calc_fraction_distribution_fp(&y_fp, &p, FI_TREE_HEIGHT, nt, f_fp, fmax_fp)?;
+    let fractions = calc_fraction_distribution_fp(&y_fp, &p, nt, f_fp, fmax_fp)?;
 
     // 7. Build FI → fraction map (fixed-point)
     let mut fi_fraction_map: std::collections::HashMap<u16, U256> =

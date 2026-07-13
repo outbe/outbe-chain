@@ -13,26 +13,24 @@ const CONTRACTS = [
   // BNB-side
   "target/IntexAuction",
   "target/EscrowAdapter",
-  "target/TargetMessenger",
+  "target/TargetRouter",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "origin/OriginMessenger",
+  "origin/OriginRouter",
   // Both chains
   "shared/IntexNFT1155",
-  "shared/ONFT1155Adapter",
-  "shared/ONFT1155AdapterBatch",
+  "shared/IntexNFT1155Bridge",
 ];
 
 const INTERFACES = [
   // BNB-side
   "target/interfaces/IIntexAuction",
   "target/interfaces/IEscrowAdapter",
-  "target/interfaces/ITargetMessenger",
+  "target/interfaces/ITargetRouter",
   // Outbe-side (precompile interfaces live in contracts/precompiles, not here)
-  "origin/interfaces/IOriginMessenger",
+  "origin/interfaces/IOriginRouter",
   // Both chains
   "shared/interfaces/IIntexNFT1155",
-  "shared/interfaces/IONFT1155Adapter",
-  "shared/interfaces/IONFT1155AdapterBatch",
+  "shared/interfaces/IIntexNFT1155Bridge",
 ];
 
 interface ArtifactJson {

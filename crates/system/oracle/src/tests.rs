@@ -22,6 +22,18 @@ mod oracle_tests {
         StorageHandle::enter(&mut storage, f);
     }
 
+    /// Test refinancing rate (4.30 %, 1e18 scaled) used when building
+    /// `ReferenceCurrency` genesis entries.
+    const TEST_REFI_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
+
+    /// Builds a `ReferenceCurrency` with the test refinancing rate.
+    fn ref_cur(iso_code: u16) -> crate::logic::ReferenceCurrency {
+        crate::logic::ReferenceCurrency {
+            iso_code,
+            refinancing_rate: TEST_REFI_RATE,
+        }
+    }
+
     #[test]
     fn test_pair_registration() {
         with_storage(|storage| {
@@ -996,7 +1008,7 @@ mod oracle_tests {
                     (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
                     (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
                 ],
-                reference_currencies: vec![840],
+                reference_currencies: vec![ref_cur(840)],
                 penalty_counters: vec![],
                 aggregate_votes: vec![],
                 snapshots: vec![],
@@ -1402,7 +1414,7 @@ mod oracle_tests {
         use alloy_sol_types::SolInterface;
         use std::collections::HashSet;
 
-        const EXPECTED_IORACLE_FUNCTIONS: usize = 37;
+        const EXPECTED_IORACLE_FUNCTIONS: usize = 38;
 
         let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
         assert_eq!(
@@ -1662,7 +1674,7 @@ mod oracle_tests {
                 (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
                 (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
             ],
-            reference_currencies: vec![840, 978],
+            reference_currencies: vec![ref_cur(840), ref_cur(978)],
             penalty_counters: vec![(v1, 7, 2, 1), (v2, 3, 0, 4)],
             snapshots: vec![crate::logic::GenesisSnapshot {
                 timestamp: 5000,
@@ -2186,7 +2198,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978, 392],
+                reference_currencies: vec![ref_cur(840), ref_cur(978), ref_cur(392)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
@@ -2203,7 +2215,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![0],
+                reference_currencies: vec![ref_cur(0)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             let err = crate::logic::init_from_genesis(&mut oracle, &config).unwrap_err();
@@ -2220,7 +2232,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 840],
+                reference_currencies: vec![ref_cur(840), ref_cur(840)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             let err = crate::logic::init_from_genesis(&mut oracle, &config).unwrap_err();
@@ -2237,13 +2249,16 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978],
+                reference_currencies: vec![ref_cur(840), ref_cur(978)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
 
             let exported = crate::logic::export_genesis(&oracle, &[]).unwrap();
-            assert_eq!(exported.reference_currencies, vec![840, 978]);
+            assert_eq!(
+                exported.reference_currencies,
+                vec![ref_cur(840), ref_cur(978)]
+            );
         });
     }
 
@@ -2295,7 +2310,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978],
+                reference_currencies: vec![ref_cur(840), ref_cur(978)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
@@ -2394,6 +2409,76 @@ mod oracle_tests {
                 }
             }
             panic!("could not locate settlement_iso_to_pair base slot in 0..128");
+        });
+    }
+
+    /// Parity guard for the `reference_refinancing_rate` base slot used by
+    /// `scripts/seed_genesis.py`. Writes a distinctive marker, then scans base
+    /// slots 0..128 to recover the macro-assigned slot via the known
+    /// `keccak256(left_pad(key, 32) || be(base, 32))` mapping derivation.
+    #[test]
+    fn test_reference_refinancing_rate_slot_parity() {
+        use alloy_primitives::keccak256;
+        use outbe_primitives::addresses::ORACLE_ADDRESS;
+
+        with_storage(|storage| {
+            let oracle = OracleContract::new(storage.clone());
+            let iso: u16 = 840;
+            let marker = U256::from(0x00AB_CDEFu64);
+            oracle
+                .reference_refinancing_rate
+                .write(&iso, marker)
+                .unwrap();
+
+            for base in 0u64..128 {
+                let mut buf = [0u8; 64];
+                buf[30..32].copy_from_slice(&iso.to_be_bytes());
+                buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
+                let slot = U256::from_be_bytes(keccak256(buf).0);
+                if storage.sload(ORACLE_ADDRESS, slot).unwrap() == marker {
+                    assert_eq!(
+                        base, 60,
+                        "macro-assigned reference_refinancing_rate slot changed; \
+                         update scripts/seed_genesis.py"
+                    );
+                    return;
+                }
+            }
+            panic!("could not locate reference_refinancing_rate base slot in 0..128");
+        });
+    }
+
+    #[test]
+    fn test_genesis_seeds_refinancing_rate() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            crate::logic::init_from_genesis(
+                &mut oracle,
+                &crate::logic::OracleGenesisConfig::default_config(),
+            )
+            .unwrap();
+            assert_eq!(
+                oracle.get_refinancing_rate(840).unwrap(),
+                crate::logic::DEFAULT_USD_REFINANCING_RATE
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_refinancing_rate_reverts_for_unregistered() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            crate::logic::init_from_genesis(
+                &mut oracle,
+                &crate::logic::OracleGenesisConfig::default_config(),
+            )
+            .unwrap();
+            let err = oracle.get_refinancing_rate(978).unwrap_err();
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("no refinancing rate for iso_code 978"),
+                "unexpected error: {msg}"
+            );
         });
     }
 }

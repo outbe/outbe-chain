@@ -8,29 +8,97 @@
 use alloy_primitives::U256;
 use outbe_primitives::units::ONE_COEN;
 
-/// Number of supported denominations (length of the ladder returned by
-/// [`denomination`]).
-pub const DENOMINATION_COUNT: u8 = 3;
+use crate::errors::GratisPoolError;
 
-/// Gratis denomination amount in 18-decimal base units for the given
-/// `denom_id`, or `None` if `denom_id` is outside the supported ladder.
+/// A supported gratis denomination.
 ///
-/// Valid ids are `1..=DENOMINATION_COUNT`. Id `0` is intentionally invalid
-/// so the zero-initialised default of a `denom_id` field rejects rather
-/// than silently aliasing the first denomination.
-///
-/// Each denomination defines a separate anonymity pool. Tornado-style fixed
-/// amounts ensure the pledge amount itself is not a unique fingerprint that
-/// could link a `pledgeGratis` to a later spend.
-///
-/// PoC ladder: 100, 1_000, 10_000 GRATIS. Expected to grow once activity
-/// warrants larger anonymity sets.
-pub fn denomination(denom_id: u8) -> Option<U256> {
-    match denom_id {
-        1 => Some(U256::from(100u64) * ONE_COEN),
-        2 => Some(U256::from(1_000u64) * ONE_COEN),
-        3 => Some(U256::from(10_000u64) * ONE_COEN),
-        _ => None,
+/// Each variant is a separate Tornado-style anonymity pool with a fixed deposit
+/// amount; fixed amounts ensure the pledge amount itself is not a unique
+/// fingerprint that could link to a later spend.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenomAmount {
+    /// Reserved anadosis-only sub-rung (0.1 GRATIS). Not directly pledgeable.
+    Gratis0_1 = 1,
+    Gratis1 = 2,
+    Gratis10 = 3,
+    Gratis100 = 4,
+    Gratis1k = 5,
+    Gratis10k = 6,
+}
+
+impl DenomAmount {
+    pub const ALL: [DenomAmount; 6] = [
+        Self::Gratis0_1,
+        Self::Gratis1,
+        Self::Gratis10,
+        Self::Gratis100,
+        Self::Gratis1k,
+        Self::Gratis10k,
+    ];
+
+    pub const fn id(self) -> u8 {
+        self as u8
+    }
+
+    pub fn amount(self) -> U256 {
+        let gratis = |g: u64| U256::from(g) * ONE_COEN;
+        match self {
+            Self::Gratis0_1 => ONE_COEN / U256::from(10u64),
+            Self::Gratis1 => gratis(1),
+            Self::Gratis10 => gratis(10),
+            Self::Gratis100 => gratis(100),
+            Self::Gratis1k => gratis(1_000),
+            Self::Gratis10k => gratis(10_000),
+        }
+    }
+
+    /// Whether users may open a pledge in this denomination. The reserved
+    /// sub-rung [`Gratis0_1`](Self::Gratis0_1) exists only as the destination
+    /// for a single anadosis installment's reclaim note, so it cannot be
+    /// pledged directly.
+    pub const fn is_pledgeable(self) -> bool {
+        !matches!(self, Self::Gratis0_1)
+    }
+
+    /// The denomination one decade down — the pool a single anadosis
+    /// installment's reclaim note lives in. Its [`amount`](Self::amount) is
+    /// exactly `self.amount() / 10` (credisfactory's `NUMBER_OF_ANADOSIS = 10`),
+    /// so a later `unpledgeGratis` of that note releases one installment's
+    /// share. Returns `None` for the reserved floor
+    /// [`Gratis0_1`](Self::Gratis0_1), which has no decade below it and is
+    /// therefore not credis-eligible.
+    pub fn anadosis_denomination(self) -> Option<DenomAmount> {
+        match self {
+            Self::Gratis10k => Some(Self::Gratis1k),
+            Self::Gratis1k => Some(Self::Gratis100),
+            Self::Gratis100 => Some(Self::Gratis10),
+            Self::Gratis10 => Some(Self::Gratis1),
+            Self::Gratis1 => Some(Self::Gratis0_1),
+            Self::Gratis0_1 => None,
+        }
+    }
+}
+
+impl TryFrom<u8> for DenomAmount {
+    type Error = GratisPoolError;
+
+    /// Resolves the on-chain `denom_id`, or [`GratisPoolError::DenomUnknown`].
+    fn try_from(denom_id: u8) -> Result<Self, Self::Error> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|denom| denom.id() == denom_id)
+            .ok_or(GratisPoolError::DenomUnknown)
+    }
+}
+
+impl TryFrom<u32> for DenomAmount {
+    type Error = GratisPoolError;
+
+    fn try_from(denom_id: u32) -> Result<Self, Self::Error> {
+        let denom_id = u8::try_from(denom_id).map_err(|_| GratisPoolError::DenomUnknown)?;
+        Self::try_from(denom_id)
     }
 }
 

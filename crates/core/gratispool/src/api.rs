@@ -10,21 +10,22 @@
 //!   [`verify_and_spend_for_unpledge`] + `Gratis::unpledge_from_pool`.
 //! - `outbe_credisfactory::request_credis` calls
 //!   [`verify_and_spend_for_credis`] + `Gratis::bind_pool_to_credis`.
-//! - `outbe_credisfactory::pay_anadosis` (final installment) calls
-//!   `Gratis::unbind_pool_from_credis` + [`insert_reclaim`].
+//! - `outbe_credisfactory::pay_anadosis` calls [`add_commitment`] for each
+//!   installment's reclaim note (at the anadosis denomination).
 
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::constants::DenomAmount;
 use crate::runtime;
 use crate::runtime::SpendArgs;
 
 /// User-pledge entrypoint. See [`runtime::add_commitment`].
 pub fn add_commitment(
     storage: StorageHandle<'_>,
-    denom_id: u8,
+    denom_id: DenomAmount,
     commitment: U256,
 ) -> Result<(U256, u32, U256)> {
     runtime::add_commitment(storage, denom_id, commitment)
@@ -33,8 +34,8 @@ pub fn add_commitment(
 /// `requestCredis` spend path. See [`runtime::verify_and_spend_for_credis`].
 ///
 /// `nonce` is the application-derived context-binding payload folded into
-/// `receiver_binding` (for `credisfactory::requestCredis` that is
-/// `args.reclaim_commitment`).
+/// `receiver_binding`. `credisfactory::requestCredis` currently passes zero
+/// (reclaim moved to per-installment `pay_anadosis`).
 pub fn verify_and_spend_for_credis(
     storage: StorageHandle<'_>,
     caller: Address,

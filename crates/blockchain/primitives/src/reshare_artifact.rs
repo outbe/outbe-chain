@@ -41,7 +41,7 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Pre-genesis hard fork; nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
-const VERSION: u8 = 0x09;
+const VERSION: u8 = 0x0A;
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
@@ -49,6 +49,7 @@ const DEALER_LOG_TAG: u8 = 0x03;
 // rejected by the active codec — do not reuse it (see CLAUDE.md).
 const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
+const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
 const EXECUTION_SUMMARY_LEN: usize = 32;
 const TIMESTAMP_MILLIS_PART_LEN: usize = 8;
 /// Raw BLS (MinPk) aggregate signature length carried per late-finalize credit.
@@ -162,6 +163,18 @@ pub struct ExecutionSummaryArtifact {
 pub enum ConsensusHeaderArtifact {
     BoundaryOutcome(DkgBoundaryArtifact),
     DealerLog(Bytes),
+    /// Path A committee-chaining pre-announce: the full DKG `outcome` (players +
+    /// polynomial) for `epoch`, emitted in a block finalized by the OUTGOING
+    /// (`epoch-1`) committee — before epoch `epoch`'s own boundary block `epoch·L+1`,
+    /// which is finalized by `epoch` itself and so cannot self-authenticate. A
+    /// follower registers `epoch`'s committee from this via the existing
+    /// `register_epoch_from_outcome`, trusting it because the carrying block's cert
+    /// verifies against the already-trusted `epoch-1` committee. Does NOT activate —
+    /// activation stays on the `BoundaryOutcome` at `epoch·L+1`.
+    CommitteePreAnnounce {
+        epoch: u64,
+        outcome: Bytes,
+    },
 }
 
 pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<Bytes> {
@@ -263,6 +276,13 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
             ConsensusHeaderArtifact::DealerLog(log) => {
                 ensure_payload_fits_u16("dealer log", log.len())?;
                 records.push((DEALER_LOG_TAG, log.to_vec()));
+            }
+            ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome } => {
+                let mut payload = Vec::with_capacity(8 + outcome.len());
+                payload.extend_from_slice(&epoch.to_be_bytes());
+                payload.extend_from_slice(outcome.as_ref());
+                ensure_payload_fits_u16("committee pre-announce", payload.len())?;
+                records.push((COMMITTEE_PREANNOUNCE_TAG, payload));
             }
         }
     }
@@ -434,6 +454,25 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
                     Bytes::copy_from_slice(payload),
                 ));
             }
+            COMMITTEE_PREANNOUNCE_TAG => {
+                if artifacts.consensus_header_artifact.is_some() {
+                    return Err(PrecompileError::Fatal(
+                        "duplicate consensus header artifact".into(),
+                    ));
+                }
+                if payload.len() < 8 {
+                    return Err(PrecompileError::Fatal(
+                        "committee pre-announce payload too short for epoch".into(),
+                    ));
+                }
+                let mut epoch_buf = [0u8; 8];
+                epoch_buf.copy_from_slice(&payload[..8]);
+                artifacts.consensus_header_artifact =
+                    Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+                        epoch: u64::from_be_bytes(epoch_buf),
+                        outcome: Bytes::copy_from_slice(&payload[8..]),
+                    });
+            }
             TIMESTAMP_MILLIS_PART_TAG => {
                 if artifacts.timestamp_millis_part != 0 {
                     return Err(PrecompileError::Fatal(
@@ -502,6 +541,9 @@ pub fn decode_boundary_artifact(extra_data: &[u8]) -> Result<Option<DkgBoundaryA
         None => Ok(None),
         Some(ConsensusHeaderArtifact::BoundaryOutcome(result)) => Ok(Some(result)),
         Some(ConsensusHeaderArtifact::DealerLog(_)) => Ok(None),
+        // A committee pre-announce carries an outcome for a follower to register a
+        // future epoch's committee; it is not an activating boundary.
+        Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => Ok(None),
     }
 }
 
@@ -1051,6 +1093,38 @@ mod tests {
             )))
         );
         assert_eq!(decode_boundary_artifact(&encoded).unwrap(), None);
+    }
+
+    #[test]
+    fn roundtrip_committee_preannounce_header_artifact() {
+        let artifact = ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: 7,
+            outcome: Bytes::from_static(b"dkg-outcome-bytes"),
+        };
+        let encoded = encode_consensus_header_artifact(&artifact).unwrap();
+        assert_eq!(
+            decode_consensus_header_artifact(&encoded).unwrap(),
+            Some(artifact)
+        );
+        // A pre-announce carries a committee for a follower; it is NOT an
+        // activating boundary.
+        assert_eq!(decode_boundary_artifact(&encoded).unwrap(), None);
+    }
+
+    #[test]
+    fn committee_preannounce_preserves_epoch_with_empty_outcome() {
+        let artifact = ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: 0xABCD,
+            outcome: Bytes::new(),
+        };
+        let encoded = encode_consensus_header_artifact(&artifact).unwrap();
+        match decode_consensus_header_artifact(&encoded).unwrap() {
+            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }) => {
+                assert_eq!(epoch, 0xABCD);
+                assert!(outcome.is_empty());
+            }
+            other => panic!("expected CommitteePreAnnounce, got {other:?}"),
+        }
     }
 
     #[test]

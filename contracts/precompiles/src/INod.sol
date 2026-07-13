@@ -17,7 +17,6 @@ interface INod {
         uint256 costAmountMinor;
         bool isQualified;
         uint16 issuanceCurrency;
-        uint64 unlocksAt;
         uint16 referenceCurrency;
         uint64 issuedAt;
     }

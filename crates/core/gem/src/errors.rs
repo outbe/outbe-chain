@@ -13,9 +13,6 @@ pub enum GemError {
     #[error("invalid state transition")]
     InvalidState,
 
-    #[error("maturity not elapsed")]
-    MaturityNotElapsed,
-
     #[error("floor price not met")]
     FloorPriceNotMet,
 

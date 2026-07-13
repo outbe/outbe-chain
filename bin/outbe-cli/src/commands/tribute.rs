@@ -58,6 +58,9 @@ pub enum TributeCmd {
         /// ISO 4217 currency code (840 = USD)
         #[arg(long, default_value_t = 840)]
         currency: u16,
+        /// Exclude the resulting Tribute from Intex issuance
+        #[arg(long, default_value_t = false)]
+        exclude_from_intex_issuance: bool,
     },
 }
 
@@ -74,7 +77,18 @@ impl TributeCmd {
                 worldwide_day,
                 amount,
                 currency,
-            } => offer(client, private_key, worldwide_day, amount, currency).await,
+                exclude_from_intex_issuance,
+            } => {
+                offer(
+                    client,
+                    private_key,
+                    worldwide_day,
+                    amount,
+                    currency,
+                    exclude_from_intex_issuance,
+                )
+                .await
+            }
         }
     }
 }
@@ -204,6 +218,7 @@ async fn offer(
     worldwide_day: WorldwideDay,
     amount_base: String,
     currency: u16,
+    exclude_from_intex_issuance: bool,
 ) -> Result<()> {
     let signer = crate::commands::require_signer(private_key)?;
     let creator = signer.address();
@@ -267,6 +282,7 @@ async fn offer(
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
         referenceCurrency: currency,
+        excludeFromIntexIssuance: exclude_from_intex_issuance,
         zkProof: Bytes::new(),
         zkVerificationKey: Bytes::new(),
         zkPublicKey: Bytes::new(),
@@ -286,7 +302,7 @@ async fn offer(
 
     println!("offerTribute tx: {tx_hash}");
     println!(
-        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base}"
+        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} exclude_from_intex_issuance={exclude_from_intex_issuance}"
     );
     println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     Ok(())

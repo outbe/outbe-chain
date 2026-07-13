@@ -8,10 +8,9 @@ import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {ONFT1155Adapter} from "@contracts/shared/ONFT1155Adapter.sol";
-import {ONFT1155AdapterBatch} from "@contracts/shared/ONFT1155AdapterBatch.sol";
-import {TargetMessenger} from "@contracts/target/TargetMessenger.sol";
-import {OriginMessenger} from "@contracts/origin/OriginMessenger.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
 /// @title UpgradeBase
 /// @author Outbe
@@ -59,9 +58,8 @@ contract UpgradeBsc is UpgradeBase {
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
         upgradeProxy(factory, deployer, "EscrowAdapter", address(new EscrowAdapter()));
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
-        upgradeProxy(factory, deployer, "TargetMessenger", address(new TargetMessenger(bridge, outbeChainId)));
+        upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
+        upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, outbeChainId)));
         vm.stopBroadcast();
     }
 }
@@ -81,17 +79,16 @@ contract UpgradeOutbe is UpgradeBase {
 
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
-        upgradeProxy(factory, deployer, "ONFT1155Adapter", address(new ONFT1155Adapter(nft, bridge)));
-        upgradeProxy(factory, deployer, "ONFT1155AdapterBatch", address(new ONFT1155AdapterBatch(nft, bridge)));
-        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
+        upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
+        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge, bnbChainId)));
         vm.stopBroadcast();
     }
 }
 
-/// @title UpgradeOriginMessenger
-/// @notice Upgrade only the OriginMessenger proxy in place (UUPS), leaving the other proxies untouched.
+/// @title UpgradeOriginRouter
+/// @notice Upgrade only the OriginRouter proxy in place (UUPS), leaving the other proxies untouched.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID.
-contract UpgradeOriginMessenger is UpgradeBase {
+contract UpgradeOriginRouter is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -101,7 +98,7 @@ contract UpgradeOriginMessenger is UpgradeBase {
         Create3Factory factory = resolveFactory();
 
         vm.startBroadcast(pk);
-        upgradeProxy(factory, deployer, "OriginMessenger", address(new OriginMessenger(bridge, bnbChainId)));
+        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge, bnbChainId)));
         vm.stopBroadcast();
     }
 }

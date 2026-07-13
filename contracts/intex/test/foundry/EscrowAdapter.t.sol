@@ -34,9 +34,9 @@ contract EscrowAdapterTest is Test {
 
     uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6; // 1000 USDC
 
-    /// @dev Stand-in for the inbound LZ packet GUID that carries refund instructions. Threaded
+    /// @dev Stand-in for the inbound bridge message id that carries refund instructions. Threaded
     ///      through `finalizeAuction`/`retryFinalize` into the emitted events.
-    bytes32 constant GUID = bytes32(uint256(0xDEADBEEF));
+    bytes32 constant RECEIVE_ID = bytes32(uint256(0xDEADBEEF));
 
     /// @dev Live ERC6909 balance held by the escrow in The Compact for the active lockId.
     function _liveCompactBalance() internal view returns (uint256) {
@@ -301,7 +301,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Check bidder received refund
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + LOCK_AMOUNT);
@@ -331,7 +331,7 @@ contract EscrowAdapterTest is Test {
         instructions[0] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_OmittedBidder_RevertsBeforeAbandon() public {
@@ -365,7 +365,7 @@ contract EscrowAdapterTest is Test {
         IEscrowAdapter.FinalizationInstruction memory inst =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
         vm.prank(bridger);
-        escrow.retryFinalize(seriesId1, GUID, inst);
+        escrow.retryFinalize(seriesId1, RECEIVE_ID, inst);
 
         // bidder1 settled -> abandon path can never fire.
         vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
@@ -386,10 +386,10 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(GUID, seriesId1, 0, LOCK_AMOUNT, 1);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, seriesId1, 0, LOCK_AMOUNT, 1);
 
         vm.prank(bridger);
-        uint128 routed = escrow.finalizeAuction(seriesId1, GUID, instructions);
+        uint128 routed = escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Proceeds handed to the configured recipient for cross-chain routing, not the caller.
         assertEq(routed, LOCK_AMOUNT);
@@ -419,10 +419,10 @@ contract EscrowAdapterTest is Test {
         });
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(GUID, seriesId1, refundedAmount, paidAmount, 1);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, seriesId1, refundedAmount, paidAmount, 1);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Bidder refunded their portion; proceeds handed to the configured recipient.
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
@@ -447,10 +447,10 @@ contract EscrowAdapterTest is Test {
         // totalRefunded = LOCK_AMOUNT (b1) + LOCK_AMOUNT (b2) = 2*LOCK_AMOUNT
         // totalPaid = 0 (b1) + LOCK_AMOUNT (b2) = LOCK_AMOUNT
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(GUID, seriesId1, LOCK_AMOUNT * 2, LOCK_AMOUNT, 2);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, seriesId1, LOCK_AMOUNT * 2, LOCK_AMOUNT, 2);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // All escrow drained for the series.
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(seriesId1);
@@ -467,7 +467,7 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "instructions"));
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_FinalizeAuction_AlreadyFinalized() public {
@@ -479,12 +479,12 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Try to finalize again
         vm.expectRevert(IEscrowAdapter.AlreadyFinalized.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_FinalizeAuction_ZeroBidder_EmitsBidderRefundFailed() public {
@@ -498,9 +498,9 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: address(0), refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(GUID, seriesId1, address(0), "");
+        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, seriesId1, address(0), "");
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // bidder1's lock is still recoverable via retryFinalize (relayer) / claimRefund.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId1, bidder1);
@@ -515,9 +515,9 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(GUID, seriesId1, bidder1, "");
+        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, seriesId1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_FinalizeAuction_OneFailure_OthersSucceed() public {
@@ -543,9 +543,9 @@ contract EscrowAdapterTest is Test {
         uint256 bidder2BalanceBefore = paymentToken.balanceOf(bidder2); // after lockFunds crosschainBurn
 
         vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(GUID, seriesId1, bidder1, "");
+        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, seriesId1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // bidder1's lock unchanged (still Locked); bidder2's finalized + refunded.
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
@@ -567,9 +567,9 @@ contract EscrowAdapterTest is Test {
         });
 
         vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(GUID, seriesId1, bidder1, "");
+        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, seriesId1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Lock remains active for recovery.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId1, bidder1);
@@ -589,7 +589,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, false, false, true, address(escrow));
         emit IEscrowAdapter.FinalizationNoOp(seriesId1, 1);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_FinalizeAuction_OnlyBridgeRole() public {
@@ -602,15 +602,15 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         vm.expectRevert();
         vm.prank(auction);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     // --- IAllocator Tests ---
@@ -701,10 +701,10 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(GUID, seriesId1, bidder1, LOCK_AMOUNT);
+        emit IEscrowAdapter.FundsRefunded(RECEIVE_ID, seriesId1, bidder1, LOCK_AMOUNT);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     function test_Events_FundsClaimed() public {
@@ -719,14 +719,14 @@ contract EscrowAdapterTest is Test {
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = inst;
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Recover; retryFinalize settles the stranded proceeds to the vault and emits FundsClaimed.
         compact.setForcedWithdrawalShouldFail(false);
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsClaimed(GUID, seriesId1, bidder1, LOCK_AMOUNT);
+        emit IEscrowAdapter.FundsClaimed(RECEIVE_ID, seriesId1, bidder1, LOCK_AMOUNT);
         vm.prank(bridger);
-        escrow.retryFinalize(seriesId1, GUID, inst);
+        escrow.retryFinalize(seriesId1, RECEIVE_ID, inst);
     }
 
     function test_Events_AuctionEscrowFinalized() public {
@@ -739,10 +739,10 @@ contract EscrowAdapterTest is Test {
         });
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(GUID, seriesId1, LOCK_AMOUNT / 2, LOCK_AMOUNT / 2, 1);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, seriesId1, LOCK_AMOUNT / 2, LOCK_AMOUNT / 2, 1);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
     }
 
     // --- Payment Token Rotation Tests ---
@@ -792,7 +792,7 @@ contract EscrowAdapterTest is Test {
         vm.warp(block.timestamp + escrow.REFUND_DELAY());
 
         // Permissionless caller (an outsider) triggers the refund; funds go to bidder1.
-        // claimRefund is not LZ-triggered, so the emitted guid is the zero sentinel.
+        // claimRefund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.FundsRefunded(bytes32(0), seriesId1, bidder1, LOCK_AMOUNT);
         vm.prank(outsider);
@@ -865,7 +865,7 @@ contract EscrowAdapterTest is Test {
         });
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // 72h after lockedAt — would unlock the pre-finalize window — but post-finalize 7d wins now.
         uint32 nowAt = finalizedAt + escrow.REFUND_DELAY();
@@ -893,7 +893,7 @@ contract EscrowAdapterTest is Test {
         });
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
 
         // Withdrawal recovers, but the vault is still down at claim time → remainder parked.
@@ -932,7 +932,7 @@ contract EscrowAdapterTest is Test {
         });
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Withdrawal recovers; the vault is healthy when the bidder claims.
         compact.setForcedWithdrawalShouldFail(false);
@@ -970,7 +970,7 @@ contract EscrowAdapterTest is Test {
         });
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Withdrawal recovers, but the vault is still down → claimRefund parks the remainder.
         compact.setForcedWithdrawalShouldFail(false);
@@ -1014,7 +1014,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, seriesId1, bidder1));
@@ -1033,13 +1033,13 @@ contract EscrowAdapterTest is Test {
             paidAmount: LOCK_AMOUNT - 1 // mismatch
         });
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Relayer retries with the correct split.
         vm.prank(bridger);
         escrow.retryFinalize(
             seriesId1,
-            GUID,
+            RECEIVE_ID,
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0})
         );
 
@@ -1068,7 +1068,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // bidder1 stayed Locked; bidder2 finalized.
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
@@ -1081,9 +1081,11 @@ contract EscrowAdapterTest is Test {
         uint256 bidder1BalanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRetried(GUID, seriesId1, bidder1, retryInst.refundedAmount, retryInst.paidAmount);
+        emit IEscrowAdapter.BidderRetried(
+            RECEIVE_ID, seriesId1, bidder1, retryInst.refundedAmount, retryInst.paidAmount
+        );
         vm.prank(bridger);
-        escrow.retryFinalize(seriesId1, GUID, retryInst);
+        escrow.retryFinalize(seriesId1, RECEIVE_ID, retryInst);
 
         assertEq(uint8(escrow.getBidLock(seriesId1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
         assertEq(paymentToken.balanceOf(bidder1), bidder1BalanceBefore + retryInst.refundedAmount);
@@ -1098,7 +1100,7 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.NotFinalizedYet.selector, seriesId1));
         vm.prank(bridger);
-        escrow.retryFinalize(seriesId1, GUID, inst);
+        escrow.retryFinalize(seriesId1, RECEIVE_ID, inst);
     }
 
     function test_RetryFinalize_Reverts_OnAlreadyFinalizedLock() public {
@@ -1111,11 +1113,11 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         vm.prank(bridger);
-        escrow.retryFinalize(seriesId1, GUID, instructions[0]);
+        escrow.retryFinalize(seriesId1, RECEIVE_ID, instructions[0]);
     }
 
     function test_RetryFinalize_OnlyRelayer() public {
@@ -1126,21 +1128,21 @@ contract EscrowAdapterTest is Test {
         instructions[0] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(seriesId1, RECEIVE_ID, instructions);
 
         // Now bidder1 sits in Locked (the iteration failed on amount mismatch). Outsider can't retry.
         vm.expectRevert();
         vm.prank(outsider);
         escrow.retryFinalize(
             seriesId1,
-            GUID,
+            RECEIVE_ID,
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0})
         );
     }
 
-    // --- GUID threading ---
+    // --- message-id threading ---
 
-    /// @dev A single finalize call must stamp the same inbound packet GUID onto every fund-movement
+    /// @dev A single finalize call must stamp the same inbound bridge message id onto every fund-movement
     ///      event it emits (FundsRefunded, FundsClaimed) and the summary (AuctionEscrowFinalized),
     ///      so an indexer can attribute the whole batch to one cross-chain packet.
     function test_GuidThreading_AllFinalizeEvents_CarryPacketGuid() public {
@@ -1157,7 +1159,7 @@ contract EscrowAdapterTest is Test {
         instructions[1] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
 
-        // Both finalize events must carry `packet` as the indexed guid (topic1).
+        // Both finalize events must carry `packet` as the indexed receiveId (topic1).
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.FundsRefunded(packet, seriesId1, bidder1, LOCK_AMOUNT);
         vm.expectEmit(true, true, false, true);
@@ -1167,9 +1169,9 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(seriesId1, packet, instructions);
     }
 
-    /// @dev A relayer retry is its own inbound packet: `retryFinalize` must stamp the retry's GUID
-    ///      (not the original finalize GUID) onto its events, so a re-sent packet is independently
-    ///      attributable. Proves the guid is the threaded argument, not an echoed constant.
+    /// @dev A relayer retry is its own inbound packet: `retryFinalize` must stamp the retry's RECEIVE_ID
+    ///      (not the original finalize RECEIVE_ID) onto its events, so a re-sent packet is independently
+    ///      attributable. Proves the receiveId is the threaded argument, not an echoed constant.
     function test_GuidThreading_RetryCarriesItsOwnGuid() public {
         bytes32 originalPacket = keccak256("inbound-packet-original");
         bytes32 retryPacket = keccak256("inbound-packet-retry");
@@ -1186,7 +1188,7 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(seriesId1, originalPacket, instructions);
 
-        // Relayer retries under a distinct packet GUID; the retry events must carry retryPacket.
+        // Relayer retries under a distinct bridge message id; the retry events must carry retryPacket.
         IEscrowAdapter.FinalizationInstruction memory fixInst =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
         vm.expectEmit(true, true, true, true);

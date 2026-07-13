@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       project:
-        description: "Sub-project directory under contracts/ (e.g. intent, oft, vault)"
+        description: "Sub-project directory under contracts/ (e.g. intent, tokens, vault)"
         type: string
         required: true
       abi-check:

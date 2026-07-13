@@ -77,7 +77,6 @@ fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
         costAmountMinor: item.cost_amount_minor,
         isQualified: bucket.is_qualified,
         issuanceCurrency: item.issuance_currency,
-        unlocksAt: item.unlocks_at,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
     }

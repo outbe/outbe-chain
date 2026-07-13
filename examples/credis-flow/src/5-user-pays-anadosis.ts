@@ -1,5 +1,3 @@
-import { readdirSync, writeFileSync } from "fs";
-import { resolve } from "path";
 import { ethers, Wallet } from "ethers";
 import {
   ICredisFactory__factory,
@@ -22,9 +20,13 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatToken,
+  anadosisDenomByAmount,
+  ownerPermissionId,
+  permissionNonceKey,
+  encodePermissionSignature,
 } from "./utils.js";
-import { fieldToHex32 } from "./shielded.js";
-import { readTicket, TICKETS_DIR, type Ticket } from "./ticket.js";
+import { commitmentHash, fieldToHex32, toField } from "./shielded.js";
+import { writeTicket } from "./ticket.js";
 
 const SALT = 0n;
 
@@ -50,7 +52,6 @@ const ccaAddress = requireEnv("CCA_ADDRESS", envContext);
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
-const ecdsaValidatorAddress = requireEnv("ECDSA_VALIDATOR_ADDRESS", envContext);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
 const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
@@ -87,7 +88,6 @@ function decodeRevert(data: string): string {
     // fall through to raw
   }
   if (KNOWN_ERROR_SIGS[sel]) return KNOWN_ERROR_SIGS[sel];
-  // outbe precompiles return raw UTF-8 strings (no Error() wrapper).
   const bytes = data.startsWith("0x") ? data.slice(2) : data;
   if (bytes.length > 0 && bytes.length % 2 === 0) {
     const buf = Buffer.from(bytes, "hex");
@@ -200,6 +200,20 @@ async function main() {
     process.exit(1);
   }
 
+  // Derive the anadosis (one-decade-down) denomination for this installment's
+  // reclaim note. Its amount == nextAnadosis.gratisAmount == pledge / 10. The
+  // reclaim commitment MUST be computed with this denom id — the chain stores
+  // it opaquely and cannot detect a wrong-denom note (it would be unspendable).
+  const anadosisDenom = anadosisDenomByAmount(nextAnadosis.gratisAmount);
+  const reclaimSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
+  const reclaimNullifierSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
+  const reclaimCommitment = await commitmentHash(reclaimSecret, reclaimNullifierSecret, anadosisDenom.id);
+  console.log(`\nReclaim note for this installment:`);
+  console.log(`  Anadosis denom:   ${anadosisDenom.id} = ${formatToken(anadosisDenom.amount, 18, "GRATIS")}`);
+  console.log(`  Reclaim secret:   ${fieldToHex32(reclaimSecret)}`);
+  console.log(`  Reclaim nullSecr: ${fieldToHex32(reclaimNullifierSecret)}`);
+  console.log(`  Reclaim commit:   ${fieldToHex32(reclaimCommitment)}`);
+
   // State before
   const before = await getState(token, credis, smartAccountAddr, underlyingVaultAddr);
   printState("State BEFORE", before, erc20Meta, smartAccountAddr);
@@ -211,10 +225,9 @@ async function main() {
 
   // ── Build batch UserOp: approve + anadosis ────────────────────────────
 
-  // nonceKey = mode(0x00) | vType(0x00=ROOT) | ecdsaValidatorAddress(20 bytes) | parallelKey(0x0000)
-  const validatorHex = ecdsaValidatorAddress.slice(2).toLowerCase();
-  const nonceKeyHex = "0000" + validatorHex + "0000";
-  const nonceKey = BigInt("0x" + nonceKeyHex);
+  // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
+  // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
+  const nonceKey = permissionNonceKey(ownerPermissionId());
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);
 
@@ -229,12 +242,12 @@ async function main() {
     console.log("  Deposited 0.05 COEN into EntryPoint");
   }
 
-  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId)]
-  // The reclaim_commitment was stored on the position at requestCredis time;
-  // the runtime appends it to the gratispool automatically when the final
-  // installment lands, so anadosis() takes only the position ID now.
+  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, reclaimCommitment)]
+  // anadosis now carries this installment's reclaim commitment; the runtime
+  // inserts it into the anadosis-denom pool so the note can be unpledged for
+  // one tenth of the pledge immediately after this payment.
   const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, anadosisAmount]);
-  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId]);
+  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, reclaimCommitment]);
 
   // Batch execution: execMode byte[0] = 0x01 (CALLTYPE_BATCH)
   const execModeBatch = "0x01" + "00".repeat(31);
@@ -269,10 +282,10 @@ async function main() {
     signature: "0x",
   };
 
-  // Sign with user key — root validation
+  // Kernel v4 permission signature: abi.encode(bytes[]{ policy slice (empty), owner ECDSA sig }).
   const userOpHash = await entryPoint.getUserOpHash(op);
   const sig = await userWallet.signMessage(ethers.getBytes(userOpHash));
-  op.signature = sig;
+  op.signature = encodePermissionSignature(sig);
 
   // ── Pre-simulate the inner execute() so a precompile revert surfaces here
   // rather than being swallowed by handleOps (which catches inner reverts and
@@ -316,9 +329,9 @@ async function main() {
 
   let userOpSuccess: boolean | null = null;
   let userOpRevertReason: string | null = null;
-  // If the final installment landed and the runtime inserted the
-  // reclaim_commitment into the pool, this captures (commitment, leafIndex,
-  // root) so we can finalize the matching local reclaim ticket.
+  // The anadosis inserts this installment's reclaim commitment into the pool;
+  // capture (commitment, leafIndex, root) so we can write the local reclaim
+  // ticket for a later unpledge.
   let poolInsertion: { commitment: bigint; leafIndex: number; root: bigint } | null = null;
 
   console.log("\n=== Transaction Events ===");
@@ -379,44 +392,36 @@ async function main() {
   console.log(`  SA ERC20:        ${formatTokenDiff(saErc20Diff, erc20Meta.decimals, erc20Meta.symbol)}`);
   console.log(`  Vault ERC20:     ${formatTokenDiff(vaultErc20Diff, erc20Meta.decimals, erc20Meta.symbol)}`);
 
-  // Final installment landed → the runtime appended the reclaim_commitment
-  // back into the pool. Find the matching local reclaim ticket (written by
-  // 3-request-credis with leafIndex = -1) and finalize it so unpledge-gratis
-  // can prove membership.
+  // The runtime appended this installment's reclaim commitment to the pool.
+  // Write a ticket so `unpledge-gratis-fast` can prove membership and unlock
+  // one tenth of the pledge immediately — no need to wait for the loan to
+  // finish.
   if (poolInsertion) {
-    finalizeReclaimTicket(poolInsertion);
-  }
-}
-
-function finalizeReclaimTicket(insertion: { commitment: bigint; leafIndex: number; root: bigint }): void {
-  const commitmentHex = fieldToHex32(insertion.commitment);
-  const entries = readdirSync(TICKETS_DIR).filter((f) => f.endsWith(".json"));
-  for (const f of entries) {
-    const path = resolve(TICKETS_DIR, f);
-    let ticket: Ticket;
-    try {
-      ticket = readTicket(path);
-    } catch {
-      continue;
+    if (poolInsertion.commitment !== reclaimCommitment) {
+      throw new Error(
+        `Poseidon parity mismatch: sent reclaim commitment ${fieldToHex32(reclaimCommitment)} but the on-chain CommitmentInserted recorded ${fieldToHex32(poolInsertion.commitment)}.`,
+      );
     }
-    if (ticket.commitment.toLowerCase() !== commitmentHex.toLowerCase()) continue;
-    if (ticket.leafIndex >= 0) {
-      console.log(`\nReclaim ticket already finalized: ${path}`);
-      return;
-    }
-    const updated: Ticket = {
-      ...ticket,
-      leafIndex: insertion.leafIndex,
-      root: fieldToHex32(insertion.root),
-    };
-    writeFileSync(path, JSON.stringify(updated, null, 2) + "\n");
-    console.log(`\nReclaim ticket finalized: ${path}`);
-    console.log(`  leafIndex: ${insertion.leafIndex}`);
-    console.log(`  root:      ${fieldToHex32(insertion.root)}`);
-    console.log("  Run `npm run unpledge-gratis-fast` to spend the reclaim commitment.");
-    return;
+    const network = await provider.getNetwork();
+    const reclaimTicketPath = writeTicket({
+      denomId: anadosisDenom.id,
+      secret: fieldToHex32(reclaimSecret),
+      nullifierSecret: fieldToHex32(reclaimNullifierSecret),
+      commitment: fieldToHex32(reclaimCommitment),
+      leafIndex: poolInsertion.leafIndex,
+      root: fieldToHex32(poolInsertion.root),
+      blockNumber: receipt!.blockNumber,
+      txHash: receipt!.hash,
+      chainId: network.chainId.toString(),
+      createdAt: new Date().toISOString(),
+    });
+    console.log(`\nReclaim ticket written: ${reclaimTicketPath}`);
+    console.log(`  denom ${anadosisDenom.id} = ${formatToken(anadosisDenom.amount, 18, "GRATIS")} (one installment's share)`);
+    console.log(`  leafIndex: ${poolInsertion.leafIndex}`);
+    console.log("  Run `npm run unpledge-gratis-fast` to unlock this installment's gratis now.");
+  } else {
+    console.log("\nWARNING: no CommitmentInserted event observed — reclaim note not recorded.");
   }
-  console.log(`\nCommitmentInserted observed (commitment=${commitmentHex}) but no matching reclaim ticket found under ${TICKETS_DIR}.`);
 }
 
 main().catch((error) => {

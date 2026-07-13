@@ -3,13 +3,11 @@ import type { HardhatUserConfig } from "hardhat/config";
 import { configVariable } from "hardhat/config";
 import "dotenv/config";
 import { generateCommitHashTasks } from "../tasks/runbook/generateCommitHash.js";
-import { qualifiedFlowTasks } from "../tasks/runbook/qualified.js";
 import { wireTasks } from "../tasks/cd/wire.js";
-import { runbookTasks } from "../tasks/runbook/index.js";
 
 const config: HardhatUserConfig = {
   plugins: [],
-  tasks: [...generateCommitHashTasks, ...qualifiedFlowTasks, ...wireTasks, ...runbookTasks],
+  tasks: [...generateCommitHashTasks, ...wireTasks],
   networks: {
     default: {
       type: "edr-simulated",
