@@ -2,7 +2,7 @@
 
 Status: todo
 Source: `compressed_entities_concept_v6_proposed_10-07-2026.md` §14 (Q10, Q16, Q17)
-Depends on: T30 (Part A: normative encoding); T15, T17, T20 (baseline-init cursor API + Part B adapters for index seeding), T21, T23 (Part B: index memberships decode via the same projection adapters — audit-final H-04)
+Depends on: T30 (Part A: normative encoding); T15, T16 (shared DB-only activation verification — R4), T17, T20 (baseline-init cursor API + Part B adapters for index seeding), T21, T23 (Part B: index memberships decode via the same projection adapters — audit-final H-04)
 Blocks: T28
 
 ## Summary
@@ -22,10 +22,11 @@ expected tree_key, expected leaf_value}`; ranges
 `{profile, payload_kind, collection_key, shard_index, start_key, end_key}` with strict ordering/uniqueness.
 Internal SMT nodes do not exist in format v1 (no acceleration section; always rebuilt from leaf records).
 Import writes into staging; activation requires
-checkpoint identity + reconstructed root to match the independently selected finalized header (and node
-consistency with the §13.2 invariant — durable Reth checkpoint ≥ H before the marker activates); the
-LOCAL durable Reth block hash AT H must equal the snapshot checkpoint hash, and the T15 identity binding
-(chain_id/genesis/scheme) must match — height alone cannot prove same-chain (postfix PF-H06). Manifests
+checkpoint identity + reconstructed root to match the independently selected finalized header. Activation
+runs THE SAME DB-only verification function T16 uses per block (R4, owner decision — one verification
+path, not a hand-rolled subset): durable block at H with the EXACT snapshot hash, durable receipts, EVM
+`0xEE0B.slot1` equal to the snapshot root, artifact/scheme binding, plus the T15 identity binding
+(chain_id/genesis/scheme) — height alone cannot prove same-chain (postfix PF-H06). Manifests
 are producer-local; failover happens at logical-range boundaries; parsers impose explicit resource bounds.
 
 ## Structure (audit P0-8): two parts
@@ -138,8 +139,9 @@ are producer-local; failover happens at logical-range boundaries; parsers impose
    proofs (network-transport bootstrap is T28's gate); crash injected mid-replay resumes from the SMT marker
    and completes without re-import (pairs with T17's multi-height catch-up AC).
 5. Activation blocked while local durable Reth checkpoint < H (no §13.3 impossible-state trip);
-   activation with matching HEIGHT but mismatching hash-at-H (wrong fork/chain) rejected; identity
-   binding (chain_id/genesis/scheme) mismatch rejected (postfix PF-H06).
+   activation calls the shared T16 DB-only verification (R4): matching height but wrong hash-at-H
+   (fork/chain) rejected; wrong `0xEE0B.slot1` root rejected; missing receipts/state rejected; wrong
+   artifact/scheme rejected; identity binding mismatch rejected — negative fixtures for each.
 6. Projection-baseline crash matrix: crash between baseline commit and the first applied event block, and
    between subsequent event blocks — restart resumes from the baseline/high-water without gaps or
    double-apply; `tree`-profile baseline (no bodies) yields explicit `unavailable` + lazy recovery, never a

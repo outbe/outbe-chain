@@ -4,7 +4,7 @@ Status: todo
 Source: `audit_plan_final.md` B-03; formerly T27's approved pre-code port map (audit v5 P1-5 / owner Q4) —
 lifted into a standalone gate so the product decision PRECEDES T30's list-RPC section and T26's
 implementation (previously T27 owned the keep/move/remove decision while sitting DOWNSTREAM of both)
-Depends on: T29
+Depends on: T29, T35 (aggregate authority — approval waits for T35; drafting the non-aggregate inventory may run in parallel)
 Blocks: T26, T27, T30
 
 ## Summary
@@ -28,6 +28,11 @@ cutover — before any surface it decides is frozen (T30 item 6) or implemented 
 - Hard read-context split restated: during consensus execution a precompile reads ONLY `read_commitment`
   and domain-owned EVM state — proof packages and the Mongo projection never back a precompile view.
 - ERC721-surface consequences (enumeration/tokenURI semantics after the port) recorded per domain.
+- Repository-grounded selector-to-consumer INVENTORY (moved from T27 — R1.4: the classification cannot
+  claim completeness without the consumer list): grep over the whole repository — precompile views,
+  `contracts/precompiles`/`interfaces` ABI exports, `bin/outbe-cli` (`abi.rs`, commands), the FULL MCP
+  surface (tool registry and signing/tx tools), and `scripts/` — every consumer of a
+  removed-or-changed selector lands in a classification row.
 
 Artifact: `docs/ces-read-surface-port-map.md` (stable path — moved from T27; audit v5 P1-12).
 

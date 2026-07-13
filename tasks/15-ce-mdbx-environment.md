@@ -35,10 +35,9 @@ Identity metadata binds `{chain_id, genesis_hash, commitment_scheme_version}`; m
 - NAMED design outputs (audit §7/T15, dependency change 7): the tree-backend **read-view API** (parent
   tree + staged-ancestor composition consumed by T12's `ParentTreeView` production impl), the
   staged-batch API and its table encoding, and the environment growth policy — written down as reviewable
-  design artifacts of this task, not discovered during T12. The staged-batch table encoding IMPLEMENTS the
-  normative grammar owned by the T30 wire spec (postfix PF-M07) — the canonical serialized footprint in
-  which `max_staged_tree_bytes` is measured (audit-final H-12); golden vectors pin the implementation to
-  the grammar.
+  design artifacts of this task, not discovered during T12. The staged-batch table encoding is an INTERNAL
+  implementation detail (the former normative-grammar rule is removed — owner decision 2026-07-13: no
+  protocol byte limit exists for staged batches).
 - Typed local storage failures (audit-final H-13): disk-full, MDBX map-full, growth failure, and I/O
   errors surface as typed local outcomes (never panics, never silent stalls); a failed commit leaves
   marker/nodes untouched (single-tx atomicity) and is safely retryable; T16 owns the ACK/lease posture

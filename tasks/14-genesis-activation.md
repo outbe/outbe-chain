@@ -38,10 +38,11 @@ hash/root and emits the first 0x08 artifact.
 - Runtime EIP-161 marker-set addition for `0xEE0B`.
 - Node initialization step: derive `R_sealed(0)` (T04 fixture path), compare to seeded slot and chainspec,
   fail-closed on mismatch; initialize/rebuild CE-MDBX height-0 marker (T15 API), idempotent on restart.
-- Single activation predicate (postfix PF-H07): ONE fail-closed chain-spec-level
-  `ces_active(chainspec, height)` predicate (true from genesis for v1) is THE source for every CES gate —
-  T13 artifact expectations, T16 startup validation, T23 registration wiring, and T29 profile gating all
-  consume it; ad hoc per-module "CE active" checks are forbidden.
+- Activation rule (postfix PF-H07, resolved per owner decision — R1.1=B, no predicate): CES core is
+  UNCONDITIONALLY active from genesis in v1; no `ces_active` predicate exists. T13 artifact expectations,
+  T16 startup validation, T23 registration, and T29 profile gating assume unconditional activation. A
+  future conditional activation (e.g. Gem onboarding, scheme v2) introduces a chain-spec predicate at its
+  own fork — documented here and in README so the assumption has one named home.
 - Block-1 boundary checks wired with T13/T16: parent root = marker root = slot value.
 
 ## Out of scope
@@ -55,8 +56,8 @@ hash/root and emits the first 0x08 artifact.
 2. Tampered slot 1 or chainspec mismatch rejects startup fail-closed.
 3. Marker rebuild after deleting the CE-MDBX directory reproduces the identical height-0 marker.
 4. Localnet boots from the new genesis and seals block 1 with matching slot/artifact/root.
-5. Activation predicate (postfix PF-H07): `ces_active` exists at chain-spec level; T13/T16/T23/T29
-   consumers route through it — grep-verified that no ad hoc CE-active check remains.
+5. Activation rule documented (PF-H07/R1.1=B): README states CES core is unconditionally active from
+   genesis in v1 and that future conditional activation introduces a chain-spec predicate at its fork.
 
 ## Invariants
 

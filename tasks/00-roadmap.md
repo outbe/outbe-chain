@@ -31,12 +31,12 @@ proofs) verified against finalized headers.
 ```text
 Gates (audit_plan.md/v2; decision/spec tasks that unblock implementation)
   T29 Gate D0: Variant A body-dependent execution profile (testnet)   → blocks T09, T20b, T23, T27, T30, T33, T34, T35, T36
-  T35 Gate: body/generator/aggregate feasibility preflight            ← T29; blocks T23, T30 (feasibility PRECEDES the schema freeze — audit-final B-07)
-  T36 Gate: read-surface product decisions (port map)                 ← T29; blocks T26, T27, T30 (decision PRECEDES the list-RPC freeze — audit-final B-03)
+  T35 Gate: body/generator/aggregate feasibility preflight            ← T29; blocks T23, T30, T36 (feasibility PRECEDES the schema freeze — audit-final B-07; aggregate authority — R1.2)
+  T36 Gate: read-surface product decisions (port map + consumer inventory) ← T29, T35; blocks T26, T27, T30 (decision PRECEDES the list-RPC freeze — audit-final B-03; inventory moved from T27 — R1.4)
   T30 Gate D1: CES1 wire & schema spec (PROVISIONAL_Q11 K values;
       final K is a T24B output — no final-K cycle)                    ← T29, T35, T36; blocks T02, T05, T06, T08, T13, T18, T19, T20, T22, T23, T24 (B re-baseline), T26, T31, T33, T34
-  T31 Gate D2: provisional resource bounds (pre-Q11; incl. B-10
-      read bounds: Lysis pages, point-read reservation)               ← T30; blocks T07, T10, T12, T20, T24 (B re-baseline)
+  T31 Gate D2: provisional resource bounds (pre-Q11; reads unmetered,
+      staged batch bounded constructively by attempt caps — re-cut)   ← T30; blocks T07, T10, T12, T20, T24 (B re-baseline)
   T32 Gate D3: Reth persistence feasibility spike (read-only)         → blocks T16, T17
 
 Gate convention (audit-v2 P1-4): a gate is COMPLETE when its own artifact (spec/contract/report) is
@@ -69,13 +69,14 @@ Phase 2  Seal & consensus integration
 
 Phase 3  Reads & projections
   T18 Proof/read module (point-proof package, single-snapshot)         ← T04, T06, T13, T15, T30
-  T19 outbe_getBody RPC (proof_encoding_version negotiation)           ← T18, T21, T30
-  T20 ExEx→Mongo: A generic ledger/current+recent-version rows/cursor ← T08; B domain adapters ← T23, T29
-      (Variant A: Part B is a testnet execution prerequisite — local liveness, never authority)
+  T19 outbe_getBody RPC (proof_encoding_version negotiation;
+      current-only — recovery DTO removed by re-cut)                  ← T18, T21, T30
+  T20 ExEx→Mongo: A generic ledger/current rows/cursor ← T08, T30; B domain adapters ← T23, T29
+      (Variant A: broken projection ⇒ node diverges and falls out — no readiness gate, never authority)
   T21 Body store: wait-only policy + RecoverySource (peer src post-T19) ← T15, T18, T20
-  T22 Snapshot: A spec/reference-exporter ← T30; B implementation      ← T15, T17, T20 (baseline API + B adapters), T21, T23 (validator-path index seeding)
+  T22 Snapshot: A spec/reference-exporter ← T30; B implementation      ← T15, T16 (R4), T17, T20 (baseline API + B adapters), T21, T23 (index decode)
   T26 Secondary-index list RPC over MongoDB                            ← T18, T20 (B), T21, T30, T36
-  T28 Snapshot serving transport + operator CLI (HTTP/object-store)    ← T22, T33 (validator-readiness scenario)
+  T28 Snapshot serving transport + operator CLI (HTTP/object-store)    ← T22
 
   T26/T28 are integration/operational support, not consensus primitives.
 
@@ -83,20 +84,19 @@ Phase 4  Domain wiring + Variant A runtime
   T23 Writers ONLY: schemas, generators, CES write/system-tx wiring
       for ALL Stage 1 producers (tribute/lysis/nod+factory;
       GEM DEFERRED to a future onboarding fork, §16.2)                 ← T05..T10, T29, T30, T35 (full E2E under T25)
-  T33 Body-read execution adapters + post-finalization catch-up
-      (readiness machine READY/DEGRADED_KEY/NOT_READY(+CATCHUP),
-      bounded automatic recovery + honest manual fallback,
-      Lysis ordering, non-catchable outcomes)                          ← T07, T09, T10, T18, T19, T20 (B), T21, T23, T29, T30, T34
+  T33 Body-read adapters (minimal: read → leaf-verify → fail;
+      diverging node falls out; manual recovery only — re-cut)        ← T07, T09, T18, T20 (B), T23, T29, T30
   T27 Legacy storage removal + read-path port to CES                   ← T19, T23, T26, T29, T33, T36
       (T27 is integration/operational support; T33 is an EXECUTION prerequisite — audit v5 P1-9)
 
 Phase 5  Activation evidence
   T34 Stage 1 release/soak plan: A hardware profile + benchmark/
-      restore/rollout protocol (blocks T24); B soak plan               ← T29, T30
+      restore/rollout protocol (blocks T24); B soak plan               ← T29, T30 (blocks T24, T25)
   T24 Q11 benchmark: A harness/candidate search; B final constants +
       T30 registry update + FULL re-baseline
-      (T02,T04,T12,T14,T15,T17,T18,T20,T21,T22,T23 + e2e);
+      (B1 constants → B2 consumer re-baselines → B3 T25 join);
       pass = execution-only < 2 s, through-ACK reported;
+      staged-batch size = report metric (no protocol limit — re-cut);
       host verified against the approved T34 profile ID (fail-closed) ← T10, T12, T16, T18, T23, T30, T31, T34 (hardware/protocol)
   T25 Cross-cutting acceptance suite + testnet soak                    ← T01–T24, T26–T36
       Blocks: STAGE 1 TESTNET activation. The production/mainnet gate
@@ -150,7 +150,7 @@ requires the future off-chain-computation design (tracked in T25).
 | M1 Store works | T06–T10 | mint/update/delete/retire + events + guards fully unit-tested incl. revert/OOG suites (§19.5, §19.7, §19.9; store-interface half of §19.6 — the seal-side half closes at M2 with T12; §19.8 generator vectors close at M4 with T23) |
 | M2 Chain seals | T11–T17 | localnet seals blocks with R_sealed; local proposer≡validator equality (§19.4 cross-architecture leg closes at M5); genesis rehearsal (§19.15); crash-matrix tests — partial, Mongo-side crash points and the consolidated sweep close at M3/M5 (§19.11) |
 | M3 Reads verify | T18–T22 | point proofs verify externally; ExEx rebuilds Mongo from scratch; snapshot bootstrap round-trip at the library level (§19.10, 12, 19; postfix PF-L03 — T26/T28 close in M4: T26 ← T36/T20B and T28 ← T33 depend on M4 inputs) |
-| M4 Domains live | T23, T26, T27, T28, T33 | Tribute (partitioned) + Nod (singleton) mint/burn/retire end-to-end on localnet; body-read execution adapters live (T33 is an execution prerequisite, not integration support); Tribute/Nod fully ported to CES — their legacy body storage deleted, views/CLI/MCP on CES reads; Gem module untouched on legacy storage (§19.8) |
+| M4 Domains live | T23, T26, T27, T28, T33 (minimal read adapters) | Tribute (partitioned) + Nod (singleton) mint/burn/retire end-to-end on localnet; body-read execution adapters live (T33 is an execution prerequisite, not integration support); Tribute/Nod fully ported to CES — their legacy body storage deleted, views/CLI/MCP on CES reads; Gem module untouched on legacy storage (§19.8) |
 | M5 Stage 1 Testnet Activation | T24, T25, T34 | benchmark report < 2 s target; Q11 closed; soak evidence per T34 plan incl. finalized-candidate recovery (§19.13–14, 17–18); production gate remains OPEN (future off-chain computation design) |
 
 ## Standing constraints (apply to every task)
@@ -199,11 +199,11 @@ requires the future off-chain-computation design (tracked in T25).
 | T26 | `26-secondary-index-list-rpc.md` | Secondary-index list RPC over MongoDB (by_owner/by_wwd, unverified lists + optional proofs) |
 | T27 | `27-legacy-read-surface-cutover.md` | Legacy storage removal + read-path port to CES (tribute/nod views, outbe-cli, MCP; Gem untouched) |
 | T28 | `28-snapshot-transport-cli.md` | Snapshot serving transport and operator CLI (export/import/bootstrap, mirror failover) |
-| T29 | `29-gate-d0-variant-a-testnet-profile.md` | Gate D0: Variant A body-dependent testnet execution profile (Stage 1) |
+| T29 | `29-gate-d0-variant-a-testnet-profile.md` | Gate D0: Variant A body reads (Stage 1 testnet, minimal profile) |
 | T30 | `30-gate-d1-ces1-wire-spec.md` | Gate D1: CES1 normative wire and schema specification |
 | T31 | `31-gate-d2-resource-guards.md` | Gate D2: conservative provisional resource bounds (pre-Q11) |
 | T32 | `32-gate-d3-reth-persistence-spike.md` | Gate D3: Reth persistence feasibility spike (read-only) |
-| T33 | `33-variant-a-runtime-adapters.md` | Variant A runtime adapters: all body-dependent Mongo reads, readiness state machine, typed unavailability outcomes |
+| T33 | `33-variant-a-runtime-adapters.md` | Variant A body-read adapters (minimal: read → leaf-verify → fail) |
 | T34 | `34-stage1-release-plan.md` | Stage 1 testnet release/soak plan (Part A: hardware profile + benchmark/restore/rollout protocol; Part B: soak) |
-| T35 | `35-body-feasibility-preflight.md` | Gate: body/generator/aggregate feasibility preflight (body-source matrix, generator uniqueness, ActiveTributePartitionsView) |
-| T36 | `36-read-surface-decision-gate.md` | Gate: read-surface product decisions (port map: (a)/(b)/(c) classification, list-RPC surface) |
+| T35 | `35-body-feasibility-preflight.md` | Gate: body/generator/aggregate feasibility preflight (body-source matrix, generator uniqueness, aggregates) |
+| T36 | `36-read-surface-decision-gate.md` | Gate: read-surface product decisions (port map + selector-to-consumer inventory) |

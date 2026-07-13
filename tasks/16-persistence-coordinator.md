@@ -3,7 +3,7 @@
 Status: todo
 Source: `compressed_entities_concept_v6_proposed_10-07-2026.md` §13.2 (Q9, Q14, Q16)
 Depends on: T12, T15, T32 (persistence spike: concrete APIs, retention floor, fault map)
-Blocks: T14 (block-1 checks), T17, T24
+Blocks: T14 (block-1 checks), T17, T22 (shared DB-only activation verification — R4), T24
 
 ## Summary
 
@@ -26,8 +26,8 @@ the barrier + commit.
 
 ## Scope
 
-- Startup validation: TreeConfig values and `MAX_PENDING_ACKS = 1` asserted with CE active (gated by
-  T14's `ces_active` chain-spec predicate — postfix PF-H07); structured
+- Startup validation: TreeConfig values and `MAX_PENDING_ACKS = 1` asserted unconditionally (CES core is
+  always active in v1 — R1.1=B, no predicate); structured
   startup failure otherwise.
 - Coordinator: subscribe to persisted-block notifications; DB-only provider verification step; invoke T15
   `apply_finalized` with the staged batch (from T12 speculative cache) and marker; then ACK.

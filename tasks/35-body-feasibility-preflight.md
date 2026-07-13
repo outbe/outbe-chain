@@ -4,7 +4,7 @@ Status: todo
 Source: `audit_plan_final.md` B-04/B-07/B-09; formerly T23's design-first checkpoint (audit v5 P1-7,
 audit v6 P0-2) — lifted into a standalone gate so feasibility PRECEDES the T30 schema/generator freeze
 Depends on: T29
-Blocks: T23, T30
+Blocks: T23, T30, T36 (approval order — aggregate authority)
 
 ## Summary
 

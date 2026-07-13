@@ -53,12 +53,9 @@ totals) — that boundary must be decided per domain, not left implicit.
   records, their slots and accessors) — dead layouts do not survive to genesis; module tier/README updated
   per the structure standard.
 - README: user-visible CLI/RPC behavior changes documented in the same PR.
-- Repository-grounded cutover inventory (postfix PF-M09): a selector-to-consumer inventory built by grep
-  over the WHOLE repository — precompile views, `contracts/precompiles`/`interfaces` ABI exports,
-  `bin/outbe-cli` (`abi.rs`, commands), the FULL MCP surface (tool registry and signing/tx tools, not
-  only `view.ts`), and `scripts/` (genesis/localnet/test scripts touching tribute/nod selectors) — every
-  consumer of a removed or changed selector lands in a classification row; an unlisted consumer found
-  later fails the T25 evidence check.
+- Cutover inventory RE-CHECK (postfix PF-M09 / R1.4 — the inventory itself is generated and approved in
+  T36): re-run the T36 selector-to-consumer grep at cutover time; any consumer not present in the
+  approved inventory fails this task and the T25 evidence check.
 
 ## Out of scope
 

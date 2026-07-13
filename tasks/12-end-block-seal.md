@@ -82,8 +82,9 @@ by block hash, ancestor-chain reads, bounded retention (numeric bounds Q11).
 7. Ancestor-chain tests (audit-final H-08): gap and fork-substitution fixtures rejected; eviction never
    breaks a protected direct-parent chain; a missing unfinalized ancestor yields the local defer/abstain
    outcome on both roles.
-8. Envelope (audit-final H-05): every published batch carries the envelope; T16's commit-time binding
-   check has a red test against a stale/wrong-fork batch.
+8. Envelope (audit-final H-05, split per R1.5): every published batch carries the envelope (asserted
+   HERE at publish); the commit-time binding red test against a stale/wrong-fork batch is T16's AC8 —
+   this task does not gate on downstream integration.
 
 ## Invariants
 
