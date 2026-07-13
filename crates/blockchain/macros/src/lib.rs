@@ -818,7 +818,9 @@ fn generate_storage_record(
                     dynamic_bytes_mapping_new(&format_ident!("entry"), key_ty, offset_lit);
                 (
                     quote! { #map_new.read_string(entry.key_ref())? },
-                    quote! { #map_new.write_string(entry.key_ref(), &value.#fname)?; },
+                    // write_if_changed: one read (SLOADs) to skip the full
+                    // rewrite (SSTOREs, ~50x per slot) when the value is equal.
+                    quote! { #map_new.get_bytes(entry.key_ref()).write_if_changed(value.#fname.as_bytes())?; },
                     quote! { #map_new.get_bytes(entry.key_ref()).clear()?; },
                 )
             }
@@ -827,7 +829,7 @@ fn generate_storage_record(
                     dynamic_bytes_mapping_new(&format_ident!("entry"), key_ty, offset_lit);
                 (
                     quote! { #map_new.get_bytes(entry.key_ref()).read()? },
-                    quote! { #map_new.get_bytes(entry.key_ref()).write(&value.#fname)?; },
+                    quote! { #map_new.get_bytes(entry.key_ref()).write_if_changed(&value.#fname)?; },
                     quote! { #map_new.get_bytes(entry.key_ref()).clear()?; },
                 )
             }

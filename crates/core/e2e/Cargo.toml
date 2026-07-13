@@ -22,6 +22,7 @@ outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
+outbe-governance.workspace = true
 outbe-update.workspace = true
 outbe-vote.workspace = true
 outbe-validatorset.workspace = true
