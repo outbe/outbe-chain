@@ -1,7 +1,7 @@
 //! Full-execution follower nodes (`--upstream`). Ported `launch_follower`.
 
-use std::process::Command;
 use std::fs;
+use std::process::Command;
 
 use eyre::Result;
 

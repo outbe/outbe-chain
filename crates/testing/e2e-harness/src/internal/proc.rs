@@ -366,6 +366,9 @@ mod tests {
         let port: u16 = 8545;
         let path = PathBuf::from("/tmp/x/data");
         let a = args!["node", "--http.port", port, "--datadir", path.display()];
-        assert_eq!(a, vec!["node", "--http.port", "8545", "--datadir", "/tmp/x/data"]);
+        assert_eq!(
+            a,
+            vec!["node", "--http.port", "8545", "--datadir", "/tmp/x/data"]
+        );
     }
 }

@@ -26,8 +26,7 @@ pub mod update {
     /// migration at activation height. Versions without a handler activate as
     /// version-only switches.
     static ACTIVE_UPGRADE_HANDLERS: UpgradeHandlers = &[];
-    static REGISTRY: UpgradeHandlerRegistry =
-        UpgradeHandlerRegistry::new(ACTIVE_UPGRADE_HANDLERS);
+    static REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(ACTIVE_UPGRADE_HANDLERS);
 
     /// Returns the compile-time upgrade handler registry for executor wiring.
     pub fn registry() -> &'static UpgradeHandlerRegistry {

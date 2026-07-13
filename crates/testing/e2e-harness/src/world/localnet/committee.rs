@@ -70,7 +70,7 @@ impl Localnet {
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
         self.validators.remove(&i); // Drop → SIGKILL + reap
-        // Backstop in case the owned handle was ever lost.
+                                    // Backstop in case the owned handle was ever lost.
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
@@ -79,7 +79,12 @@ impl Localnet {
     /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
     /// `--consensus.use-local-defaults`, signing-key + evm-key only (peers come
     /// from the on-chain ValidatorSet), no `run-supervised` wrapper.
-    fn launch_validator(&mut self, i: usize, opts: &StartOpts, bootnodes: Option<&str>) -> Result<()> {
+    fn launch_validator(
+        &mut self,
+        i: usize,
+        opts: &StartOpts,
+        bootnodes: Option<&str>,
+    ) -> Result<()> {
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;

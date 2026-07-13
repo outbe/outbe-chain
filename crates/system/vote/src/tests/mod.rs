@@ -497,7 +497,9 @@ fn list_proposals_oversized_index_does_not_panic() {
             Vec::<U256>::new()
         );
         assert_eq!(
-            list_proposals(storage, U256::ZERO, U256::MAX).unwrap().len(),
+            list_proposals(storage, U256::ZERO, U256::MAX)
+                .unwrap()
+                .len(),
             1
         );
     });

@@ -128,6 +128,8 @@ mod tests {
         assert_eq!(vs.deadline, Some(100));
         assert_eq!((vs.yes, vs.no), (3, 0));
         assert!(vs.payload.contains("activationHeight"));
-        assert!(vs.target.eq_ignore_ascii_case("0x000000000000000000000000000000000000EE0B"));
+        assert!(vs
+            .target
+            .eq_ignore_ascii_case("0x000000000000000000000000000000000000EE0B"));
     }
 }

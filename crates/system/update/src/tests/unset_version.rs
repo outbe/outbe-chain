@@ -40,9 +40,12 @@ fn is_version_active_zero_on_fresh_chain() {
 fn schedule_update_rejects_zero_version() {
     with_update(|storage| {
         let mut update = Update::new(storage.clone());
-        let payload: Value =
-            serde_json::from_str(&encode_schedule_update_json(ProtocolVersion::ZERO, 1000, ""))
-                .unwrap();
+        let payload: Value = serde_json::from_str(&encode_schedule_update_json(
+            ProtocolVersion::ZERO,
+            1000,
+            "",
+        ))
+        .unwrap();
         let err = update
             .schedule_update_from_propose(U256::from(1), &payload, 100)
             .unwrap_err();
