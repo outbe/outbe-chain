@@ -33,6 +33,13 @@ const FIELD_PLEDGED: u8 = 1;
 /// remaining(4) ‖ spent(1)`.
 const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 20 + 4 + 4 + 1;
 
+/// Amount blob length: `version(8, BE) ‖ ChaCha20Poly1305(U256 amount)` where the
+/// ct is a 32-byte plaintext + 16-byte Poly1305 tag = 56 bytes. Constant for every
+/// amount, so the ciphertext size never leaks the balance/pledged magnitude. This
+/// is the byte length `IGratis.balanceOf` / `pledgedOf` return (empty for a fresh
+/// slot); keep it in sync with those Solidity comments.
+const AMOUNT_BLOB_LEN: usize = 8 + 32 + 16;
+
 const MODIFY_PREIMAGE_TAG: &[u8] = b"outbe/gratis/modify/v1";
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
 
@@ -207,6 +214,11 @@ fn write_amount(
     let ct = chacha20poly1305_encrypt(view_key, &nonce, &amount.to_be_bytes::<32>())?;
     let mut blob = version.to_be_bytes().to_vec();
     blob.extend_from_slice(&ct);
+    debug_assert_eq!(
+        blob.len(),
+        AMOUNT_BLOB_LEN,
+        "gratis amount blob must be a fixed {AMOUNT_BLOB_LEN} bytes"
+    );
     Ok(blob)
 }
 

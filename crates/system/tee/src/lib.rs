@@ -53,14 +53,11 @@ pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
 pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
 
 /// HKDF `info` for the resident Gratis state key, derived from the DKG group
-/// signature the same way the tribute offer key is (`info = GRATIS_STATE_HKDF_INFO
-/// || epoch`, `salt = chain_id`, `ikm = group_sig`). Identical on every enclave,
-/// so encrypted Gratis state is byte-identical across validators. Distinct domain
-/// from the offer key so the two secrets can never collide.
+/// signature (`info = GRATIS_STATE_HKDF_INFO || epoch`, `salt = chain_id`, `ikm = group_sig`).
 pub const GRATIS_STATE_HKDF_INFO: &[u8] = b"outbe/gratis/state-key/v1/";
 
-/// HKDF `info` for a per-account **view key** (read capability). Derived inside
-/// the enclave as `HKDF(salt = gratis_state_key, ikm = account, info =
+/// HKDF `info` for a per-account **view key** (read capability).
+/// Derived inside the enclave as `HKDF(salt = gratis_state_key, ikm = account, info =
 /// GRATIS_VIEW_KEY_INFO)`. The view key IS the per-account AEAD key: the client
 /// uses it to decrypt its own balance/pledged ciphertext.
 pub const GRATIS_VIEW_KEY_INFO: &[u8] = b"outbe/gratis/view-key/v1";
@@ -76,7 +73,7 @@ pub const GRATIS_MODIFY_KEY_INFO: &[u8] = b"outbe/gratis/modify-key/v1";
 /// `(key, nonce)` pair is never reused when a slot is overwritten.
 pub const GRATIS_NONCE_INFO: &[u8] = b"outbe/gratis/nonce/v1";
 
-/// HKDF `info` for the deterministic per-pledge handle that replaces the old ZK
-/// commitment: `HKDF(salt = gratis_state_key, ikm = account ‖ amount ‖ op_nonce,
+/// HKDF `info` for the deterministic per-pledge handle:
+/// `HKDF(salt = gratis_state_key, ikm = account ‖ amount ‖ op_nonce,
 /// info = GRATIS_PLEDGE_HANDLE_INFO)`.
 pub const GRATIS_PLEDGE_HANDLE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";
