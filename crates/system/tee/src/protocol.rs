@@ -18,7 +18,8 @@ use alloy_primitives::{Address, B256, U256};
 ///
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
 /// plus the oracle price and the sender:
-///   - `cipherText`, `nonce`, `ephemeralPubkey`, `referenceCurrency` (ABI);
+///   - `cipherText`, `nonce`, `ephemeralPubkey`, `referenceCurrency`,
+///     `excludeFromIntexIssuance` (ABI);
 ///   - `owner` — the L1 `msg.sender`; the enclave binds it into the result and
 ///     into the `token_id` (computed in-enclave, see `TributeOfferResult`);
 ///   - `tribute_price_minor` — the coen/usdt oracle price, resolved by the node
@@ -46,6 +47,10 @@ pub struct EncryptedTributeOffer {
     pub ephemeral_pubkey: U256,
     /// ABI `referenceCurrency`.
     pub reference_currency: u16,
+    /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
+    /// excluded from Intex issuance. Unencrypted (public), like
+    /// `reference_currency` — the enclave echoes it back in the result.
+    pub exclude_from_intex_issuance: bool,
     /// Current USDC/COEN oracle rate (at this block) the enclave applies.
     pub tribute_price_minor: U256,
 }
@@ -75,6 +80,9 @@ pub struct TributeOfferResult {
     pub issuance_currency: u16,
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
+    /// Echoed from the offer's unencrypted `excludeFromIntexIssuance` ABI flag
+    /// (see `EncryptedTributeOffer`); the host stores it on the Tribute.
+    pub exclude_from_intex_issuance: bool,
     pub tribute_price_minor: U256,
     /// SU hashes (hex) — the host marks them used (replay prevention). Public
     /// on-chain as used-markers. The privacy-preserving markers-only form (rather
@@ -358,8 +366,8 @@ pub enum EnclaveRequest {
 }
 
 /// Deterministic hash over the canonical batch inputs — each offer's
-/// owner/cipher_text/nonce/ephemeral/reference-currency/price. Length-prefixed to
-/// be unambiguous.
+/// owner/cipher_text/nonce/ephemeral/reference-currency/exclude-from-intex/price.
+/// Length-prefixed to be unambiguous.
 ///
 /// SHARED by the enclave (which returns it in `TributeOfferBatch`) and the host (which
 /// recomputes it from the request it sent and compares — a mismatch is enclave
@@ -376,6 +384,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&offer.nonce);
         buf.extend_from_slice(&offer.ephemeral_pubkey.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
+        buf.push(u8::from(offer.exclude_from_intex_issuance));
         buf.extend_from_slice(&offer.tribute_price_minor.to_be_bytes::<32>());
     }
     alloy_primitives::keccak256(buf)

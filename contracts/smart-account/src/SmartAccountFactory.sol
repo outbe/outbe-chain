@@ -4,22 +4,38 @@ pragma solidity ^0.8.30;
 import {ISmartAccountFactory} from "./interfaces/ISmartAccountFactory.sol";
 import {IKernelFactory} from "./interfaces/kernel/IKernelFactory.sol";
 import {BundleModulePlugin} from "./BundleModulePlugin.sol";
-import {Kernel} from "@zerodev/kernel/Kernel.sol";
-import {IValidator, IHook, IFallback, IPolicy, ISigner} from "@zerodev/kernel/interfaces/IERC7579Modules.sol";
-import {ValidationId, CallType, PermissionId} from "@zerodev/kernel/types/Types.sol";
-import {ValidatorLib} from "@zerodev/kernel/utils/ValidationTypeLib.sol";
-import {ValidationManager} from "@zerodev/kernel/core/ValidationManager.sol";
-import {MODULE_TYPE_FALLBACK, MODULE_TYPE_EXECUTOR, CALLTYPE_SINGLE} from "@zerodev/kernel/types/Constants.sol";
+import {IERC7579Account} from "@zerodev/kernel/interfaces/IERC7579Account.sol";
+import {Install} from "@zerodev/kernel/types/Structs.sol";
+import {CallType, PermissionId} from "@zerodev/kernel/types/Types.sol";
+import {
+    MODULE_TYPE_EXECUTOR,
+    MODULE_TYPE_FALLBACK,
+    MODULE_TYPE_HOOK,
+    MODULE_TYPE_POLICY,
+    MODULE_TYPE_SIGNER,
+    CALLTYPE_SINGLE
+} from "@zerodev/kernel/types/Constants.sol";
 
+/// @title SmartAccountFactory
+/// @notice Deploys Credis-configured Kernel v4 smart accounts.
+/// @dev Kernel v4 initializes an account from an ordered `Install[]` package list where `packages[0]`
+///      becomes the root validation and every package installs strictly in order. A validation's
+///      hook must be enabled *before* the package that references it — impossible for a plain root
+///      validator (nothing precedes `packages[0]`). We therefore model the OWNER as a permission
+///      `[SudoPolicy(always-pass) + ECDSASigner(owner)]` carrying `BundleSpendProtectorHook` when
+///      bundle tokens are configured, installed as `[policy, hook, signer]` so the hook is enabled
+///      before the signer initializes the validation. Each CCA is a per-token permission
+///      `[WithdrawalLimitPolicy + ECDSASigner(cca)]` guarded by `BundleWithdrawHook`. This preserves
+///      the Kernel v3.3 behavior (owner has full authority; the hook enforces the bundle reserve).
 contract SmartAccountFactory is ISmartAccountFactory {
     IKernelFactory private immutable _KERNEL_FACTORY;
-    IValidator private immutable _ECDSA_VALIDATOR;
-    IFallback private immutable _BUNDLE_MODULE_PLUGIN;
-    IHook private immutable _CALLER_HOOK;
-    IHook private immutable _BUNDLE_SPEND_PROTECTOR_HOOK;
-    IPolicy private immutable _WITHDRAWAL_LIMIT_POLICY;
-    ISigner private immutable _ECDSA_SIGNER;
-    IHook private immutable _BUNDLE_WITHDRAW_HOOK;
+    address private immutable _SUDO_POLICY;
+    address private immutable _BUNDLE_MODULE_PLUGIN;
+    address private immutable _CALLER_HOOK;
+    address private immutable _BUNDLE_SPEND_PROTECTOR_HOOK;
+    address private immutable _WITHDRAWAL_LIMIT_POLICY;
+    address private immutable _ECDSA_SIGNER;
+    address private immutable _BUNDLE_WITHDRAW_HOOK;
 
     /// @notice Daily withdrawal limit enforced by WithdrawalLimitPolicy (6-decimal USDC units)
     uint256 public constant DAILY_LIMIT = 1000e6;
@@ -27,7 +43,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
 
     constructor(
         address kernelFactory_,
-        address ecdsaValidator_,
+        address sudoPolicy_,
         address bundleModulePlugin_,
         address callerHook_,
         address bundleSpendProtectorHook_,
@@ -36,13 +52,13 @@ contract SmartAccountFactory is ISmartAccountFactory {
         address bundleWithdrawHook_
     ) {
         _KERNEL_FACTORY = IKernelFactory(kernelFactory_);
-        _ECDSA_VALIDATOR = IValidator(ecdsaValidator_);
-        _BUNDLE_MODULE_PLUGIN = IFallback(bundleModulePlugin_);
-        _CALLER_HOOK = IHook(callerHook_);
-        _BUNDLE_SPEND_PROTECTOR_HOOK = IHook(bundleSpendProtectorHook_);
-        _WITHDRAWAL_LIMIT_POLICY = IPolicy(withdrawalLimitPolicy_);
-        _ECDSA_SIGNER = ISigner(ecdsaSigner_);
-        _BUNDLE_WITHDRAW_HOOK = IHook(bundleWithdrawHook_);
+        _SUDO_POLICY = sudoPolicy_;
+        _BUNDLE_MODULE_PLUGIN = bundleModulePlugin_;
+        _CALLER_HOOK = callerHook_;
+        _BUNDLE_SPEND_PROTECTOR_HOOK = bundleSpendProtectorHook_;
+        _WITHDRAWAL_LIMIT_POLICY = withdrawalLimitPolicy_;
+        _ECDSA_SIGNER = ecdsaSigner_;
+        _BUNDLE_WITHDRAW_HOOK = bundleWithdrawHook_;
     }
 
     // ── ISmartAccountFactory getters ─────────────────────────────────────
@@ -53,38 +69,38 @@ contract SmartAccountFactory is ISmartAccountFactory {
     }
 
     /// @inheritdoc ISmartAccountFactory
-    function ecdsaValidator() external view override returns (address) {
-        return address(_ECDSA_VALIDATOR);
+    function sudoPolicy() external view override returns (address) {
+        return _SUDO_POLICY;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function bundleModulePlugin() external view override returns (address) {
-        return address(_BUNDLE_MODULE_PLUGIN);
+        return _BUNDLE_MODULE_PLUGIN;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function callerHook() external view override returns (address) {
-        return address(_CALLER_HOOK);
+        return _CALLER_HOOK;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function bundleSpendProtectorHook() external view override returns (address) {
-        return address(_BUNDLE_SPEND_PROTECTOR_HOOK);
+        return _BUNDLE_SPEND_PROTECTOR_HOOK;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function withdrawalLimitPolicy() external view override returns (address) {
-        return address(_WITHDRAWAL_LIMIT_POLICY);
+        return _WITHDRAWAL_LIMIT_POLICY;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function ecdsaSigner() external view override returns (address) {
-        return address(_ECDSA_SIGNER);
+        return _ECDSA_SIGNER;
     }
 
     /// @inheritdoc ISmartAccountFactory
     function bundleWithdrawHook() external view override returns (address) {
-        return address(_BUNDLE_WITHDRAW_HOOK);
+        return _BUNDLE_WITHDRAW_HOOK;
     }
 
     // ── Account creation ─────────────────────────────────────────────────
@@ -98,8 +114,8 @@ contract SmartAccountFactory is ISmartAccountFactory {
     ) external returns (address account) {
         require(owner != address(0), "owner required");
         require(cca != address(0), "cca required");
-        bytes memory initData = _initData(owner, cca, bundleTokens, bundleSenders);
-        account = _KERNEL_FACTORY.createAccount(initData, bytes32(salt));
+        Install[] memory packages = _packages(owner, cca, bundleTokens, bundleSenders);
+        account = _KERNEL_FACTORY.deploy(packages, salt);
     }
 
     function getAccountAddress(
@@ -109,106 +125,120 @@ contract SmartAccountFactory is ISmartAccountFactory {
         address[] calldata bundleSenders,
         uint256 salt
     ) external view returns (address account) {
-        bytes memory initData = _initData(owner, cca, bundleTokens, bundleSenders);
-        account = _KERNEL_FACTORY.getAddress(initData, bytes32(salt));
+        Install[] memory packages = _packages(owner, cca, bundleTokens, bundleSenders);
+        account = _KERNEL_FACTORY.getAddress(packages, salt);
     }
 
-    /// @dev Per-token CCA permission ID: stable key for per-token daily-limit permission.
+    /// @dev Stable owner permission id (single per account).
+    function _ownerPermId() internal pure returns (PermissionId) {
+        return PermissionId.wrap(bytes4(keccak256("credis.owner")));
+    }
+
+    /// @dev Per-token CCA permission id: stable key for per-token daily-limit permission.
     function _ccaPermId(address token) internal pure returns (PermissionId) {
         return PermissionId.wrap(bytes4(keccak256(abi.encode("credis.cca", token))));
     }
 
-    function _initData(address user, address cca, address[] memory bundleTokens, address[] memory bundleSenders)
+    /// @dev Build the ordered Kernel v4 install packages for the account.
+    ///
+    ///      internalData byte layouts consumed by Kernel v4 (see types/Structs.sol):
+    ///        policy  (5): [bytes4 permissionId]
+    ///        signer  (6): [bytes4 permissionId | bytes20 hook | bytes4[] allowedSelectors]
+    ///        fallback(3): [bytes4 selector | bytes1 callType | bytes20 hook]
+    ///      moduleData is forwarded to each module's onInstall (PolicyBase/SignerBase parse the
+    ///      32-byte permission id from the front; the module reads the remainder).
+    function _packages(address owner, address cca, address[] memory bundleTokens, address[] memory bundleSenders)
         internal
         view
-        returns (bytes memory)
+        returns (Install[] memory packages)
     {
-        ValidationId valId = ValidatorLib.validatorToIdentifier(_ECDSA_VALIDATOR);
-
-        // ECDSAValidator reads owner from first 20 bytes of validatorData
-        bytes memory validatorData = abi.encodePacked(user);
-
-        // Use BundleSpendProtectorHook as root execution hook only when bundle tokens are configured.
-        IHook hook;
-        bytes memory rootHookData;
-        if (bundleTokens.length > 0) {
-            hook = _BUNDLE_SPEND_PROTECTOR_HOOK;
-            rootHookData = hex"00";
-        } else {
-            hook = IHook(address(0));
-            rootHookData = hex"";
-        }
-
-        // Build fallback init data for BundleModulePlugin guarded by CallerHook (topUp).
-        //
-        // Kernel MODULE_TYPE_FALLBACK initData layout:
-        //   [0:4]   selector
-        //   [4:24]  hook address
-        //   [24:]   abi.encode(selectorData, hookData)
-        //
-        // _installSelector strips selectorData[0] as CallType then calls BundleModulePlugin.onInstall(selectorData[1:])
-        // _installHook strips hookData[0] as flag then calls CallerHook.onInstall(hookData[1:])
-        bytes memory topUpSelectorData = bytes.concat(CallType.unwrap(CALLTYPE_SINGLE), abi.encode(bundleTokens));
-        bytes memory topUpHookData = bytes.concat(CallType.unwrap(CALLTYPE_SINGLE), abi.encode(bundleSenders));
-        bytes memory topUpFallbackInitData = abi.encodePacked(
-            BundleModulePlugin.topUp.selector, address(_CALLER_HOOK), abi.encode(topUpSelectorData, topUpHookData)
-        );
-
-        // Executor install: no hook, empty executorData (onInstall is a no-op for empty data).
-        bytes memory executorInitData = abi.encodePacked(address(0), abi.encode(hex"", hex""));
-
-        bytes[] memory initConfig = new bytes[](4 + bundleTokens.length);
-
-        // [0] Executor install
-        initConfig[0] = abi.encodeWithSelector(
-            Kernel.installModule.selector, MODULE_TYPE_EXECUTOR, address(_BUNDLE_MODULE_PLUGIN), executorInitData
-        );
-        // [1] Fallback for topUp (guarded by CallerHook)
-        initConfig[1] = abi.encodeWithSelector(
-            Kernel.installModule.selector, MODULE_TYPE_FALLBACK, address(_BUNDLE_MODULE_PLUGIN), topUpFallbackInitData
-        );
-
         uint256 n = bundleTokens.length;
-        ValidationId[] memory vIds = new ValidationId[](n);
-        ValidationManager.ValidationConfig[] memory configs = new ValidationManager.ValidationConfig[](n);
-        bytes[] memory validationData = new bytes[](n);
-        bytes[] memory permHookData = new bytes[](n);
+        bytes4 execSel = IERC7579Account.execute.selector;
+        bytes1 callTypeSingle = CallType.unwrap(CALLTYPE_SINGLE);
 
-        for (uint256 i = 0; i < n; i++) {
-            PermissionId permId = _ccaPermId(bundleTokens[i]);
-            vIds[i] = ValidatorLib.permissionToIdentifier(permId);
+        PermissionId ownerPerm = _ownerPermId();
+        bytes4 ownerPerm4 = PermissionId.unwrap(ownerPerm);
+        bytes32 ownerPerm32 = bytes32(ownerPerm4);
 
-            // nonce=1: currentNonce stays 1 throughout initialize() initConfig processing.
-            configs[i] = ValidationManager.ValidationConfig({nonce: 1, hook: _BUNDLE_WITHDRAW_HOOK});
-
-            // Policy entry: bytes2(PassFlag=0) || address(policy) || abi.encode(limit, interval, token)
-            bytes memory policyEntry = bytes.concat(
-                bytes2(0),
-                bytes20(address(_WITHDRAWAL_LIMIT_POLICY)),
-                abi.encode(DAILY_LIMIT, LIMIT_INTERVAL, bundleTokens[i])
-            );
-            // Signer entry: bytes2(PassFlag=0) || address(signer) || abi.encodePacked(cca)
-            bytes memory signerEntry = bytes.concat(bytes2(0), bytes20(address(_ECDSA_SIGNER)), abi.encodePacked(cca));
-
-            bytes[] memory permData = new bytes[](2);
-            permData[0] = policyEntry;
-            permData[1] = signerEntry;
-            validationData[i] = abi.encode(permData);
-
-            // hookData flag byte: 0x00 = call onInstall only if not yet initialized
-            permHookData[i] = hex"00";
+        if (n == 0) {
+            // Owner permission only (no bundle, no hook): [SudoPolicy(root), ECDSASigner].
+            packages = new Install[](2);
+            packages[0] = Install({
+                moduleType: MODULE_TYPE_POLICY,
+                module: _SUDO_POLICY,
+                moduleData: abi.encodePacked(ownerPerm32),
+                internalData: abi.encodePacked(ownerPerm4)
+            });
+            packages[1] = Install({
+                moduleType: MODULE_TYPE_SIGNER,
+                module: _ECDSA_SIGNER,
+                moduleData: abi.encodePacked(ownerPerm32, bytes20(owner)),
+                internalData: abi.encodePacked(ownerPerm4, bytes20(address(0)), execSel)
+            });
+            return packages;
         }
 
-        // [3] installValidations: one permission per bundle token
-        initConfig[3] =
-            abi.encodeWithSelector(Kernel.installValidations.selector, vIds, configs, validationData, permHookData);
+        // With bundle tokens: owner permission (hooked) + module wiring + one CCA permission per token.
+        // Layout: [0] SudoPolicy(root) [1] BundleSpendProtectorHook [2] owner ECDSASigner
+        //         [3] CallerHook [4] BundleWithdrawHook [5] executor [6] fallback
+        //         then, per token: [.. policy, signer ..] (each pair contiguous).
+        packages = new Install[](7 + 2 * n);
 
-        // [4..3+N] grantAccess: allow each permission to call execute.selector
+        packages[0] = Install({
+            moduleType: MODULE_TYPE_POLICY,
+            module: _SUDO_POLICY,
+            moduleData: abi.encodePacked(ownerPerm32),
+            internalData: abi.encodePacked(ownerPerm4)
+        });
+        // Enable the root execution hook BEFORE the owner signer initializes the owner validation.
+        packages[1] = Install({
+            moduleType: MODULE_TYPE_HOOK, module: _BUNDLE_SPEND_PROTECTOR_HOOK, moduleData: hex"", internalData: hex""
+        });
+        packages[2] = Install({
+            moduleType: MODULE_TYPE_SIGNER,
+            module: _ECDSA_SIGNER,
+            moduleData: abi.encodePacked(ownerPerm32, bytes20(owner)),
+            internalData: abi.encodePacked(ownerPerm4, bytes20(_BUNDLE_SPEND_PROTECTOR_HOOK), execSel)
+        });
+        // CallerHook guards the topUp fallback; its allowed senders arrive via its own onInstall.
+        packages[3] = Install({
+            moduleType: MODULE_TYPE_HOOK,
+            module: _CALLER_HOOK,
+            moduleData: abi.encode(bundleSenders),
+            internalData: hex""
+        });
+        // Shared per-CCA-permission hook.
+        packages[4] = Install({
+            moduleType: MODULE_TYPE_HOOK, module: _BUNDLE_WITHDRAW_HOOK, moduleData: hex"", internalData: hex""
+        });
+        // BundleModulePlugin as executor (empty onInstall = no-op) and as the topUp fallback.
+        packages[5] = Install({
+            moduleType: MODULE_TYPE_EXECUTOR, module: _BUNDLE_MODULE_PLUGIN, moduleData: hex"", internalData: hex""
+        });
+        packages[6] = Install({
+            moduleType: MODULE_TYPE_FALLBACK,
+            module: _BUNDLE_MODULE_PLUGIN,
+            moduleData: abi.encode(bundleTokens),
+            internalData: abi.encodePacked(BundleModulePlugin.topUp.selector, callTypeSingle, bytes20(_CALLER_HOOK))
+        });
+
         for (uint256 i = 0; i < n; i++) {
-            initConfig[4 + i] =
-                abi.encodeWithSelector(Kernel.grantAccess.selector, vIds[i], Kernel.execute.selector, true);
-        }
+            PermissionId perm = _ccaPermId(bundleTokens[i]);
+            bytes4 perm4 = PermissionId.unwrap(perm);
+            bytes32 perm32 = bytes32(perm4);
 
-        return abi.encodeWithSelector(Kernel.initialize.selector, valId, hook, validatorData, rootHookData, initConfig);
+            packages[7 + 2 * i] = Install({
+                moduleType: MODULE_TYPE_POLICY,
+                module: _WITHDRAWAL_LIMIT_POLICY,
+                moduleData: abi.encodePacked(perm32, abi.encode(DAILY_LIMIT, LIMIT_INTERVAL, bundleTokens[i])),
+                internalData: abi.encodePacked(perm4)
+            });
+            packages[8 + 2 * i] = Install({
+                moduleType: MODULE_TYPE_SIGNER,
+                module: _ECDSA_SIGNER,
+                moduleData: abi.encodePacked(perm32, bytes20(cca)),
+                internalData: abi.encodePacked(perm4, bytes20(_BUNDLE_WITHDRAW_HOOK), execSel)
+            });
+        }
     }
 }

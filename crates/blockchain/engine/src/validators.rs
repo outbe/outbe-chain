@@ -413,6 +413,54 @@ pub fn read_tee_recipient_x25519_at_latest(
     read_tee_recipient_x25519_from_state(&state, validator)
 }
 
+/// Check if current binary version is compatible with active (or approved) proposals.
+/// Also warns if there are approved versions without registered handlers.
+pub fn check_binary_version_compatibility(
+    provider: &dyn StateProviderFactory,
+    registry: &outbe_update::handlers::UpgradeHandlerRegistry,
+) -> Result<()> {
+    let active_version = read_active_protocol_version_at_latest(&provider)?;
+    outbe_update::startup::assert_binary_protocol_compatible(active_version)
+        .map_err(eyre::Error::msg)?;
+    let waiting = read_waiting_scheduled_updates_at_latest(&provider)?;
+    outbe_update::startup::warn_missing_handlers_for_waiting_updates(&waiting, registry);
+    Ok(())
+}
+
+/// Read the on-chain active protocol version from the latest committed state.
+fn read_active_protocol_version_at_latest(
+    provider: &dyn StateProviderFactory,
+) -> Result<outbe_update::ProtocolVersion> {
+    let state = provider
+        .latest()
+        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+    let reader = RethStateReader { state: &state };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    let update = outbe_update::schema::Update::new(storage);
+    Ok(update.get_active_version()?)
+}
+
+/// Read scheduled updates waiting for activation from the latest committed state.
+fn read_waiting_scheduled_updates_at_latest(
+    provider: &dyn StateProviderFactory,
+) -> Result<Vec<outbe_update::ScheduledUpdateInfo>> {
+    let state = provider
+        .latest()
+        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+    let reader = RethStateReader { state: &state };
+    let mut provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut provider);
+    let update = outbe_update::schema::Update::new(storage);
+    let mut scheduled = Vec::new();
+    for proposal_id in update.list_waiting_for_activation_proposal_ids()? {
+        if let Some(record) = update.read_scheduled_update(proposal_id)? {
+            scheduled.push(record);
+        }
+    }
+    Ok(scheduled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

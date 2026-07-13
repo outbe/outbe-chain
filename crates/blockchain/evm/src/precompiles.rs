@@ -17,12 +17,12 @@ use core::marker::PhantomData;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
     DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS,
-    NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, PROMIS_ADDRESS,
-    PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS,
-    STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-    VALIDATOR_SET_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
-    ZKPROOF_POSEIDON_ADDRESS,
+    GRATIS_FACTORY_ADDRESS, GRATIS_POOL_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
+    METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
+    SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_PROVIDER_ADDRESS,
+    VOTE_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
@@ -59,7 +59,20 @@ type BaseGasFn = fn(&[u8]) -> u64;
 fn default_base_gas(_input: &[u8]) -> u64 {
     PRECOMPILE_BASE_GAS
 }
-
+fn vote_dispatch(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: alloy_primitives::U256,
+) -> outbe_primitives::error::Result<Bytes> {
+    outbe_vote::precompile::dispatch_with_handlers(
+        storage,
+        data,
+        caller,
+        value,
+        crate::handlers::vote::registry(),
+    )
+}
 /// Resolve outbe address to its dispatch entrypoint. Single source of truth
 /// for the registered outbe stateful-precompile table.
 fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, BaseGasFn)> {
@@ -203,6 +216,12 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             outbe_teeregistry::precompile::dispatch,
             default_base_gas,
         ),
+        a if a == VOTE_ADDRESS => ("vote", vote_dispatch, default_base_gas),
+        a if a == UPDATE_ADDRESS => (
+            "update",
+            outbe_update::precompile::dispatch,
+            default_base_gas,
+        ),
         _ => return None,
     };
     Some(entry)
@@ -301,6 +320,8 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
         ZKPROOF_POSEIDON_ADDRESS,
         ZKPROOF_GROTH16_ADDRESS,
         TEE_REGISTRY_ADDRESS,
+        VOTE_ADDRESS,
+        UPDATE_ADDRESS,
     ]
 }
 

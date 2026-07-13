@@ -6,12 +6,8 @@ import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
-import {IEntryPoint} from "@zerodev/kernel/interfaces/IEntryPoint.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
-import {CALLTYPE_SINGLE, EXECTYPE_DEFAULT} from "@zerodev/kernel/types/Constants.sol";
-import {ExecMode, ExecModeSelector, ExecModePayload} from "@zerodev/kernel/types/Types.sol";
-import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
-import {ECDSA} from "solady/utils/ECDSA.sol";
+import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 
 contract CCAFlow is BaseAATest {
     // -------------------------------------------------------------------------
@@ -116,7 +112,7 @@ contract CCAFlow is BaseAATest {
                 abi.encodeWithSelector(WithdrawalLimitPolicy.WithdrawalLimitExceeded.selector, 1001e6, 1000e6)
             )
         );
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
     }
 
     function test_CCA_CumulativeLimit() external {
@@ -141,7 +137,7 @@ contract CCAFlow is BaseAATest {
                 abi.encodeWithSelector(WithdrawalLimitPolicy.WithdrawalLimitExceeded.selector, 1100e6, 1000e6)
             )
         );
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
 
         // Balance unchanged after failed op
         assertEq(token.balanceOf(recipient.addr), 600e6, "recipient balance should still be 600");
@@ -172,12 +168,10 @@ contract CCAFlow is BaseAATest {
         otherToken.mint(smartAccount, 500e6);
 
         // Build UserOp targeting otherToken — not a bundle token → hook reverts
-        ExecMode execMode =
-            ExecLib.encode(CALLTYPE_SINGLE, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
+        bytes32 execMode = _execMode();
         bytes memory transferCall = abi.encodeWithSelector(otherToken.transfer.selector, recipient.addr, uint256(100e6));
-        bytes memory innerExecute = abi.encodeWithSelector(
-            Kernel.execute.selector, execMode, ExecLib.encodeSingle(address(otherToken), 0, transferCall)
-        );
+        bytes memory innerExecute =
+            abi.encodeWithSelector(Kernel.execute.selector, execMode, _single(address(otherToken), 0, transferCall));
         bytes memory callData = abi.encodePacked(Kernel.executeUserOp.selector, innerExecute);
 
         PackedUserOperation memory op = _buildCcaUserOpRaw(smartAccount, callData, address(token));
@@ -185,7 +179,7 @@ contract CCAFlow is BaseAATest {
         ops[0] = op;
 
         // Hook reverts with TokenNotInBundle → EntryPoint wraps as execution revert
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
         // The UserOp fails (success=false from EntryPointEvent) — recipient gets nothing
         assertEq(otherToken.balanceOf(recipient.addr), 0, "recipient should have no other token");
     }
@@ -195,18 +189,16 @@ contract CCAFlow is BaseAATest {
         vm.deal(smartAccount, 0.1 ether);
         _topUp(smartAccount, 500e6);
 
-        // Build a UserOp but sign with user key instead of cca key
+        // Build a UserOp but sign with user key instead of cca key (permission signature format)
         PackedUserOperation memory op = _buildCcaUserOp(smartAccount, recipient.addr, 100e6);
-        // Overwrite signature with wrong key
-        bytes32 userOpHash = entrypoint.getUserOpHash(op);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user.privKey, ECDSA.toEthSignedMessageHash(userOpHash));
-        op.signature = abi.encodePacked(bytes1(0xFF), r, s, v);
+        // Overwrite the signer slice with the wrong key → ECDSASigner recovers != cca → AA24.
+        op.signature = _permSignature(entrypoint.getUserOpHash(op), user.privKey);
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
 
         vm.expectRevert(abi.encodeWithSelector(IEntryPoint.FailedOp.selector, 0, "AA24 signature error"));
-        entrypoint.handleOps(ops, payable(ENTRYPOINT_BENEFICIARY));
+        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
     }
 
     function test_CCA_SeparatePermissionsPerToken() external {
@@ -293,10 +285,9 @@ contract CCAFlow is BaseAATest {
         (address attackerAddr,) = makeAddrAndKey("attacker2");
         address attackerSA = factory.createAccount(attackerAddr, attackerAddr, bundleTokens, bundleSenders, 99);
 
-        ExecMode execMode =
-            ExecLib.encode(CALLTYPE_SINGLE, EXECTYPE_DEFAULT, ExecModeSelector.wrap(0x00), ExecModePayload.wrap(0x00));
+        bytes32 execMode = _execMode();
         bytes memory decreaseCall = abi.encodeCall(BundleModulePlugin.decreaseBundleBalance, (address(token), 500e6));
-        bytes memory execCalldata = ExecLib.encodeSingle(address(bundlePlugin), 0, decreaseCall);
+        bytes memory execCalldata = _single(address(bundlePlugin), 0, decreaseCall);
 
         // attackerSA is not a registered executor on smartAccount → Kernel reverts
         vm.prank(attackerSA);

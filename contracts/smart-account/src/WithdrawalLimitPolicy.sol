@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {PolicyBase} from "@zerodev/kernel/sdk/moduleBase/PolicyBase.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
-import {packValidationData, ValidAfter, ValidUntil, ExecMode, CallType} from "@zerodev/kernel/types/Types.sol";
-import {ExecLib} from "@zerodev/kernel/utils/ExecLib.sol";
+import {PolicyBase} from "kernel-7579-plugins/base/PolicyBase.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {CallType} from "@zerodev/kernel/types/Types.sol";
 import {CALLTYPE_SINGLE} from "@zerodev/kernel/types/Constants.sol";
+import {LibERC7579} from "solady/accounts/LibERC7579.sol";
+import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IAccountExecute} from "@zerodev/kernel/interfaces/IAccountExecute.sol";
+import {IAccountExecute} from "account-abstraction/interfaces/IAccountExecute.sol";
 
 /// @title WithdrawalLimitPolicy
 /// @notice ERC-7579 Policy (module type 5) that enforces per-interval cumulative
@@ -87,8 +88,10 @@ contract WithdrawalLimitPolicy is PolicyBase {
         usedIds[msg.sender]--;
     }
 
-    /// @inheritdoc PolicyBase
-    function isInitialized(address wallet) external view override returns (bool) {
+    /// @notice Returns true once at least one policy id is installed for `wallet`.
+    /// @dev Not part of the kernel-7579-plugins `IModule`, so this is a plain declaration (no
+    ///      `override`); Kernel still invokes it by selector at install/uninstall time.
+    function isInitialized(address wallet) external view returns (bool) {
         return usedIds[wallet] > 0;
     }
 
@@ -124,8 +127,9 @@ contract WithdrawalLimitPolicy is PolicyBase {
         // Minimum: selector(4) + ExecMode(32) = 36 bytes
         if (uopCallData.length < 36) return 0;
 
-        ExecMode mode = ExecMode.wrap(bytes32(uopCallData[4:36]));
-        CallType callType = ExecLib.getCallType(mode);
+        // Call type is the first byte of the ExecMode word (at [4]); preserve the fixed-offset
+        // parsing of the surrounding execution calldata unchanged from the Kernel v3.3 version.
+        CallType callType = CallType.wrap(bytes1(uopCallData[4]));
         if (callType != CALLTYPE_SINGLE) return 0;
 
         // ABI-encoded params: [4:36]=ExecMode(static), [36:68]=offset=64, [68:100]=execLen, [100:]=execCalldata
@@ -136,7 +140,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
         // decodeSingle requires at least 52 bytes (target + value)
         if (execCalldata.length < 52) return 0;
-        (address target,, bytes calldata innerCallData) = ExecLib.decodeSingle(execCalldata);
+        (address target,, bytes calldata innerCallData) = LibERC7579.decodeSingle(execCalldata);
 
         WithdrawalLimitConfig storage cfg = configs[id][msg.sender];
         if (target != cfg.token) return 0;
@@ -161,7 +165,8 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
         state.usedAmount = newUsed;
 
-        return packValidationData(ValidAfter.wrap(0), ValidUntil.wrap(state.windowEnd));
+        // validAfter = 0, validUntil = windowEnd, sigFailed = false (account-abstraction v0.9 packing).
+        return _packValidationData(false, state.windowEnd, 0);
     }
 
     /// @inheritdoc PolicyBase

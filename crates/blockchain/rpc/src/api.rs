@@ -148,7 +148,6 @@ pub struct FinalizationProof {
     /// Hex of the `commonware_codec::Encode` finalized `ConsensusBlock`.
     pub block_hex: String,
 }
-
 /// Outbe custom RPC namespace.
 ///
 /// Provides read-only access to validator infrastructure state.

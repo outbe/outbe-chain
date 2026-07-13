@@ -29,6 +29,7 @@ fn gas_audit_tribute(
         issuance_currency: 1,
         nominal_amount_minor,
         reference_currency: 840,
+        exclude_from_intex_issuance: false,
         tribute_price_minor: U256::ZERO,
     }
 }
@@ -514,6 +515,7 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
                 issuance_currency: 1,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
             })
             .unwrap();
@@ -793,6 +795,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
                 issuance_currency: 1,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
             })
             .unwrap();

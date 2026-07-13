@@ -26,13 +26,12 @@ fn build_extended_precompiles() -> PrecompilesMap {
 }
 
 #[test]
-fn registered_address_count_is_29() {
+fn registered_address_count_is_31() {
     let count = outbe_precompile_addresses().len();
     assert_eq!(
-        count, 29,
-        "outbe registers 29 stateful precompiles (incl. Promis, PromisFactory, Intex, \
-         IntexFactory, Desis, and TEE registry; the shielded gratispool was removed by the \
-         TEE-gratis migration); if this changes, update the address list in \
+        count, 32,
+        "outbe registers 32 stateful precompiles (incl. Promis, PromisFactory, Intex, \
+         IntexFactory, Desis, and TEE registry); if this changes, update the address list in \
          `outbe_precompile_addresses()` and the dispatch match in `extend_outbe_precompiles`"
     );
 }

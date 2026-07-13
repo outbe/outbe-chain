@@ -3,8 +3,8 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
-import {parseValidationData, ValidAfter, ValidUntil} from "@zerodev/kernel/types/Types.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {ValidationData, _parseValidationData} from "account-abstraction/core/Helpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 
@@ -173,9 +173,9 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
 
-        (ValidAfter validAfter, ValidUntil validUntil,) = parseValidationData(result);
-        assertEq(ValidAfter.unwrap(validAfter), 0, "validAfter should be 0");
-        assertGt(ValidUntil.unwrap(validUntil), 0, "validUntil should be non-zero");
+        ValidationData memory vd = _parseValidationData(result);
+        assertEq(vd.validAfter, 0, "validAfter should be 0");
+        assertGt(vd.validUntil, 0, "validUntil should be non-zero");
     }
 
     function test_CheckUserOpPolicy_PassesAtLimit() public {
@@ -185,8 +185,8 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
 
-        (, ValidUntil validUntil,) = parseValidationData(result);
-        assertGt(ValidUntil.unwrap(validUntil), 0, "validUntil should be non-zero");
+        ValidationData memory vd = _parseValidationData(result);
+        assertGt(vd.validUntil, 0, "validUntil should be non-zero");
         (uint256 usedAfter,) = policy.states(DEFAULT_ID, kernelAccount);
         assertEq(usedAfter, DEFAULT_LIMIT, "usedAmount should equal limit");
     }
