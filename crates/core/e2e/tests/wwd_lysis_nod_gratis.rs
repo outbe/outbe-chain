@@ -373,6 +373,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     issuance_currency: 840,
                     nominal_amount_minor: green_nominal,
                     reference_currency: 840,
+                    exclude_from_intex_issuance: false,
                     tribute_price_minor: U256::ZERO,
                 })
                 .unwrap();
@@ -395,6 +396,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     issuance_currency: 840,
                     nominal_amount_minor: red_small_nominal,
                     reference_currency: 840,
+                    exclude_from_intex_issuance: false,
                     tribute_price_minor: U256::ZERO,
                 })
                 .unwrap();
@@ -407,6 +409,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     issuance_currency: 840,
                     nominal_amount_minor: red_large_nominal,
                     reference_currency: 840,
+                    exclude_from_intex_issuance: false,
                     tribute_price_minor: U256::ZERO,
                 })
                 .unwrap();

@@ -95,6 +95,7 @@ mod tests {
                 nonce: vec![1; 12],
                 ephemeral_pubkey: U256::from(12345u64),
                 reference_currency: 840,
+                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::from(1u64),
             }],
         };
