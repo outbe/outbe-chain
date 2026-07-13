@@ -213,11 +213,18 @@ async function printVaultProviderInfo(
   assetAddress: string,
   erc20Meta: TokenMeta,
 ) {
+  console.log(`\n=== Vault Provider: ${vaultProviderAddress} ===`);
+
+  const vaultCount = await vaultProvider.assetVaultsCount(assetAddress);
+  if (vaultCount === 0n) {
+    console.log(`  No vaults registered for asset ${assetAddress}`);
+    return;
+  }
+
   const underlyingVault = await vaultProvider.assetVaultAt(assetAddress, 0);
   const sharesBalance = await vaultProvider.sharesBalance(underlyingVault);
   const vaultErc20Balance = await token.balanceOf(underlyingVault);
 
-  console.log(`\n=== Vault Provider: ${vaultProviderAddress} ===`);
   console.log(`  Underlying Outbe vault:  ${underlyingVault}`);
   console.log(`  Shares balance:          ${sharesBalance}`);
   console.log(`  Vault ERC20 bal:         ${formatTokenMeta(vaultErc20Balance, erc20Meta)}`);
