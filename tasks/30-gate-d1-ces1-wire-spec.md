@@ -36,10 +36,8 @@ normative until the format is defined independently of the first implementation.
    `proof_encoding_version` negotiation, trusted-local-testnet-node vs independent-verification modes;
    the LIST RPC surface for T26 (method names for by-owner/by-day/by-WWD, request/response DTOs, stable
    ordering key, continuation/offset semantics, numeric codes, `with_proof` shape, max-response behavior)
-   and the bounded RECOVERY request form `{checkpoint, canonical_identity}` with `RECOVERY_BODY_WINDOW`
-   value and status codes (audit v6 P0-1/P1-5). The list-RPC surface implements the T36-approved port map
-   (audit-final B-03). Recovery responses use INTERVAL version-selection semantics — the version current
-   AT the requested checkpoint (audit-final H-15). Height-status split (audit-final M-12):
+  . The list-RPC surface implements the T36-approved port map
+   (audit-final B-03). Height-status split (audit-final M-12):
    `height < local` ⇒ historical `unsupported`; `height > local` ⇒ retryable `not_ready` carrying
    `{local, required}` checkpoints; version mismatch stays `unsupported`.
 7. Snapshot format v1: canonical record/container encoding, inclusive/exclusive range semantics and
@@ -53,23 +51,13 @@ normative until the format is defined independently of the first implementation.
    descriptor for a present leaf all reject; empty-present and retired-absent golden vectors included.
 8. Versioning/reservation rules and the golden-vector generation procedure (reference generator, fixture
    layout, regeneration policy).
-9. Local runtime outcome vocabulary (audit v3 P1-3, granularity per audit v4 P0-1):
-   `ProjectionNotReady {local_checkpoint, required_checkpoint, reason}` — global readiness gate;
-   `BodyDataUnavailable {canonical_identity, checkpoint, reason}` — per-operation; both are LOCAL
-   executor outcomes, never wire/consensus errors and never in receipts;
-   `SameBlockBodyUnavailable {canonical_identity, block_number}` — deterministic domain revert.
-   Which of these surface in RPC/status/metrics, their numeric codes at process boundaries, and the
-   bounded timeout/retry/queue budget values for the T33 I/O layer. Includes the `NOT_READY_CATCHUP`
-   sub-state and the parent-checkpoint recovery status contract (audit v7): recovery target shape
-   `{checkpoint, canonical_identity}`; on window/source exhaustion — typed recovery failure, node remains
-   NOT_READY, operator manual paired-restore status (NO snapshot fallback exists); operator status
-   surface for catch-up progress. T30 is the SINGLE numeric owner of the `RECOVERY_BODY_WINDOW` minimum
-   (T34 validates it via SLO/soak). Also owns the shared `ProjectionBaselineCoverageReport` type/API
-   (produced by T22 through T20's baseline-init, consumed by T33's readiness checker — audit v7 P1-5).
-10. Staged-batch serialized encoding grammar (postfix PF-M07): the normative byte encoding of a staged
-   tree batch — the canonical unit in which `max_staged_tree_bytes` is measured; T31 references it,
-   T15 implements it with golden vectors, T10/T12 measure in it.
-11. Provisional marking is GLOBAL: every benchmark-controlled numeric — K values, body/byte limits, gas
+9. Local runtime outcome vocabulary (minimal per the 2026-07-13 scope re-cut):
+   `BodyReadFailed {canonical_identity, reason}` — node-local deterministic failure of the reading
+   operation (missing/corrupt/stale/mismatched row, I/O timeout); never a wire/consensus error, never in
+   receipts. `SameBlockBodyUnavailable {canonical_identity, block_number}` — deterministic domain revert.
+   Which surface in RPC/status/metrics and their numeric codes at process boundaries; the bounded
+   timeout/queue budget values for the T33 I/O thread.
+10. Provisional marking is GLOBAL: every benchmark-controlled numeric — K values, body/byte limits, gas
    profiles, staged bounds — carries `PROVISIONAL_Q11`, not only K (audit v3 P1-3). This includes the
    READ bounds of audit-final B-10: Lysis page max rows/bytes and the point-read count/bytes reservation
    values.
