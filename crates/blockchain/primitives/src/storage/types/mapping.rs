@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 
 use crate::error::Result;
-use crate::storage::types::{Slot, Storable, StorageBytes, StorageKey};
+use crate::storage::types::{Slot, Storable, StorageBytes, StorageKey, StorageSet};
 use crate::storage::StorageHandle;
 
 /// A Solidity-compatible mapping: `mapping(K => V)`.
@@ -79,6 +79,18 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, StorageBytes<'storage>> {
     /// Writes a UTF-8 string value for the given key.
     pub fn write_string(&self, key: &K, value: &str) -> Result<()> {
         self.get_bytes(key).write_string(value)
+    }
+}
+
+// Mapping<K, StorageSet<T>> → an enumerable set per key (OZ `mapping(key =>
+// EnumerableSet)` pattern). The inner set is rooted at the key's mapping slot.
+impl<'storage, K: StorageKey, T: Storable + StorageKey>
+    Mapping<'storage, K, StorageSet<'storage, T>>
+{
+    /// Returns the `StorageSet` bucket for the given key.
+    pub fn get_set(&self, key: &K) -> StorageSet<'storage, T> {
+        let slot = key.mapping_slot(self.base_slot);
+        StorageSet::new(slot, self.address, self.storage.clone())
     }
 }
 

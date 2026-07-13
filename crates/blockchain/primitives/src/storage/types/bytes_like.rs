@@ -56,18 +56,29 @@ impl<'storage> StorageBytes<'storage> {
     }
 
     pub fn write(&self, data: &[u8]) -> Result<()> {
+        // Number of data-run slots the current value occupies (short form uses
+        // none — the bytes live inline in the base slot).
+        let old_len = self.len()?;
+        let old_data_slots = if old_len <= 31 {
+            0
+        } else {
+            old_len.div_ceil(32)
+        };
+
         let length = data.len();
+        let new_data_slots = if length <= 31 { 0 } else { length.div_ceil(32) };
+
         if length <= 31 {
             let mut word = [0u8; 32];
             word[..length].copy_from_slice(data);
             word[31] = (length * 2) as u8;
             self.storage
-                .sstore(self.address, self.base_slot, U256::from_be_bytes(word))
+                .sstore(self.address, self.base_slot, U256::from_be_bytes(word))?;
         } else {
             self.storage
                 .sstore(self.address, self.base_slot, U256::from(length * 2 + 1))?;
             let data_start = data_slot(self.base_slot);
-            for i in 0..length.div_ceil(32) {
+            for i in 0..new_data_slots {
                 let start = i * 32;
                 let end = (start + 32).min(length);
                 let mut word = [0u8; 32];
@@ -78,8 +89,30 @@ impl<'storage> StorageBytes<'storage> {
                     U256::from_be_bytes(word),
                 )?;
             }
-            Ok(())
         }
+
+        // Zero any stale tail slots left by a longer previous value, so a
+        // shrinking overwrite leaves no dead data in state.
+        if old_data_slots > new_data_slots {
+            let data_start = data_slot(self.base_slot);
+            for i in new_data_slots..old_data_slots {
+                self.storage
+                    .sstore(self.address, data_start + U256::from(i), U256::ZERO)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes only if the stored value differs from `data`. Returns `true`
+    /// when a write was performed. The compare reads the current value once
+    /// (SLOAD, cheap) to avoid an unnecessary full rewrite (SSTORE, ~50x the
+    /// cost per slot) when the content is unchanged.
+    pub fn write_if_changed(&self, data: &[u8]) -> Result<bool> {
+        if self.read()? == data {
+            return Ok(false);
+        }
+        self.write(data)?;
+        Ok(true)
     }
 
     pub fn read_string(&self) -> Result<String> {
@@ -92,6 +125,16 @@ impl<'storage> StorageBytes<'storage> {
     }
 
     pub fn clear(&self) -> Result<()> {
+        // Zero the data run first (long form), then the length/base slot, so no
+        // dead payload slots survive a clear of a previously-long value.
+        let old_len = self.len()?;
+        if old_len > 31 {
+            let data_start = data_slot(self.base_slot);
+            for i in 0..old_len.div_ceil(32) {
+                self.storage
+                    .sstore(self.address, data_start + U256::from(i), U256::ZERO)?;
+            }
+        }
         self.storage
             .sstore(self.address, self.base_slot, U256::ZERO)
     }
@@ -191,6 +234,74 @@ mod tests {
             sb.write_string("hello").unwrap();
             sb.clear().unwrap();
             assert!(sb.is_empty().unwrap());
+        });
+    }
+
+    #[test]
+    fn test_shrink_clears_stale_tail() {
+        // A long value overwritten by a shorter one must leave no dead data in
+        // the tail data-run slots.
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+            let long: Vec<u8> = (0..100u16).map(|i| i as u8).collect();
+            sb.write(&long).unwrap();
+            let long_slots = 100usize.div_ceil(32);
+
+            sb.write(b"short").unwrap();
+            assert_eq!(sb.read().unwrap(), b"short");
+
+            // Every former data-run slot is now zero.
+            let data_start = data_slot(U256::ZERO);
+            for i in 0..long_slots {
+                let raw = sb.storage.sload(ADDR, data_start + U256::from(i)).unwrap();
+                assert!(raw.is_zero(), "stale tail slot {i} not cleared");
+            }
+        });
+    }
+
+    #[test]
+    fn test_long_to_shorter_long_clears_extra_tail() {
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+            let long: Vec<u8> = (0..200u16).map(|i| i as u8).collect(); // 7 slots
+            sb.write(&long).unwrap();
+            let mid: Vec<u8> = (0..64u16).map(|i| i as u8).collect(); // 2 slots
+            sb.write(&mid).unwrap();
+            assert_eq!(sb.read().unwrap(), mid);
+
+            let data_start = data_slot(U256::ZERO);
+            for i in 2..200usize.div_ceil(32) {
+                let raw = sb.storage.sload(ADDR, data_start + U256::from(i)).unwrap();
+                assert!(raw.is_zero(), "stale slot {i} not cleared");
+            }
+        });
+    }
+
+    #[test]
+    fn test_clear_zeroes_long_data_run() {
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+            let long: Vec<u8> = vec![0xEE; 128];
+            sb.write(&long).unwrap();
+            sb.clear().unwrap();
+            assert!(sb.is_empty().unwrap());
+
+            let data_start = data_slot(U256::ZERO);
+            for i in 0..128usize.div_ceil(32) {
+                let raw = sb.storage.sload(ADDR, data_start + U256::from(i)).unwrap();
+                assert!(raw.is_zero(), "clear left data slot {i} non-zero");
+            }
+        });
+    }
+
+    #[test]
+    fn test_write_if_changed_skips_equal() {
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+            assert!(sb.write_if_changed(b"hello").unwrap()); // first write
+            assert!(!sb.write_if_changed(b"hello").unwrap()); // unchanged → skip
+            assert!(sb.write_if_changed(b"world").unwrap()); // changed → write
+            assert_eq!(sb.read().unwrap(), b"world");
         });
     }
 }

@@ -1,11 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Ctx } from "../chain.js";
-import { CONTRACTS } from "../registry.js";
+import { CONTRACTS, proposalStatusName } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const addr = z.string().describe("0x-prefixed address");
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
+
+/** Attach the human-readable proposal status name (statusCode -> {code, name}). */
+function annotateProposal(p: unknown): Record<string, unknown> {
+  const r = { ...(p as Record<string, unknown>) };
+  const code = Number(r.statusCode);
+  delete r.statusCode;
+  return { ...r, status: { code, name: proposalStatusName(code) } };
+}
 
 export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
@@ -245,5 +253,107 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     "Pending validator rewards for an address (in COEN).",
     { validator: addr },
     handler(async ({ validator }) => ok(await view(ctx, "rewards", "pendingRewards", [validator]))),
+  );
+
+  // --- Governance (canon, meta-canon, OIP, GIP) — read-only -----------------
+  server.tool(
+    "metacanon_get",
+    "The meta-canon: current text + version + keccak hash (constitutional layer regulating the canon).",
+    {},
+    handler(async () => ok(await view(ctx, "governance", "getMetaCanon", []))),
+  );
+
+  server.tool(
+    "canon_get",
+    "The canon: current text + version + keccak hash (active protocol norms).",
+    {},
+    handler(async () => ok(await view(ctx, "governance", "getCanon", []))),
+  );
+
+  const proposalId = z.string().describe("Proposal id (decimal or 0x hex), 1-based");
+
+  server.tool(
+    "oip_get",
+    "One Outbe Improvement Proposal by id: author, status, blocks, text hash, and full text.",
+    { id: proposalId },
+    handler(async ({ id }) =>
+      ok(annotateProposal(await view(ctx, "governance", "getOip", [BigInt(id)]))),
+    ),
+  );
+
+  server.tool(
+    "gip_get",
+    "One Governance Improvement Proposal by id: author, status, blocks, text hash, and full text.",
+    { id: proposalId },
+    handler(async ({ id }) =>
+      ok(annotateProposal(await view(ctx, "governance", "getGip", [BigInt(id)]))),
+    ),
+  );
+
+  // Index-backed, PAGINATED listing (metadata only — omits the full text).
+  // Exactly one of `author` / `status` must be given; each maps to a dedicated
+  // on-chain index (getByAuthor / getAccepted / getRejected). Returns `total`
+  // (the whole bucket size) plus the requested `[offset, offset+limit)` page.
+  const listFilter = {
+    author: z.string().optional().describe("0x address — list this author's proposals"),
+    status: z
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe("'accepted' (Approved or Implemented) or 'rejected'"),
+    offset: z.number().int().min(0).optional().describe("page start (default 0)"),
+    limit: z.number().int().min(1).max(1000).optional().describe("page size (default 100, max 1000)"),
+  };
+
+  async function listProposals(
+    kind: "Oip" | "Gip",
+    args: { author?: string; status?: "accepted" | "rejected"; offset?: number; limit?: number },
+  ): Promise<{ total: number; offset: number; limit: number; items: unknown[] }> {
+    const { author, status } = args;
+    if ((author === undefined) === (status === undefined)) {
+      throw new Error("provide exactly one of `author` or `status` (accepted|rejected)");
+    }
+    const offset = args.offset ?? 0;
+    const limit = args.limit ?? 100;
+    let listFn: string;
+    let countFn: string;
+    let pageArgs: unknown[];
+    if (author !== undefined) {
+      listFn = `get${kind}sByAuthor`;
+      countFn = `${kind.toLowerCase()}CountByAuthor`;
+      pageArgs = [author, offset, limit];
+    } else {
+      const cap = status === "accepted" ? "Accepted" : "Rejected";
+      listFn = `get${cap}${kind}s`;
+      countFn = `${status}${kind}Count`; // acceptedOipCount / rejectedGipCount ...
+      pageArgs = [offset, limit];
+    }
+    const countCallArgs = author !== undefined ? [author] : [];
+    const [metas, total] = await Promise.all([
+      view(ctx, "governance", listFn, pageArgs) as Promise<unknown[]>,
+      view(ctx, "governance", countFn, countCallArgs),
+    ]);
+    return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
+  }
+
+  server.tool(
+    "oip_list",
+    "List OIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+      "(their OIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
+    listFilter,
+    handler(async (args) => {
+      const { total, offset, limit, items } = await listProposals("Oip", args);
+      return ok({ total, offset, limit, oips: items });
+    }),
+  );
+
+  server.tool(
+    "gip_list",
+    "List GIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+      "(their GIPs) or `status` = accepted | rejected, plus optional `offset`/`limit`.",
+    listFilter,
+    handler(async (args) => {
+      const { total, offset, limit, items } = await listProposals("Gip", args);
+      return ok({ total, offset, limit, gips: items });
+    }),
   );
 }

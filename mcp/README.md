@@ -110,6 +110,13 @@ on any precompile, decoded. `contract` is a registry name or a `0x` address.
 `currency_pairs`, `currency_rate`, `currency_rate_vwap`, `validators`, `validator_get`,
 `staking_info`, `rewards_claimable`.
 
+**Governance reads** (canon / meta-canon / proposals) — `metacanon_get`, `canon_get`,
+`oip_get { id }`, `gip_get { id }`, `oip_list`, `gip_list`. `*_get` returns the full
+text + status. `*_list` is index-backed and **paginated**: give `author` (their
+proposals) or `status` = `accepted` (Approved or Implemented) | `rejected`, plus
+optional `offset` (default 0) / `limit` (default 100, max 1000); it returns
+`{ total, offset, limit, … }` with proposal metadata only (omits the text body).
+
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
 `staking_unstake`, `staking_unbonded_claim`, `rewards_claim`, `agentreward_claim`,
 `oracle_feeder_delegate`, `oracle_vote_submit`. Amounts are whole COEN strings (`"100"`,
