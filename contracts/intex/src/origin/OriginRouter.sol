@@ -99,7 +99,9 @@ contract OriginRouter is
     function wire(address _desis, address _intexFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_desis == address(0)) revert ZeroAddress("desis");
         if (_intexFactory == address(0)) revert ZeroAddress("intexFactory");
-        _assertDesisInterface(_desis);
+        // TEMP (test-only branch, do not merge): skip the ERC-165 Desis assert so wire() accepts the
+        // legacy node's Desis precompile for the contract-only proceeds test.
+        // _assertDesisInterface(_desis);
 
         OriginRouterStorage storage $ = _os();
         address desisOld = $.desis;
