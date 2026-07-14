@@ -52,7 +52,7 @@ mod tests {
             log_at(UPDATE_ADDRESS),
             log_at(GOVERNANCE_ADDRESS),
         ]);
-        assert_eq!(whitelisted.len(), 2);
+        assert_eq!(whitelisted.len(), 3);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
         assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
