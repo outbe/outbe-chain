@@ -6,6 +6,7 @@ use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
+    time::timestamp_to_date_key,
 };
 
 /// Result of a lysis execution.
@@ -16,6 +17,8 @@ pub struct LysisResult {
 }
 
 /// Executes lysis for a given worldwide day with the specified gratis allocation.
+/// `auction_timestamp` is the day's scheduled auction time (NOT within `wwd`);
+/// the contributor map is keyed by its date key, the auction series id.
 ///
 /// All arithmetic uses integer fixed-point math (no f32/f64).
 ///
@@ -28,6 +31,7 @@ pub struct LysisResult {
 pub fn lysis(
     storage: StorageHandle,
     wwd: WorldwideDay,
+    auction_timestamp: u64,
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
@@ -139,11 +143,13 @@ pub fn lysis(
     }
 
     // Capture the contributor map (owner -> Σ nominal of processed tributes)
-    // for this day's auction series (series_id == wwd) BEFORE the tributes are
-    // burned, so IntexFactory can later pay creators proportional to nominal.
+    // for this day's auction series BEFORE the tributes are burned, so
+    // IntexFactory can later pay creators proportional to nominal. The series
+    // id mirrors desis: date key of the auction timestamp.
     if !contributors.is_empty() {
         let list: Vec<(Address, U256)> = contributors.into_iter().collect();
-        outbe_intex::api::record_contributors(&storage, u32::from(wwd), &list)?;
+        let series_id = timestamp_to_date_key(auction_timestamp);
+        outbe_intex::api::record_contributors(&storage, series_id, &list)?;
     }
 
     // Bucket qualification is NOT written here. Buckets become qualified when
