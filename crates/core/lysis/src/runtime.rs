@@ -17,8 +17,8 @@ pub struct LysisResult {
 }
 
 /// Executes lysis for a given worldwide day with the specified gratis allocation.
-/// `auction_timestamp` is the day's scheduled auction time (NOT within `wwd`);
-/// the contributor map is keyed by its date key, the auction series id.
+/// `auction_timestamp` is the day's scheduled auction time (weeks after `wwd`);
+/// its date key is the auction series id that keys the contributor map.
 ///
 /// All arithmetic uses integer fixed-point math (no f32/f64).
 ///
