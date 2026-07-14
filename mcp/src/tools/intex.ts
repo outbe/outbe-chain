@@ -56,11 +56,12 @@ const PROMIS_MINED_EVENT = parseAbiItem(
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
 );
 
-// Auction series ids are WorldwideDay dates (yyyymmdd), one per day. Active
-// auctions are discovered by probing getAuctionStage across a date window — a few
-// cheap point reads — rather than scanning logs, which public RPCs range-limit.
-const DEFAULT_DAYS_BACK = 2;
-const DEFAULT_DAYS_AHEAD = 10;
+// Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
+// after its day, so active ids sit up to ~26 days in the past. Discovery probes
+// getAuctionStage across a date window — a few cheap point reads — rather than
+// scanning logs, which public RPCs range-limit.
+const DEFAULT_DAYS_BACK = 30;
+const DEFAULT_DAYS_AHEAD = 2;
 const DAY_MS = 86_400_000;
 
 function ymdToDate(ymd: number): Date {
@@ -324,14 +325,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auctions_active",
-    "Active Intex auctions and their stage. Series ids are dates (yyyymmdd); probes a date window " +
-      "(default today-2..+10, override via from_date/to_date). Active = CommittingBids or RevealingBids; " +
+    "Active Intex auctions and their stage. Auction ids are worldwide days (yyyymmdd); probes a date window " +
+      "(default today-30..+2, override via from_date/to_date). Active = CommittingBids or RevealingBids; " +
       "pass include_all for every stage.",
     {
       network: networkArg.optional(),
       include_all: z.boolean().optional(),
-      from_date: z.number().int().optional().describe("window start yyyymmdd (default today-2)"),
-      to_date: z.number().int().optional().describe("window end yyyymmdd (default today+10)"),
+      from_date: z.number().int().optional().describe("window start yyyymmdd (default today-30)"),
+      to_date: z.number().int().optional().describe("window end yyyymmdd (default today+2)"),
     },
     handler(async ({ network, include_all, from_date, to_date }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
