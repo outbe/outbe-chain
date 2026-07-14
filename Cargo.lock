@@ -7077,6 +7077,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-common",
  "outbe-gem",
+ "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

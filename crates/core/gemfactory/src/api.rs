@@ -23,6 +23,23 @@ pub fn mint_gem(
     )
 }
 
+pub fn setup_factory(
+    storage: &StorageHandle<'_>,
+    merchant: Address,
+    source_intex_id: u32,
+) -> Result<U256> {
+    runtime::setup_factory(storage, merchant, source_intex_id)
+}
+
+pub fn mint_merchant_gem(
+    storage: &StorageHandle<'_>,
+    factory_id: U256,
+    owner: Address,
+    gem_load: U256,
+) -> Result<U256> {
+    runtime::mint_merchant_gem(storage, factory_id, owner, gem_load)
+}
+
 pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) -> Result<()> {
     runtime::settle_gem(storage, caller, gem_id)
 }

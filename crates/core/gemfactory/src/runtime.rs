@@ -12,10 +12,12 @@ use outbe_vaultprovider::api::IVaultProvider;
 
 use outbe_gem::GEM_CALL_PERIOD_SECONDS;
 
-use crate::constants::{FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, SRA_COEFFICIENT_PERCENT};
+use crate::constants::{
+    FLOOR_MARKUP_PERCENT, GEM_CALL_MARKUP_PERCENT, PARK_PERIOD_SECONDS, SRA_COEFFICIENT_PERCENT,
+};
 use crate::errors::GemFactoryError;
 use crate::events::{GemBurned, GemIssued, GemSettled};
-use crate::schema::{GemFactoryContract, GemTypes};
+use crate::schema::{FactoryRecord, GemFactoryContract, GemTypes};
 use crate::sol_ext::IERC20;
 
 pub fn mint_gem(
@@ -80,6 +82,137 @@ pub fn mint_gem(
             costAmount: cost_amount,
             floorPrice: floor_price,
             issuedAt: issued_at,
+        },
+    )?;
+
+    Ok(gem_id)
+}
+
+/// Register a merchant Gem Factory from a parked Intex. Reads the source series
+/// for its entry/floor snapshot and whole-series Promis capacity. The source
+/// Intex NFT burn happens outside this module.
+pub fn setup_factory(
+    storage: &StorageHandle<'_>,
+    merchant: Address,
+    source_intex_id: u32,
+) -> Result<U256> {
+    if merchant.is_zero() {
+        return Err(GemFactoryError::InvalidOwner.into());
+    }
+
+    let series = outbe_intex::api::get_series(storage, source_intex_id)?
+        .ok_or(GemFactoryError::SourceIntexNotFound)?;
+    // v1 supports only same-currency factories (mirrors mint_gem's limitation).
+    if series.issuance_currency != series.reference_currency {
+        return Err(GemFactoryError::IssuanceReferenceMismatch {
+            issuance: series.issuance_currency,
+            reference: series.reference_currency,
+        }
+        .into());
+    }
+    let capacity = series
+        .promis_load_minor
+        .checked_mul(U256::from(series.issued_intex_count))
+        .ok_or(GemFactoryError::Overflow)?;
+    if capacity.is_zero() {
+        return Err(GemFactoryError::InsufficientCapacity.into());
+    }
+
+    let parked_at = storage.timestamp()?.to::<u64>();
+    let factory_id =
+        GemFactoryContract::generate_factory_id(source_intex_id, storage.block_number()?);
+
+    let factory = GemFactoryContract::new(storage.clone());
+    factory.factories.create(&FactoryRecord {
+        factory_id,
+        merchant,
+        source_intex_id,
+        remaining_capacity: capacity,
+        source_entry_price: series.entry_price_minor,
+        source_floor_price: series.floor_price_minor,
+        issuance_currency: series.issuance_currency,
+        reference_currency: series.reference_currency,
+        parked_at,
+    })?;
+
+    let prev_parked = factory.total_intex_parked.read()?;
+    let new_parked = prev_parked
+        .checked_add(capacity)
+        .ok_or(GemFactoryError::Overflow)?;
+    factory.total_intex_parked.write(new_parked)?;
+
+    Ok(factory_id)
+}
+
+/// Issue one Merchant gem to a customer, draining the factory's capacity.
+pub fn mint_merchant_gem(
+    storage: &StorageHandle<'_>,
+    factory_id: U256,
+    owner: Address,
+    gem_load: U256,
+) -> Result<U256> {
+    if owner.is_zero() {
+        return Err(GemFactoryError::InvalidOwner.into());
+    }
+
+    let factory = GemFactoryContract::new(storage.clone());
+    let mut record = factory
+        .factories
+        .get(factory_id)?
+        .ok_or(GemFactoryError::FactoryRecordNotFound)?;
+
+    let now = storage.timestamp()?.to::<u64>();
+    if now >= record.parked_at + PARK_PERIOD_SECONDS {
+        return Err(GemFactoryError::FactoryRecordExpired.into());
+    }
+    let remaining = record
+        .remaining_capacity
+        .checked_sub(gem_load)
+        .ok_or(GemFactoryError::InsufficientCapacity)?;
+
+    let coen_rate = read_oracle_rate(storage, record.issuance_currency)?;
+    let entry_price = coen_rate.max(record.source_entry_price);
+    let cost_amount = compute_cost(entry_price, gem_load, 100)?;
+    let floor_price = floor_with_markup(entry_price)?.max(record.source_floor_price);
+    let call_threshold = call_threshold_with_markup(entry_price)?;
+
+    let gem_id = gem_api::add_gem(
+        storage,
+        GemAddParams {
+            owner,
+            gem_type: GemTypes::Merchant as u8,
+            gem_load,
+            entry_price,
+            cost_amount,
+            floor_price,
+            call_threshold,
+            issuance_currency: record.issuance_currency,
+            reference_currency: record.reference_currency,
+            initial_state: GemState::Issued,
+            issued_at: now,
+        },
+    )?;
+
+    record.remaining_capacity = remaining;
+    factory.factories.update(&record)?;
+
+    let prev_total = factory.total_gems_issued.read()?;
+    let new_total = prev_total
+        .checked_add(U256::from(1))
+        .ok_or(GemFactoryError::Overflow)?;
+    factory.total_gems_issued.write(new_total)?;
+
+    emit_event(
+        storage,
+        GemIssued {
+            gemId: gem_id,
+            gemType: GemTypes::Merchant as u8,
+            owner,
+            gemLoad: gem_load,
+            entryPrice: entry_price,
+            costAmount: cost_amount,
+            floorPrice: floor_price,
+            issuedAt: now,
         },
     )?;
 

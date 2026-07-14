@@ -20,6 +20,18 @@ pub enum GemFactoryError {
     #[error("merchant flow deferred")]
     MerchantDeferred,
 
+    #[error("source intex not found")]
+    SourceIntexNotFound,
+
+    #[error("factory record not found")]
+    FactoryRecordNotFound,
+
+    #[error("insufficient factory capacity")]
+    InsufficientCapacity,
+
+    #[error("factory record expired")]
+    FactoryRecordExpired,
+
     #[error("invalid asset")]
     InvalidAsset,
 

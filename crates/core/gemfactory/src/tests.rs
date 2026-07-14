@@ -5,8 +5,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
+use crate::constants::PARK_PERIOD_SECONDS;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemTypes};
+use crate::schema::{FactoryRecord, GemFactoryContract, GemTypes};
 
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
@@ -343,5 +344,147 @@ fn statistics_track_mint_count() {
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));
+    });
+}
+
+// --- Merchant gems ---
+
+const SOURCE_INTEX_ID: u32 = 7;
+
+/// Seed an Intex series (whole-series capacity = `promis_load × count`) and park
+/// it into a factory. Returns the factory id.
+fn seed_and_setup(
+    storage: &StorageHandle,
+    entry: U256,
+    floor: U256,
+    promis_load: u128,
+    count: u32,
+) -> U256 {
+    outbe_intex::api::create_series(
+        storage,
+        outbe_intex::CreateSeriesParams {
+            series_id: SOURCE_INTEX_ID,
+            issued_intex_count: count,
+            promis_load_minor: promis_load,
+            entry_price_minor: entry,
+            floor_price_minor: floor,
+            call_price_minor: U256::ZERO,
+            call_trigger: outbe_intex::IntexCallTrigger::default(),
+            issued_at: T_NOW as u32,
+            issuance_currency: 840,
+            reference_currency: 840,
+        },
+    )
+    .unwrap();
+    runtime::setup_factory(storage, ALICE, SOURCE_INTEX_ID).unwrap()
+}
+
+fn e18_u128() -> u128 {
+    10u128.pow(18)
+}
+
+#[test]
+fn setup_factory_reads_series_and_bumps_parked() {
+    with_storage(None, |storage| {
+        // capacity = 1e18 promis/unit × 100 units = 100e18.
+        let id = seed_and_setup(storage, one_e18(), one_e18(), e18_u128(), 100);
+        let capacity = U256::from(100u64) * one_e18();
+
+        let factory = GemFactoryContract::new(storage.clone());
+        let rec = factory.factories.get(id).unwrap().unwrap();
+        assert_eq!(rec.merchant, ALICE);
+        assert_eq!(rec.source_intex_id, SOURCE_INTEX_ID);
+        assert_eq!(rec.remaining_capacity, capacity);
+        assert_eq!(rec.source_entry_price, one_e18());
+        assert_eq!(factory.total_intex_parked.read().unwrap(), capacity);
+    });
+}
+
+#[test]
+fn setup_factory_unknown_source_rejects() {
+    with_storage(None, |storage| {
+        let r = runtime::setup_factory(storage, ALICE, SOURCE_INTEX_ID);
+        assert!(err_msg(r).contains("source intex"));
+    });
+}
+
+#[test]
+fn mint_merchant_gem_mints_issued_and_drains_capacity() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        // source entry below coen -> entry follows coen.
+        let id = seed_and_setup(storage, one_e18(), one_e18(), e18_u128(), 100);
+        let capacity = U256::from(100u64) * one_e18();
+
+        let load = U256::from(10u64) * one_e18();
+        let gem_id = runtime::mint_merchant_gem(storage, id, BOB, load).unwrap();
+
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.owner, BOB);
+        assert_eq!(item.gem_type, GemTypes::Merchant as u8);
+        assert_eq!(item.state, GemState::Issued as u8);
+        assert_eq!(item.entry_price, rate); // max(coen, source_entry) = coen
+        assert_eq!(item.cost_amount, U256::from(20u64) * one_e18()); // entry * load
+        assert_eq!(item.floor_price, rate * U256::from(108u64) / U256::from(100u64));
+        assert_eq!(item.call_threshold, rate * U256::from(228u64) / U256::from(100u64));
+
+        let factory = GemFactoryContract::new(storage.clone());
+        let rec = factory.factories.get(id).unwrap().unwrap();
+        assert_eq!(rec.remaining_capacity, capacity - load);
+        assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(1u64));
+    });
+}
+
+#[test]
+fn mint_merchant_gem_anchors_entry_and_floor_to_source() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        // source entry above coen, source floor above 1.08 * entry -> both dominate.
+        let source_entry = U256::from(3u64) * one_e18();
+        let source_floor = U256::from(5u64) * one_e18();
+        let id = seed_and_setup(storage, source_entry, source_floor, e18_u128(), 100);
+
+        let gem_id = runtime::mint_merchant_gem(storage, id, BOB, one_e18()).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.entry_price, source_entry);
+        assert_eq!(item.floor_price, source_floor);
+    });
+}
+
+#[test]
+fn mint_merchant_gem_over_capacity_rejects() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        // capacity = 1e18 × 1 = 1e18.
+        let id = seed_and_setup(storage, one_e18(), one_e18(), e18_u128(), 1);
+        let r = runtime::mint_merchant_gem(storage, id, BOB, one_e18() + U256::from(1u64));
+        assert!(err_msg(r).contains("capacity"));
+    });
+}
+
+#[test]
+fn mint_merchant_gem_after_expiry_rejects() {
+    let rate = U256::from(2u64) * one_e18();
+    with_storage(Some(rate), |storage| {
+        // Craft a factory whose parked_at is already past the validity window.
+        let factory_id = U256::from(1u64);
+        let factory = GemFactoryContract::new(storage.clone());
+        factory
+            .factories
+            .create(&FactoryRecord {
+                factory_id,
+                merchant: ALICE,
+                source_intex_id: SOURCE_INTEX_ID,
+                remaining_capacity: U256::from(100u64) * one_e18(),
+                source_entry_price: one_e18(),
+                source_floor_price: one_e18(),
+                issuance_currency: 840,
+                reference_currency: 840,
+                parked_at: T_NOW - PARK_PERIOD_SECONDS - 1,
+            })
+            .unwrap();
+
+        let r = runtime::mint_merchant_gem(storage, factory_id, BOB, one_e18());
+        assert!(err_msg(r).contains("expired"));
     });
 }
