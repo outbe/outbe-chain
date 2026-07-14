@@ -47,6 +47,7 @@ members = [
     "crates/core/tributefactory",
     "crates/core/gratisfactory",
     "crates/core/gratispool",
+    "crates/core/governance",
     "crates/core/e2e",
     "crates/core/common",
     # binaries
@@ -128,6 +129,7 @@ outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }
 outbe-gratisfactory = { path = "crates/core/gratisfactory" }
 outbe-gratispool = { path = "crates/core/gratispool" }
+outbe-governance = { path = "crates/core/governance" }
 outbe-e2e = { path = "crates/core/e2e" }
 outbe-common = { path = "crates/core/common" }
 
@@ -264,6 +266,9 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
+
+# Text diff (governance proposal vs canon/meta-canon; view-only, deterministic)
+similar = "2"
 
 # Utilities
 thiserror = "2"

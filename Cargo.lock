@@ -7108,6 +7108,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-common",
  "outbe-evm",
+ "outbe-governance",
  "outbe-gratis",
  "outbe-metadosis",
  "outbe-nod",
@@ -7232,6 +7233,7 @@ dependencies = [
  "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
+ "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-gratispool",
@@ -7335,6 +7337,18 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-vaultprovider",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-governance"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "similar",
  "thiserror 2.0.18",
 ]
 
@@ -12940,6 +12954,12 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple_asn1"
