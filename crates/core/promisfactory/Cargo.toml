@@ -14,8 +14,11 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 [dev-dependencies]
-# Read the minted gratis balance/supply in convert_to_gratis tests.
-outbe-gratis.workspace = true
+# Drive the confidential Gratis mint in convert_to_gratis tests via the
+# in-process enclave engine, and decrypt the minted balance to assert on it.
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
+outbe-tee.workspace = true
+outbe-tee-enclave.workspace = true
 
 [lints]
 workspace = true

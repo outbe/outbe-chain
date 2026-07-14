@@ -206,7 +206,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        runtime::mine(
+        runtime::mint(
             storage.clone(),
             alice(),
             amount,
@@ -231,7 +231,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
 #[test]
 fn mine_rejects_zero_amount() {
     with_env(|storage| {
-        let err = runtime::mine(
+        let err = runtime::mint(
             storage.clone(),
             alice(),
             U256::ZERO,

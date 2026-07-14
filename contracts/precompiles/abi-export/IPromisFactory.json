@@ -7,6 +7,16 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [

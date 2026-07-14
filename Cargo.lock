@@ -7635,6 +7635,8 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]

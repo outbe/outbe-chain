@@ -3,6 +3,9 @@ pragma solidity ^0.8.30;
 
 /// @title IGratisFactory — confidential Gratis orchestration entry point (0x2003).
 interface IGratisFactory {
+    /// @notice Emitted when gratis is minted to `account`.
+    event GratisMined(address indexed account, uint256 amount);
+
     /// @notice Emitted when `sender` converts gratis to native COEN.
     event CoenMined(address indexed sender, uint256 amount);
 

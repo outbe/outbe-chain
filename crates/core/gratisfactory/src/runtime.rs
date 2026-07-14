@@ -52,17 +52,19 @@ pub fn unpledge_gratis(
     gratis::unpledge(storage, caller, amount, pledge_handle, auth)
 }
 
+/// Mint `amount` gratis to `account` (authorized by the account owner's modify
+/// key) and record the Fidelity acquisition cohort. The `GratisMinted` event is
+/// emitted by the Gratis token; the factory `GratisMined` is emitted here.
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    let mut gratis = Gratis::new(storage.clone());
-    gratis.mint(account, amount)?;
+    gratis::mine(storage.clone(), account, amount, auth)?;
 
     let now = storage.timestamp()?.to::<u64>();
-    outbe_fidelity::api::cohort_in(storage, account, amount, now)?;
+    outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
@@ -74,12 +76,15 @@ pub fn mint(
 /// Mint `amount` gratis to `account` WITHOUT recording a Fidelity acquisition
 /// cohort (unlike [`mint`]). Used by the promis→gratis conversion, where the
 /// original promis acquisition cohort is preserved so loyalty aging carries over.
-/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mint`].
-pub fn mint_from_promis(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
-    let mut gratis = Gratis::new(storage);
-    gratis.mint(account, amount)?;
-
-    Ok(())
+/// Authorized by the account owner's modify key; the `GratisMinted` event is
+/// emitted by [`outbe_gratis::api::mine`].
+pub fn mint_from_promis(
+    storage: StorageHandle<'_>,
+    account: Address,
+    amount: U256,
+    auth: ModifyAuth,
+) -> Result<()> {
+    gratis::mine(storage, account, amount, auth)
 }
 
 pub fn mine_coen(
