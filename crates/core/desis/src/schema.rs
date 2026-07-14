@@ -211,6 +211,10 @@ pub struct DesisContract {
     /// series_id -> commit-entry bond (payment-token minor units).
     #[attribute(order = 22)]
     pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// series/day -> scheduled auction timestamp, recorded at start (bounded until 2106).
+    #[attribute(order = 23)]
+    pub auction_at: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {

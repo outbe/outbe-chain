@@ -781,12 +781,13 @@ fn no_tributes_green_day_clears_started_auction() {
 
         assert!(outbe_desis::api::dispatch_stage_start(
             storage.clone(),
+            u32::from(wwd),
             auction_ts,
             U256::from(10u64).pow(U256::from(18u64)),
         )
         .unwrap());
         assert!(
-            outbe_desis::api::dispatch_stage_reveal(storage.clone(), auction_ts, true).unwrap()
+            outbe_desis::api::dispatch_stage_reveal(storage.clone(), u32::from(wwd), true).unwrap()
         );
 
         run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
@@ -837,12 +838,13 @@ fn no_day_limit_green_day_still_empty_clears_started_auction() {
 
         assert!(outbe_desis::api::dispatch_stage_start(
             storage.clone(),
+            u32::from(wwd),
             auction_ts,
             U256::from(10u64).pow(U256::from(18u64)),
         )
         .unwrap());
         assert!(
-            outbe_desis::api::dispatch_stage_reveal(storage.clone(), auction_ts, true).unwrap()
+            outbe_desis::api::dispatch_stage_reveal(storage.clone(), u32::from(wwd), true).unwrap()
         );
 
         run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
@@ -850,7 +852,7 @@ fn no_day_limit_green_day_still_empty_clears_started_auction() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
-        let series = timestamp_to_date_key(auction_ts);
+        let series = u32::from(wwd);
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 1);
         assert_eq!(desis.pending_supply_intex.read(&series).unwrap(), 0);
@@ -896,7 +898,7 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
     let base_ts = crate::runtime::date_key_to_timestamp(20260601);
 
     // Track one wwd by its date key; many wwds dispatch each tick, so filter the
-    // event by its indexed seriesId (the wwd's scheduled-process date) to isolate it.
+    // event by its indexed seriesId (the wwd itself) to isolate it.
     let wwd_key: u32 = 20260601;
     let mut stages: Vec<Option<String>> = Vec::new();
     for k in 0..7u64 {
@@ -905,23 +907,12 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
         StorageHandle::enter(&mut storage, |storage| {
             run_begin_block(storage.clone(), k + 1, ts);
         });
-        // Desis sees seriesId = timestamp_to_date_key(scheduled_process_time).
-        let target_series = StorageHandle::enter(&mut storage, |storage| {
-            let metadosis = MetadosisContract::new(storage);
-            let scheduled = metadosis
-                .worldwide_days
-                .entry(outbe_common::WorldwideDay::from(wwd_key))
-                .scheduled_process_time()
-                .read()
-                .unwrap_or(0);
-            timestamp_to_date_key(scheduled)
-        });
         let stage = storage.get_events(desis_addr).iter().find_map(|log| {
             if log.topics().first() != Some(&fail_sig) {
                 return None;
             }
             let ev = IDesis::AuctionDispatchFailed::decode_log_data(log).ok()?;
-            (ev.seriesId == target_series).then_some(ev.stage)
+            (ev.seriesId == wwd_key).then_some(ev.stage)
         });
         println!(
             "tick {k}: date={} stage={stage:?}",

@@ -6,16 +6,15 @@
 //! caller (Metadosis) supplies only raw inputs; Desis owns config construction and
 //! its own series-id derivation.
 //!
-//! The `auction_timestamp` parameter is the worldwide day's scheduled-process unix
-//! timestamp. Desis derives the auction series id as
-//! `timestamp_to_date_key(auction_timestamp)` (a yyyymmdd date key) and currently
-//! uses it directly as the series id; the mapping will become non-trivial once a
-//! single day can host multiple series.
+//! The auction key is the worldwide day (yyyymmdd date key) supplied by the
+//! caller — one auction per day. `auction_timestamp` is the day's scheduled
+//! auction time and is only needed at stage start to derive the auction
+//! windows. Series ids are allocated at issuance; today each auction issues
+//! one series that reuses the day key.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::precompile::IDesis;
 use crate::runtime;
@@ -25,13 +24,13 @@ use crate::schema::{AuctionConfig, DesisContract};
 /// `Started`. Returns `true` if Desis accepted the signal.
 pub fn dispatch_stage_start(
     storage: StorageHandle<'_>,
+    worldwide_day: u32,
     auction_timestamp: u64,
     entry_price: U256,
 ) -> Result<bool> {
-    let series_id = timestamp_to_date_key(auction_timestamp);
     let config = AuctionConfig::from_entry_price(entry_price);
-    best_effort(storage, series_id, "auction_stage_start", |s| {
-        runtime::start_auction(s, series_id, config)
+    best_effort(storage, worldwide_day, "auction_stage_start", |s| {
+        runtime::start_auction(s, worldwide_day, auction_timestamp, config)
     })
 }
 
@@ -39,12 +38,11 @@ pub fn dispatch_stage_start(
 /// `Cancelled` (red day). Returns `true` if Desis accepted the signal.
 pub fn dispatch_stage_reveal(
     storage: StorageHandle<'_>,
-    auction_timestamp: u64,
+    worldwide_day: u32,
     is_green_day: bool,
 ) -> Result<bool> {
-    let series_id = timestamp_to_date_key(auction_timestamp);
-    best_effort(storage, series_id, "auction_stage_reveal", |s| {
-        runtime::reveal_auction(s, series_id, is_green_day)
+    best_effort(storage, worldwide_day, "auction_stage_reveal", |s| {
+        runtime::reveal_auction(s, worldwide_day, is_green_day)
     })
 }
 
@@ -64,18 +62,16 @@ pub fn dispatch_stage_reveal(
 /// back to PromisLimit; that is a separate flow.)
 pub fn dispatch_stage_clearing(
     storage: StorageHandle<'_>,
-    auction_timestamp: u64,
+    worldwide_day: u32,
     supply_promis: U256,
 ) -> Result<U256> {
-    let series_id = timestamp_to_date_key(auction_timestamp);
-
     let Ok(supply_u128) = u128::try_from(supply_promis) else {
-        return clearing_failed(storage, series_id, "supply exceeds u128", supply_promis);
+        return clearing_failed(storage, worldwide_day, "supply exceeds u128", supply_promis);
     };
 
-    match runtime::begin_clearing(storage.clone(), series_id, supply_u128) {
+    match runtime::begin_clearing(storage.clone(), worldwide_day, supply_u128) {
         Ok(rounding_remainder) => Ok(U256::from(rounding_remainder)),
-        Err(err) => clearing_failed(storage, series_id, &format!("{err:?}"), supply_promis),
+        Err(err) => clearing_failed(storage, worldwide_day, &format!("{err:?}"), supply_promis),
     }
 }
 
