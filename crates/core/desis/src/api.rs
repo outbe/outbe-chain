@@ -6,11 +6,9 @@
 //! caller (Metadosis) supplies only raw inputs; Desis owns config construction and
 //! its own series-id derivation.
 //!
-//! The auction key is the worldwide day (yyyymmdd date key) supplied by the
-//! caller — one auction per day. `auction_timestamp` is the day's scheduled
-//! auction time and is only needed at stage start to derive the auction
-//! windows. Series ids are allocated at issuance; today each auction issues
-//! one series that reuses the day key.
+//! The auction key is the worldwide day supplied by the caller — one auction
+//! per day. `auction_timestamp` is only needed at stage start to derive the
+//! auction windows. Series ids are allocated at issuance.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;

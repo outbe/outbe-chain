@@ -79,8 +79,7 @@ pub fn lysis(
     // Track which tribute token_ids were successfully processed.
     let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
-    // Per-owner nominal accumulator for the day's creator-reward split. BTreeMap
-    // keeps the contributor order deterministic (sorted by address) across nodes.
+    // BTreeMap keeps the contributor order deterministic across nodes.
     let mut contributors: std::collections::BTreeMap<Address, U256> =
         std::collections::BTreeMap::new();
 
@@ -138,9 +137,7 @@ pub fn lysis(
         *contributors.entry(tribute.owner).or_insert(U256::ZERO) += tribute.nominal_amount_minor;
     }
 
-    // Capture the contributor map (owner -> Σ nominal of processed tributes)
-    // under the worldwide day — the auction key — BEFORE the tributes are
-    // burned, so IntexFactory can later pay creators proportional to nominal.
+    // Recorded before the tributes are burned.
     if !contributors.is_empty() {
         let list: Vec<(Address, U256)> = contributors.into_iter().collect();
         outbe_intex::api::record_contributors(&storage, u32::from(wwd), &list)?;
