@@ -11,6 +11,7 @@
     "info": "tsx src/0-info.ts",
     "setup-native": "tsx src/0-setup-native.ts",
     "setup-erc20": "tsx src/0-setup-erc20.ts",
+    "setup-gratis": "tsx src/0-setup-gratis.ts",
     "pledge-gratis": "tsx src/1-pledge-gratis.ts",
     "unpledge-gratis-fast": "tsx src/1.1-unpledge-gratis.ts",
     "top-up-bundle-account": "tsx src/2-top-up-bundle-account.ts",
