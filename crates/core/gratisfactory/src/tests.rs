@@ -253,6 +253,32 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
 }
 
 #[test]
+fn mine_from_promis_mints_without_cohort() {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = U256::from(1_000u64);
+        let later = CREATED_AT + ONE_YEAR_SECS;
+
+        runtime::mine_from_promis(storage.clone(), alice(), amount).unwrap();
+
+        // Gratis minted to the recipient and into total supply.
+        let gratis = Gratis::new(storage.clone());
+        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
+        assert_eq!(gratis.total_supply().unwrap(), amount);
+
+        // Unlike `mine`, no acquisition cohort is recorded, so aged RCFI a year
+        // later stays zero. If `mine_from_promis` started calling `cohort_in`,
+        // this would become positive and fail.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .compute_fidelity_index(alice(), later)
+            .unwrap();
+        assert_eq!(rcfi_after, U256::ZERO);
+    });
+}
+
+#[test]
 fn mine_rejects_zero_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));

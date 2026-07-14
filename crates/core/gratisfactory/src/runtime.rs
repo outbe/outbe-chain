@@ -86,6 +86,25 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
     Ok(())
 }
 
+/// Mint `amount` gratis to `account` and emit `GratisMined`, WITHOUT recording a
+/// Fidelity acquisition cohort (unlike [`mine`]). Used by the promis→gratis
+/// conversion, where the original promis acquisition cohort is preserved so loyalty
+/// aging carries over. Validation is delegated to [`outbe_gratis::Gratis::mine`].
+pub fn mine_from_promis(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+    let mut gratis = Gratis::new(storage.clone());
+    gratis.mine(account, amount)?;
+
+    storage.emit_event(
+        GRATIS_FACTORY_ADDRESS,
+        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisMined {
+            account,
+            amount,
+        }),
+    )?;
+
+    Ok(())
+}
+
 pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<U256> {
     let mut gratis = Gratis::new(storage.clone());
     gratis.burn(account, amount)?;

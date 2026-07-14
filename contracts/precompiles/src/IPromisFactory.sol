@@ -9,8 +9,14 @@ interface IPromisFactory {
     /// @notice Emitted when `sender` converts promis to native COEN.
     event CoenMined(address indexed sender, uint256 amount);
 
+    /// @notice Emitted when `account` burns promis (e.g. converting to Gratis).
+    event PromisBurned(address indexed account, uint256 amount);
+
     /// @notice Convert `amount` promis to native COEN at 1:1.
     function mineCoen(uint256 amount) external returns (uint256);
+
+    /// @notice Convert `amount` promis to Gratis at 1:1.
+    function convertToGratis(uint256 amount) external returns (uint256);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
