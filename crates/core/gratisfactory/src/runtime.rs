@@ -69,10 +69,10 @@ pub fn unpledge_gratis(
 }
 
 /// Mint `amount` gratis to `account` and record the Fidelity acquisition cohort.
-/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mine`].
-pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mint`].
+pub fn mint(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut gratis = Gratis::new(storage.clone());
-    gratis.mine(account, amount)?;
+    gratis.mint(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage, account, amount, now)?;
@@ -81,12 +81,12 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
 }
 
 /// Mint `amount` gratis to `account` WITHOUT recording a Fidelity acquisition
-/// cohort (unlike [`mine`]). Used by the promis→gratis conversion, where the
+/// cohort (unlike [`mint`]). Used by the promis→gratis conversion, where the
 /// original promis acquisition cohort is preserved so loyalty aging carries over.
-/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mine`].
-pub fn mine_from_promis(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mint`].
+pub fn mint_from_promis(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut gratis = Gratis::new(storage);
-    gratis.mine(account, amount)?;
+    gratis.mint(account, amount)?;
 
     Ok(())
 }

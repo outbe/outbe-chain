@@ -148,7 +148,7 @@ pub fn mine_gratis(
         },
     )?;
 
-    outbe_gratisfactory::api::mine(storage.clone(), caller, item.gratis_load_minor)?;
+    outbe_gratisfactory::api::mint(storage.clone(), caller, item.gratis_load_minor)?;
 
     Ok(item.gratis_load_minor)
 }

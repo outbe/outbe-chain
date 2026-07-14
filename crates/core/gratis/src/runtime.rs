@@ -45,7 +45,7 @@ impl Gratis<'_> {
 
     /// Mints gratis tokens to an account. Internal Rust API; not exposed via
     /// the precompile. Lysis is the production caller.
-    pub fn mine(&mut self, account: Address, amount: U256) -> Result<U256> {
+    pub fn mint(&mut self, account: Address, amount: U256) -> Result<U256> {
         if amount.is_zero() {
             return Err(PrecompileError::Revert("amount must be positive".into()));
         }

@@ -173,7 +173,7 @@ pub fn mine_gem_promis(
 
     gem_api::burn(storage, gem_id)?;
 
-    outbe_promisfactory::api::mine(storage.clone(), caller, item.gem_load)?;
+    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load)?;
 
     emit_event(
         storage,

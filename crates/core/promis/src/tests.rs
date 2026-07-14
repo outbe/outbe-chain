@@ -36,7 +36,7 @@ fn test_mine() {
     with_promis_mut(|p| {
         let alice = address!("0x1111111111111111111111111111111111111111");
 
-        let supply = p.mine(alice, U256::from(500)).unwrap();
+        let supply = p.mint(alice, U256::from(500)).unwrap();
         assert_eq!(supply, U256::from(500));
         assert_eq!(p.balance_of(alice).unwrap(), U256::from(500));
         assert_eq!(p.total_supply().unwrap(), U256::from(500));
@@ -47,7 +47,7 @@ fn test_mine() {
 fn test_burn() {
     with_promis_mut(|p| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        p.mine(alice, U256::from(1000)).unwrap();
+        p.mint(alice, U256::from(1000)).unwrap();
 
         let remaining = p.burn(alice, U256::from(300)).unwrap();
         assert_eq!(remaining, U256::from(700));
@@ -59,7 +59,7 @@ fn test_burn() {
 fn test_burn_insufficient_fails() {
     with_promis_mut(|p| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        p.mine(alice, U256::from(100)).unwrap();
+        p.mint(alice, U256::from(100)).unwrap();
         assert!(p.burn(alice, U256::from(200)).is_err());
     });
 }
@@ -69,7 +69,7 @@ fn test_business_failures_return_revert() {
     with_promis_mut(|p| {
         let alice = address!("0x1111111111111111111111111111111111111111");
 
-        let err = p.mine(alice, U256::ZERO).unwrap_err();
+        let err = p.mint(alice, U256::ZERO).unwrap_err();
         assert!(
             matches!(err, PrecompileError::Revert(message) if message == "amount must be positive")
         );
@@ -87,8 +87,8 @@ fn test_multiple_users() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
 
-        p.mine(alice, U256::from(1000)).unwrap();
-        p.mine(bob, U256::from(2000)).unwrap();
+        p.mint(alice, U256::from(1000)).unwrap();
+        p.mint(bob, U256::from(2000)).unwrap();
         assert_eq!(p.total_supply().unwrap(), U256::from(3000));
 
         p.burn(alice, U256::from(500)).unwrap();
@@ -144,9 +144,9 @@ fn test_mine_rejects_total_supply_overflow_across_accounts() {
         let bob = address!("0x2222222222222222222222222222222222222222");
 
         let near_max = U256::MAX - U256::from(10u64);
-        p.mine(alice, near_max).unwrap();
+        p.mint(alice, near_max).unwrap();
 
-        let err = p.mine(bob, U256::from(100u64)).unwrap_err();
+        let err = p.mint(bob, U256::from(100u64)).unwrap_err();
         assert!(err.to_string().contains("overflow"));
         assert_eq!(p.balance_of(bob).unwrap(), U256::ZERO);
         assert_eq!(p.total_supply().unwrap(), near_max);

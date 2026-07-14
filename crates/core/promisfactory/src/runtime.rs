@@ -20,15 +20,15 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_promis::Promis;
 
 /// Mint `amount` promis to `account` and record the Fidelity acquisition cohort.
-/// The `PromisMinted` event is emitted by [`outbe_promis::Promis::mine`].
+/// The `PromisMinted` event is emitted by [`outbe_promis::Promis::mint`].
 ///
 /// Internal cross-module API (not exposed on the precompile ABI). The
 /// production callers are GemFactory's and IntexFactory's mine paths, which
 /// delegate the matching promis mint here. Amount/address validation is
-/// delegated to [`outbe_promis::Promis::mine`].
-pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+/// delegated to [`outbe_promis::Promis::mint`].
+pub fn mint(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut promis = Promis::new(storage.clone());
-    promis.mine(account, amount)?;
+    promis.mint(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage, account, amount, now)?;
@@ -64,7 +64,7 @@ pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> 
 }
 
 /// Burn `amount` promis from `account` and mint the matching Gratis 1:1 via
-/// [`outbe_gratisfactory::api::mine_from_promis`]. The `PromisBurned` event is
+/// [`outbe_gratisfactory::api::mint_from_promis`]. The `PromisBurned` event is
 /// emitted by [`outbe_promis::Promis::burn`].
 ///
 /// Unlike [`mine_coen`], this touches no Fidelity cohort: the original promis
@@ -80,7 +80,7 @@ pub fn convert_to_gratis(
     let mut promis = Promis::new(storage.clone());
     promis.burn(account, amount)?;
 
-    outbe_gratisfactory::api::mine_from_promis(storage, account, amount)?;
+    outbe_gratisfactory::api::mint_from_promis(storage, account, amount)?;
 
     Ok(amount)
 }
