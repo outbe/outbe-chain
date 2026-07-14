@@ -434,6 +434,13 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
         }
 
+        // Creator-reward provenance: the contributor map is keyed by the wwd
+        // (the auction key), even though processing runs weeks later.
+        assert_eq!(
+            outbe_intex::api::read_contributors(&storage, u32::from(green_wwd)).unwrap(),
+            vec![(alice, green_nominal)]
+        );
+
         // Alice got one NOD and her tribute is cleared, but the bucket is NOT
         // yet qualified — lysis only mints NODs, the oracle rate has to reach
         // floor_price for mining to unlock.

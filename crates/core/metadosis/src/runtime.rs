@@ -461,18 +461,9 @@ fn process_metadosis(
     let metadosis_parameters =
         metadosis.calculate_metadosis(wwd, tribute_nominal_total, limit_amount)?;
 
-    // Same timestamp the auction stages dispatch with: lysis keys the
-    // contributor map by its date key, i.e. the auction series id.
-    let auction_ts = metadosis
-        .worldwide_days
-        .entry(wwd)
-        .scheduled_process_time()
-        .read()?;
-
     match outbe_lysis::runtime::lysis(
         metadosis.storage.clone(),
         wwd,
-        auction_ts,
         metadosis_parameters.gratis_allocation,
     ) {
         Ok(lysis_result) => {
