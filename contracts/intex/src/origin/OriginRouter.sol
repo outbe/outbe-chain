@@ -5,10 +5,14 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
 import {IDesis} from "./interfaces/IDesis.sol";
+import {IIntexFactory} from "./interfaces/IIntexFactory.sol";
+import {IWCOEN} from "./interfaces/IWCOEN.sol";
+import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 
@@ -21,6 +25,7 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 ///      messages are keyed by `seriesId` (uint32).
 contract OriginRouter is
     IOriginRouter,
+    IERC7786TokenReceiver,
     ERC7786MessengerBase,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
@@ -40,6 +45,14 @@ contract OriginRouter is
         address desis;
         /// @dev IntexFactory authorized for the supply-side sends (holds `INTEX_FACTORY_ROLE`).
         address intexFactory;
+        /// @dev WCOEN token bridge authorized to invoke the proceeds hook.
+        address tokenBridge;
+        /// @dev WCOEN token unwrapped to native before distribution.
+        address wcoen;
+        /// @dev Parked distributions awaiting permissionless retry, by enqueue index.
+        mapping(uint256 idx => ParkedProceeds) parkedProceeds;
+        /// @dev Next index to assign in `parkedProceeds`.
+        uint256 nextParkedProceedsIdx;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -425,5 +438,78 @@ contract OriginRouter is
         if (!ok) revert NativeSweepFailed();
 
         emit NativeSwept(to, amount);
+    }
+
+    // --- Proceeds route ---
+    /// @inheritdoc IOriginRouter
+    function setProceedsRoute(address _tokenBridge, address _wcoen) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_tokenBridge == address(0)) revert ZeroAddress("tokenBridge");
+        if (_wcoen == address(0)) revert ZeroAddress("wcoen");
+        OriginRouterStorage storage $ = _os();
+        $.tokenBridge = _tokenBridge;
+        $.wcoen = _wcoen;
+        emit ProceedsRouteSet(_tokenBridge, _wcoen);
+    }
+
+    /// @inheritdoc IOriginRouter
+    function tokenBridge() external view returns (address) {
+        return _os().tokenBridge;
+    }
+
+    /// @inheritdoc IOriginRouter
+    function wcoen() external view returns (address) {
+        return _os().wcoen;
+    }
+
+    /// @inheritdoc IOriginRouter
+    function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory) {
+        return _os().parkedProceeds[idx];
+    }
+
+    /// @inheritdoc IERC7786TokenReceiver
+    /// @dev The token bridge credits WCOEN before this call; we unwrap it and hand the native to the factory
+    ///      precompile, which pays the series' creators. A distribution failure parks the native for retry so
+    ///      the transfer still settles (returning the magic value) instead of bricking on redelivery.
+    function onCrosschainTokensReceived(
+        uint32 sourceDomain,
+        bytes calldata from,
+        uint256 amount,
+        bytes calldata extraData
+    ) external nonReentrant returns (bytes4) {
+        OriginRouterStorage storage $ = _os();
+        if (msg.sender != $.tokenBridge) revert UnauthorizedProceedsCaller(msg.sender);
+        if (sourceDomain != BNB_CHAIN_ID) revert UnexpectedProceedsSource(sourceDomain);
+        // The bridge is permissionless: pin the source sender to the registered BNB peer (TargetRouter), else
+        // anyone could open a distribution for any series and wipe its contributor provenance.
+        if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
+
+        uint32 seriesId = abi.decode(extraData, (uint32));
+        IWCOEN($.wcoen).withdraw(amount);
+        _distributeOrPark(seriesId, SafeCast.toUint128(amount));
+
+        return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
+    }
+
+    /// @inheritdoc IOriginRouter
+    function retryProceeds(uint256 idx) external nonReentrant {
+        ParkedProceeds storage p = _os().parkedProceeds[idx];
+        if (p.amount == 0 || p.settled) revert NoParkedProceeds(idx);
+        p.settled = true;
+        IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.seriesId);
+        emit ProceedsRetried(idx, p.seriesId, p.amount);
+    }
+
+    /// @dev Hand native proceeds to the factory precompile; park them for retry on failure.
+    function _distributeOrPark(uint32 seriesId, uint128 amount) private {
+        // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park write is safe.
+        // slither-disable-next-line reentrancy-eth
+        try IIntexFactory(_os().intexFactory).distribute{value: amount}(seriesId) {
+            emit ProceedsDistributed(seriesId, amount);
+        } catch {
+            OriginRouterStorage storage $ = _os();
+            uint256 idx = $.nextParkedProceedsIdx++;
+            $.parkedProceeds[idx] = ParkedProceeds({seriesId: seriesId, amount: amount, settled: false});
+            emit ProceedsParked(idx, seriesId, amount);
+        }
     }
 }

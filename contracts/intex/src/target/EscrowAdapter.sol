@@ -83,6 +83,8 @@ contract EscrowAdapter is
         mapping(uint32 seriesId => AuctionEscrowState) auctionEscrowState;
         /// @dev Commit-entry bonds: seriesId => bidder => CommitBond.
         mapping(uint32 seriesId => mapping(address bidder => CommitBond)) commitBonds;
+        /// @dev Recipient of finalized auction proceeds (the router routing them cross-chain).
+        address proceedsRecipient;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -136,8 +138,20 @@ contract EscrowAdapter is
 
     /// @notice Active payment token used for bid escrow.
     /// @return The wired payment token.
-    function paymentToken() external view returns (IERC20) {
+    function paymentToken() external view override returns (IERC20) {
         return _s().paymentToken;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function proceedsRecipient() external view override returns (address) {
+        return _s().proceedsRecipient;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function setProceedsRecipient(address recipient) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (recipient == address(0)) revert ZeroAddress("recipient");
+        _s().proceedsRecipient = recipient;
+        emit ProceedsRecipientSet(recipient);
     }
 
     /// @notice The Compact resource lock ID for our deposits.
@@ -367,6 +381,7 @@ contract EscrowAdapter is
         override
         onlyRole(RELAYER_ROLE)
         nonReentrant
+        returns (uint128 totalPaid)
     {
         EscrowAdapterStorage storage $ = _s();
         if ($.auctionEscrowState[seriesId].finalized) {
@@ -380,7 +395,6 @@ contract EscrowAdapter is
         $.auctionEscrowState[seriesId].finalizedAt = uint32(block.timestamp);
 
         uint128 totalRefunded = 0;
-        uint128 totalPaid = 0;
         uint32 bidsProcessed = 0;
         uint32 bidsSettled = 0;
 
@@ -414,6 +428,13 @@ contract EscrowAdapter is
         emit AuctionEscrowFinalized(receiveId, seriesId, totalRefunded, totalPaid, bidsProcessed);
         // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
         if (bidsSettled == 0) emit FinalizationNoOp(seriesId, bidsProcessed);
+
+        // Hand proceeds to the configured recipient (the messenger) for cross-chain routing.
+        if (totalPaid > 0) {
+            address recipient = $.proceedsRecipient;
+            if (recipient == address(0)) revert ProceedsRecipientNotSet();
+            $.paymentToken.safeTransfer(recipient, totalPaid);
+        }
     }
 
     /// @notice Self-call helper for `finalizeAuction`'s per-bidder try/catch. Reverts on any
@@ -440,6 +461,15 @@ contract EscrowAdapter is
             revert NotFinalizedYet(seriesId);
         }
         _processFinalizationInstruction(receiveId, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
+
+        // Stranded recovery: series already routed on Outbe, settle residual to the vault.
+        if (inst.paidAmount > 0) {
+            EscrowAdapterStorage storage $ = _s();
+            $.paymentToken.forceApprove(address($.vaultProvider), inst.paidAmount);
+            $.vaultProvider.depositLiquidity(address($.paymentToken), inst.paidAmount);
+            emit FundsClaimed(receiveId, seriesId, inst.bidder, inst.paidAmount);
+        }
+
         emit BidderRetried(receiveId, seriesId, inst.bidder, inst.refundedAmount, inst.paidAmount);
     }
 
@@ -637,13 +667,13 @@ contract EscrowAdapter is
     }
 
     /// @notice Process a single finalization instruction: validate the split, mark the lock
-    ///         `Finalized`, refund the bidder, and route the paid portion to the vault.
+    ///         `Finalized`, refund the bidder, and collect the paid portion for the caller to route.
     /// @dev Reverts `AmountMismatch` when `refundedAmount + paidAmount != lockedAmount`.
     /// @param receiveId Inbound bridge message id threaded into the emitted refund/payout events.
     /// @param seriesId Series identifier.
     /// @param bidder Bidder address.
     /// @param refundedAmount Amount to refund to the bidder.
-    /// @param paidAmount Amount paid out to the vault.
+    /// @param paidAmount Auction proceeds left in this contract for the caller to route.
     function _processFinalizationInstruction(
         bytes32 receiveId,
         uint32 seriesId,
@@ -677,12 +707,7 @@ contract EscrowAdapter is
             emit FundsRefunded(receiveId, seriesId, bidder, refundedAmount);
         }
 
-        if (paidAmount > 0) {
-            // Route through outbe-vault provider; shares accrue on the provider, not here.
-            $.paymentToken.forceApprove(address($.vaultProvider), paidAmount);
-            $.vaultProvider.depositLiquidity(address($.paymentToken), paidAmount);
-            emit FundsClaimed(receiveId, seriesId, bidder, paidAmount);
-        }
+        // Paid portion stays in this contract; the caller routes it.
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).

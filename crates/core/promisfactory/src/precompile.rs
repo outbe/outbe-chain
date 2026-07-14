@@ -29,6 +29,9 @@ pub fn dispatch(
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     runtime::mine_coen(storage.clone(), sender, c.amount)
                 }),
+                convertToGratis(c) => mutate(c, caller, |sender, c| {
+                    runtime::convert_to_gratis(storage.clone(), sender, c.amount)
+                }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
                     Ok(id == ERC165_INTERFACE_ID)

@@ -293,7 +293,7 @@
   },
   {
     "type": "event",
-    "name": "GratisMined",
+    "name": "GratisMinted",
     "inputs": [
       {
         "name": "account",

@@ -74,7 +74,32 @@ interface IOriginRouter {
     /// @param amount Amount of native tokens (wei) swept.
     event NativeSwept(address indexed to, uint256 amount);
 
+    /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
+    event ProceedsRouteSet(address tokenBridge, address wcoen);
+    /// @notice Emitted when inbound auction proceeds are handed to the factory for creator payout.
+    event ProceedsDistributed(uint32 indexed seriesId, uint256 amount);
+    /// @notice Emitted when distribution failed and the proceeds were parked for retry.
+    event ProceedsParked(uint256 indexed idx, uint32 indexed seriesId, uint256 amount);
+    /// @notice Emitted when a parked distribution was retried successfully.
+    event ProceedsRetried(uint256 indexed idx, uint32 indexed seriesId, uint256 amount);
+
+    /// @notice Caller of the proceeds hook is not the wired token bridge.
+    error UnauthorizedProceedsCaller(address caller);
+    /// @notice Proceeds arrived from an unexpected source domain.
+    error UnexpectedProceedsSource(uint32 sourceDomain);
+    /// @notice Proceeds arrived from a source sender other than the registered BNB peer.
+    error UnauthorizedProceedsSender(bytes from);
+    /// @notice No live parked distribution at `idx`.
+    error NoParkedProceeds(uint256 idx);
+
     // --- Types ---
+    /// @notice Auction proceeds unwrapped on Outbe but not yet distributed, awaiting permissionless retry.
+    struct ParkedProceeds {
+        uint32 seriesId;
+        uint128 amount;
+        bool settled;
+    }
+
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     struct AuctionStageStartParams {
         uint32 seriesId;
@@ -230,4 +255,16 @@ interface IOriginRouter {
     function sendMarkCalled(uint32 seriesId) external payable returns (bytes32 sendId);
     /// @notice Send mark-qualified to BNB, flipping the series to Qualified. Restricted to `INTEX_FACTORY_ROLE`.
     function sendMarkQualified(uint32 seriesId) external payable returns (bytes32 sendId);
+
+    // --- Proceeds ---
+    /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
+    function setProceedsRoute(address _tokenBridge, address _wcoen) external;
+    /// @notice WCOEN token bridge authorized to invoke the proceeds hook.
+    function tokenBridge() external view returns (address);
+    /// @notice WCOEN token unwrapped to native before distribution.
+    function wcoen() external view returns (address);
+    /// @notice Parked proceeds awaiting retry, by enqueue index.
+    function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
+    /// @notice Permissionless retry of a parked distribution.
+    function retryProceeds(uint256 idx) external;
 }

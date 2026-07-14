@@ -7435,6 +7435,7 @@ dependencies = [
  "alloy-primitives",
  "outbe-common",
  "outbe-fidelity",
+ "outbe-intex",
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-oracle",
@@ -7630,6 +7631,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-fidelity",
+ "outbe-gratis",
+ "outbe-gratisfactory",
  "outbe-primitives",
  "outbe-promis",
 ]

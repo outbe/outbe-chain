@@ -47,6 +47,8 @@ contract EscrowAdapterInvariantsTest is Test {
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        vm.prank(admin);
+        escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
 
         address[3] memory bidders = [bidderA, bidderB, bidderC];

@@ -30,7 +30,7 @@ impl Promis<'_> {
     // --- State-changing functions ---
 
     /// Mints promis tokens to an account.
-    pub fn mine(&mut self, account: Address, amount: U256) -> Result<U256> {
+    pub fn mint(&mut self, account: Address, amount: U256) -> Result<U256> {
         if amount.is_zero() {
             return Err(PrecompileError::Revert("amount must be positive".into()));
         }
@@ -49,7 +49,7 @@ impl Promis<'_> {
         self.balances.write(&account, new_balance)?;
         self.total_supply.write(new_supply)?;
 
-        self.emit(IPromis::PromisMined {
+        self.emit(IPromis::PromisMinted {
             account,
             amount,
             newTotalSupply: new_supply,

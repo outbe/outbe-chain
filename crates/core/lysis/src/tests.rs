@@ -88,7 +88,7 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
             "GAS-08 fixture must seed a dense but valid Lysis day"
         );
 
-        let result = crate::runtime::lysis(storage.clone(), wwd, gratis_allocation)
+        let result = crate::runtime::lysis(storage.clone(), wwd, T_NOW, gratis_allocation)
             .expect("GAS-08 dense Lysis day must complete");
 
         assert_eq!(
@@ -524,7 +524,7 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
         let gratis_allocation = nominal / U256::from(10u64);
-        let result = lysis(s.clone(), wwd, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), wwd, T_NOW, gratis_allocation).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
 
         // 4. Read back the NOD and assert the documented scale invariant.
@@ -800,7 +800,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
             })
             .unwrap();
 
-        let result = lysis(s.clone(), wwd, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), wwd, T_NOW, gratis_allocation).unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -828,6 +828,99 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         assert!(
             result.remaining_gratis.is_zero(),
             "the full scarce allocation must be consumed"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------
+// Creator-reward: lysis records the per-owner contributor map
+// ---------------------------------------------------------------------
+
+#[test]
+fn lysis_records_contributors_aggregated_by_owner() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut storage, |storage| {
+        // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        // Distinct owners: lysis derives nod_id from (owner, day), so an owner
+        // can have at most one processed tribute per day.
+        let owner_a = gas_audit_address(1);
+        let owner_b = gas_audit_address(2);
+        let owner_c = gas_audit_address(3);
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(&gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)))
+            .unwrap();
+        tribute
+            .issue(&gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)))
+            .unwrap();
+        tribute
+            .issue(&gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)))
+            .unwrap();
+
+        let total_nominal = U256::in_units(600u64);
+        let gratis_allocation = total_nominal / U256::from(10u64);
+
+        // The auction runs weeks after the tribute day; its date key — not the
+        // wwd — is the series id the map must land under.
+        const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
+        let result = crate::runtime::lysis(storage.clone(), wwd, AUCTION_TS, gratis_allocation)
+            .expect("lysis must complete");
+        assert_eq!(
+            result.nod_ids.len(),
+            3,
+            "every tribute must be processed for this fixture"
+        );
+
+        // Contributors are sorted by address (a < b < c) and carry each
+        // owner's nominal, under the auction series id (desis derivation).
+        let series_id = outbe_primitives::time::timestamp_to_date_key(AUCTION_TS);
+        assert_ne!(series_id, u32::from(wwd), "fixture must exercise the lag");
+        assert_eq!(
+            outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
+            vec![
+                (owner_a, U256::in_units(100u64)),
+                (owner_b, U256::in_units(200u64)),
+                (owner_c, U256::in_units(300u64)),
+            ]
+        );
+        assert_eq!(
+            outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
+            U256::in_units(600u64)
+        );
+        assert_eq!(
+            outbe_intex::api::contributor_count(&storage, u32::from(wwd)).unwrap(),
+            0,
+            "map must not be keyed by the tribute day"
         );
     });
 }

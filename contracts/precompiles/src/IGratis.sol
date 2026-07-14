@@ -8,7 +8,7 @@ interface IGratis {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     // Gratis runtime events.
-    event GratisMined(address indexed account, uint256 amount, uint256 newTotalSupply);
+    event GratisMinted(address indexed account, uint256 amount, uint256 newTotalSupply);
     event GratisBurned(address indexed account, uint256 amount, uint256 remainingSupply);
     event GratisPledged(address indexed account, uint256 amount, uint256 totalPledged);
     event GratisUnpledged(address indexed account, uint256 amount, uint256 remainingPledged);

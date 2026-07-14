@@ -31,6 +31,14 @@ pub enum IntexFactoryError {
     InsufficientProofOfWork,
     #[error("zero shares received from vault")]
     ZeroSharesReceived,
+    #[error("caller is not the origin router")]
+    NotOriginRouter,
+    #[error("no contributors recorded for series {0}")]
+    NoContributors(u32),
+    #[error("no in-flight distribution for series {0}")]
+    NoDistribution(u32),
+    #[error("distribution payout math overflow for series {0}")]
+    DistributionOverflow(u32),
 }
 
 impl From<IntexFactoryError> for PrecompileError {

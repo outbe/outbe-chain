@@ -36,7 +36,7 @@ fn mine_mints_promis_and_records_fidelity_cohort() {
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        runtime::mine(storage.clone(), alice(), amount).unwrap();
+        runtime::mint(storage.clone(), alice(), amount).unwrap();
 
         // Promis minted to the recipient and into total supply.
         let promis = Promis::new(storage.clone());
@@ -58,7 +58,7 @@ fn mine_rejects_zero_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::mine(storage, alice(), U256::ZERO).unwrap_err();
+        let err = runtime::mint(storage, alice(), U256::ZERO).unwrap_err();
         assert!(err.to_string().contains("amount must be positive"));
     });
 }
@@ -73,7 +73,7 @@ fn mine_coen_burns_promis_mints_native_and_records_sale_cohort() {
         // Seed promis to burn plus an active Fidelity cohort of the SAME size
         // acquired a year ago, so it has positive RCFI now and is fully
         // consumed by the sale.
-        Promis::new(storage.clone()).mine(alice(), amount).unwrap();
+        Promis::new(storage.clone()).mint(alice(), amount).unwrap();
         outbe_fidelity::api::cohort_in(
             storage.clone(),
             alice(),
@@ -116,7 +116,7 @@ fn mine_coen_rejects_insufficient_balance() {
     StorageHandle::enter(&mut storage, |storage| {
         // Alice holds 100 promis but tries to convert 200.
         Promis::new(storage.clone())
-            .mine(alice(), U256::from(100u64))
+            .mint(alice(), U256::from(100u64))
             .unwrap();
 
         let call = dispatch_call_bytes(IPromisFactory::IPromisFactoryCalls::mineCoen(
@@ -143,7 +143,7 @@ fn mine_coen_failure_no_partial_burn() {
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         Promis::new(storage.clone())
-            .mine(alice(), U256::from(100u64))
+            .mint(alice(), U256::from(100u64))
             .unwrap();
 
         let balance_before = Promis::new(storage.clone()).balance_of(alice()).unwrap();
@@ -165,6 +165,88 @@ fn mine_coen_failure_no_partial_burn() {
             supply_before
         );
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn convert_to_gratis_burns_promis_mints_gratis_preserving_fidelity() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = U256::from(1_000u64);
+
+        // Seed promis to convert plus an active Fidelity cohort of the SAME size
+        // acquired a year ago, so it has positive RCFI now. Converting to gratis
+        // must leave this cohort untouched (aging preserved).
+        Promis::new(storage.clone()).mint(alice(), amount).unwrap();
+        outbe_fidelity::api::cohort_in(
+            storage.clone(),
+            alice(),
+            amount,
+            CREATED_AT - ONE_YEAR_SECS,
+        )
+        .unwrap();
+        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_fidelity_index(alice())
+            .unwrap();
+        assert!(rcfi_before > U256::ZERO);
+
+        // convertToGratis on the promisfactory precompile.
+        let call = dispatch_call_bytes(IPromisFactory::IPromisFactoryCalls::convertToGratis(
+            IPromisFactory::convertToGratisCall { amount },
+        ));
+        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        let minted = IPromisFactory::convertToGratisCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(minted, amount);
+
+        // Promis fully burned; gratis minted 1:1 to the account.
+        let promis = Promis::new(storage.clone());
+        assert_eq!(promis.balance_of(alice()).unwrap(), U256::ZERO);
+        assert_eq!(promis.total_supply().unwrap(), U256::ZERO);
+        let gratis = outbe_gratis::Gratis::new(storage.clone());
+        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
+        assert_eq!(gratis.total_supply().unwrap(), amount);
+
+        // Fidelity untouched: no cohort_out (promis burn) and no cohort_in (gratis
+        // mint), so RCFI is unchanged. If either hook crept in, this would move.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_fidelity_index(alice())
+            .unwrap();
+        assert_eq!(rcfi_after, rcfi_before);
+    });
+}
+
+/// convert_to_gratis with insufficient balance must fail with no partial state:
+/// no promis burned, no gratis minted (atomic revert).
+#[test]
+fn convert_to_gratis_rejects_insufficient_balance() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        // Alice holds 100 promis but tries to convert 200.
+        Promis::new(storage.clone())
+            .mint(alice(), U256::from(100u64))
+            .unwrap();
+
+        let call = dispatch_call_bytes(IPromisFactory::IPromisFactoryCalls::convertToGratis(
+            IPromisFactory::convertToGratisCall {
+                amount: U256::from(200u64),
+            },
+        ));
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("insufficient balance"));
+
+        // No gratis minted, promis untouched (atomic revert).
+        assert_eq!(
+            Promis::new(storage.clone()).balance_of(alice()).unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(
+            outbe_gratis::Gratis::new(storage.clone())
+                .balance_of(alice())
+                .unwrap(),
+            U256::ZERO
+        );
     });
 }
 

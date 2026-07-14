@@ -71,6 +71,18 @@ fn write_account_blobs(
     Ok(())
 }
 
+    // --- State-changing functions ---
+
+    /// Mints gratis tokens to an account. Internal Rust API; not exposed via
+    /// the precompile. Lysis is the production caller.
+    pub fn mint(&mut self, account: Address, amount: U256) -> Result<U256> {
+        if amount.is_zero() {
+            return Err(PrecompileError::Revert("amount must be positive".into()));
+        }
+        if account.is_zero() {
+            return Err(PrecompileError::Revert("invalid address".into()));
+        }
+
 /// Mint `amount` gratis to `caller` (owner-authorized).
 pub(crate) fn mine(
     storage: StorageHandle<'_>,
@@ -105,7 +117,7 @@ pub(crate) fn mine(
     gratis.set_total_supply(new_supply)?;
     storage.emit_event(
         GRATIS_ADDRESS,
-        SolEvent::encode_log_data(&IGratis::GratisMined {
+        SolEvent::encode_log_data(&IGratis::GratisMinted {
             account: caller,
             amount: result.event_amount,
             newTotalSupply: new_supply,

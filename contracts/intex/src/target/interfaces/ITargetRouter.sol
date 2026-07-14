@@ -74,6 +74,15 @@ interface ITargetRouter {
     /// @param reason Raw revert bytes from the failed `systemMultiSend`.
     event HoldersRelayDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
 
+    /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
+    event ProceedsRouted(uint32 indexed seriesId, uint256 amount);
+    /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
+    event ProceedsRouteDeferred(uint256 indexed idx, uint32 indexed seriesId, uint256 amount, bytes reason);
+    /// @notice Emitted when `flushPendingProceedsRoute` routed a previously deferred amount.
+    event ProceedsRouteFlushed(uint256 indexed idx, uint32 indexed seriesId);
+    /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
+    event ProceedsRouteSet(address tokenBridge, address originRouter);
+
     /// @notice Emitted when `flushPendingHoldersRelay` successfully bridges a previously deferred snapshot.
     /// @param idx Index of the parked relay slot that was flushed.
     /// @param tokenId Token id whose holders were bridged.
@@ -119,6 +128,9 @@ interface ITargetRouter {
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
     error NoSuchPendingHoldersRelay(uint256 idx);
+
+    /// @notice No parked proceeds route at `idx`.
+    error NoSuchPendingProceedsRoute(uint256 idx);
     /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
     error NoSuchPendingIssuanceMint(uint256 idx);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.

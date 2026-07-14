@@ -12,7 +12,8 @@ use outbe_vaultprovider::api::IVaultProvider;
 
 use crate::config;
 use crate::constants::{
-    CALL_PRICE_DEN, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
+    CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -169,6 +170,103 @@ pub fn set_authorized_settler(
     }
     let mut factory = IntexFactoryContract::new(storage.clone());
     factory.write_authorized_settler(holder, series_id, settler)
+}
+
+/// Register an auction-proceeds distribution (native COEN, arriving as
+/// `amount` = msg.value) for the series' contributing tribute owners. Gated to
+/// the OriginRouter. Payouts run entirely in the begin-block drain, keeping
+/// the cross-chain delivery tx light and deterministic. Reverts on no
+/// contributors, returning the native value to the caller via the tx rollback.
+pub fn distribute(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    series_id: u32,
+    amount: U256,
+) -> Result<()> {
+    if caller != ORIGIN_ROUTER_ADDRESS {
+        return Err(IntexFactoryError::NotOriginRouter.into());
+    }
+    if amount.is_zero() {
+        return Err(IntexFactoryError::ZeroAmount.into());
+    }
+    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    if total.is_zero() {
+        return Err(IntexFactoryError::NoContributors(series_id).into());
+    }
+    outbe_intex::api::start_distribution(storage, series_id, amount, total)
+}
+
+/// Pay up to `limit` contributors of an in-flight distribution, advancing the
+/// cursor. The last contributor absorbs the integer-division remainder so the
+/// full `amount` is paid out exactly. On reaching the last contributor the
+/// distribution is finalized (progress + contributor map cleared). Driven by
+/// the begin-block drain.
+pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32) -> Result<()> {
+    let mut progress = outbe_intex::api::get_progress(storage, series_id)?
+        .ok_or_else(|| IntexFactoryError::NoDistribution(series_id))?;
+    let count = outbe_intex::api::contributor_count(storage, series_id)?;
+    let end = progress.cursor.saturating_add(limit).min(count);
+
+    // A zero denominator would panic on divide; begin-block panics halt the chain (not checkpoint-isolated),
+    // so fail as an isolated Err instead.
+    if progress.total_nominal.is_zero() {
+        return Err(IntexFactoryError::NoContributors(series_id).into());
+    }
+
+    let mut paid = progress.paid_so_far;
+    for i in progress.cursor..end {
+        let (owner, nominal) = outbe_intex::api::contributor_at(storage, series_id, i)?;
+        // The final contributor absorbs the rounding remainder so the sum of
+        // payouts equals `amount` exactly. checked_mul: isolated Err over a silent wrap.
+        let share = if i == count - 1 {
+            progress.amount - paid
+        } else {
+            progress
+                .amount
+                .checked_mul(nominal)
+                .ok_or(IntexFactoryError::DistributionOverflow(series_id))?
+                / progress.total_nominal
+        };
+        storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
+        paid += share;
+    }
+
+    if end == count {
+        outbe_intex::api::clear_distribution(storage, series_id)?;
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::ProceedsDistributed {
+                seriesId: series_id,
+                amount: progress.amount,
+                contributors: count,
+            },
+        )?;
+    } else {
+        progress.cursor = end;
+        progress.paid_so_far = paid;
+        outbe_intex::api::save_progress(storage, &progress)?;
+    }
+    Ok(())
+}
+
+/// Begin-block drain: advance every in-flight distribution by one chunk
+/// (`DIST_CHUNK_LIMIT` payouts). Completed distributions remove themselves from
+/// the active set inside `pay_chunk`, so the snapshot avoids iterating a set
+/// that mutates underneath us.
+pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
+    let count = outbe_intex::api::active_dist_count(storage)?;
+    let mut series_ids = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        series_ids.push(outbe_intex::api::active_dist_at(storage, i)?);
+    }
+    for series_id in series_ids {
+        // Per-series isolation: Err reverts the series' checkpoint, retried next block.
+        let res = storage.with_checkpoint(|| pay_chunk(storage, series_id, DIST_CHUNK_LIMIT));
+        if let Err(e) = res {
+            tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "distribution drain: skipping series");
+        }
+    }
+    Ok(())
 }
 
 /// Settle: `settler` is the caller. Gating reads Intex; value movement
@@ -370,7 +468,7 @@ pub fn mine_promis(
         .into(),
     )?;
 
-    outbe_promisfactory::api::mine(storage.clone(), holder, promis_amount)?;
+    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount)?;
 
     emit_event(
         storage,
