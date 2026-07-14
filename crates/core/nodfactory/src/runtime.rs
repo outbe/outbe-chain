@@ -73,8 +73,8 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 /// qualification, pull `cost_amount_minor` from the caller as a vault
 /// deposit (when non-zero), burn the Nod (emitting `NodBurned`), then
 /// delegate the matching gratis mint to `gratisfactory` (which mints to the
-/// owner, records the Fidelity cohort, and emits `GratisMined`). Returns the
-/// minted amount.
+/// owner and records the Fidelity cohort; the `GratisMinted` event is emitted
+/// by the Gratis token). Returns the minted amount.
 ///
 /// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
 /// that amount of `asset` from the caller into the precompile address via

@@ -49,7 +49,7 @@ impl Promis<'_> {
         self.balances.write(&account, new_balance)?;
         self.total_supply.write(new_supply)?;
 
-        self.emit(IPromis::PromisMined {
+        self.emit(IPromis::PromisMinted {
             account,
             amount,
             newTotalSupply: new_supply,

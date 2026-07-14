@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 interface IPromis {
-    event PromisMined(address indexed account, uint256 amount, uint256 newTotalSupply);
+    event PromisMinted(address indexed account, uint256 amount, uint256 newTotalSupply);
     event PromisBurned(address indexed account, uint256 amount, uint256 remainingSupply);
 
     function name() external view returns (string memory);

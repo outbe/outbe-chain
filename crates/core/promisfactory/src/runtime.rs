@@ -1,14 +1,15 @@
 //! Orchestration logic for the promisfactory precompile.
 //!
 //! Owns the promis mint/burn orchestration on top of the Promis token
-//! (`outbe_promis::Promis`). `mine` wraps `outbe_promis::Promis::mine`, records
-//! the Fidelity acquisition cohort (`cohort_in`), and emits `PromisMined`.
-//! `mine_coen` is the symmetric sale path: it wraps `outbe_promis::Promis::burn`,
-//! records the Fidelity sale cohort (`cohort_out`), mints native COEN 1:1, and
-//! emits `CoenMined`. `convert_to_gratis` burns promis and mints Gratis 1:1 via
+//! (`outbe_promis::Promis`). `mine` wraps `outbe_promis::Promis::mine` and records
+//! the Fidelity acquisition cohort (`cohort_in`). `mine_coen` is the symmetric
+//! sale path: it wraps `outbe_promis::Promis::burn`, records the Fidelity sale
+//! cohort (`cohort_out`), mints native COEN 1:1, and emits `CoenMined`.
+//! `convert_to_gratis` burns promis and mints Gratis 1:1 via
 //! `gratisfactory::api::mine_from_promis`, deliberately leaving Fidelity untouched
 //! so the original acquisition cohort carries over to the gratis. Keeping these
-//! here puts the token movement and Fidelity bookkeeping in one place.
+//! here puts the token movement and Fidelity bookkeeping in one place. The
+//! `PromisMinted`/`PromisBurned` events are emitted by the Promis token itself.
 
 use alloy_primitives::{Address, U256};
 
@@ -18,8 +19,8 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promis::Promis;
 
-/// Mint `amount` promis to `account`, record the Fidelity acquisition cohort,
-/// and emit `PromisMined`.
+/// Mint `amount` promis to `account` and record the Fidelity acquisition cohort.
+/// The `PromisMinted` event is emitted by [`outbe_promis::Promis::mine`].
 ///
 /// Internal cross-module API (not exposed on the precompile ABI). The
 /// production callers are GemFactory's and IntexFactory's mine paths, which
@@ -30,15 +31,7 @@ pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Resul
     promis.mine(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
-    outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
-
-    storage.emit_event(
-        PROMIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::PromisMined {
-            account,
-            amount,
-        }),
-    )?;
+    outbe_fidelity::api::cohort_in(storage, account, amount, now)?;
 
     Ok(())
 }
@@ -70,8 +63,9 @@ pub fn mine_coen(storage: StorageHandle<'_>, account: Address, amount: U256) -> 
     Ok(amount)
 }
 
-/// Burn `amount` promis from `account`, emit `PromisBurned`, and mint the matching
-/// Gratis 1:1 via [`outbe_gratisfactory::api::mine_from_promis`].
+/// Burn `amount` promis from `account` and mint the matching Gratis 1:1 via
+/// [`outbe_gratisfactory::api::mine_from_promis`]. The `PromisBurned` event is
+/// emitted by [`outbe_promis::Promis::burn`].
 ///
 /// Unlike [`mine_coen`], this touches no Fidelity cohort: the original promis
 /// acquisition cohort stays intact and carries over to the gratis, so loyalty
@@ -86,15 +80,7 @@ pub fn convert_to_gratis(
     let mut promis = Promis::new(storage.clone());
     promis.burn(account, amount)?;
 
-    storage.emit_event(
-        PROMIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::PromisBurned {
-            account,
-            amount,
-        }),
-    )?;
-
-    outbe_gratisfactory::api::mine_from_promis(storage.clone(), account, amount)?;
+    outbe_gratisfactory::api::mine_from_promis(storage, account, amount)?;
 
     Ok(amount)
 }

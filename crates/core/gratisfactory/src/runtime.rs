@@ -4,12 +4,12 @@
 //! (`outbe_gratispool`):
 //!
 //! Also owns the gratis mint/burn orchestration. `mine` wraps
-//! `outbe_gratis::Gratis::mine`, records the Fidelity acquisition cohort
-//! (`cohort_in`), and emits `GratisMined`. `mine_coen` is the symmetric
-//! sale path: it wraps `outbe_gratis::Gratis::burn`, records the Fidelity
-//! sale cohort (`cohort_out`), mints native COEN 1:1, and emits `CoenMined`.
-//! Keeping both here puts the token movement and Fidelity bookkeeping in one
-//! place.
+//! `outbe_gratis::Gratis::mine` and records the Fidelity acquisition cohort
+//! (`cohort_in`). `mine_coen` is the symmetric sale path: it wraps
+//! `outbe_gratis::Gratis::burn`, records the Fidelity sale cohort (`cohort_out`),
+//! mints native COEN 1:1, and emits `CoenMined`. Keeping both here puts the token
+//! movement and Fidelity bookkeeping in one place. The `GratisMinted`/`GratisBurned`
+//! events are emitted by the Gratis token itself.
 
 use alloy_primitives::{Address, U256};
 
@@ -68,39 +68,25 @@ pub fn unpledge_gratis(
     Ok(amount)
 }
 
+/// Mint `amount` gratis to `account` and record the Fidelity acquisition cohort.
+/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mine`].
 pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     let mut gratis = Gratis::new(storage.clone());
     gratis.mine(account, amount)?;
 
     let now = storage.timestamp()?.to::<u64>();
-    outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
-
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisMined {
-            account,
-            amount,
-        }),
-    )?;
+    outbe_fidelity::api::cohort_in(storage, account, amount, now)?;
 
     Ok(())
 }
 
-/// Mint `amount` gratis to `account` and emit `GratisMined`, WITHOUT recording a
-/// Fidelity acquisition cohort (unlike [`mine`]). Used by the promis→gratis
-/// conversion, where the original promis acquisition cohort is preserved so loyalty
-/// aging carries over. Validation is delegated to [`outbe_gratis::Gratis::mine`].
+/// Mint `amount` gratis to `account` WITHOUT recording a Fidelity acquisition
+/// cohort (unlike [`mine`]). Used by the promis→gratis conversion, where the
+/// original promis acquisition cohort is preserved so loyalty aging carries over.
+/// The `GratisMinted` event is emitted by [`outbe_gratis::Gratis::mine`].
 pub fn mine_from_promis(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
-    let mut gratis = Gratis::new(storage.clone());
+    let mut gratis = Gratis::new(storage);
     gratis.mine(account, amount)?;
-
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisMined {
-            account,
-            amount,
-        }),
-    )?;
 
     Ok(())
 }

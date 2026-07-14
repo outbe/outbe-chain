@@ -64,7 +64,7 @@ impl Gratis<'_> {
         self.balances.write(&account, new_balance)?;
         self.total_supply.write(new_supply)?;
 
-        self.emit(IGratis::GratisMined {
+        self.emit(IGratis::GratisMinted {
             account,
             amount,
             newTotalSupply: new_supply,
