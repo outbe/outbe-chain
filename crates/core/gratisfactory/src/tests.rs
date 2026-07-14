@@ -48,7 +48,7 @@ fn pledge_moves_balance_into_escrow_and_credits_caller_ledger() {
     StorageHandle::enter(&mut storage, |storage| {
         let amount = DenomAmount::Gratis1.amount();
         Gratis::new(storage.clone())
-            .mine(alice(), amount * U256::from(2u64))
+            .mint(alice(), amount * U256::from(2u64))
             .unwrap();
         seed_fidelity(storage.clone(), alice());
 
@@ -120,7 +120,7 @@ fn pledge_duplicate_commitment_reverts() {
     StorageHandle::enter(&mut storage, |storage| {
         let amount = DenomAmount::Gratis1.amount();
         Gratis::new(storage.clone())
-            .mine(alice(), amount * U256::from(2u64))
+            .mint(alice(), amount * U256::from(2u64))
             .unwrap();
         seed_fidelity(storage.clone(), alice());
 
@@ -146,7 +146,7 @@ fn unpledge_releases_escrow_back_to_pledger() {
         let amount = denom.amount();
 
         // Alice pledges.
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        Gratis::new(storage.clone()).mint(alice(), amount).unwrap();
         seed_fidelity(storage.clone(), alice());
         let secret = U256::from(0xAAu64);
         let null_s = U256::from(0xBBu64);
@@ -235,7 +235,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             .unwrap();
         assert_eq!(rcfi_before, U256::ZERO);
 
-        runtime::mine(storage.clone(), alice(), amount).unwrap();
+        runtime::mint(storage.clone(), alice(), amount).unwrap();
 
         // Gratis minted to the recipient and into total supply.
         let gratis = Gratis::new(storage.clone());
@@ -253,11 +253,37 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
 }
 
 #[test]
+fn mine_from_promis_mints_without_cohort() {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut storage, |storage| {
+        let amount = U256::from(1_000u64);
+        let later = CREATED_AT + ONE_YEAR_SECS;
+
+        runtime::mint_from_promis(storage.clone(), alice(), amount).unwrap();
+
+        // Gratis minted to the recipient and into total supply.
+        let gratis = Gratis::new(storage.clone());
+        assert_eq!(gratis.balance_of(alice()).unwrap(), amount);
+        assert_eq!(gratis.total_supply().unwrap(), amount);
+
+        // Unlike `mine`, no acquisition cohort is recorded, so aged RCFI a year
+        // later stays zero. If `mine_from_promis` started calling `cohort_in`,
+        // this would become positive and fail.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .compute_fidelity_index(alice(), later)
+            .unwrap();
+        assert_eq!(rcfi_after, U256::ZERO);
+    });
+}
+
+#[test]
 fn mine_rejects_zero_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::mine(storage, alice(), U256::ZERO).unwrap_err();
+        let err = runtime::mint(storage, alice(), U256::ZERO).unwrap_err();
         assert!(err.to_string().contains("amount must be positive"));
     });
 }
@@ -273,7 +299,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         // Seed gratis to burn plus an active Fidelity cohort of the SAME size
         // acquired a year ago, so it has positive RCFI now and is fully
         // consumed by the sale.
-        Gratis::new(storage.clone()).mine(alice(), amount).unwrap();
+        Gratis::new(storage.clone()).mint(alice(), amount).unwrap();
         outbe_fidelity::api::cohort_in(
             storage.clone(),
             alice(),
@@ -316,7 +342,7 @@ fn mine_coen_rejects_insufficient_balance() {
     StorageHandle::enter(&mut storage, |storage| {
         // Alice holds 100 gratis but tries to convert 200.
         Gratis::new(storage.clone())
-            .mine(alice(), U256::from(100u64))
+            .mint(alice(), U256::from(100u64))
             .unwrap();
 
         let call = dispatch_call_bytes(IGratisFactory::IGratisFactoryCalls::mineCoen(

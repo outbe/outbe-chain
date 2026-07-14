@@ -8,9 +8,14 @@ publish.workspace = true
 [dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-promis.workspace = true
+outbe-gratisfactory.workspace = true
 outbe-fidelity.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+
+[dev-dependencies]
+# Read the minted gratis balance/supply in convert_to_gratis tests.
+outbe-gratis.workspace = true
 
 [lints]
 workspace = true

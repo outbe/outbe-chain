@@ -468,7 +468,7 @@ pub fn mine_promis(
         .into(),
     )?;
 
-    outbe_promisfactory::api::mine(storage.clone(), holder, promis_amount)?;
+    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount)?;
 
     emit_event(
         storage,

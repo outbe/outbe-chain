@@ -48,12 +48,12 @@ fn test_mine() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let amount = U256::from(1000);
 
-        let supply = g.mine(alice, amount).unwrap();
+        let supply = g.mint(alice, amount).unwrap();
         assert_eq!(supply, amount);
         assert_eq!(g.balance_of(alice).unwrap(), amount);
         assert_eq!(g.total_supply().unwrap(), amount);
 
-        let supply = g.mine(alice, U256::from(500)).unwrap();
+        let supply = g.mint(alice, U256::from(500)).unwrap();
         assert_eq!(supply, U256::from(1500));
         assert_eq!(g.balance_of(alice).unwrap(), U256::from(1500));
     });
@@ -63,14 +63,14 @@ fn test_mine() {
 fn test_mine_zero_fails() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        assert!(g.mine(alice, U256::ZERO).is_err());
+        assert!(g.mint(alice, U256::ZERO).is_err());
     });
 }
 
 #[test]
 fn test_mine_zero_address_fails() {
     with_gratis_mut(|g| {
-        assert!(g.mine(Address::ZERO, U256::from(100)).is_err());
+        assert!(g.mint(Address::ZERO, U256::from(100)).is_err());
     });
 }
 
@@ -78,7 +78,7 @@ fn test_mine_zero_address_fails() {
 fn test_burn() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
 
         let remaining = g.burn(alice, U256::from(400)).unwrap();
         assert_eq!(remaining, U256::from(600));
@@ -91,7 +91,7 @@ fn test_burn() {
 fn test_burn_insufficient_fails() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(100)).unwrap();
+        g.mint(alice, U256::from(100)).unwrap();
         assert!(g.burn(alice, U256::from(200)).is_err());
     });
 }
@@ -101,7 +101,7 @@ fn test_transfer_gratis_internal() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
 
         g.transfer_gratis(alice, bob, U256::from(300)).unwrap();
 
@@ -117,7 +117,7 @@ fn test_transfer_gratis_insufficient_fails() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
-        g.mine(alice, U256::from(100)).unwrap();
+        g.mint(alice, U256::from(100)).unwrap();
         assert!(g.transfer_gratis(alice, bob, U256::from(200)).is_err());
     });
 }
@@ -128,8 +128,8 @@ fn test_multiple_users() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
 
-        g.mine(alice, U256::from(1000)).unwrap();
-        g.mine(bob, U256::from(2000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
+        g.mint(bob, U256::from(2000)).unwrap();
 
         assert_eq!(g.balance_of(alice).unwrap(), U256::from(1000));
         assert_eq!(g.balance_of(bob).unwrap(), U256::from(2000));
@@ -152,7 +152,7 @@ fn test_events_emitted() {
         let mut g = Gratis::new(storage.clone());
         let alice = address!("0x1111111111111111111111111111111111111111");
 
-        g.mine(alice, U256::from(100)).unwrap();
+        g.mint(alice, U256::from(100)).unwrap();
         g.pledge(alice, U256::from(20)).unwrap();
         g.unpledge(alice, U256::from(10)).unwrap();
         g.burn(alice, U256::from(10)).unwrap();
@@ -172,7 +172,7 @@ fn test_pledge_moves_balance_to_credis_escrow() {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         assert_eq!(g.balance_of(CREDIS_ADDRESS).unwrap(), U256::ZERO);
 
         let total_pledged = g.pledge(alice, U256::from(300)).unwrap();
@@ -196,7 +196,7 @@ fn test_pledge_moves_balance_to_credis_escrow() {
 fn test_pledge_zero_amount_fails() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         assert!(g.pledge(alice, U256::ZERO).is_err());
     });
 }
@@ -206,7 +206,7 @@ fn test_pledge_insufficient_balance_fails() {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(100)).unwrap();
+        g.mint(alice, U256::from(100)).unwrap();
         assert!(g.pledge(alice, U256::from(200)).is_err());
 
         // Failure must not move state.
@@ -221,7 +221,7 @@ fn test_unpledge_returns_balance_from_credis_escrow() {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(300)).unwrap();
 
         let remaining = g.unpledge(alice, U256::from(100)).unwrap();
@@ -238,7 +238,7 @@ fn test_unpledge_returns_balance_from_credis_escrow() {
 fn test_unpledge_zero_amount_fails() {
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(300)).unwrap();
         assert!(g.unpledge(alice, U256::ZERO).is_err());
     });
@@ -249,7 +249,7 @@ fn test_unpledge_more_than_pledged_fails() {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(100)).unwrap();
         assert!(g.unpledge(alice, U256::from(200)).is_err());
 
@@ -267,8 +267,8 @@ fn test_pledge_multiple_users_share_escrow() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
 
-        g.mine(alice, U256::from(1000)).unwrap();
-        g.mine(bob, U256::from(2000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
+        g.mint(bob, U256::from(2000)).unwrap();
 
         g.pledge(alice, U256::from(100)).unwrap();
         g.pledge(bob, U256::from(400)).unwrap();
@@ -296,7 +296,7 @@ fn test_pledged_of_increases_on_pledge_and_decreases_on_unpledge() {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
     with_gratis_mut(|g| {
         let alice = address!("0x1111111111111111111111111111111111111111");
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         assert_eq!(g.pledged_of(alice).unwrap(), U256::ZERO);
 
         g.pledge(alice, U256::from(300)).unwrap();
@@ -318,8 +318,8 @@ fn test_pledged_of_is_per_account_independent() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
 
-        g.mine(alice, U256::from(1000)).unwrap();
-        g.mine(bob, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
+        g.mint(bob, U256::from(1000)).unwrap();
 
         g.pledge(alice, U256::from(100)).unwrap();
         g.pledge(bob, U256::from(70)).unwrap();
@@ -346,8 +346,8 @@ fn test_unpledge_rejects_when_caller_underfunded_even_if_escrow_has_balance() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let bob = address!("0x2222222222222222222222222222222222222222");
 
-        g.mine(alice, U256::from(1000)).unwrap();
-        g.mine(bob, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
+        g.mint(bob, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(100)).unwrap();
         g.pledge(bob, U256::from(50)).unwrap();
         assert_eq!(g.balance_of(CREDIS_ADDRESS).unwrap(), U256::from(150));
@@ -384,10 +384,10 @@ fn test_mine_rejects_total_supply_overflow_across_accounts() {
 
         // Start supply close to MAX via alice.
         let near_max = U256::MAX - U256::from(10u64);
-        g.mine(alice, near_max).unwrap();
+        g.mint(alice, near_max).unwrap();
 
         // Bob's balance would fit (starts at 0), but total_supply += 100 overflows.
-        let err = g.mine(bob, U256::from(100u64)).unwrap_err();
+        let err = g.mint(bob, U256::from(100u64)).unwrap_err();
         assert!(err.to_string().contains("overflow"));
 
         // State invariants: balance for bob not credited, supply unchanged.
@@ -496,7 +496,7 @@ fn test_precompile_pledged_of_reflects_state() {
 
         // Seed state and pledge.
         let mut g = Gratis::new(storage.clone());
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(250)).unwrap();
 
         // Re-query through the precompile.
@@ -522,7 +522,7 @@ fn test_precompile_pledged_total_supply_reflects_state() {
 
         // Seed state and pledge.
         let mut g = Gratis::new(storage.clone());
-        g.mine(alice, U256::from(1000)).unwrap();
+        g.mint(alice, U256::from(1000)).unwrap();
         g.pledge(alice, U256::from(250)).unwrap();
 
         // Re-query through the precompile.

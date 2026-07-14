@@ -116,7 +116,7 @@
   },
   {
     "type": "event",
-    "name": "PromisMined",
+    "name": "PromisMinted",
     "inputs": [
       {
         "name": "account",
