@@ -21,6 +21,8 @@ library IntexGas {
     /// @dev markCalled flips state and snapshots holders for the migration bridge.
     uint256 internal constant MARK_CALLED = 500_000;
     uint256 internal constant MARK_QUALIFIED = 200_000;
+    /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
+    uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     // --- Variable-size messages: base + per-item marginal ---
     uint256 internal constant BIDS_BASE = 1_300_000;

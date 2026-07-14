@@ -5,10 +5,13 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
+import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
@@ -30,6 +33,8 @@ contract TargetRouter is
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
+    using SafeERC20 for IERC20;
+
     /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
@@ -91,6 +96,23 @@ contract TargetRouter is
         mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
         /// @dev Next index to assign in `pendingIssuanceMints`; also the count ever enqueued.
         uint256 nextPendingIssuanceMintIdx;
+        /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
+        IERC7786TokenBridge tokenBridge;
+        /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
+        address originRouter;
+        /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
+        /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
+        uint256 nextPendingProceedsRouteIdx;
+    }
+
+    /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
+    ///         via `flushPendingProceedsRoute`. The WCOEN is already held here, so only series+amount is snapshotted.
+    struct PendingProceedsRoute {
+        uint32 seriesId;
+        uint128 amount;
+        bool exists;
+        bool done;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -140,6 +162,26 @@ contract TargetRouter is
     /// @notice IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
     function nftBridge() external view returns (IIntexNFT1155Bridge) {
         return _ts().nftBridge;
+    }
+
+    /// @notice Token bridge that routes auction proceeds to Outbe.
+    function tokenBridge() external view returns (IERC7786TokenBridge) {
+        return _ts().tokenBridge;
+    }
+
+    /// @notice OriginRouter address on Outbe that receives the proceeds.
+    function originRouter() external view returns (address) {
+        return _ts().originRouter;
+    }
+
+    /// @notice Parked proceeds route by enqueue index.
+    function pendingProceedsRoutes(uint256 idx)
+        external
+        view
+        returns (uint32 seriesId, uint128 amount, bool exists, bool done)
+    {
+        PendingProceedsRoute storage p = _ts().pendingProceedsRoutes[idx];
+        return (p.seriesId, p.amount, p.exists, p.done);
     }
 
     /// @notice Parked BIDS_BATCH relay by enqueue index.
@@ -204,6 +246,16 @@ contract TargetRouter is
     /// @inheritdoc ITargetRouter
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRemoteMessenger(chainId, interop);
+    }
+
+    /// @notice Set the composed-transfer token bridge and the OriginRouter recipient for proceeds routing.
+    function setProceedsRoute(address _tokenBridge, address _originRouter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_tokenBridge == address(0)) revert ZeroAddress("tokenBridge");
+        if (_originRouter == address(0)) revert ZeroAddress("originRouter");
+        TargetRouterStorage storage $ = _ts();
+        $.tokenBridge = IERC7786TokenBridge(_tokenBridge);
+        $.originRouter = _originRouter;
+        emit ProceedsRouteSet(_tokenBridge, _originRouter);
     }
 
     // --- Quote ---
@@ -515,7 +567,10 @@ contract TargetRouter is
             });
         }
 
-        _ts().escrowAdapter.finalizeAuction(seriesId, _receiveId, instructions);
+        uint128 totalPaid = _ts().escrowAdapter.finalizeAuction(seriesId, _receiveId, instructions);
+
+        // Proceeds land here (proceedsRecipient); route them to Outbe for creator payout, parking on failure.
+        if (totalPaid > 0) _routeOrParkProceeds(seriesId, totalPaid);
 
         emit RefundInstructionsReceived(_srcChainId, seriesId, bidders.length);
     }
@@ -607,6 +662,53 @@ contract TargetRouter is
         uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);
+    }
+
+    /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
+    ///      back the finalization (the WCOEN is already held here). Retried via `flushPendingProceedsRoute`.
+    function _routeOrParkProceeds(uint32 seriesId, uint128 amount) internal {
+        try this.routeProceedsExt(seriesId, amount) {
+        // ok — proceeds routed
+        }
+        catch (bytes memory reason) {
+            TargetRouterStorage storage $ = _ts();
+            uint256 idx = $.nextPendingProceedsRouteIdx++;
+            $.pendingProceedsRoutes[idx] =
+                PendingProceedsRoute({seriesId: seriesId, amount: amount, exists: true, done: false});
+            emit ProceedsRouteDeferred(idx, seriesId, amount, reason);
+        }
+    }
+
+    /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
+    function routeProceedsExt(uint32 seriesId, uint128 amount) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        _doRouteProceeds(seriesId, amount);
+    }
+
+    /// @notice Permissionless retry of a previously deferred proceeds route.
+    /// @param idx Index of the parked route to flush.
+    function flushPendingProceedsRoute(uint256 idx) external nonReentrant {
+        PendingProceedsRoute storage p = _ts().pendingProceedsRoutes[idx];
+        if (!p.exists) revert NoSuchPendingProceedsRoute(idx);
+        if (p.done) revert AlreadyFlushed(idx);
+        p.done = true;
+        _doRouteProceeds(p.seriesId, p.amount);
+        emit ProceedsRouteFlushed(idx, p.seriesId);
+    }
+
+    /// @dev Approve the token bridge and route `amount` WCOEN to the OriginRouter with the series id, self-funding
+    ///      the bridge fee from the relay float. The credited WCOEN is unwrapped and distributed on Outbe.
+    function _doRouteProceeds(uint32 seriesId, uint128 amount) internal {
+        TargetRouterStorage storage $ = _ts();
+        address to = $.originRouter;
+        bytes memory extraData = abi.encode(seriesId);
+        IERC20 token = $.escrowAdapter.paymentToken();
+
+        token.forceApprove(address($.tokenBridge), amount);
+        uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        // slither-disable-next-line unused-return,arbitrary-send-eth
+        $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        emit ProceedsRouted(seriesId, amount);
     }
 
     /// @inheritdoc ITargetRouter

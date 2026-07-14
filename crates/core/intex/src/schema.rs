@@ -1,7 +1,7 @@
 //! Storage schema for the Intex runtime module: the canonical per-series
 //! identity + lifecycle ledger. One record per `seriesId`.
 
-use alloy_primitives::U256;
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 
@@ -125,6 +125,35 @@ impl SeriesRecord {
     }
 }
 
+/// Paginated creator-reward distribution progress for a series. Exists while a
+/// distribution is in flight; `active != 0` is the existence sentinel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = active)]
+pub struct DistProgress {
+    #[key]
+    pub series_id: u32,
+
+    /// Total native COEN received for this series' distribution.
+    #[attribute(order = 0)]
+    pub amount: U256,
+
+    /// Σ of contributor nominals (the proportionality denominator).
+    #[attribute(order = 1)]
+    pub total_nominal: U256,
+
+    /// Native COEN already paid out across chunks so far.
+    #[attribute(order = 2)]
+    pub paid_so_far: U256,
+
+    /// Index of the next contributor to pay.
+    #[attribute(order = 3)]
+    pub cursor: u32,
+
+    /// Existence sentinel: 1 while in flight.
+    #[attribute(order = 4)]
+    pub active: u8,
+}
+
 /// EVM storage layout for the Intex module.
 #[storage_schema]
 #[contract(addr = INTEX_ADDRESS)]
@@ -137,4 +166,49 @@ pub struct IntexContract {
 
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    // --- Creator-reward: per-series contributors (owner → nominal share) ---
+    /// series_id -> number of contributors.
+    #[attribute(order = 3)]
+    pub contributor_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    /// keccak256(series_id_be32 ++ index_be32) -> contributor owner.
+    #[attribute(order = 4)]
+    pub contributor_owner_at: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    /// keccak256(series_id_be32 ++ index_be32) -> contributor nominal share.
+    #[attribute(order = 5)]
+    pub contributor_nominal_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// series_id -> Σ nominal across all contributors.
+    #[attribute(order = 6)]
+    pub contributor_total: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    // --- Creator-reward: paginated distribution progress + active set ---
+    /// series_id -> in-flight distribution progress.
+    #[attribute(order = 7)]
+    pub dist_progress: outbe_primitives::storage::dsl::Map<u32, DistProgress>,
+
+    /// Number of in-flight distributions (dense active set for the begin-block drain).
+    #[attribute(order = 8)]
+    pub active_dist_count: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// dense index -> series_id.
+    #[attribute(order = 9)]
+    pub active_dist_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    /// series_id -> (active index + 1); 0 = not active.
+    #[attribute(order = 10)]
+    pub active_dist_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+}
+
+impl IntexContract<'_> {
+    /// Composite key for per-series contributor index lists:
+    /// `keccak256(series_id_be32 ++ index_be32)`.
+    pub fn contributor_index_key(series_id: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&series_id.to_be_bytes());
+        buf[4..8].copy_from_slice(&index.to_be_bytes());
+        keccak256(buf)
+    }
 }

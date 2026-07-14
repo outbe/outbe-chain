@@ -1,11 +1,12 @@
 use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
+    time::timestamp_to_date_key,
 };
 
 /// Result of a lysis execution.
@@ -16,6 +17,8 @@ pub struct LysisResult {
 }
 
 /// Executes lysis for a given worldwide day with the specified gratis allocation.
+/// `auction_timestamp` is the day's scheduled auction time (weeks after `wwd`);
+/// its date key is the auction series id that keys the contributor map.
 ///
 /// All arithmetic uses integer fixed-point math (no f32/f64).
 ///
@@ -28,6 +31,7 @@ pub struct LysisResult {
 pub fn lysis(
     storage: StorageHandle,
     wwd: WorldwideDay,
+    auction_timestamp: u64,
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
@@ -79,6 +83,10 @@ pub fn lysis(
     // Track which tribute token_ids were successfully processed.
     let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
+    // Per-owner nominal accumulator for the day's creator-reward split. BTreeMap
+    // keeps the contributor order deterministic (sorted by address) across nodes.
+    let mut contributors: std::collections::BTreeMap<Address, U256> =
+        std::collections::BTreeMap::new();
 
     for (i, tribute) in tributes.iter().enumerate() {
         tribute_ids.push(tribute.token_id);
@@ -130,7 +138,20 @@ pub fn lysis(
         )?;
         nod_ids.push(nod_id);
         processed_tribute_ids.push(tribute.token_id);
+        // Credit this owner's nominal toward the creator-reward split.
+        *contributors.entry(tribute.owner).or_insert(U256::ZERO) += tribute.nominal_amount_minor;
     }
+
+    // Capture the contributor map (owner -> Σ nominal of processed tributes)
+    // for this day's auction series BEFORE the tributes are burned, so
+    // IntexFactory can later pay creators proportional to nominal. The series
+    // id mirrors desis: date key of the auction timestamp.
+    if !contributors.is_empty() {
+        let list: Vec<(Address, U256)> = contributors.into_iter().collect();
+        let series_id = timestamp_to_date_key(auction_timestamp);
+        outbe_intex::api::record_contributors(&storage, series_id, &list)?;
+    }
+
     // Bucket qualification is NOT written here. Buckets become qualified when
     // the COEN/0xUSD oracle exchange rate reaches bucket.floor_price_minor —
     // see `outbe_nod::runtime::NodContract::mine_gratis` for the price check

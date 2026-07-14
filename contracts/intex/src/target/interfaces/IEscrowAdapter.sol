@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /**
  * @title EscrowAdapter Contract Interface
  * @author Outbe
@@ -192,6 +194,10 @@ interface IEscrowAdapter {
     /// @param bidsProcessed Number of instructions processed, all of which failed.
     event FinalizationNoOp(uint32 indexed seriesId, uint32 bidsProcessed);
 
+    /// @notice Emitted when the finalized-proceeds recipient is configured.
+    /// @param recipient Address receiving each series' finalized proceeds.
+    event ProceedsRecipientSet(address recipient);
+
     // --- Errors ---
 
     /// @notice Zero address provided.
@@ -226,6 +232,8 @@ interface IEscrowAdapter {
     error LiveLocksOutstanding(uint256 outstanding);
     /// @notice Self-call helper invoked by an external caller (only `address(this)` is allowed).
     error NotSelf();
+    /// @notice Finalization produced proceeds but no recipient is configured.
+    error ProceedsRecipientNotSet();
     /// @notice `retryFinalize` invoked before the series was finalized at least once.
     /// @param seriesId Series identifier.
     error NotFinalizedYet(uint32 seriesId);
@@ -291,6 +299,15 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose bond is returned.
     function releaseCommitBond(uint32 seriesId, address bidder) external;
 
+    /// @notice Active payment token used for bid escrow (WCOEN).
+    function paymentToken() external view returns (IERC20);
+
+    /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
+    function proceedsRecipient() external view returns (address);
+
+    /// @notice Set the recipient of finalized auction proceeds.
+    function setProceedsRecipient(address recipient) external;
+
     // --- Bridge Finalization ---
 
     /// @notice Finalize a series escrow with per-bidder refund/payout instructions.
@@ -298,8 +315,10 @@ interface IEscrowAdapter {
     /// @param receiveId Inbound bridge message id that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.
     /// @param instructions Array of finalization instructions per bidder.
+    /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to creators.
     function finalizeAuction(uint32 seriesId, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
-        external;
+        external
+        returns (uint128 totalPaid);
 
     // --- Recovery ---
 

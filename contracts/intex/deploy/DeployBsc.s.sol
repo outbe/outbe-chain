@@ -80,6 +80,14 @@ contract DeployBsc is BaseScript {
                 InteroperableAddress.formatEvmV1(outbeChainId, predictProxy(factory, deployer, "IntexNFT1155Bridge"))
             );
 
+        // Proceeds route (creator-reward): the escrow hands finalized proceeds to the router, which bridges
+        // them to the OriginRouter for creator payout. Skipped when the WCOEN bridge env is unset.
+        address wcoenBridge = vm.envOr("BSC_WCOEN_BRIDGE", address(0));
+        if (wcoenBridge != address(0)) {
+            EscrowAdapter(payable(escrow)).setProceedsRecipient(router);
+            TargetRouter(payable(router)).setProceedsRoute(wcoenBridge, predictProxy(factory, deployer, "OriginRouter"));
+        }
+
         vm.stopBroadcast();
 
         console.log("Create3Factory:", address(factory));

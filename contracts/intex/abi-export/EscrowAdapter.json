@@ -375,7 +375,13 @@
           ]
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "totalPaid",
+          "type": "uint128",
+          "internalType": "uint128"
+        }
+      ],
       "stateMutability": "nonpayable"
     },
     {
@@ -730,6 +736,19 @@
     },
     {
       "type": "function",
+      "name": "proceedsRecipient",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "processFinalizationOne",
       "inputs": [
         {
@@ -868,6 +887,19 @@
         },
         {
           "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setProceedsRecipient",
+      "inputs": [
+        {
+          "name": "recipient",
           "type": "address",
           "internalType": "address"
         }
@@ -1265,6 +1297,19 @@
     },
     {
       "type": "event",
+      "name": "ProceedsRecipientSet",
+      "inputs": [
+        {
+          "name": "recipient",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "RoleAdminChanged",
       "inputs": [
         {
@@ -1632,6 +1677,11 @@
     {
       "type": "error",
       "name": "NotSelf",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ProceedsRecipientNotSet",
       "inputs": []
     },
     {

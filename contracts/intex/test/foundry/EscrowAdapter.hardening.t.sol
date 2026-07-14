@@ -173,7 +173,7 @@ contract EscrowAdapterHardeningTest is Test {
         assertEq(totalLocked, 0, "no state written on a fee-token lock");
     }
 
-    function test_HostileReentrantVault_FinalizeBlocksReentry_ConservationHolds() public {
+    function test_HostileReentrantVault_RetryFinalizeBlocksReentry_ConservationHolds() public {
         EscrowAdapter hEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact hCompact = new MockTheCompact();
         MockERC20 hToken = new MockERC20("USD Coin", "USDC", 6);
@@ -191,12 +191,24 @@ contract EscrowAdapterHardeningTest is Test {
         vm.prank(auction);
         hEscrow.lockFunds(SERIES, bidderA, amount);
 
-        hostile.arm(hEscrow, SERIES, bidderA);
-
+        // Strand the winner at finalize so its proceeds settle via retryFinalize — the path that
+        // now touches the (hostile) vault, since finalize itself no longer calls it.
+        hCompact.setForcedWithdrawalShouldFail(true);
+        IEscrowAdapter.FinalizationInstruction memory inst =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidderA, refundedAmount: 0, paidAmount: amount});
         IEscrowAdapter.FinalizationInstruction[] memory ins = new IEscrowAdapter.FinalizationInstruction[](1);
-        ins[0] = IEscrowAdapter.FinalizationInstruction({bidder: bidderA, refundedAmount: 0, paidAmount: amount});
+        ins[0] = inst;
         vm.prank(bridger);
         hEscrow.finalizeAuction(SERIES, bytes32(uint256(0x1)), ins);
+        assertEq(uint8(hEscrow.getBidLock(SERIES, bidderA).status), uint8(IEscrowAdapter.LockStatus.Locked));
+
+        // retryFinalize deposits the stranded proceeds to the vault, whose hostile depositLiquidity
+        // re-enters claimRefund — the nonReentrant guard must block it and revert the whole call.
+        hCompact.setForcedWithdrawalShouldFail(false);
+        hostile.arm(hEscrow, SERIES, bidderA);
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        hEscrow.retryFinalize(SERIES, bytes32(uint256(0x2)), inst);
 
         assertEq(
             uint8(hEscrow.getBidLock(SERIES, bidderA).status),
