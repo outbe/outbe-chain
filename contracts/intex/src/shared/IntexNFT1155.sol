@@ -30,6 +30,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
+    /// @notice Gem factory role; allowed to call `parkForGems`.
+    bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
     /// @notice System relayer role; allowed to drive the system bridge during the `Called` window.
     /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
     ///      can only `crosschainBurn` while the series is `Qualified`.
@@ -512,6 +514,27 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         emit IntexCompleted(seriesId, holder, amount);
         emit MetadataUpdate(sTok);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function parkForGems(address holder, uint32 seriesId, uint256 amount) external onlyRole(GEM_ROLE) {
+        if (holder == address(0)) revert ZeroAddress("holder", holder);
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 iTok = uint256(seriesId);
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
+        if (data.issuedAt == 0) revert NonexistentToken(iTok);
+
+        if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
+            revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
+        }
+
+        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
+        data.totalSupply -= uint32(amount);
+        _burn(holder, iTok, amount);
+
+        emit IntexParked(seriesId, holder, amount);
+        emit MetadataUpdate(iTok);
     }
 
     /// @inheritdoc IIntexNFT1155
