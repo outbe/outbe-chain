@@ -133,12 +133,15 @@ pub enum GratisOp {
     /// rejected); does not touch a pledge record.
     Unpledge,
     /// Consume a pledge record for a credis request: verify `spend_auth`, mark it
-    /// spent, bind it to `bundle_account`, and return the pledged `gratis_amount`
-    /// so credis can size the position. No balance/pledged move.
+    /// spent, bind it to `bundle_account`, and move the pledged `gratis_amount` out
+    /// of the EOA's pledged ledger into the `credis_account` escrow balance
+    /// (`pledged_total_supply -= gratis_amount`). Returns `gratis_amount` so credis
+    /// can size the position.
     PledgeToBundle,
-    /// Release one anadosis installment of pledged collateral back to the original
-    /// EOA's balance (`pledged_total_supply -= release`); decrements the record's
-    /// remaining installments.
+    /// Release one anadosis installment of collateral from the `credis_account`
+    /// escrow balance back to the original EOA's balance (no aggregate change — the
+    /// pledge left the pool at `PledgeToBundle`); decrements the record's remaining
+    /// installments.
     UnlockToEoa,
 }
 
@@ -162,8 +165,9 @@ pub struct ModifyAuth {
 pub struct GratisOpRequest {
     pub op: GratisOp,
     pub chain_id: B256,
-    /// Balance-owning account (the EOA). For `UnlockToEoa` this is the original
-    /// pledger the enclave credits; the host learns it from the credis position.
+    /// Balance-owning account (the EOA). For `PledgeToBundle`/`UnlockToEoa` this is
+    /// the original pledger, supplied by the host (`eoaAccount` calldata arg) and
+    /// checked by the enclave against `record.eoa`.
     pub account: Address,
     // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
     // visible in calldata (only cumulative balances are encrypted). To also hide
@@ -191,6 +195,14 @@ pub struct GratisOpRequest {
     /// (`HMAC(pledge_secret, "credis" ‖ bundle_account ‖ op_nonce)`), set for
     /// `PledgeToBundle`.
     pub spend_auth: Option<[u8; 32]>,
+    /// Escrow account holding credis collateral (`CREDIS_ADDRESS`). Set for the
+    /// two-account moves `PledgeToBundle` (credit its balance) and `UnlockToEoa`
+    /// (debit its balance); the enclave derives its view key from this address.
+    pub credis_account: Option<Address>,
+    /// Escrow account's current balance blob (`version ‖ ct`), forwarded so the
+    /// two-account move can read + re-encrypt it. Empty when the escrow has no
+    /// balance yet.
+    pub credis_balance: Vec<u8>,
 }
 
 /// Outcome of a single Gratis op.
@@ -212,16 +224,15 @@ pub struct GratisOpResult {
     pub new_pledged: Vec<u8>,
     /// New/updated pledge-record blob (`version ‖ ct`); empty unless the op touches one.
     pub new_pledge_record: Vec<u8>,
+    /// New escrow balance blob (`version ‖ ct`) to store verbatim under
+    /// `credis_account`; set for the two-account moves `PledgeToBundle` /
+    /// `UnlockToEoa`, empty otherwise.
+    pub new_credis_balance: Vec<u8>,
     /// Deterministic pledge handle for a `Pledge` (zero otherwise).
     pub pledge_handle: B256,
     /// Pledged amount surfaced for credis (`PledgeToBundle`) or the installment
     /// amount released (`UnlockToEoa`); zero otherwise.
     pub gratis_amount: U256,
-    /// The original pledger EOA, revealed to the host by `PledgeToBundle` so the
-    /// credis position can store it for the later `UnlockToEoa`. (Accepted
-    /// linkage-visibility tradeoff — see the `apply_unlock_to_eoa` TODO. Zero for
-    /// other ops.)
-    pub pledger_eoa: Address,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
     /// The account's next modify-auth nonce (for the host to persist).
@@ -576,6 +587,14 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         }
         None => buf.push(0),
     }
+    match req.credis_account {
+        Some(a) => {
+            buf.push(1);
+            buf.extend_from_slice(a.as_slice());
+        }
+        None => buf.push(0),
+    }
+    push_bytes(&mut buf, &req.credis_balance);
     alloy_primitives::keccak256(buf)
 }
 

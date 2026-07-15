@@ -7,6 +7,11 @@
         "name": "positionId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "eoaAccount",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -23,6 +28,11 @@
       },
       {
         "name": "bundleAccount",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "eoaAccount",
         "type": "address",
         "internalType": "address"
       },

@@ -86,19 +86,21 @@ pub fn unpledge(
 // --- Credis-driven ---
 
 /// requestCredis: consume `pledge_handle` for `bundle` (authorized by
-/// `spend_auth`). Returns `(gratis_amount, pledger_eoa)` — the EOA is surfaced so
-/// the credis position can store it for the later per-installment unlock.
+/// `spend_auth`), moving the collateral from `eoa`'s pledged ledger into the
+/// `CREDIS_ADDRESS` escrow balance. Returns `gratis_amount`. `eoa` is supplied by
+/// the caller and checked by the enclave against the pledge record.
 pub fn pledge_to_bundle(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
+    eoa: Address,
     spend_auth: [u8; 32],
-) -> Result<(U256, Address)> {
-    runtime::pledge_to_bundle(storage, pledge_handle, bundle, spend_auth)
+) -> Result<U256> {
+    runtime::pledge_to_bundle(storage, pledge_handle, bundle, eoa, spend_auth)
 }
 
-/// payAnadosis: release one installment of `pledge_handle` back to `eoa`. Returns
-/// the released amount.
+/// payAnadosis: release one installment of `pledge_handle` from the
+/// `CREDIS_ADDRESS` escrow balance back to `eoa`. Returns the released amount.
 pub fn unlock_to_eoa(
     storage: StorageHandle<'_>,
     eoa: Address,

@@ -33,15 +33,20 @@ fn decimals_diff() -> U256 {
 // ---------------------------------------------------------------------------
 
 /// Consumes a confidential Gratis pledge (identified by `pledge_handle` +
-/// `spend_auth`, which binds it to `bundle_account`), opens a credis position
-/// bound to `bundleAccount`, persists the pledge linkage for the later
-/// per-installment unlock, and delivers the stablecoin loan via the vault
-/// sub-call. Returns `(position_id, amount_stables)`.
+/// `spend_auth`, which binds it to `bundle_account`), moves the collateral into
+/// the `CREDIS_ADDRESS` escrow, opens a credis position bound to `bundleAccount`,
+/// persists the pledge handle for the later per-installment unlock, and delivers
+/// the stablecoin loan via the vault sub-call. Returns `(position_id, amount_stables)`.
+///
+// TODO(privacy): `eoa_account` is passed in plaintext calldata so external
+// observers can read the pledger's address. Carry it in a client-encrypted blob
+// (decrypted inside the enclave) in a future slice.
 pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
     asset: Address,
     bundle_account: Address,
+    eoa_account: Address,
     pledge_handle: B256,
     spend_auth: [u8; 32],
 ) -> Result<(U256, U256)> {
@@ -65,12 +70,14 @@ pub fn request_credis(
     }
 
     // Consume the pledge (the enclave verifies `spend_auth` binds it to
-    // `bundle_account`, so a mempool copy cannot redirect the loan), learning the
-    // pledged gratis amount and the original pledger EOA.
-    let (gratis_amount, pledger_eoa) = outbe_gratis::api::pledge_to_bundle(
+    // `bundle_account`, so a mempool copy cannot redirect the loan) and move the
+    // collateral into the CREDIS_ADDRESS escrow. The enclave checks `eoa_account`
+    // matches the pledge record. Returns the pledged gratis amount.
+    let gratis_amount = outbe_gratis::api::pledge_to_bundle(
         storage.clone(),
         pledge_handle,
         bundle_account,
+        eoa_account,
         spend_auth,
     )?;
 
@@ -97,14 +104,15 @@ pub fn request_credis(
         current_time,
     )?;
 
-    // Persist the pledge linkage so `pay_anadosis` can release the right
-    // pledger's collateral one installment at a time.
+    // Persist the pledge handle so `pay_anadosis` can address the right pledge
+    // record one installment at a time. The pledger EOA is deliberately NOT stored
+    // (the caller re-supplies it at `anadosis`), so the position carries no durable
+    // EOA↔bundle linkage.
     {
         let factory = CredisFactoryContract::new(storage.clone());
         factory
             .position_pledge_handle
             .write(&position_id, pledge_handle)?;
-        factory.position_pledger.write(&position_id, pledger_eoa)?;
     }
 
     // Withdraw the matching stablecoin from the vault to the smart account.
@@ -126,12 +134,19 @@ pub fn request_credis(
 // ---------------------------------------------------------------------------
 
 /// Advances the credis position by one anadosis installment and releases 1/N of
-/// the pledged collateral back to the original pledger's confidential Gratis
-/// balance.
+/// the escrowed collateral from `CREDIS_ADDRESS` back to `eoa_account`'s
+/// confidential Gratis balance. The enclave checks `eoa_account` matches the
+/// pledge record, so the release can only reach the rightful pledger. The paid
+/// installment (the ERC20 → vault deposit below) is itself the authorization for
+/// the release — no separate proof is required.
+///
+// TODO(privacy): `eoa_account` is passed in plaintext calldata. Carry it in a
+// client-encrypted blob (decrypted inside the enclave) in a future slice.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
+    eoa_account: Address,
 ) -> Result<AnadosisResult> {
     // Read-only validation pass before any mutation.
     {
@@ -181,12 +196,12 @@ pub fn pay_anadosis(
     // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
     outbe_vaultprovider::api::deposit_liquidity(&storage, asset, amount)?;
 
-    // 4) Release this installment's share of the pledged collateral back to the
-    //    original pledger's encrypted Gratis balance.
+    // 4) Release this installment's share of the escrowed collateral from
+    //    CREDIS_ADDRESS back to the pledger's encrypted Gratis balance. The enclave
+    //    checks `eoa_account` binds to the pledge record.
     let factory = CredisFactoryContract::new(storage.clone());
     let pledge_handle = factory.position_pledge_handle.read(&position_id)?;
-    let pledger_eoa = factory.position_pledger.read(&position_id)?;
-    outbe_gratis::api::unlock_to_eoa(storage.clone(), pledger_eoa, pledge_handle)?;
+    outbe_gratis::api::unlock_to_eoa(storage.clone(), eoa_account, pledge_handle)?;
 
     Ok(result)
 }

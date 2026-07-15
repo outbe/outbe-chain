@@ -19,7 +19,6 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatToken,
-  anadosisDenomByAmount,
   ownerPermissionId,
   permissionNonceKey,
   encodePermissionSignature,
@@ -246,11 +245,12 @@ async function main() {
     console.log("  Deposited 0.05 COEN into EntryPoint");
   }
 
-  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId)].
+  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, eoaAccount)].
   // The runtime pulls the stablecoin, advances the schedule, and releases this
-  // installment's collateral share to the pledger's encrypted balance.
+  // installment's collateral share from the escrow to the pledger's (userAddress)
+  // encrypted balance — the enclave checks the EOA against the pledge record.
   const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, anadosisAmount]);
-  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId]);
+  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, userAddress]);
 
   // Batch execution: execMode byte[0] = 0x01 (CALLTYPE_BATCH)
   const execModeBatch = "0x01" + "00".repeat(31);

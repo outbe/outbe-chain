@@ -105,8 +105,10 @@ async function main() {
   const bundleErc20Before = await token.balanceOf(bundleAccount);
   console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
 
-  console.log("\nSending requestCredis(asset, bundleAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(erc20Address, bundleAccount, ticket.pledgeHandle, spend);
+  // `userAddress` is the pledger EOA: the chain checks it against the pledge
+  // record and debits its pledged ledger into the credis escrow.
+  console.log("\nSending requestCredis(asset, bundleAccount, eoaAccount, pledgeHandle, spendAuth)...");
+  const tx = await credisFactory.requestCredis(erc20Address, bundleAccount, userAddress, ticket.pledgeHandle, spend);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");

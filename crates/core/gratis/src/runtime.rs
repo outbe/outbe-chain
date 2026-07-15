@@ -9,7 +9,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::GRATIS_ADDRESS;
+use outbe_primitives::addresses::{CREDIS_ADDRESS, GRATIS_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth};
@@ -71,6 +71,15 @@ fn write_account_blobs(
     Ok(())
 }
 
+/// Store the escrow balance ciphertext the enclave produced for the two-account
+/// credis moves (an empty blob means the op did not touch the escrow).
+fn write_credis_balance(gratis: &Gratis<'_>, result: &GratisOpResult) -> Result<()> {
+    if !result.new_credis_balance.is_empty() {
+        gratis.write_balance_ct(CREDIS_ADDRESS, &result.new_credis_balance)?;
+    }
+    Ok(())
+}
+
 /// Mint `amount` gratis to `caller` (owner-authorized).
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
@@ -93,6 +102,8 @@ pub(crate) fn mint(
         pledge_handle: None,
         bundle_account: None,
         spend_auth: None,
+        credis_account: None,
+        credis_balance: Vec::new(),
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -136,6 +147,8 @@ pub(crate) fn burn(
         pledge_handle: None,
         bundle_account: None,
         spend_auth: None,
+        credis_account: None,
+        credis_balance: Vec::new(),
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -182,6 +195,8 @@ pub(crate) fn pledge(
         pledge_handle: None,
         bundle_account: None,
         spend_auth: None,
+        credis_account: None,
+        credis_balance: Vec::new(),
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -228,6 +243,8 @@ pub(crate) fn unpledge(
         pledge_handle: Some(pledge_handle),
         bundle_account: None,
         spend_auth: None,
+        credis_account: None,
+        credis_balance: Vec::new(),
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -251,40 +268,62 @@ pub(crate) fn unpledge(
 }
 
 /// requestCredis: consume `pledge_handle` for a credis request, binding it to
-/// `bundle`. Returns `(gratis_amount, pledger_eoa)` so credis can size the
-/// position and store the EOA for the later unlock. Authorized by `spend_auth`
-/// (not a modify key).
+/// `bundle`, and move the pledged collateral out of `eoa`'s pledged ledger into
+/// the `CREDIS_ADDRESS` escrow balance. Returns `gratis_amount` so credis can size
+/// the position. Authorized by `spend_auth` (not a modify key); `eoa` is supplied
+/// by the host and checked by the enclave against the pledge record.
 pub(crate) fn pledge_to_bundle(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
+    eoa: Address,
     spend_auth: [u8; 32],
-) -> Result<(U256, Address)> {
+) -> Result<U256> {
     let gratis = Gratis::new(storage.clone());
     let req = GratisOpRequest {
         op: GratisOp::PledgeToBundle,
         chain_id: chain_id_b256(&storage)?,
-        account: Address::ZERO,
+        account: eoa,
         amount: U256::ZERO,
         current_balance: Vec::new(),
-        current_pledged: Vec::new(),
+        current_pledged: gratis.pledged_ct_of(eoa)?,
         current_pledge_record: gratis.pledge_record_ct_of(pledge_handle)?,
         modify_auth: no_auth(),
         installments: 0,
         pledge_handle: Some(pledge_handle),
         bundle_account: Some(bundle),
         spend_auth: Some(spend_auth),
+        credis_account: Some(CREDIS_ADDRESS),
+        credis_balance: gratis.balance_ct_of(CREDIS_ADDRESS)?,
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
+    // Debit the EOA's pledged ledger and credit the escrow balance.
+    write_account_blobs(&gratis, eoa, &result)?;
+    write_credis_balance(&gratis, &result)?;
     gratis.write_pledge_record_ct(pledge_handle, &result.new_pledge_record)?;
-    Ok((result.gratis_amount, result.pledger_eoa))
+    // The collateral left the pledge pool for the escrow.
+    let total_pledged = gratis
+        .pledged_total_supply()?
+        .checked_sub(result.event_amount)
+        .ok_or_else(|| PrecompileError::Fatal("gratis pledged_total underflow".to_string()))?;
+    gratis.set_pledged_total_supply(total_pledged)?;
+    storage.emit_event(
+        GRATIS_ADDRESS,
+        SolEvent::encode_log_data(&IGratis::GratisUnpledged {
+            account: eoa,
+            amount: result.event_amount,
+            remainingPledged: total_pledged,
+        }),
+    )?;
+    Ok(result.gratis_amount)
 }
 
-/// payAnadosis: release one installment of pledged collateral from
-/// `pledge_handle` back to the original `eoa`'s balance. Returns the released
-/// amount. The host supplies `eoa` from the credis position; the enclave checks
-/// the record binds to it.
+/// payAnadosis: release one installment of collateral from the `CREDIS_ADDRESS`
+/// escrow balance back to the original `eoa`'s balance. Returns the released
+/// amount. The host supplies `eoa` (the `eoaAccount` calldata arg); the enclave
+/// checks the record binds to it. No aggregate change — the pledge left the pool
+/// at `pledge_to_bundle`; this is a balance→balance move.
 pub(crate) fn unlock_to_eoa(
     storage: StorageHandle<'_>,
     eoa: Address,
@@ -297,30 +336,21 @@ pub(crate) fn unlock_to_eoa(
         account: eoa,
         amount: U256::ZERO,
         current_balance: gratis.balance_ct_of(eoa)?,
-        current_pledged: gratis.pledged_ct_of(eoa)?,
+        current_pledged: Vec::new(),
         current_pledge_record: gratis.pledge_record_ct_of(pledge_handle)?,
         modify_auth: no_auth(),
         installments: 0,
         pledge_handle: Some(pledge_handle),
         bundle_account: None,
         spend_auth: None,
+        credis_account: Some(CREDIS_ADDRESS),
+        credis_balance: gratis.balance_ct_of(CREDIS_ADDRESS)?,
     };
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
+    // Credit the EOA's balance and debit the escrow balance.
     write_account_blobs(&gratis, eoa, &result)?;
+    write_credis_balance(&gratis, &result)?;
     gratis.write_pledge_record_ct(pledge_handle, &result.new_pledge_record)?;
-    let total_pledged = gratis
-        .pledged_total_supply()?
-        .checked_sub(result.gratis_amount)
-        .ok_or_else(|| PrecompileError::Fatal("gratis pledged_total underflow".to_string()))?;
-    gratis.set_pledged_total_supply(total_pledged)?;
-    storage.emit_event(
-        GRATIS_ADDRESS,
-        SolEvent::encode_log_data(&IGratis::GratisUnpledged {
-            account: eoa,
-            amount: result.gratis_amount,
-            remainingPledged: total_pledged,
-        }),
-    )?;
     Ok(result.gratis_amount)
 }

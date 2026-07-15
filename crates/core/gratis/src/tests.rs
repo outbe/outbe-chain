@@ -5,6 +5,7 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
+use outbe_primitives::addresses::CREDIS_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -192,29 +193,29 @@ fn pledge_request_credis_and_pay_anadosis_flow() {
 
         // requestCredis from a distinct bundle account: alice derives the pledge
         // secret from her modify key + the public handle and binds it to `bundle`.
+        // The collateral moves out of alice's pledged ledger into the CREDIS escrow
+        // balance, so pledged_total drops to zero.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let (credis_amount, eoa) =
-            api::pledge_to_bundle(storage.clone(), handle, bundle(), spend).unwrap();
+        let credis_amount =
+            api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).unwrap();
         assert_eq!(credis_amount, amount);
-        assert_eq!(eoa, alice(), "pledger EOA surfaced for the position");
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+        assert_eq!(view_balance(storage.clone(), CREDIS_ADDRESS), amount);
+        assert_eq!(
+            api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
 
-        // A wrong bundle binding is rejected (front-running defense).
-        let bad = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        assert!(api::pledge_to_bundle(
-            storage.clone(),
-            handle,
-            address!("0x3333333333333333333333333333333333333333"),
-            bad
-        )
-        .is_err());
+        // Re-spending the now-consumed handle is rejected.
+        assert!(api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).is_err());
 
-        // Pay 10 installments: each unlocks 1/10 back to alice's balance.
+        // Pay 10 installments: each unlocks 1/10 from the escrow back to alice.
         for _ in 0..10 {
             api::unlock_to_eoa(storage.clone(), alice(), handle).unwrap();
         }
         assert_eq!(view_balance(storage.clone(), alice()), amount);
-        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+        assert_eq!(view_balance(storage.clone(), CREDIS_ADDRESS), U256::ZERO);
         assert_eq!(
             api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
@@ -263,7 +264,7 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         // The closed pledge can no longer be spent for credis.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        assert!(api::pledge_to_bundle(storage.clone(), handle, bundle(), spend).is_err());
+        assert!(api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).is_err());
     });
 }
 
