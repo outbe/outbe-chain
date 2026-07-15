@@ -23,6 +23,11 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     ///         The refund itself still completes — slash is best-effort to preserve user-side liveness.
     event SlashSkipped(bytes32 indexed orderId);
 
+    /// @notice Thrown when a settle/refund batch mixes orders from different origin domains.
+    ///         The batch is dispatched to a single domain (order [0]'s), so a mixed batch would
+    ///         silently mis-route every order whose origin differs and strand its input tokens.
+    error MixedOriginDomain(uint32 expected, uint32 got);
+
     // ========== CLAIM ==========
 
     /// @notice Claim an order after quoting ends — locks collateral of the winning solver.
@@ -100,14 +105,29 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         bytes[] memory _ordersOriginData,
         bytes[] memory _ordersFillerData
     ) internal override {
-        _dispatchSettle(OrderEncoder.decode(_ordersOriginData[0]).originDomain, _orderIds, _ordersFillerData);
+        _dispatchSettle(_requireSameOriginDomain(_ordersOriginData), _orderIds, _ordersFillerData);
     }
 
     // ========== REFUND ==========
 
     /// @dev Refunds multiple OnchainCrossChain orders by dispatching refund instructions.
     function _refundOrders(OnchainCrossChainOrder[] calldata _orders, bytes32[] memory _orderIds) internal override {
-        _dispatchRefund(OrderEncoder.decode(_orders[0].orderData).originDomain, _orderIds);
+        bytes[] memory ordersData = new bytes[](_orders.length);
+        for (uint256 i = 0; i < _orders.length; i++) {
+            ordersData[i] = _orders[i].orderData;
+        }
+        _dispatchRefund(_requireSameOriginDomain(ordersData), _orderIds);
+    }
+
+    /// @dev Returns the shared origin domain of a batch, reverting if any order's differs from the
+    ///      first. The whole batch dispatches to this one domain, so a mixed batch would silently
+    ///      mis-route the divergent orders and strand their input tokens.
+    function _requireSameOriginDomain(bytes[] memory _ordersData) private pure returns (uint32 originDomain) {
+        originDomain = OrderEncoder.decode(_ordersData[0]).originDomain;
+        for (uint256 i = 1; i < _ordersData.length; i++) {
+            uint32 got = OrderEncoder.decode(_ordersData[i]).originDomain;
+            if (got != originDomain) revert MixedOriginDomain(originDomain, got);
+        }
     }
 
     /// @notice Get order ID for onchain order
