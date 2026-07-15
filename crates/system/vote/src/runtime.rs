@@ -10,10 +10,10 @@ use crate::constants::{
     QUORUM_NUMERATOR, VOTING_WINDOW_BLOCKS,
 };
 use crate::errors::VoteError;
+use crate::handlers::{self, VoteTargetRegistry};
 use crate::notify::ProposalFinalization;
 use crate::schema::Vote;
 use crate::state::{active_validator_addresses, calculate_vote_tally, ProposalStatus, VoteKind};
-use crate::handlers::{self, VoteTargetRegistry};
 
 const LOCALNET_CHAIN_ID: u64 = 54_322_345;
 
@@ -83,7 +83,13 @@ impl Vote<'_> {
             return Err(VoteError::TooManyPendingByValidator.into());
         }
 
-        handlers::validate_target_payload(registry, target_module, payload, current_height, chain_id)?;
+        handlers::validate_target_payload(
+            registry,
+            target_module,
+            payload,
+            current_height,
+            chain_id,
+        )?;
 
         let voting_deadline = current_height.saturating_add(voting_window_blocks(chain_id));
         let proposal_id = self.write_proposal(
@@ -189,24 +195,24 @@ impl Vote<'_> {
             ProposalStatus::Expired
         };
 
-        let outcome = match handlers::handle_target_tally(registry, ctx, proposal_id, &proposal, status)
-        {
-            Ok(()) => {
-                self.set_proposal_status(proposal_id, status)?;
-                match status {
-                    ProposalStatus::Approved => ProposalFinalization::Approved,
-                    ProposalStatus::Expired => ProposalFinalization::Expired,
-                    ProposalStatus::Pending | ProposalStatus::Rejected => unreachable!(),
+        let outcome =
+            match handlers::handle_target_tally(registry, ctx, proposal_id, &proposal, status) {
+                Ok(()) => {
+                    self.set_proposal_status(proposal_id, status)?;
+                    match status {
+                        ProposalStatus::Approved => ProposalFinalization::Approved,
+                        ProposalStatus::Expired => ProposalFinalization::Expired,
+                        ProposalStatus::Pending | ProposalStatus::Rejected => unreachable!(),
+                    }
                 }
-            }
-            Err(e) if status == ProposalStatus::Approved => {
-                self.set_proposal_status(proposal_id, ProposalStatus::Rejected)?;
-                ProposalFinalization::Rejected {
-                    reason: e.to_string(),
+                Err(e) if status == ProposalStatus::Approved => {
+                    self.set_proposal_status(proposal_id, ProposalStatus::Rejected)?;
+                    ProposalFinalization::Rejected {
+                        reason: e.to_string(),
+                    }
                 }
-            }
-            Err(err) => return Err(err),
-        };
+                Err(err) => return Err(err),
+            };
 
         self.notify_proposal_finalized(block_number, &proposal, &tally, active_count, outcome)
     }

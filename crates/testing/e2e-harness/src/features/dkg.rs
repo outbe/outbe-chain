@@ -29,8 +29,14 @@ fn tuned_setup(world: &mut World) {
 fn freeze_target(world: &mut World) {
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
-    world.localnet.provision_joiner(idx).expect("provision joiner");
-    world.localnet.launch_joiner(idx, &[]).expect("launch joiner");
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("launch joiner");
     world.rpc.wait_block(joiner_port, 20, 40);
     let key = world.validators.joiner().evm_key().expect("joiner key");
     world.rpc.stake(&key, 1000).expect("stake");
@@ -71,8 +77,14 @@ fn old_committee_keeps_finalizing(world: &mut World) {
             break;
         }
     }
-    assert!(retry >= 1, "DKG join-reshare did not retry (flag-based per height)");
-    assert!(alive_grow, "old committee did not keep finalizing (3-of-4 quorum)");
+    assert!(
+        retry >= 1,
+        "DKG join-reshare did not retry (flag-based per height)"
+    );
+    assert!(
+        alive_grow,
+        "old committee did not keep finalizing (3-of-4 quorum)"
+    );
     assert_eq!(
         world.localnet.log_count(0, "hard halt"),
         0,

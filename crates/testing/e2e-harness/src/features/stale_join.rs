@@ -18,8 +18,14 @@ fn staked_joiner_unconfirmed(world: &mut World) {
     let joiner_port = world.validators.http_port(idx);
     let primary = world.validators.primary_port();
 
-    world.localnet.provision_joiner(idx).expect("provision joiner");
-    world.localnet.launch_joiner(idx, &[]).expect("launch joiner");
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("launch joiner");
     world.rpc.wait_block(joiner_port, 20, 40);
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
@@ -55,7 +61,10 @@ fn stays_pending(world: &mut World) {
             break;
         }
     }
-    assert!(crossed, "committee did not cross a reshare/activation (height > 130)");
+    assert!(
+        crossed,
+        "committee did not cross a reshare/activation (height > 130)"
+    );
     assert!(
         stayed_pending,
         "unconfirmed joiner did not stay PENDING across the reshare window"
@@ -67,7 +76,11 @@ fn stays_pending(world: &mut World) {
         Some(1),
         "unconfirmed PENDING joiner must not be activated"
     );
-    assert_eq!(world.rpc.active_count(primary), Some(4), "active set must stay 4");
+    assert_eq!(
+        world.rpc.active_count(primary),
+        Some(4),
+        "active set must stay 4"
+    );
     assert!(
         !world.rpc.is_participant(primary, &addr),
         "unconfirmed joiner must not be a participant"
@@ -96,5 +109,9 @@ fn confirmed_joiner_activates(world: &mut World) {
         Some(2),
         "joiner should be ACTIVE (2)"
     );
-    assert_eq!(world.rpc.active_count(primary), Some(5), "active set should grow to 5");
+    assert_eq!(
+        world.rpc.active_count(primary),
+        Some(5),
+        "active set should grow to 5"
+    );
 }

@@ -43,13 +43,7 @@ fn dispatch_vote_call(
     match call {
         createProposal(c) => mutate(c, caller, |sender, c| {
             let block_number = storage.block_number()?;
-            governance.create_proposal(
-                sender,
-                c.targetModule,
-                &c.payload,
-                block_number,
-                registry,
-            )
+            governance.create_proposal(sender, c.targetModule, &c.payload, block_number, registry)
         }),
         castVote(c) => mutate_void(c, caller, |sender, c| {
             let block_number = storage.block_number()?;

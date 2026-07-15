@@ -4,6 +4,8 @@
 - **Date:** 2026-07-15
 - **Depends on:** ADR-001
 
+> **Supersession note:** ADR-006 changes the active reset-era body wire/key contract from temporary Postcard plus 32-byte Tribute/Nod IDs to strict-canonical Protobuf plus exact 36-byte `WWD_BE4 || Poseidon_BE32` Tribute/Nod IDs. Nod bucket identity becomes `WWD_BE4 || bucket_key_BE32`. ADR-002 remains authoritative for domain ownership, typed repository boundaries, collection separation, deterministic ordering, pagination semantics, and the off-chain-versus-compact-EVM state split; ADR-006 updates the affected primary/index key suffixes, ID types, codecs, and cursors.
+
 ## Context
 
 ADR-001 introduced a domain-neutral off-chain storage facade with equivalent in-memory and MongoDB adapters. Tribute, Nod, Lysis, NodFactory, Gratis, and the precompiles still use their existing EVM-backed records.

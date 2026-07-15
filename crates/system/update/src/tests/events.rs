@@ -65,15 +65,7 @@ fn lifecycle_emits_upgrade_canceled_event() {
             current,
         )
         .unwrap();
-        schedule_update(
-            &mut update,
-            U256::from(2),
-            PV,
-            activation_late,
-            "",
-            current,
-        )
-        .unwrap();
+        schedule_update(&mut update, U256::from(2), PV, activation_late, "", current).unwrap();
         update.process_begin_block_test(activation_early).unwrap();
     });
 

@@ -213,8 +213,7 @@ impl Default for Environment {
             keygen_bin: None,
             mock_bin: None,
             seed: None,
-            projection_mongodb_uri:
-                "mongodb://127.0.0.1:27018/?directConnection=true".to_owned(),
+            projection_mongodb_uri: "mongodb://127.0.0.1:27018/?directConnection=true".to_owned(),
         })
     }
 }

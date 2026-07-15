@@ -30,11 +30,7 @@ impl UpgradeHandler for RegisteredCountingHandler {
         "registered_counting_handler"
     }
 
-    fn handle(
-        &self,
-        _ctx: &BlockRuntimeContext,
-        _scheduled: &ScheduledUpdateInfo,
-    ) -> Result<()> {
+    fn handle(&self, _ctx: &BlockRuntimeContext, _scheduled: &ScheduledUpdateInfo) -> Result<()> {
         REGISTERED_HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -51,11 +47,7 @@ impl UpgradeHandler for ReplayCountingHandler {
         "replay_counting_handler"
     }
 
-    fn handle(
-        &self,
-        _ctx: &BlockRuntimeContext,
-        _scheduled: &ScheduledUpdateInfo,
-    ) -> Result<()> {
+    fn handle(&self, _ctx: &BlockRuntimeContext, _scheduled: &ScheduledUpdateInfo) -> Result<()> {
         REPLAY_HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -72,11 +64,7 @@ impl UpgradeHandler for FailingHandler {
         "failing_handler"
     }
 
-    fn handle(
-        &self,
-        _ctx: &BlockRuntimeContext,
-        _scheduled: &ScheduledUpdateInfo,
-    ) -> Result<()> {
+    fn handle(&self, _ctx: &BlockRuntimeContext, _scheduled: &ScheduledUpdateInfo) -> Result<()> {
         Err(PrecompileError::Fatal("handler failed".into()))
     }
 }

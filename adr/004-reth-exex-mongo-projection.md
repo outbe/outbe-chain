@@ -4,6 +4,8 @@
 - **Date:** 2026-07-15
 - **Depends on:** ADR-003
 
+> **ADR-006 integration note:** the coordinated reset replaces ADR-004's explicit-field event decoder and Postcard value construction with strict-canonical Protobuf payload verification. ADR-004's finalized-only source, full-block prepare, per-receipt atomicity, checkpoint-last rule, and crash replay remain authoritative. Because Mongo may contain partially applied receipt batches above its durable block checkpoint after a crash, ADR-006 ExEx validation does not compare the first event's `previousCommitment` with the current Mongo body; execution and independent ordered replay validate that pre-state, while ExEx validates the new leaf and same-identity event continuity within the block.
+
 ## Context
 
 ADR-001 introduced backend-neutral Memory and MongoDB storage adapters. ADR-002 added typed Tribute and Nod repositories over six body/index namespaces. ADR-003 added complete `Stored` and identity-only `Deleted` events for every successful mutation of:
@@ -30,7 +32,7 @@ The starting system has:
 
 ## Added capability
 
-An optional Reth ExEx that consumes finalized projection events and maintains a durable, restartable MongoDB materialization of Tribute and Nod bodies and indexes.
+A mandatory Reth ExEx on validator and full-node modes that consumes finalized projection events and maintains a durable, restartable MongoDB materialization of Tribute and Nod bodies and indexes.
 
 ## Decision
 
@@ -49,14 +51,14 @@ The projector never runs consensus-critical business logic. It only reconstructs
 
 Install the projector through Reth's normal `install_exex` node-builder seam.
 
-The projector may be enabled on either:
+The projector is required on both:
 
-- a validator node; or
-- a full node.
+- validator nodes; and
+- full nodes.
 
 A full node executes and stores accepted blocks even though it does not vote or propose, so it has the same finalized receipt source required by the projector.
 
-Projection is opt-in during ADR-004. A node without projector configuration keeps its existing EVM-backed behavior.
+A missing projector or MongoDB configuration is a startup configuration error and stops node startup. After a successful startup, ExEx projects asynchronously: consensus, execution, and existing EVM-backed reads do not wait for each MongoDB block checkpoint during ADR-004.
 
 ### One node, one logical database, one writer
 
@@ -79,7 +81,7 @@ The enabled projector requires a MongoDB topology that supports multi-document t
 
 Standalone MongoDB is not a supported projector topology because it cannot atomically update one body and its secondary-index documents.
 
-The node performs a startup capability check. It does not infer correctness merely from a successful TCP connection. An enabled projector whose topology cannot provide sessions and transactions enters a configuration-error state.
+The node performs a startup capability check. It does not infer correctness merely from a successful TCP connection. A configured topology that cannot provide sessions and transactions is a startup configuration error and stops node startup.
 
 Replica-set versus sharded-cluster selection remains an operator decision. Shard keys, balancing, replication factor, capacity, backup topology, and failover policy are outside the projector interface. A sharded deployment may execute the same receipt transaction as a distributed transaction and may therefore have different performance, but not different observable storage semantics.
 
@@ -393,7 +395,7 @@ Portable snapshot protocols, peer body recovery, authenticated snapshot manifest
 
 After implementation:
 
-- enabling the ExEx on a validator or full node populates all six Tribute/Nod repository namespaces from finalized receipts;
+- the mandatory ExEx on validator and full-node modes populates all six Tribute/Nod repository namespaces from finalized receipts;
 - body and derived-index mutations from one EVM receipt commit atomically;
 - primary documents carry exact receipt provenance;
 - restart resumes from a durable exact block checkpoint;
@@ -533,7 +535,7 @@ Verify:
 Verify in ADR-004 specifically that:
 
 - validator and full-node modes must have projection;
-- a node without projector configuration must be stoped;
+- a node without projector configuration is stopped during startup;
 - a projector failure reports degraded status but does not stop EVM-backed node operation;
 - no runtime Tribute/Nod read is switched to MongoDB.
 

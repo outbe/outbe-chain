@@ -7,8 +7,8 @@ pub mod slash;
 pub mod staking;
 pub mod tee;
 pub mod tribute;
-pub mod vote;
 pub mod validator;
+pub mod vote;
 pub mod zerofee;
 
 use crate::tx::TxSigner;

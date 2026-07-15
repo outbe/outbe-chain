@@ -39,7 +39,11 @@ fn validator_starts_active(world: &mut World, name: String) {
 /// Kill the named committee validator, recording the head at kill time (s7a:37-38).
 #[when(expr = "validator {string} is killed")]
 fn validator_is_killed(world: &mut World, name: String) {
-    let i = world.validators.by_name(&name).expect("resolve validator").index;
+    let i = world
+        .validators
+        .by_name(&name)
+        .expect("resolve validator")
+        .index;
     let port = world.validators.primary_port();
     world.state.marker_height = world.rpc.head(port);
     world.localnet.kill_validator(i).expect("kill validator");

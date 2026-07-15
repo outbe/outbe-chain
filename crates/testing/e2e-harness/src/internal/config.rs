@@ -159,7 +159,10 @@ impl Config {
     /// The teardown sweep matches on the `outbe-tee-gramine-<run_tag>-` prefix,
     /// which still covers every scenario's containers.
     pub fn tee_container(&self, i: usize) -> String {
-        format!("outbe-tee-gramine-{}-s{}-{}", self.run_tag, self.scenario, i)
+        format!(
+            "outbe-tee-gramine-{}-s{}-{}",
+            self.run_tag, self.scenario, i
+        )
     }
 
     /// Per-validator data dir: `<dir>/validator-<i>`.
@@ -211,7 +214,10 @@ mod tests {
 
     #[test]
     fn dir_tag_is_docker_safe() {
-        assert_eq!(dir_tag(Path::new("/tmp/outbe-e2e-harness")), "tmp-outbe-e2e-harness");
+        assert_eq!(
+            dir_tag(Path::new("/tmp/outbe-e2e-harness")),
+            "tmp-outbe-e2e-harness"
+        );
         assert_eq!(dir_tag(Path::new("/tmp/Foo_Bar/x")), "tmp-foo-bar-x");
         assert_eq!(dir_tag(Path::new("/")), "localnet");
     }

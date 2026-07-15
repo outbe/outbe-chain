@@ -93,7 +93,7 @@ There is no long-lived dual-read mode. Tests may build fixtures through dedicate
 
 ### Required projector configuration
 
-Unlike ADR-004, Mongo projection is mandatory for every node running the ADR-005 fork profile.
+Unlike ADR-004, Mongo projection is mandatory for every node running the final ADR-005–010 implementation.
 
 The configured database must satisfy the ADR-004 capability contract:
 
@@ -137,49 +137,119 @@ execute/finalize block N
 
 This barrier applies during live operation and historical synchronization. Reth must not execute an arbitrary batch of later Mongo-dependent blocks while their finalized predecessors remain unprojected.
 
-#### Required non-ExEx coordinator seam
+#### Local projection-readiness gate
 
-Standard Reth ExEx delivery alone cannot implement this barrier. ExEx observes executed/canonicalized blocks, and `FinishedHeight` controls retention rather than permission to execute the next block. Using only ExEx would allow historical execution to run ahead or create a circular wait in which projection needs a committed block while execution waits for projection.
+ExEx remains the sole MongoDB writer and continues to project finalized blocks asynchronously. ADR-005 does not delay Reth finalization or Marshal acknowledgment while waiting for ExEx:
 
-ADR-005 therefore remains **Proposed and blocked for implementation** until the pinned Reth integration has a verified non-ExEx coordinator seam that:
+```text
+finalize/canonicalize block N
+-> acknowledge Marshal normally
+-> ExEx projects N asynchronously
+```
 
-- gates live next-height execution on the finalized parent's durable Mongo checkpoint;
-- forces historical sync through a sequence that lets each required predecessor execute, finalize, project, and checkpoint before a Mongo-dependent successor executes;
-- does not treat an execution-valid block as invalid merely because local MongoDB is temporarily behind;
-- works identically for proposer, validator, and full-node paths;
-- integrates the eight-second availability/shutdown policy without `block_on` or process-local consensus state.
+A backend-neutral local readiness handle publishes ExEx health and its durable exact `BlockNumHash` checkpoint. It does not expose MongoDB sessions or become part of block, vote, certificate, or fork-choice data.
 
-The concrete seam may be an engine/finalization coordinator owned by Outbe's single-binary wiring, but it must be verified against the pinned Reth revision before this ADR is accepted. `ConsensusExecutionBridge` status and ExEx `FinishedHeight` are not substitutes.
+Conceptually, the interface is:
 
-The barrier is operational wiring around execution readiness. Consensus-visible state transitions still do not read process-local consensus memory as a substitute for the repository.
+```text
+ProjectionReadinessHandle
+  current() -> ProjectionStatus
+  wait_for(BlockNumHash, remaining_view_budget) -> WaitOutcome
 
-### No same-block body overlay in this stage
+WaitOutcome
+  Ready
+  BudgetExpired
+  ProjectionAhead
+  Fatal
 
-ADR-005 does not pull the generic journaled body overlay from ADR-007 forward.
+ProjectionStatus
+  Starting
+  CatchingUp { checkpoint }
+  Ready { checkpoint }
+  MongoUnavailable { since }
+  Fatal { error }
+```
 
-Consequently, after a Tribute/Nod body or relevant partition is mutated in a block, a later body-dependent operation on that same entity or partition in the same block is forbidden by a deterministic runtime guard. It reverts rather than reading a pre-mutation Mongo body or an unavailable post-mutation body.
+The handle is backed by an in-process watch/subscription, not MongoDB polling from proposal or verification handlers. MongoDB `projection_state` remains the durable source. Startup seeds the watch from the validated stored checkpoint, and ExEx publishes a newer exact checkpoint only after its MongoDB checkpoint commit succeeds.
 
-The next block may consume the body after the previous block is finalized and projected.
+Each wait captures the exact finalized parent required by that one propose/verify/full-node execution request. It never waits for a moving global latest-finalized target. `wait_for(required_parent)` follows these rules:
 
-System-phase ordering that consumes existing bodies must remain explicit and hard-fork governed. In particular, body-consuming Lysis work executes before user transactions and before later same-block work that could mutate the same affected records/partitions.
+- checkpoint below the required height waits within the caller's budget;
+- equal height and equal hash is `Ready`;
+- equal height with another hash is `Fatal`;
+- checkpoint above the required height is `ProjectionAhead`, because the unversioned MongoDB contains future state for that request;
+- repeating the same request is idempotent.
 
-ADR-007 may later replace this temporary restriction with a deterministic in-block journaled overlay.
+`ProjectionAhead` is local unavailability for that stale request, not projector corruption: proposer forfeits, verifier withholds rather than voting `false`, and the Mongo outage timer does not start.
+
+For local execution of block `N`, the required projection target is its exact finalized parent, not whatever newer finalized target ExEx may already be chasing.
+
+Before local Mongo-dependent work on a successor, node wiring checks that the required finalized parent has been projected:
+
+- a ready checkpoint is a non-blocking local check and does not alter network consensus processing;
+- `handle_propose` waits for the checkpoint only within the remaining proposal/view budget, then forfeits the local proposal slot;
+- `handle_verify` waits only within the remaining verification/view budget, then drops/withholds the response and never votes `false` for projection lag;
+- full-node historical sync has no consensus view budget and defers local execution of the Mongo-dependent successor while projection remains healthy but behind.
+
+Consensus waits use the Commonware runtime clock and the request's existing remaining budget. They do not create a new wall-clock deadline, reset a view timeout, or block beyond the current proposal/verification request.
+
+The eight-second Mongo-unavailability deadline is independent. Short healthy projection lag can consume the remaining view budget and cause local abstention without starting the outage timer. An actual MongoDB availability error starts or continues the supervisor-owned eight-second window.
+
+A lagging node may miss a proposal or vote while other validators continue by quorum. The checkpoint does not define block validity for the network. Only the local node's ability to execute with its required body materialization is gated.
+
+`ConsensusExecutionBridge` status and ExEx `FinishedHeight` are not substituted for the exact Mongo checkpoint. `FinishedHeight` retains its Reth pruning/backpressure meaning. The readiness handle reports the projector's own durable checkpoint and health.
+
+Historical and live paths must be verified against the pinned Reth revision so no path executes a Mongo-dependent successor using an unprojected finalized parent. This is local execution/readiness wiring, not a new consensus protocol acknowledgment.
+
+### Implementation and deployment sequence
+
+Implement ADR-005 through ADR-010 consecutively on the same development branch before deploying or starting a network with the new compressed-entity path. A temporary same-block read fence would duplicate checkpoint, rollback, scope, error, and test machinery that ADR-007 immediately provides permanently.
+
+Therefore ADR-005 does not add `outbe-fencing`, `BlockBodyReadFence`, guarded temporary readers, a temporary provider decorator, temporary same-block revert rules, or an intermediate CLI/Cargo/chain-spec activation switch.
+
+```text
+implement ADR-005 Mongo execution reads
+-> implement ADR-006 commitments and verified reads
+-> implement ADR-007 permanent journaled body overlay
+-> implement ADR-008 unsharded CKB reference stage
+-> benchmark and implement ADR-009 sharding
+-> implement ADR-010 collections and Root Catalog
+-> run the combined acceptance/integration suite
+-> one coordinated testnet reset and first CES1 deployment
+```
+
+No intermediate ADR-005 binary is deployed. ADR-005 may have focused compile/unit checks while being developed, but its network-level acceptance is evaluated only after ADR-010 completes the first deployed CES1 path.
 
 ### Read semantics
 
 Repository semantics remain explicit:
 
-- `Some(body)` means a valid decodable body exists under the requested identity;
-- `None` means the repository authoritatively has no row for that identity at its complete checkpoint;
-- corruption, dangling indexes, identity mismatches, backend unavailability, and checkpoint lag are errors, not absence;
+- before ADR-006, `Some(body)` means a valid decodable body exists under the requested identity;
+- before ADR-006, `None` produces the normal domain `NotFound`/revert behavior for that local execution and does not start recovery;
+- `StorageError::Unavailable` aborts the current local propose/verify execution as infrastructure unavailable, never emits a `false` vote, and publishes `MongoUnavailable` to the shared projection supervisor;
+- each synchronous execution read is bounded by the lesser of the request's remaining view budget and a one-second Mongo operation timeout;
+- the individual EVM call never owns or waits through the complete eight-second recovery window;
+- corruption, dangling indexes, identity mismatches, and checkpoint conflicts publish `Fatal` rather than absence;
 - list pages are all-or-error and never silently omit malformed entries;
 - no caller falls back to an EVM body after a repository error.
 
-ADR-005 still has no body commitment. A body that is well-formed, has the expected identity, and is consistently indexed but has altered semantic fields cannot yet be detected. ADR-006 closes that integrity gap.
+ADR-005 by itself has no body commitment or authenticated non-membership proof. Therefore a locally omitted row is indistinguishable from canonical absence during focused ADR-005-only development. If other validators have the body, the incomplete validator may reject or fail to reproduce their execution and will not contribute a matching positive vote.
+
+Focused ADR-006/007 tests use direct EVM commitment mappings: mapping zero is point absence and non-zero plus MongoDB `None` is fatal `CommittedBodyMissing`. No direct-map stage is deployed. The first combined testnet path after ADR-010 uses the CES1 sharded collection/Root Catalog tree for the same authenticated absence/body check.
 
 ### Cross-receipt visibility
 
 ADR-004 intentionally does not add block-wide MVCC or historical versions.
+
+Execution/projector Mongo access uses a fixed consistency contract:
+
+```text
+readPreference = primary
+readConcern = majority
+writeConcern = majority
+```
+
+Receipt transactions and checkpoint commits require majority acknowledgment. Runtime body/index reads use the primary and majority-committed data; lagging secondary reads are forbidden in execution. Replica-set and sharded-cluster operators may choose topology but cannot downgrade these guarantees. A read/write concern failure is `Unavailable`. A single-node replica set remains supported, with majority determined by its voting topology.
 
 - One EVM receipt's body/index changes are atomic.
 - Different receipts in a finalized block may appear progressively while projection runs.
@@ -205,6 +275,16 @@ The deadline applies both:
 
 It is eight seconds total from the first connection/unavailability error, not eight seconds per retry attempt. Recovery requires an acknowledged MongoDB transaction-capability operation or successful retry of the failed transaction; a TCP connection or ping alone does not end the outage window.
 
+The retry schedule is fixed:
+
+```text
+retry_interval = 1 second
+total_deadline = 8 seconds
+initial_retry = immediate
+```
+
+The first recovery attempt starts immediately. Later attempts start at one-second intervals while the total deadline remains open. Attempts never overlap, and each MongoDB connect/server-selection/operation timeout is capped by the remaining total deadline. The node does not wait eight seconds before making its first attempt.
+
 After one acknowledged operation ends an outage, a later independent availability failure starts a new eight-second window. A failure encountered while replay/catch-up is still trying to establish that first acknowledged operation remains inside the original window.
 
 On a runtime connection failure:
@@ -222,9 +302,41 @@ Catch-up time after a successful reconnection is not counted inside the eight-se
 
 The maximum protocol consequence of a local outage is that the validator misses one or more votes/views. The node must not guess body state merely to remain online.
 
+### Long-lived ExEx runner and projection supervisor
+
+A transient MongoDB failure does not terminate or dynamically reinstall ExEx. Reth expects one long-lived ExEx future, and delivered notification lifecycle must remain owned by that runner.
+
+Conceptually:
+
+```text
+ExExRunner                 // process-lifetime task
+  ProjectorSession         // replaceable Mongo client/session
+
+ProjectionSupervisor       // deadline and node-lifecycle owner
+```
+
+On `StorageError::Unavailable`, `ExExRunner`:
+
+1. catches the error instead of returning it through Reth's critical-task wrapper;
+2. publishes `MongoUnavailable` through `ProjectionReadinessHandle`;
+3. continues draining Reth canonical notifications to avoid backpressure;
+4. keeps `FinishedHeight` at the last durable checkpoint;
+5. recreates or reconnects only `ProjectorSession` on the retry schedule;
+6. after recovery, reloads and verifies the durable checkpoint;
+7. reads the current provider finalized target;
+8. replays `checkpoint + 1 ..= finalized` and publishes `CatchingUp`, then `Ready`.
+
+While MongoDB is unavailable, ExEx coalesces finalized notifications into one latest exact target instead of retaining an unbounded target queue. Recovery replays every provider block in `checkpoint + 1 ..= latest_target`; coalescing never skips intermediate blocks. A lower finalized target or a different hash at the same finalized height is `Fatal`. Repeating the identical target is an idempotent wake-up.
+
+`ProjectionSupervisor` owns the eight-second monotonic deadline and sends a structured `ProjectionExit` to the top-level node supervisor on deadline expiry, `Fatal`, unexpected ExEx exit, or readiness-channel closure. Node main initiates the common graceful shutdown. After reporting fatal state, ExEx waits for the common cancellation token rather than returning early and triggering Reth's "ExEx finished unexpectedly" panic path.
+
+Only the replaceable Mongo session is soft-restarted. The ExEx task is never automatically restarted.
+
 ### Deterministic failures
 
-The eight-second retry window is for technical MongoDB availability failures, not for deterministic data defects.
+The eight-second retry window is for technical MongoDB availability failures, not for deterministic data defects or projector lifecycle failure.
+
+`ProjectionStatus::Fatal`, unexpected ExEx task exit, or closure of the mandatory readiness watch initiates immediate structured graceful shutdown. The node does not wait eight seconds for a subsystem that is no longer running.
 
 The following fail immediately and initiate graceful whole-node shutdown:
 
@@ -238,7 +350,8 @@ The following fail immediately and initiate graceful whole-node shutdown:
 - conflicting checkpoint hash;
 - unmanaged existing projection data;
 - unavailable required historical receipt;
-- a required body missing at a complete checkpoint.
+- unexpected ExEx task termination;
+- closed projection-readiness channel.
 
 The node records structured diagnostics without interpreting the defective value as absence. Raw event payload diagnostics remain available through ADR-004's `projection_failures` representation when the failure originates during projection.
 
@@ -268,31 +381,53 @@ A restored database is accepted only after ADR-004 validation of:
 
 The node then synchronizes Reth and MongoDB together. It does not become ready or participate as a validator until both are aligned.
 
-If the restored checkpoint cannot be connected to locally available chain history, recovery requires another valid snapshot or an archive source. The node does not skip history or initialize from the current finalized head.
+Because ADR-005 deliberately has no historical body versions, startup enforces:
+
+```text
+Mongo checkpoint <= local Reth finalized/executed checkpoint
+```
+
+- equal heights require equal hashes and can resume directly;
+- Mongo behind Reth is safe only when retained receipts let ExEx project the missing range before new Mongo-dependent execution;
+- Mongo ahead of Reth is `projection_ahead_of_execution` and stops startup.
+
+A fresh node that bootstraps from a Mongo snapshot at height `H` must also restore or already possess a Reth datadir/state snapshot at the same finalized height/hash (or later compatible Reth state). It cannot execute earlier blocks against future Mongo bodies. Automatic Reth catch-up from below the Mongo checkpoint is forbidden until a later versioned-body design exists.
+
+If the restored checkpoint cannot be connected to locally available chain history, recovery requires another valid snapshot pair or an archive source. The node does not skip history or initialize from the current finalized head.
 
 ### Runtime and projector ownership
 
 MongoDB remains node-local. It is not shared by validators and is not read over a remote execution/consensus protocol.
 
+The composition root creates the Mongo adapter and concrete typed readers once, then injects one explicit bundle through `OutbeEvmConfig` into the block executor, conceptually:
+
+```rust
+struct RuntimeBodyReaders {
+    tribute: TributeRepositoryReader,
+    nod: NodRepositoryReader,
+}
+```
+
 The composition root distributes:
 
 - projector write capability to ExEx;
-- repository read capability to body-dependent runtime/query modules;
+- `RuntimeBodyReaders` read capability to body-dependent execution;
+- typed reader clones to RPC/query modules where needed;
 - no write capability to runtime business modules.
 
-Runtime code does not construct Mongo clients, select collection names, or perform ad hoc BSON queries.
+Runtime and domain code do not construct Mongo clients, select collection names, perform ad hoc BSON queries, use process globals, or carry a legacy EVM body fallback inside the bundle. MongoDB types remain inside the storage adapter; domain consumers see only typed repository results.
 
 #### Required architecture-contract update
 
-The current repository rule says Reth ExEx is observability/indexing only and consensus-critical logic must not run inside it. ADR-005 intentionally makes ExEx-produced Mongo bodies an intermediate testnet execution input, so implementation would otherwise contradict that rule even though ExEx still does not execute domain business logic.
+The current repository rule says Reth ExEx is observability/indexing only and consensus-critical logic must not run inside it. ADR-005 deliberately approves one narrow testnet-only exception: ExEx still performs only finalized receipt materialization, but its Mongo output becomes a local input to Tribute/Nod body-dependent execution.
 
-Before ADR-005 can move from Proposed to Accepted, the narrow testnet-only exception must be recorded consistently in the source architecture rules, README/debt documentation, and regenerated agent instructions through the repository's `ruler apply` workflow. The exception must include a hard production disable and must not be generalized to validator settlement or other consensus-critical ExEx work.
+This does not make ExEx checkpoint data part of the consensus protocol. A locally broken projection affects that node's ability to produce or positively verify the same result; the remaining correctly materialized validators continue by quorum.
 
-Until both this contract update and the non-ExEx coordinator seam above are approved, ADR-005 must not be implemented.
+The ADR-005 implementation change must record this exception consistently in the source architecture rules, README/debt documentation, and regenerated agent instructions through the repository's `ruler apply` workflow. The exception must include a hard production disable and must not be generalized to validator settlement or other consensus-critical ExEx work.
 
 ### Node modes
 
-The ADR-005 profile applies to both validator and full-node modes.
+The final combined body-storage implementation applies to both validator and full-node modes.
 
 - Validator mode requires complete Mongo readiness before voting/proposing.
 - Full-node mode requires complete Mongo readiness before advertising business/RPC readiness.
@@ -349,11 +484,13 @@ After implementation:
 
 ## Accepted limitations
 
-- This is a testnet-only operational trust stage.
-- A well-formed but altered Mongo body is not detected until ADR-006.
-- Every validator/full node must operate an independent complete MongoDB projection.
-- Local Mongo failure can remove a validator from voting and reduce network liveness until quorum/operator recovery.
-- Same-block body-dependent reuse after mutation is forbidden until ADR-007 adds an overlay.
+- No intermediate ADR-005 binary is deployed or treated as a network profile.
+- Before ADR-006 is implemented on the branch, focused ADR-005 tests cannot detect a well-formed altered Mongo body.
+- Every validator/full node must operate an independent MongoDB projection.
+- The testnet assumes a protocol quorum has complete, correct local materializations.
+- During focused pre-ADR-006 development, a locally omitted or altered body may make one node disagree with the correctly materialized quorum; the deployed combined path uses ADR-006 leaf commitments inside ADR-010's final scheme-1 tree for point integrity and absence.
+- After the final ADR-005–010 deployment, local Mongo failure can remove a validator from voting and reduce network liveness until quorum/operator recovery.
+- Same-block body correctness is supplied by ADR-007 rather than a temporary ADR-005 mechanism.
 - Different receipt transactions are not block-snapshot-visible to user reads.
 - Secondary-index list completeness is not authenticated.
 - Snapshot creation/distribution and full recovery remain operator runbooks.
@@ -375,8 +512,8 @@ After implementation:
 - MongoDB becomes a local execution dependency before it is cryptographically authenticated.
 - A database outage may make a validator miss consensus votes or shut down.
 - Lockstep projection can limit block-to-block throughput if MongoDB cannot keep pace.
-- The temporary same-block mutation/read restriction is stricter than the eventual overlay design.
-- Different locally corrupted but well-formed bodies can cause nodes to disagree until ADR-006.
+- End-to-end network validation waits until ADR-006/007 complete the branch.
+- Different locally corrupted but well-formed bodies can cause focused pre-ADR-006 tests to disagree.
 - Operators must provision transaction-capable MongoDB and maintain snapshots/archive recovery.
 
 ## Alternatives considered
@@ -389,9 +526,9 @@ Rejected because it would preserve two sources of truth and allow MongoDB defect
 
 Rejected because body-dependent execution would read a stale parent materialization and could diverge from nodes whose projection is current.
 
-### Treat missing/corrupt data as absence
+### Treat backend or corruption errors as absence
 
-Rejected because it can turn an infrastructure defect into a valid-looking but different business transition.
+Rejected because it can turn an infrastructure defect into a valid-looking but different business transition. In ADR-005-only semantics, a genuine `None` is normal `NotFound`; ADR-006 supersedes this in focused direct-map tests, and the deployed ADR-010 tree performs the equivalent commitment check and treating non-zero plus `None` as `CommittedBodyMissing`.
 
 ### Retry MongoDB forever
 
@@ -413,13 +550,15 @@ Rejected because users primarily consume current records and receipt-level atomi
 
 Rejected because ADR-004 intentionally projects only exact finalized targets. Outbe's finalized-parent execution sequence and the ADR-005 parent-projection barrier provide the required next-height state.
 
-### Pull the generic journaled overlay into ADR-005
+### Deploy an intermediate ADR-005 binary
 
-Rejected to keep the staged implementation bounded. ADR-005 uses a deterministic same-block reuse restriction; ADR-007 introduces the general overlay.
+Rejected because it would require a temporary same-block fence with its own scopes, rollback journal, provider integration, errors, and tests. Implement ADR-006 through ADR-010 on the same branch and deploy only the completed CES1 path.
 
 ## Verification
 
 ### Read cutover coverage
+
+Verify composition-root wiring constructs one Mongo adapter, injects `RuntimeBodyReaders` through `OutbeEvmConfig`, gives ExEx separate write authority, and exposes no runtime write or legacy fallback capability.
 
 Add a completeness guard proving every production body/query read in:
 
@@ -438,6 +577,7 @@ Do not use tests that inspect source text for string presence. Exercise real int
 
 Run real node scenarios covering:
 
+- clean genesis has no Tribute/Nod per-entity bodies and starts projection at the first executable block;
 - Tribute issue -> finalized receipt -> Mongo -> later Tribute/Lysis read;
 - Tribute burn and owner/day index removal;
 - Nod issue -> item plus bucket receipt transaction -> later mining/payment read;
@@ -451,55 +591,77 @@ Run real node scenarios covering:
 Verify:
 
 - empty database replays from `start_block` before readiness;
-- restored snapshot validates and catches up before readiness;
-- validator does not vote/propose while Mongo is behind;
+- restored Reth/Mongo snapshot pair validates the same finalized height/hash before readiness;
+- Mongo behind Reth catches up from retained receipts before new Mongo-dependent execution;
+- Mongo ahead of local Reth state fails startup with `projection_ahead_of_execution`;
+- startup seeds `ProjectionReadinessHandle` from the validated durable checkpoint;
+- ExEx publishes readiness only after Mongo checkpoint commit;
+- each wait remains bound to its request's exact finalized parent while global finality advances;
+- same-height hash conflict is `Fatal`;
+- checkpoint ahead returns local `ProjectionAhead`, never reads future Mongo state, never votes `false`, and does not start the outage timer;
+- proposal and verification perform no MongoDB polling on their hot paths;
+- a ready parent checkpoint adds no proposal/verification delay;
+- proposal and verification wait only within their existing remaining view budgets;
+- budget expiry forfeits/withholds locally and never produces a `false` vote for projection lag;
+- healthy projection lag does not start the Mongo-unavailability deadline;
 - full node does not advertise business readiness while Mongo is behind;
 - state and Mongo process finalized blocks in lockstep during historical sync;
-- unsupported topology/schema/network identity cannot enter ADR-005 mode.
+- unsupported topology/schema/network identity cannot enter ADR-005 mode;
+- execution/projector access enforces primary read preference and majority read/write concern;
+- attempted consistency downgrade is rejected as configuration error.
 
 ### Eight-second recovery
 
 Use controlled time and injected backend failures to verify:
 
+- runtime read timeout is `min(remaining view budget, 1 second)`;
+- read-side `Unavailable` aborts only the local request, produces no `false` vote, and enters the shared supervisor recovery state;
+- before ADR-006, `None` does not start recovery; after ADR-006, mapping zero is `NotFound`, non-zero plus `None` is fatal, and read-side corruption immediately publishes `Fatal`;
+- startup and runtime perform an immediate first recovery attempt;
+- later attempts occur at one-second intervals without overlap;
+- each attempt is bounded by the remaining total deadline;
 - startup connection recovery before eight seconds succeeds;
 - startup failure at the deadline aborts startup;
-- runtime recovery before eight seconds replays and catches up;
-- runtime failure at the deadline triggers graceful shutdown;
+- runtime recovery soft-restarts only `ProjectorSession`, then replays and catches up;
+- `ExExRunner` continues draining notifications while MongoDB is unavailable;
+- multiple finalized notifications coalesce to the latest target and recovery still replays every intermediate block;
+- finalized-height regression and same-height hash conflict are `Fatal`;
+- runtime failure at the deadline sends structured `ProjectionExit` and triggers graceful shutdown;
 - catch-up time is not incorrectly charged to the connection deadline;
 - validator participation returns only after catch-up;
-- no panic, busy loop, or hidden fallback occurs.
+- no panic, busy loop, or hidden fallback occurs;
+- `Fatal`, ExEx task exit, and readiness-channel closure bypass the Mongo retry window and shut down immediately.
 
 ### Data failure behavior
 
-Verify that missing, malformed, wrong-identity, dangling-index, stale-checkpoint, and unavailable values:
+Verify that:
 
-- produce structured errors;
-- never become `None` unless the row is genuinely absent at a complete checkpoint;
-- never fall back to EVM bodies;
-- prevent invalid body-dependent execution;
-- lead to the documented shutdown/recovery path.
+- focused ADR-005 tests preserve the temporary `None -> NotFound` result;
+- the combined ADR-006 suite proves mapping zero -> `NotFound` and non-zero plus `None` -> `CommittedBodyMissing`;
+- malformed, wrong-identity, dangling-index, stale-checkpoint, and unavailable values produce structured non-absence errors;
+- no failure falls back to EVM bodies;
+- a validator with an injected local omission does not contribute a matching positive vote for execution produced by the correct quorum;
+- MongoDB unavailability follows the eight-second retry/shutdown path;
+- deterministic corruption follows its documented immediate failure path.
 
-### Determinism and same-block guard
+### Combined cutover determinism
 
-Run proposer/validator execution with independent MongoDB instances populated from the same receipts and assert equal:
+After ADR-007, exercise Mongo read cutover with independent databases and assert equal transaction results, logs, balances, and state roots when all inputs are identical.
 
-- transaction validity/results;
-- emitted logs;
-- balance deltas;
-- post-block state roots.
+Do not add temporary same-block fencing tests. ADR-007 owns mutation-sequence, nested-revert, same-key, same-block, and overlay parity coverage in the final combined suite.
 
-Exercise attempts to consume a body or partition after same-block mutation and assert the deterministic guard rejects them identically.
-
-Inject a well-formed altered row and document the expected pre-ADR-006 failure/risk explicitly rather than claiming authenticated integrity.
+Before ADR-006 lands on the branch, focused tests may inject a well-formed altered row only to document the temporary implementation risk; they must not claim authenticated integrity.
 
 ## Reset policy
 
-ADR-005 changes consensus-visible runtime behavior and removes active EVM body paths. Activate it through a coordinated hard fork and complete testnet reset.
+ADR-005 changes consensus-visible runtime behavior and removes active EVM body paths. Implement ADR-005 through ADR-010 consecutively on one branch without an intermediate runtime activation mechanism or deployment.
 
-No migration of legacy per-entity EVM bodies is required before production. Start the new testnet from a clean or deliberately seeded MongoDB state consistent with genesis and the activated receipt format.
+After ADR-010 and the combined test/benchmark suite, deploy ADR-003 through ADR-010 together through one complete coordinated testnet reset rather than an in-place migration fork. The new genesis contains no Tribute/Nod per-entity bodies. MongoDB starts empty, and projection begins at the first executable block.
+
+No legacy per-entity EVM body migration, dual-read period, dual-write period, hidden fallback, or temporary fence is implemented. If a future genesis must contain Tribute/Nod entities, that is a separate design requiring a matching genesis Mongo snapshot and explicit validation.
 
 MongoDB may be rebuilt from retained receipts or an operator-provided compatible snapshot. The node does not automatically weaken the read contract during recovery.
 
 ## Next unlocked step
 
-ADR-006 can define canonical body encoding and commitments, store the commitment beside compact EVM state, and verify every MongoDB point read before a body influences runtime behavior.
+Implement ADR-006 next, then continue through ADR-010 on the same branch. Direct-map and unsharded stages remain focused test/reference milestones; only the completed sharded collection/Root Catalog path is deployed.

@@ -31,8 +31,7 @@ pub const PROTOCOL_VERSION: crate::ProtocolVersion =
 
 /// Highest protocol version that may activate on devnet/testnet without matching
 /// the binary [`PROTOCOL_VERSION`]. Production / unknown chains stay strict.
-pub const TEST_ACTIVATION_CEILING: crate::ProtocolVersion =
-    crate::encode_protocol_version(2, 3);
+pub const TEST_ACTIVATION_CEILING: crate::ProtocolVersion = crate::encode_protocol_version(2, 3);
 
 /// Max version that may be activated on `chain_id`.
 ///

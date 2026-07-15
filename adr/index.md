@@ -216,7 +216,7 @@ Automatic finalized receipt-to-Mongo projection through Reth ExEx.
 
 ### Decision
 
-Install an optional ExEx on validator or full-node modes. Use `provider.finalized_block_stream()` as the sole finalized target source, replay exact intermediate blocks from a durable number/hash checkpoint, and never advance Reth `FinishedHeight` above that checkpoint.
+Install a mandatory ExEx on validator and full-node modes; missing projector/MongoDB configuration stops node startup. Use `provider.finalized_block_stream()` as the sole finalized target source, replay exact intermediate blocks from a durable number/hash checkpoint, and never advance Reth `FinishedHeight` above that checkpoint. During ADR-004 the mandatory ExEx remains asynchronous and execution does not wait for each checkpoint.
 
 Validate and simulate the complete block before writes. Apply all body/index mutations from one successful EVM receipt through one backend-neutral atomic storage batch. MongoDB must provide transaction capabilities through a replica set or sharded cluster; topology remains an operator choice. Persist local network/schema identity and exact receipt provenance, while leaving snapshot transport to MongoDB tooling.
 
@@ -258,33 +258,35 @@ The first complete Mongo-backed Tribute/Nod runtime.
 
 Switch Lysis, Tribute processing/burn, NodFactory mining/payment, Gratis inputs, metadata, and body/query reads to the typed facade backed by MongoDB. Remove active full per-entity EVM body storage while retaining only the protocol aggregates and control structures identified in ADR-002.
 
-Require state and Mongo projection to catch up together before business readiness or validator participation. Enforce a complete finalized-parent projection before the next Mongo-dependent height. A technical MongoDB outage receives one total eight-second reconnect deadline; recovery replays and catches up, while deadline expiry or deterministic corruption triggers graceful whole-node shutdown.
+Require state and Mongo projection to catch up together before business readiness or validator participation. ExEx remains the sole asynchronous writer, and Marshal acknowledgment/finality does not wait for projection. Before local proposal, verification, or full-node execution consumes Mongo-dependent successor state, a local readiness handle checks the required finalized-parent checkpoint. Proposal/verification waits only within the existing remaining view budget; expiry causes local abstention rather than a `false` vote, while the rest of the network continues by quorum. Because Mongo is unversioned, only an exact checkpoint/required-parent match is executable; checkpoint ahead returns local `ProjectionAhead` and never reads future state.
 
-ADR-005 remains Proposed and blocked until a non-ExEx coordinator seam is verified against the pinned Reth revision for live and historical execution, and the repository's ExEx observability-only rule is updated with the narrow testnet exception through the normal README/debt/ruler workflow.
+A synchronous execution read is bounded by `min(remaining view budget, 1 second)`; read-side `Unavailable` aborts only the local request and enters shared recovery without a `false` vote. Execution/projector Mongo access requires primary read preference and majority read/write concerns. A technical MongoDB outage receives an immediate recovery attempt followed by non-overlapping one-second retries within one total eight-second deadline. The long-lived ExEx runner recreates only its Mongo session, keeps draining notifications, coalesces pending finality to the latest exact target, and replays every intermediate block from the durable checkpoint after recovery. A projection supervisor triggers graceful whole-node shutdown on deadline expiry; deterministic `Fatal`, unexpected ExEx exit, or readiness-channel closure shuts down immediately without using the Mongo retry window. ADR-005 approves a narrow testnet-only exception to the ExEx observability-only rule; implementation records it through the normal README/debt/ruler workflow with a hard production disable.
 
-Missing, malformed, unavailable, or lagging rows fail explicitly. They are not interpreted as absence and do not fall back to a hidden EVM body source. Until the later journaled overlay, same-block body-dependent reuse after mutation is deterministically forbidden.
+ADR-005 startup also requires `Mongo checkpoint <= local Reth finalized/executed checkpoint`; Mongo-ahead startup is rejected, and first-start snapshots restore a matching Reth/Mongo finalized height/hash pair. A genuine missing row produces the normal domain `NotFound`/revert result. Backend, corruption, and lag errors remain explicit and never fall back to a hidden EVM body source. Until authenticated absence exists, a local omission may make that validator disagree with the correctly materialized quorum.
+
+Implement ADR-005 through ADR-010 consecutively on one branch without an intermediate runtime gate or deployment. ADR-005 introduces no temporary fence; ADR-006/007 add canonical commitments and permanent overlay, ADR-008 is the unsharded reference/benchmark, ADR-009 shards it, and ADR-010 completes the first deployed Root Catalog topology before one testnet reset.
 
 ### Working result
 
-A Tribute or Nod is created, published in a receipt, projected by ExEx, and consumed through MongoDB by an eligible later block. Lysis and Nod-to-Gratis flows complete through the off-chain facade. Validator and full-node modes do not advertise their active role while projection is behind.
+The branch implements Mongo read cutover, commitments, overlay, CKB tree, sharding, and Root Catalog sequentially before combined end-to-end validation.
 
 ### Accepted limitations
 
-MongoDB is deliberately an unauthenticated testnet execution dependency. The required execution/projection coordinator is not supplied by standard ExEx and must be resolved before acceptance. A well-formed altered row cannot yet be compared with a consensus commitment. Local Mongo failure may remove a validator from voting. There is no SMT, proof service, authenticated list completeness, automatic snapshot recovery, or production availability guarantee.
+Before ADR-006 lands on the branch, MongoDB is unauthenticated only in focused implementation tests; no intermediate binary is deployed. Projection readiness affects only the local node's ability to participate or execute; it is not consensus protocol data. The first testnet deployment after ADR-010 assumes a protocol quorum has correct independent projections. A locally omitted or altered row fails the CES1 commitment/tree check. Local Mongo failure may remove a validator from voting. There is still no public proof service, authenticated list completeness, automatic snapshot recovery, or production availability guarantee.
 
 These limitations are normal for this stage.
 
 ### Verification
 
-Run end-to-end Tribute -> ExEx -> Mongo -> Lysis and Nod -> ExEx -> Mongo -> mining -> Gratis flows on locally running nodes. Exercise startup gating, finalized-parent lockstep, recovery before and failure at the eight-second deadline, missing/malformed/unavailable rows, same-block guards, graceful shutdown, and proposer/validator parity across independent databases.
+After ADR-010, run the combined Tribute -> ExEx -> Mongo -> Lysis and Nod -> ExEx -> Mongo -> mining -> Gratis plus CKB/shard/catalog suite. Exercise startup gating, finalized-parent readiness, recovery before and failure at the eight-second deadline, missing/malformed/unavailable rows, graceful shutdown, same-block overlay behavior, and proposer/validator parity across independent databases.
 
 ### Reset policy
 
-Use a coordinated hard fork and complete testnet reset. Legacy per-entity EVM bodies do not require migration.
+Do not deploy any intermediate ADR-005–009 binary. After ADR-010 and combined verification, use one complete coordinated testnet reset to deploy ADR-003 through ADR-010 with an empty Tribute/Nod per-entity genesis body set. Projection starts at the first executable block; no legacy body migration, dual-read, dual-write, fallback, or temporary fence is introduced.
 
 ### Next unlocked step
 
-Give every body a deterministic commitment and compare Mongo reads against it.
+Implement ADR-006 through ADR-010 on the same branch, then run combined verification and deploy only the completed CES1 path.
 
 ---
 
@@ -302,34 +304,34 @@ Deterministic body commitments and verification on real Mongo reads.
 
 In one functional step, define:
 
-- canonical Tribute and Nod body bytes;
-- the hash suite and byte-to-field/hash rules;
-- canonical entity identity;
-- the leaf commitment binding identity and body.
+- append-only strict-canonical Protobuf bodies with an authenticated per-body `schema_version`;
+- one fork-global CES1-tagged Poseidon-BN254 commitment scheme, with `PBytes` and leaf rules and no simultaneous scheme coexistence;
+- exact 36-byte identities: Tribute/Nod use `WWD_BE4 || full Poseidon_BE32`, while Nod bucket uses `WWD_BE4 || bucket_key_BE32`; the typed collection provides the namespace;
+- the leaf commitment binding that identity and body.
 
-Store the current per-entity commitment in a simple EVM mapping. Emit the same commitment with the body event. On every body-dependent read, canonicalize the returned body, derive its identity and commitment, and compare it with EVM state before use.
+Tribute/Nod switch from `uint256` IDs to custom ABI `bytes` validated as exactly 36 bytes; no digest truncation or surrogate ID remains. Store current commitments in three direct typed EVM mappings keyed by `identity_f = PBytes(TAG_ID, EntityId36)`; zero is canonical absence. Emit public verifiable transitions containing the raw ID, commitment/body schema versions, previous and new commitments, and the exact canonical Protobuf payload. On every body-dependent read, canonicalize the returned body, derive its identity and commitment, and compare it with EVM state before use.
 
 The commitment format is deliberately chosen so it can become the future SMT leaf.
 
 ### Working result
 
-Lysis, Tribute, NodFactory, and Gratis continue to read Mongo, but modified, wrong-identity, or stale bodies fail commitment verification.
+Lysis, Tribute, NodFactory, and Gratis continue to read Mongo, but modified, missing-while-committed, wrong-identity, wrong-version, non-canonical, or stale bodies fail before domain use. Finalized events provide complete independently replayable commitment transitions.
 
 ### Accepted limitations
 
-Commitments still consume one EVM entry per entity. There is no global current-state root, membership proof, sharding, or scalable tree.
+Commitments still consume one EVM entry per entity. There is no global current-state root, membership proof, sharding, or scalable tree. Secondary-index list completeness remains unauthenticated even though every returned member is verified.
 
 ### Verification
 
-Use golden body/identity/leaf vectors and end-to-end runtime tests. Mutate every body field, entity ID, and stored commitment independently and prove that reads fail.
+Use golden Protobuf envelope/payload, 36-byte identity, pinned `outbe-poseidon` v0.11.0/CES1 `PBytes`, and leaf vectors plus event-replay and end-to-end runtime tests. Mutate every body field, WWD, entity ID, schema version, canonical payload, event commitment, and stored EVM commitment independently and prove that reads or projection fail explicitly.
 
 ### Reset policy
 
-Use a hard fork and testnet reset for the new EVM layout and canonical event/body format. No old body migration is required.
+Implement ADR-006 on the ADR-005–010 branch; its direct maps are a focused test backend. Use the single reset only after ADR-010 for the final EVM/tree layout and canonical event/body format. No old U256 ID, Postcard body, event, or commitment migration is required.
 
 ### Next unlocked step
 
-Move Tribute and Nod mutations behind one generic commitment lifecycle while preserving EVM journaling semantics.
+Move the three typed mappings behind one generic commitment lifecycle and add the permanent journaled body overlay in ADR-007.
 
 ---
 
@@ -345,29 +347,29 @@ One generic `mint/update/delete` lifecycle with deterministic same-block behavio
 
 ### Decision
 
-Introduce a generic compressed-entity mutation facade over the current EVM commitment mapping. It owns present/absent checks, `Set/Delete` pending values, unique touched keys, read-your-write behavior, repeated mutation rules, nested-call and transaction rollback, and end-block cleanup.
+Add the internal `outbe-compressed-entities` module at system state address `0xEE0D` with no public mutating precompile. It physically owns the three logically distinct direct commitment namespaces, shared body/index first-touch lists, lifecycle cleanup, and a block-scoped full-body EVM overlay: pending `Set` stores the non-zero leaf plus exact canonical `StoredBody`, pending `Deleted` is same-block absence, and `Untouched` falls through to finalized-parent MongoDB. Unique touched identities drive mandatory cleanup before state-root calculation. A second journaled delta overlay covers `TributeByOwner`, `TributeByDay`, `NodByOwner`, and `NodAll`: list reads deterministically merge finalized-parent Mongo IDs with same-block Added/Removed memberships before resolving bodies overlay-first. The fixed `0xEE0D` layout uses slots 0–3 for schema/direct maps, slots 4–6 for body pending word/bytes/touches, slots 7–9 for index delta word/record/touches, and slot 10 for the reversible body identity record required by cleanup and ADR-008; pending encodes `0 = Untouched`, canonical non-zero BN254 leaf = Set, and `U256::MAX = Deleted`.
 
-Existing EVM journaling keeps body events, commitment changes, and domain writes in the same revert scope.
+A closed typed-enum Rust interface exposes only `mint`, `update`, `delete`, and verified `read`; the module derives collection, ID, active schema, leaf, mapping key, and canonical event itself. `read` is the only constructor of an opaque value-based `VerifiedBody`; update/delete consume that capability, accept same-value ABA when identity/leaf still match, reject a mismatched current value, and use its old typed body to derive index removals without a second Mongo read. Finalized-parent Mongo fallback is hidden behind a consumer-owned `ParentBodySource` implemented by ADR-005 `RuntimeBodyReaders`. Existing EVM journaling keeps overlay bytes, touched keys, body events, commitment changes, and domain writes in the same revert scope. No process-memory undo journal is introduced. Generic transitions use overlay-aware current existence: mint requires absent, update/delete require present, delete→mint and same-leaf update are allowed, and every successful operation remains a separate ordered event. First body touches prepay the active schema's maximum cleanup footprint and first index touches prepay their fixed deferred cleanup, and list reads charge per scanned delta/parent ID/verified body, so no separate mutation-count cap is introduced. `CompressedEntitiesLifecycle::begin_block` requires an empty overlay; `end_block` runs after the final receipt-visible body mutation and before buffered post-block changes notify Reth's state-root task, after which further execution reads, lists, or mutations of compressed bodies are forbidden. Tribute/Nod retain business-state and stricter lifetime-reuse ownership; only trusted typed Rust paths select a collection, and canonical events remain emitted at their domain addresses.
 
 ### Working result
 
-Tribute and Nod use the same lifecycle for commitment mutation. Same-block create/update/delete sequences and reverted transactions produce deterministic commitments and events while the node still uses the simple mapping backend.
+Tribute and Nod use the same lifecycle for commitment mutation and verified point/list reads. Same-block create/update/delete/index sequences, mismatched-capability rejection and accepted same-value ABA, dependent transactions, and reverted execution produce deterministic commitments, bodies, lists, gas, and events; end-block removes every temporary slot while direct mappings persist.
 
 ### Accepted limitations
 
-The mapping remains unscalable and has no Merkle root or proof. Partition retirement is not available.
+The mappings remain unscalable and have no Merkle root or proof. Parent secondary-index completeness remains unauthenticated, partition retirement is unavailable, finalized RPC does not expose an in-progress overlay, and exact production capacity remains subject to later benchmarks.
 
 ### Verification
 
-Run mutation-sequence, same-key, same-block, nested revert, failed transaction, and proposer/validator equivalence tests against the active runtime.
+Run complete mutation matrices, body/index key vectors, parent-page merge boundaries, opaque-capability misuse, nested revert/failure injection, cleanup/state-root notification, golden gas accounting, ExEx replay, and multi-node proposer/validator equivalence tests.
 
 ### Reset policy
 
-A hard fork/testnet reset is allowed for the journal layout. Mongo can be rebuilt from the new events.
+Do not deploy schema-v1 direct maps. Continue through ADR-008–010 and use one combined ADR-003–010 reset. Final genesis allocates marker-preserved `0xEE0D` with the Root Catalog root schema and empty overlays; Mongo rebuilds from final CES1 events. No migration, intermediate domain-owned maps, dual path, or fence is introduced.
 
 ### Next unlocked step
 
-Replace the simple commitment mapping with one authenticated tree without changing domain callers.
+Replace the three direct mappings with one authenticated unsharded SMT inside the same module without changing domain callers or the body/index overlay.
 
 ---
 
@@ -383,29 +385,31 @@ One consensus-enforced unsharded sparse Merkle tree.
 
 ### Decision
 
-Replace the per-entity commitment mapping as the current-state authority with one unsharded SMT. The existing leaf commitment becomes the tree value. End-block sealing consumes the final journaled mutation set, updates the tree, writes the resulting root to an EVM root slot, and cleans the overlay atomically.
+Vendor and minimally panic-sanitize CKB `sparse-merkle-tree` `v0.6.1` at immutable commit `ad555350c866b2265d87d2d7fbd146fbc918bfe5` inside `outbe-compressed-entities`, retaining MIT license and exact provenance; no custom tree engine or public backend abstraction is introduced. Outbe leaves traversal/topology/update/delete/proof algorithms intact: `PoseidonCkbHasher` maps CKB's existing Hasher transcripts to the three CES1 SMT tags, using non-canonical `H256::MAX` only as an internally rejected hash-error poison, while finalized MDBX and speculative stores implement CKB's existing read/write seams. The vendored production subset excludes Blake2/C/trie/WASM and permits only allowlisted panic-to-structured-error edits in tree/proof paths, enforced by checksums, source diff, panic/unsafe scan, and pristine-upstream differential tests. The tree retains CKB's 256-level H256 key/path, update/delete, proof, and compact-zero MergeValue semantics. ADR-006 leaf commitments are stored verbatim and ZERO deletes them. Outbe supplies the exact CES1 Poseidon codec using `TAG_SMT_BASE/NORMAL/ZERO`, including upstream `u8` wrapping `zero_count` semantics.
 
-The initial tree may be in memory or a simple rebuildable local store. On restart, replay from genesis is acceptable.
+Storage schema v2 keeps ADR-007 overlay slots 4–10 stable: slot 0 is schema version 2, slot 1 is `last_smt_root`, and former direct-map bases 2–3 remain reserved/empty after the complete reset. The exact-parent root in `0xEE0D` is the sole consensus authority. `tree_key_f = P(TAG_KEY; commitment_scheme_version, collection_id, identity_f)` converts directly as `CKB_H256::from(BE32(tree_key_f))` with no byte reversal; its two high numeric bits are zero but all bytes follow pinned CKB `get_bit`/parent-path/`Ord` semantics. The unsharded tree is a non-deployed reference/benchmark milestone using CES1 primitives; local vendor/codec metadata is not a network version. Because ADR-006–010 have no intermediate activation, the first deployed scheme 1 is defined only by ADR-010's final sharded collection/Root Catalog topology. The CE-owned MDBX at `<datadir>/compressed_entities/smt/` stores the finalized in-place tree and atomic complete `last_applied` marker. ADR-005/008 execution uses only one exact finalized parent whose Mongo projection and CE MDBX marker both match height/hash/root; a non-finalized candidate is never a descendant execution parent in this stage. Each candidate uses one block-scoped finalized `AuthenticatedTreeView`, while `StagingCkbStore` captures ordered branch/leaf changes without copying or mutating MDBX. Batches publish only after executor finish/sealing, re-publication is idempotent only when typed metadata/ordered maps are structurally equal, and losing candidates never touch MDBX. Restart discards them; candidates return only through verified redelivery/reexecution.
+
+Every untouched point/list body uses block-cached `read_leaf_verified` evidence against the exact parent root. End-block has an explicit zero-touch proof/update bypass, otherwise derives strictly unique CKB-ordered keys, rejects cross-identity `tree_key` collision, verifies one parent multi-proof for all touched leaves, drops `parent_leaf == final_leaf` net no-ops, and runs `update_all` only for effective changes. Canonical operation events, EVM gas, and reserved CE work units remain even for net no-op. A zero-change block still publishes/commits an empty identity batch so `last_applied` and exact block-parent chaining advance without gaps. `BlockLifecycle` has associated `EndBlockResult`; ordinary modules use `()`, while compressed entities returns typed `SealOutput { root, staged_tree_batch }`, writes the EVM root, and cleans the overlay before Reth state-root notification. ADR-007 transaction gas remains receipt/header EVM gas. Separately, one executor-local CE work-unit meter spans user/system lanes: every block reserves base seal/marker units and every first unique key reserves worst-case proof/update/staging/MDBX/cleanup units. Repeated touches and net no-ops receive no duplicate reserve/release. No mutation-count cap or provisional numbers are activated; reproducible worst-case benchmarks fix coefficients, total budget, and local cache limits before deployment. After Marshal finality and durable Reth block/receipt/EVM persistence, one CE MDBX transaction commits nodes plus marker; only then is the finalized block ACKed. `CeRetentionHeight = last_applied.height` independently fences Reth receipt/event/historical-root pruning for behind recovery; if pinned Reth cannot register that dynamic retention client, startup disables the relevant pruning. Missing exact-parent state causes local forfeiture/abstention, and corrupt/mismatched local state fails closed/rebuilds rather than becoming a negative vote.
 
 ### Working result
 
-Locally running proposer and validator nodes execute Tribute/Nod flows, calculate the same SMT root, and reject a block whose EVM root does not match deterministic execution.
+Proposer and validator execute Tribute/Nod flows through the same vendored tree semantics, calculate the same EVM root, retain speculative branches safely, atomically persist finalized tree progress, and restart from a root-verified marker.
 
 ### Accepted limitations
 
-One tree has no sharding, collection isolation, Root Catalog, header artifact, durable persistence, fast restart, or proof RPC. Restart may require full replay.
+One tree has no sharding, collection isolation, Root Catalog, header artifact, public proof RPC, portable snapshot, or production capacity evidence. MDBX may still require canonical replay/rebuild after corruption.
 
 ### Verification
 
-Run reference-model and differential SMT vectors, multi-node root-equality tests, delete/non-membership tests, full replay, and invalid-root rejection.
+Run independent-reference and differential CKB vectors for every MergeValue form and the `zero_count` 255→0 boundary; multi-node root equality; delete/non-membership; speculative branch/drop; atomic marker/idempotent ACK; behind/ahead/conflicting restart rows; invalid-root rejection; and full replay.
 
 ### Reset policy
 
-Use a coordinated hard fork and complete testnet reset. The previous commitment map is not migrated.
+No separate reset or deployment. ADR-008's unsharded state is discarded after benchmark; the single ADR-003–010 reset initializes only the final scheme-1 shard/collection/catalog root and CE MDBX marker.
 
 ### Next unlocked step
 
-Improve tree scalability without changing lifecycle, leaf, or domain repository interfaces.
+Measure and add fixed sharding over the same vendored engine without changing lifecycle, leaf, or domain repository interfaces.
 
 ---
 
@@ -421,11 +425,11 @@ Fixed power-of-two SMT sharding.
 
 ### Decision
 
-Split the tree into a fixed number of shards selected deterministically from `tree_key`. Define shard namespaces, independent shard updates, deterministic shard-root aggregation, and parallel preparation where safe. Preserve worst-case correctness when all mutations hit one shard.
+Without deployment or version bump, split the reference tree into a fixed number of shards selected deterministically from the pinned CKB path bits of `tree_key`. Define shard namespaces, independent shard updates, deterministic shard-root aggregation, and parallel preparation where safe. Preserve worst-case correctness when all mutations hit one shard.
 
 ### Working result
 
-The same Tribute/Nod operations and leaf commitments produce a sharded consensus root. Multi-node execution agrees, and load tests demonstrate better working-set behavior or throughput than the unsharded stage.
+The same Tribute/Nod lifecycle and byte-identical scheme-1 leaf values produce the sharded candidate root used by ADR-010. Multi-node execution agrees, and load tests demonstrate better working-set behavior or throughput than the unsharded stage.
 
 ### Accepted limitations
 
@@ -437,7 +441,7 @@ Run equal-root tests across architectures, all-in-one-shard adversarial workload
 
 ### Reset policy
 
-Use a hard fork and complete testnet/tree reset because tree topology and root derivation change.
+No reset or testnet activation. The unsharded reference state is disposable; continue directly to ADR-010 on the same branch.
 
 ### Next unlocked step
 
@@ -457,7 +461,7 @@ Independent collections combined by a Root Catalog.
 
 ### Decision
 
-Define collection identity for Nod and Tribute partitions, calculate one root from each collection's shard roots, and store collection roots as leaves of a Root Catalog SMT. Derive one final `R_sealed` from the catalog root.
+Complete the first activated `commitment_scheme_version = 1` without recommitting the unchanged scheme-1 leaves. Define collection identity for Nod and Tribute partitions, calculate one root from each collection's shard roots, and store collection roots as leaves of a Root Catalog SMT. Derive one final `R_sealed` from the catalog root.
 
 This ADR introduces collection presence and empty-collection semantics but not bulk retirement.
 
@@ -467,7 +471,7 @@ Tribute WWD collections and the Nod collection update independently while every 
 
 ### Accepted limitations
 
-Finished Tribute partitions cannot yet be removed in one operation. Empty collections remain present, and local tree state is still replay-based.
+Finished Tribute partitions cannot yet be removed in one operation. Empty collections remain present; CE MDBX persists their current shard/catalog materialization.
 
 ### Verification
 
@@ -475,7 +479,7 @@ Run single-collection, multi-collection, empty-collection, cross-collection orde
 
 ### Reset policy
 
-Use a hard fork and testnet/tree reset because collection keys and final root topology change.
+After the combined ADR-003–010 suite, perform the one first CES1 testnet reset. Genesis derives only the final empty shard/collection/Root Catalog `R_sealed`; no direct-map, unsharded, or pre-catalog state is migrated.
 
 ### Next unlocked step
 
@@ -503,7 +507,7 @@ A completed Tribute WWD partition can be retired in one block without per-entity
 
 ### Accepted limitations
 
-The root is committed through EVM state only. There is still no direct header carrier, proof RPC, durable tree storage, or snapshot recovery.
+The root is committed through EVM state only. There is still no direct header carrier, proof RPC, or portable snapshot recovery.
 
 ### Verification
 
@@ -539,7 +543,7 @@ Every accepted block carries a directly extractable compressed-entity root. A mi
 
 ### Accepted limitations
 
-The node does not yet expose entity proofs. Tree state is still replayable rather than durably checkpointed.
+The node does not yet expose entity proofs or portable snapshots; CE MDBX is node-local materialization rather than a client trust anchor.
 
 ### Verification
 
@@ -559,7 +563,7 @@ Serve inclusion/non-inclusion proofs and bind Mongo bodies to the finalized head
 
 ### Starting system
 
-Finalized headers contain `R_sealed`, and the node can reconstruct the current tree through replay.
+Finalized headers contain `R_sealed`, and the node retains the matching latest finalized tree in CE MDBX.
 
 ### Added capability
 
@@ -577,7 +581,7 @@ A client requests a Tribute or Nod body from the node and verifies it independen
 
 ### Accepted limitations
 
-Proof generation depends on the current in-memory/replayed tree. Restart may require full replay, and historical proof generation is not guaranteed.
+Proof generation serves the latest root-verified finalized CE MDBX snapshot. Historical proof generation is not guaranteed.
 
 ### Verification
 
@@ -589,45 +593,15 @@ A hard fork may be unnecessary if only RPC/proof transport is added. Testnet res
 
 ### Next unlocked step
 
-Persist the working proof-capable tree so normal restart no longer requires genesis replay.
+Complete exhaustive cross-store crash-window reconciliation and recovery evidence.
 
 ---
 
-## ADR-014 — `014-persistent-smt-storage.md`
+## ADR-014 — removed; folded into ADR-008
 
-### Starting system
+The former `014-persistent-smt-storage.md` roadmap stage is removed. CE-owned MDBX, atomic finalized node/marker commit, Reth durability ordering, and baseline restart behavior are required by the selected CKB engine from ADR-008 onward; deferring them would create an unusable intermediate authority model.
 
-The authenticated tree and proofs work, but local tree state must be replayed after restart.
-
-### Added capability
-
-Durable finalized SMT checkpoints.
-
-### Decision
-
-Add a CE-owned MDBX environment. Persist changed tree nodes, shard/collection/catalog metadata, and one complete `last_applied` marker atomically after the corresponding finalized Reth state is durable. Bind the environment to chain and genesis identity.
-
-This ADR establishes the normal finalized commit path. Exhaustive crash reconciliation is ADR-015.
-
-### Working result
-
-After a clean restart, the node opens the persisted tree at its finalized marker, verifies the stored root against chain state, resumes execution, and immediately serves current proofs without replay from genesis.
-
-### Accepted limitations
-
-Interrupted commits and cursor disagreement have only basic fail-closed handling. Automatic recovery of every crash window is not yet implemented. Portable snapshots do not exist.
-
-### Verification
-
-Run clean shutdown/restart, atomic transaction, same-marker idempotency, wrong chain/genesis, root mismatch, and proof-after-restart tests.
-
-### Reset policy
-
-Local MDBX may be deleted and rebuilt from chain replay. A chain reset is not required unless persistence reveals a consensus-format defect.
-
-### Next unlocked step
-
-Define deterministic recovery for every relationship between Reth, SMT, Mongo, and finality progress.
+Number 014 remains reserved so later ADR references do not silently change. Exhaustive cross-store fault reconciliation remains ADR-015.
 
 ---
 

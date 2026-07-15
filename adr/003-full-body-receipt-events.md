@@ -4,6 +4,8 @@
 - **Date:** 2026-07-15
 - **Depends on:** ADR-002
 
+> **Supersession note:** ADR-006 replaces the explicit-field Stored/Delete ABI defined here during the single coordinated ADR-003–010 first CES1 testnet reset. ADR-003 remains authoritative for receipt visibility, complete mutation publication, owning emitters, journal/revert atomicity, system-receipt inclusion, and deterministic log ordering. The active ADR-006 wire form publishes strict-canonical Protobuf payloads, 36-byte IDs, schema/commitment versions, and previous/new commitments instead of duplicating every body field as Solidity arguments.
+
 ## Context
 
 ADR-001 introduced the domain-neutral off-chain storage facade. ADR-002 added typed Tribute and Nod repositories for:

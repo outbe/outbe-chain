@@ -334,7 +334,12 @@ mod tests {
 
     #[test]
     fn record_when_uninit_is_noop() {
-        record(JournalRecord::vote_cast(0, "1".into(), "0xabc".into(), true));
+        record(JournalRecord::vote_cast(
+            0,
+            "1".into(),
+            "0xabc".into(),
+            true,
+        ));
     }
 
     #[test]
