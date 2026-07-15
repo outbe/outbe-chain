@@ -3,6 +3,7 @@ pub mod constants;
 pub mod errors;
 pub mod hooks;
 pub mod precompile;
+pub mod projection;
 mod repository;
 pub mod runtime;
 pub mod schema;

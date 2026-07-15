@@ -25,6 +25,7 @@ members = [
     "crates/system/teeregistry",
     "crates/system/update",
     "crates/system/vote",
+    "crates/system/offchain-data",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -108,6 +109,7 @@ outbe-tee = { path = "crates/system/tee" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
+outbe-offchain-data = { path = "crates/system/offchain-data" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
@@ -168,6 +170,7 @@ reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }

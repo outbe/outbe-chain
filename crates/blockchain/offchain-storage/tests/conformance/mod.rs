@@ -1,7 +1,97 @@
+use std::collections::BTreeMap;
+
 use outbe_offchain_storage::{
-    Key, Namespace, ScanRequest, StorageReaderHandle, StorageWriterHandle, Value, MAX_KEY_BYTES,
-    MAX_SCAN_ENTRIES, MAX_SCAN_PAGE_VALUE_BYTES, MAX_VALUE_BYTES,
+    AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanRequest, StorageMetadata,
+    StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_KEY_BYTES, MAX_SCAN_ENTRIES,
+    MAX_SCAN_PAGE_VALUE_BYTES, MAX_VALUE_BYTES,
 };
+
+pub fn atomic_batches_preserve_order_metadata_and_idempotency(
+    reader: StorageReaderHandle,
+    writer: StorageWriterHandle,
+) {
+    let primary = Namespace::new("atomic_primary").unwrap();
+    let index = Namespace::new("atomic_index").unwrap();
+    let first_key = Key::new(b"first".to_vec()).unwrap();
+    let second_key = Key::new(b"second".to_vec()).unwrap();
+    let index_key = Key::new(b"index".to_vec()).unwrap();
+    let metadata = StorageMetadata::new(BTreeMap::from([
+        ("block_number".to_owned(), "7".to_owned()),
+        ("block_hash".to_owned(), "0x01".to_owned()),
+    ]))
+    .unwrap();
+
+    let mut batch = AtomicWriteBatch::new();
+    batch.push(AtomicWriteOperation::put_record(
+        primary.clone(),
+        first_key.clone(),
+        StoredValue::with_metadata(Value::new(b"old".to_vec()).unwrap(), metadata.clone()),
+    ));
+    batch.push(AtomicWriteOperation::put(
+        primary.clone(),
+        first_key.clone(),
+        Value::new(b"replacement".to_vec()).unwrap(),
+    ));
+    batch.push(AtomicWriteOperation::put_record(
+        primary.clone(),
+        second_key.clone(),
+        StoredValue::with_metadata(Value::new(b"second".to_vec()).unwrap(), metadata.clone()),
+    ));
+    batch.push(AtomicWriteOperation::put(
+        index.clone(),
+        index_key.clone(),
+        Value::new(Vec::new()).unwrap(),
+    ));
+
+    writer.apply_atomic(&batch).unwrap();
+    writer.apply_atomic(&batch).unwrap();
+
+    let first = reader
+        .get_record(primary.clone(), &first_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.value.as_bytes(), b"replacement");
+    assert_eq!(first.metadata, None, "plain replacement removes metadata");
+    let second = reader
+        .get_record(primary.clone(), &second_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.metadata, Some(metadata.clone()));
+    assert_eq!(
+        reader.get(primary.clone(), &second_key).unwrap().unwrap(),
+        second.value,
+        "value-only reads intentionally discard metadata"
+    );
+    assert_eq!(
+        reader
+            .get_records(primary.clone(), &[second_key.clone(), first_key.clone()])
+            .unwrap(),
+        vec![Some(second.clone()), Some(first)]
+    );
+    assert_eq!(
+        reader
+            .get_records(primary.clone(), &[second_key.clone(), second_key.clone()])
+            .unwrap(),
+        vec![Some(second.clone()), Some(second)]
+    );
+    let page = reader
+        .scan_prefix(
+            primary,
+            ScanRequest::new(&[], None, MAX_SCAN_ENTRIES).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(page.entries.len(), 2);
+    assert_eq!(page.entries[0].metadata, None);
+    assert_eq!(page.entries[1].metadata, Some(metadata));
+    assert_eq!(
+        reader
+            .get_record(index, &index_key)
+            .unwrap()
+            .unwrap()
+            .metadata,
+        None
+    );
+}
 
 pub fn put_get_replace_and_repeat(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     let namespace = Namespace::new("records").expect("valid namespace");

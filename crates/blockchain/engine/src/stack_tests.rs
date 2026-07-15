@@ -1807,6 +1807,9 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_bootstrap_timeout_secs: 60,
         upstream: None,
         upstream_nocertify: false,
+        projection_mongodb_uri: None,
+        projection_mongodb_database: None,
+        projection_start_block: 0,
     };
 
     let address = validate_validator_evm_signer(
@@ -2762,6 +2765,9 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_bootstrap_timeout_secs: 60,
         upstream: None,
         upstream_nocertify: false,
+        projection_mongodb_uri: None,
+        projection_mongodb_database: None,
+        projection_start_block: 0,
     };
 
     let address = super::validate_validator_evm_signer(
@@ -3182,6 +3188,9 @@ mod restart_recovery {
             tee_bootstrap_timeout_secs: 60,
             upstream: None,
             upstream_nocertify: false,
+            projection_mongodb_uri: None,
+            projection_mongodb_database: None,
+            projection_start_block: 0,
         };
         let signer_address = validate_validator_evm_signer(
             &args,

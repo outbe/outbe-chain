@@ -3,16 +3,16 @@
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_offchain_storage::{
-    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageReaderHandle, StorageWriterHandle,
-    Value, MAX_SCAN_ENTRIES,
+    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
+    StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use thiserror::Error;
 
 use crate::TributeData;
 
-const TRIBUTES_NAMESPACE: &str = "tributes";
-const TRIBUTES_BY_OWNER_NAMESPACE: &str = "tributes_by_owner";
-const TRIBUTES_BY_DAY_NAMESPACE: &str = "tributes_by_day";
+pub(crate) const TRIBUTES_NAMESPACE: &str = "tributes";
+pub(crate) const TRIBUTES_BY_OWNER_NAMESPACE: &str = "tributes_by_owner";
+pub(crate) const TRIBUTES_BY_DAY_NAMESPACE: &str = "tributes_by_day";
 const PRIMARY_KEY_LEN: usize = 32;
 const OWNER_INDEX_KEY_LEN: usize = 20 + PRIMARY_KEY_LEN;
 const DAY_INDEX_KEY_LEN: usize = 4 + PRIMARY_KEY_LEN;
@@ -33,6 +33,9 @@ pub struct TributePage {
     /// Exclusive cursor for the next page, when more records exist.
     pub next_after: Option<U256>,
 }
+
+/// One decoded Tribute body and optional primary storage metadata.
+pub type TributeRecordWithMetadata = (TributeData, Option<StorageMetadata>);
 
 /// Failure at the typed Tribute persistence boundary.
 #[derive(Debug, Error)]
@@ -59,6 +62,9 @@ pub enum TributeRepositoryError {
     /// Secondary-index values must be exactly empty.
     #[error("Tribute {index} index value is not empty")]
     NonEmptyIndexValue { index: &'static str },
+    /// Secondary-index documents must not carry primary provenance.
+    #[error("Tribute {index} index unexpectedly carries metadata")]
+    IndexMetadata { index: &'static str },
     /// An index selects a missing primary body.
     #[error("Tribute {index} index points to missing body {token_id}")]
     DanglingIndex { index: &'static str, token_id: U256 },
@@ -88,11 +94,49 @@ impl TributeRepositoryReader {
 
     /// Loads one Tribute body and verifies its embedded identity.
     pub fn get(&self, token_id: U256) -> Result<Option<TributeData>, TributeRepositoryError> {
+        Ok(self
+            .get_with_metadata(token_id)?
+            .map(|(body, _metadata)| body))
+    }
+
+    /// Loads one Tribute body together with optional primary provenance.
+    pub fn get_with_metadata(
+        &self,
+        token_id: U256,
+    ) -> Result<Option<(TributeData, Option<StorageMetadata>)>, TributeRepositoryError> {
         let key = primary_key(token_id)?;
-        let Some(value) = self.storage.get(namespace(TRIBUTES_NAMESPACE)?, &key)? else {
+        let Some(record) = self
+            .storage
+            .get_record(namespace(TRIBUTES_NAMESPACE)?, &key)?
+        else {
             return Ok(None);
         };
-        decode_body(token_id, value.as_bytes()).map(Some)
+        decode_body(token_id, record.value.as_bytes()).map(|body| Some((body, record.metadata)))
+    }
+
+    /// Batch-loads bodies and metadata in the same order as the supplied identities.
+    pub fn get_many_with_metadata(
+        &self,
+        token_ids: &[U256],
+    ) -> Result<Vec<Option<TributeRecordWithMetadata>>, TributeRepositoryError> {
+        let keys = token_ids
+            .iter()
+            .copied()
+            .map(primary_key)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.storage
+            .get_records(namespace(TRIBUTES_NAMESPACE)?, &keys)?
+            .into_iter()
+            .zip(token_ids.iter().copied())
+            .map(|(record, token_id)| {
+                record
+                    .map(|record| {
+                        decode_body(token_id, record.value.as_bytes())
+                            .map(|body| (body, record.metadata))
+                    })
+                    .transpose()
+            })
+            .collect()
     }
 
     /// Lists one owner's Tributes in ascending ID order.
@@ -171,6 +215,9 @@ impl TributeRepositoryReader {
 }
 
 /// Cloneable write authority for Tribute bodies and derived indexes.
+///
+/// Callers must serialize mutations of the same Tribute identity. Each resulting body/index batch
+/// is atomic, but the old-body read used to plan replacement or deletion precedes that batch.
 pub struct TributeRepositoryWriter {
     reader: TributeRepositoryReader,
     writer: StorageWriterHandle,
@@ -179,9 +226,7 @@ pub struct TributeRepositoryWriter {
 impl TributeRepositoryWriter {
     /// Creates a writer. Both handles must address the same adapter instance.
     ///
-    /// The read handle is required for replacement and deletion. Until the
-    /// transactional projection introduced by ADR-004, callers must also
-    /// serialize concurrent mutations of the same Tribute ID.
+    /// The read handle is required for replacement and deletion.
     #[must_use]
     pub fn new(reader: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {
@@ -191,68 +236,37 @@ impl TributeRepositoryWriter {
     }
 
     /// Inserts or replaces one body and its owner/day indexes.
-    ///
-    /// Multi-key writes are intentionally non-atomic: the first storage failure
-    /// is returned and already-completed steps are not rolled back.
     pub fn put(&self, tribute: &TributeData) -> Result<(), TributeRepositoryError> {
         let old = self.reader.get(tribute.token_id)?;
-        let primary = primary_key(tribute.token_id)?;
-        let encoded = encode_body(tribute)?;
-        let owner_index = owner_index_key(tribute.owner, tribute.token_id)?;
-        let day_index = day_index_key(tribute.worldwide_day, tribute.token_id)?;
-        let empty = Value::new(Vec::new())?;
-
-        self.writer
-            .put(namespace(TRIBUTES_NAMESPACE)?, &primary, &encoded)?;
-        self.writer.put(
-            namespace(TRIBUTES_BY_OWNER_NAMESPACE)?,
-            &owner_index,
-            &empty,
+        let batch = crate::projection::plan_tribute_mutation(
+            old.as_ref(),
+            crate::projection::TributeMutation::Store {
+                token_id: tribute.token_id,
+                body: tribute,
+                metadata: None,
+            },
         )?;
-        self.writer
-            .put(namespace(TRIBUTES_BY_DAY_NAMESPACE)?, &day_index, &empty)?;
-
-        if let Some(old) = old {
-            if old.owner != tribute.owner {
-                self.writer.delete(
-                    namespace(TRIBUTES_BY_OWNER_NAMESPACE)?,
-                    &owner_index_key(old.owner, old.token_id)?,
-                )?;
-            }
-            if old.worldwide_day != tribute.worldwide_day {
-                self.writer.delete(
-                    namespace(TRIBUTES_BY_DAY_NAMESPACE)?,
-                    &day_index_key(old.worldwide_day, old.token_id)?,
-                )?;
-            }
-        }
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 
     /// Deletes a body and its derived indexes. Missing bodies are a success.
     pub fn delete(&self, token_id: U256) -> Result<(), TributeRepositoryError> {
-        let Some(old) = self.reader.get(token_id)? else {
-            return Ok(());
-        };
-        self.writer.delete(
-            namespace(TRIBUTES_BY_OWNER_NAMESPACE)?,
-            &owner_index_key(old.owner, token_id)?,
+        let old = self.reader.get(token_id)?;
+        let batch = crate::projection::plan_tribute_mutation(
+            old.as_ref(),
+            crate::projection::TributeMutation::Delete { token_id },
         )?;
-        self.writer.delete(
-            namespace(TRIBUTES_BY_DAY_NAMESPACE)?,
-            &day_index_key(old.worldwide_day, token_id)?,
-        )?;
-        self.writer
-            .delete(namespace(TRIBUTES_NAMESPACE)?, &primary_key(token_id)?)?;
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 }
 
-fn namespace(name: &'static str) -> Result<Namespace, TributeRepositoryError> {
+pub(crate) fn namespace(name: &'static str) -> Result<Namespace, TributeRepositoryError> {
     Ok(Namespace::new(name)?)
 }
 
-fn encode_body(tribute: &TributeData) -> Result<Value, TributeRepositoryError> {
+pub(crate) fn encode_body(tribute: &TributeData) -> Result<Value, TributeRepositoryError> {
     let bytes = postcard::to_stdvec(tribute).map_err(TributeRepositoryError::Encode)?;
     Ok(Value::new(bytes)?)
 }
@@ -274,18 +288,21 @@ fn decode_body(token_id: U256, bytes: &[u8]) -> Result<TributeData, TributeRepos
     Ok(body)
 }
 
-fn primary_key(token_id: U256) -> Result<Key, TributeRepositoryError> {
+pub(crate) fn primary_key(token_id: U256) -> Result<Key, TributeRepositoryError> {
     Ok(Key::new(token_id.to_be_bytes::<PRIMARY_KEY_LEN>())?)
 }
 
-fn owner_index_key(owner: Address, token_id: U256) -> Result<Key, TributeRepositoryError> {
+pub(crate) fn owner_index_key(
+    owner: Address,
+    token_id: U256,
+) -> Result<Key, TributeRepositoryError> {
     let mut bytes = Vec::with_capacity(OWNER_INDEX_KEY_LEN);
     bytes.extend_from_slice(owner.as_slice());
     bytes.extend_from_slice(&token_id.to_be_bytes::<PRIMARY_KEY_LEN>());
     Ok(Key::new(bytes)?)
 }
 
-fn day_index_key(
+pub(crate) fn day_index_key(
     worldwide_day: WorldwideDay,
     token_id: U256,
 ) -> Result<Key, TributeRepositoryError> {
@@ -319,6 +336,9 @@ fn validate_empty_index(
 ) -> Result<(), TributeRepositoryError> {
     if !entry.value.as_bytes().is_empty() {
         return Err(TributeRepositoryError::NonEmptyIndexValue { index });
+    }
+    if entry.metadata.is_some() {
+        return Err(TributeRepositoryError::IndexMetadata { index });
     }
     Ok(())
 }

@@ -1,9 +1,31 @@
 //! Consensus CLI arguments.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fmt, net::SocketAddr, path::PathBuf};
+
+/// Complete opt-in configuration for finalized offchain-data projection into MongoDB.
+#[derive(Clone, Eq, PartialEq)]
+pub struct OffchainDataArgs {
+    /// MongoDB connection string.
+    pub mongodb_uri: String,
+    /// Logical database exclusively owned by this node's projector.
+    pub mongodb_database: String,
+    /// First block projected when the managed database has no checkpoint.
+    pub start_block: u64,
+}
+
+impl fmt::Debug for OffchainDataArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OffchainDataArgs")
+            .field("mongodb_uri", &"<redacted>")
+            .field("mongodb_database", &self.mongodb_database)
+            .field("start_block", &self.start_block)
+            .finish()
+    }
+}
 
 /// CLI arguments for the Outbe consensus layer.
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Clone, clap::Args)]
 pub struct ConsensusArgs {
     /// Run as active consensus participant (validator).
     /// When false, runs as full node (sync + RPC only, no block production).
@@ -149,6 +171,53 @@ pub struct ConsensusArgs {
         requires = "upstream"
     )]
     pub upstream_nocertify: bool,
+
+    /// MongoDB URI for the optional finalized offchain-data projection.
+    #[arg(
+        long = "projection.mongodb-uri",
+        env = "OUTBE_PROJECTION_MONGODB_URI",
+        value_name = "URI"
+    )]
+    pub projection_mongodb_uri: Option<String>,
+
+    /// Logical MongoDB database exclusively owned by this node's projector.
+    #[arg(
+        long = "projection.mongodb-database",
+        env = "OUTBE_PROJECTION_MONGODB_DATABASE",
+        value_name = "DATABASE"
+    )]
+    pub projection_mongodb_database: Option<String>,
+
+    /// First block to project into a new managed database.
+    #[arg(long = "projection.start-block", default_value_t = 0)]
+    pub projection_start_block: u64,
+}
+
+impl fmt::Debug for ConsensusArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConsensusArgs")
+            .field("is_validator", &self.is_validator)
+            .field("listen_address", &self.listen_address)
+            .field("trust_el_head", &self.trust_el_head)
+            .field("force_dkg", &self.force_dkg)
+            .field("use_local_defaults", &self.use_local_defaults)
+            .field("worker_threads", &self.worker_threads)
+            .field("bls_key_backend", &self.bls_key_backend)
+            .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
+            .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
+            .field("upstream_configured", &self.upstream.is_some())
+            .field(
+                "offchain_data_configured",
+                &self.projection_mongodb_uri.is_some(),
+            )
+            .field(
+                "projection_mongodb_database",
+                &self.projection_mongodb_database,
+            )
+            .field("projection_start_block", &self.projection_start_block)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ConsensusArgs {
@@ -158,6 +227,7 @@ impl ConsensusArgs {
     /// - `--consensus.signing-key` without `--validator` → warning (ignored key)
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
+        self.offchain_data()?;
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
         // `conflicts_with` also enforces this on the CLI; this covers programmatic
@@ -215,6 +285,32 @@ impl ConsensusArgs {
         Ok(())
     }
 
+    /// Returns a complete projection configuration or `None` when projection is disabled.
+    pub fn offchain_data(&self) -> eyre::Result<Option<OffchainDataArgs>> {
+        match (
+            self.projection_mongodb_uri.as_ref(),
+            self.projection_mongodb_database.as_ref(),
+        ) {
+            (None, None) => Ok(None),
+            (Some(uri), Some(database)) => {
+                if uri.trim().is_empty() {
+                    eyre::bail!("--projection.mongodb-uri must not be empty");
+                }
+                if database.trim().is_empty() {
+                    eyre::bail!("--projection.mongodb-database must not be empty");
+                }
+                Ok(Some(OffchainDataArgs {
+                    mongodb_uri: uri.clone(),
+                    mongodb_database: database.clone(),
+                    start_block: self.projection_start_block,
+                }))
+            }
+            _ => eyre::bail!(
+                "--projection.mongodb-uri and --projection.mongodb-database must be provided together"
+            ),
+        }
+    }
+
     /// Effective validator EVM-key path.
     ///
     /// Returns `None` for full-node mode. In validator mode, an explicit
@@ -262,10 +358,18 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    #[derive(Debug, Parser)]
+    #[derive(Parser)]
     struct TestConsensusCli {
         #[command(flatten)]
         consensus: ConsensusArgs,
+    }
+
+    impl fmt::Debug for TestConsensusCli {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("TestConsensusCli")
+                .finish_non_exhaustive()
+        }
     }
 
     fn default_args() -> ConsensusArgs {
@@ -292,12 +396,72 @@ mod tests {
             tee_bootstrap_timeout_secs: 60,
             upstream: None,
             upstream_nocertify: false,
+            projection_mongodb_uri: None,
+            projection_mongodb_database: None,
+            projection_start_block: 0,
         }
     }
 
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
+    }
+
+    #[test]
+    fn projection_is_opt_in_and_requires_a_complete_mongo_pair() {
+        assert_eq!(default_args().offchain_data().unwrap(), None);
+
+        let mut args = default_args();
+        args.projection_mongodb_uri = Some("mongodb://localhost:27017".to_owned());
+        let error = args.offchain_data().unwrap_err().to_string();
+        assert!(
+            error.contains("must be provided together"),
+            "error: {error}"
+        );
+
+        args.projection_mongodb_database = Some("outbe_projection".to_owned());
+        args.projection_start_block = 42;
+        let config = args.offchain_data().unwrap().unwrap();
+        assert_eq!(config.mongodb_uri, "mongodb://localhost:27017");
+        assert_eq!(config.mongodb_database, "outbe_projection");
+        assert_eq!(config.start_block, 42);
+    }
+
+    #[test]
+    fn cli_parses_projection_configuration() {
+        let cli = TestConsensusCli::try_parse_from([
+            "test",
+            "--projection.mongodb-uri",
+            "mongodb://mongo:27017/?replicaSet=rs0",
+            "--projection.mongodb-database",
+            "outbe_projection",
+            "--projection.start-block",
+            "17",
+        ])
+        .unwrap();
+        let config = cli.consensus.offchain_data().unwrap().unwrap();
+        assert_eq!(config.start_block, 17);
+        assert_eq!(config.mongodb_database, "outbe_projection");
+    }
+
+    #[test]
+    fn debug_output_redacts_operator_secrets() {
+        let mut args = default_args();
+        args.bls_passphrase = Some("bls-secret-value".to_owned());
+        args.upstream = Some("https://user:upstream-secret@example.test".to_owned());
+        args.projection_mongodb_uri =
+            Some("mongodb://user:mongo-secret@localhost:27017".to_owned());
+        args.projection_mongodb_database = Some("outbe_projection".to_owned());
+
+        let args_debug = format!("{args:?}");
+        let config_debug = format!("{:?}", args.offchain_data().unwrap().unwrap());
+
+        for secret in ["bls-secret-value", "upstream-secret", "mongo-secret"] {
+            assert!(!args_debug.contains(secret));
+            assert!(!config_debug.contains(secret));
+        }
+        assert!(args_debug.contains("offchain_data_configured: true"));
+        assert!(config_debug.contains("mongodb_uri: \"<redacted>\""));
     }
 
     #[test]

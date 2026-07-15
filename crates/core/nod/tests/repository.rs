@@ -15,8 +15,9 @@ use outbe_nod::{
     NodRepositoryWriter,
 };
 use outbe_offchain_storage::{
-    Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace, StorageError, StorageReader,
-    StorageReaderHandle, StorageWriter, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
+    AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
+    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
+    MAX_SCAN_ENTRIES,
 };
 
 fn nod(nod_id: U256, owner: Address) -> NodItemState {
@@ -517,19 +518,16 @@ impl FailAfterWriter {
 }
 
 impl StorageWriter for FailAfterWriter {
-    fn put(&self, namespace: Namespace, key: &Key, value: &Value) -> Result<(), StorageError> {
-        self.inner.put(namespace, key, value)?;
-        self.finish_step()
-    }
-
-    fn delete(&self, namespace: Namespace, key: &Key) -> Result<(), StorageError> {
-        self.inner.delete(namespace, key)?;
-        self.finish_step()
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        for _ in batch.operations() {
+            self.finish_step()?;
+        }
+        self.inner.apply_atomic(batch)
     }
 }
 
 #[test]
-fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
+fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
     let owner = Address::repeat_byte(0x91);
     let new_owner = Address::repeat_byte(0x92);
     let id = U256::from(88);
@@ -546,20 +544,14 @@ fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
             repository.put_nod(&nod(id, owner)),
             Err(NodRepositoryError::Storage(_))
         ));
-        assert_eq!(
-            storage
-                .get(namespace("nods"), &id_key(id))
-                .unwrap()
-                .is_some(),
-            fail_after >= 1
-        );
-        assert_eq!(
-            storage
-                .get(namespace("nods_by_owner"), &owner_key(owner, id))
-                .unwrap()
-                .is_some(),
-            fail_after >= 2
-        );
+        assert!(storage
+            .get(namespace("nods"), &id_key(id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("nods_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_none());
     }
 
     for fail_after in 1..=3 {
@@ -577,19 +569,21 @@ fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
             Err(NodRepositoryError::Storage(_))
         ));
         assert_eq!(
-            storage
-                .get(namespace("nods_by_owner"), &owner_key(new_owner, id),)
+            NodRepositoryReader::new(storage.clone())
+                .get(id)
                 .unwrap()
-                .is_some(),
-            fail_after >= 2
-        );
-        assert_eq!(
-            storage
-                .get(namespace("nods_by_owner"), &owner_key(owner, id))
                 .unwrap()
-                .is_none(),
-            fail_after >= 3
+                .owner,
+            owner
         );
+        assert!(storage
+            .get(namespace("nods_by_owner"), &owner_key(new_owner, id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("nods_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_some());
     }
 
     for fail_after in 1..=2 {
@@ -606,20 +600,14 @@ fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
             repository.delete_nod(id),
             Err(NodRepositoryError::Storage(_))
         ));
-        assert_eq!(
-            storage
-                .get(namespace("nods_by_owner"), &owner_key(owner, id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 1
-        );
-        assert_eq!(
-            storage
-                .get(namespace("nods"), &id_key(id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 2
-        );
+        assert!(storage
+            .get(namespace("nods_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_some());
+        assert!(storage
+            .get(namespace("nods"), &id_key(id))
+            .unwrap()
+            .is_some());
     }
 
     let bucket_key = B256::repeat_byte(0xa1);
@@ -640,8 +628,10 @@ fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
             &key(bucket_key.as_slice().to_vec()),
         )
         .unwrap()
-        .is_some());
+        .is_none());
 
+    let seed = NodRepositoryWriter::new(storage.clone(), storage.clone());
+    seed.put_bucket(&bucket(bucket_key)).unwrap();
     let failing = Arc::new(FailAfterWriter {
         inner: storage.clone(),
         fail_after: 1,
@@ -658,7 +648,7 @@ fn failures_after_each_nod_write_step_expose_the_documented_partial_state() {
             &key(bucket_key.as_slice().to_vec()),
         )
         .unwrap()
-        .is_none());
+        .is_some());
 }
 
 fn run_isolated_mongo(test_name: &str, test: fn(StorageReaderHandle, StorageWriterHandle)) {

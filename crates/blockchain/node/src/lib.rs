@@ -7,6 +7,7 @@ pub mod consensus;
 pub mod engine;
 pub mod node;
 pub mod payload_builder;
+pub mod projection;
 
 pub use consensus::{OutbeBeaconConsensus, OutbeConsensusBuilder};
 pub use engine::OutbeEngineValidatorBuilder;

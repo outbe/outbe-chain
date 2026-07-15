@@ -7822,12 +7822,16 @@ dependencies = [
  "alloy-rpc-types-engine",
  "either",
  "eyre",
+ "futures",
  "hex",
  "outbe-evm",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-txpool",
  "outbe-validatorset",
  "reth-basic-payload-builder",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-consensus-common",
  "reth-db",
@@ -7872,6 +7876,22 @@ dependencies = [
  "outbe-primitives",
  "outbe-vaultprovider",
  "ring",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-offchain-data"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-common",
+ "outbe-nod",
+ "outbe-offchain-storage",
+ "outbe-primitives",
+ "outbe-tribute",
+ "postcard",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -10391,6 +10411,7 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-evm-ethereum",
+ "reth-exex",
  "reth-network",
  "reth-network-api",
  "reth-node-api",

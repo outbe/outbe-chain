@@ -5,6 +5,15 @@ use std::sync::Arc;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 
 #[test]
+fn atomic_batches_preserve_order_metadata_and_idempotency() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = storage.clone();
+    let writer: StorageWriterHandle = storage;
+
+    conformance::atomic_batches_preserve_order_metadata_and_idempotency(reader, writer);
+}
+
+#[test]
 fn put_get_replace_and_repeat() {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();

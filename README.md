@@ -348,6 +348,27 @@ outbe-cli rewards emission|history            # emission params (validator emiss
 
 Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`.
 
+### Optional finalized offchain-data projection
+
+The node can materialize finalized Tribute and Nod bodies and indexes into MongoDB. The feature is
+opt-in and does not replace EVM-backed runtime or RPC reads. Enable it with both MongoDB settings:
+
+```bash
+outbe-chain node \
+  --projection.mongodb-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+  --projection.mongodb-database outbe_projection \
+  --projection.start-block 0
+```
+
+`OUTBE_PROJECTION_MONGODB_URI` and `OUTBE_PROJECTION_MONGODB_DATABASE` are equivalent environment
+variables. The URI and database flags must be supplied together. Each node projector exclusively
+owns one logical database; do not point multiple active nodes at the same database. MongoDB must be
+a transaction-capable replica set (including a single-node replica set) or sharded cluster.
+
+MongoDB connection, topology, schema, or projection failures stall only this optional
+materialization. They do not stop consensus, synchronization, execution, or existing RPC behavior;
+the projector keeps its last durable finalized checkpoint and retries.
+
 ## Documentation
 
 - `docs/becoming-a-validator.md` — validator lifecycle and operator flow.

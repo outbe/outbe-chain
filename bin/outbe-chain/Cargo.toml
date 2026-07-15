@@ -25,7 +25,7 @@ outbe-update.workspace = true
 outbe-tributefactory.workspace = true
 outbe-zkproof.workspace = true
 
-reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-node-builder.workspace = true

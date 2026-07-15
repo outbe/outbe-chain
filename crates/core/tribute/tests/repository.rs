@@ -11,8 +11,9 @@ use alloy_primitives::{Address, U256};
 use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
 use outbe_offchain_storage::{
-    Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace, StorageError, StorageReader,
-    StorageReaderHandle, StorageWriter, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
+    AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
+    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
+    MAX_SCAN_ENTRIES,
 };
 use outbe_tribute::{
     TributeData, TributePageRequest, TributeRepositoryError, TributeRepositoryReader,
@@ -435,19 +436,16 @@ impl FailAfterWriter {
 }
 
 impl StorageWriter for FailAfterWriter {
-    fn put(&self, namespace: Namespace, key: &Key, value: &Value) -> Result<(), StorageError> {
-        self.inner.put(namespace, key, value)?;
-        self.finish_step()
-    }
-
-    fn delete(&self, namespace: Namespace, key: &Key) -> Result<(), StorageError> {
-        self.inner.delete(namespace, key)?;
-        self.finish_step()
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        for _ in batch.operations() {
+            self.finish_step()?;
+        }
+        self.inner.apply_atomic(batch)
     }
 }
 
 #[test]
-fn failures_after_each_tribute_write_step_expose_the_documented_partial_state() {
+fn failures_before_each_tribute_batch_step_leave_repository_unchanged() {
     let owner = Address::repeat_byte(0x81);
     let new_owner = Address::repeat_byte(0x82);
     let id = U256::from(77);
@@ -464,27 +462,18 @@ fn failures_after_each_tribute_write_step_expose_the_documented_partial_state() 
             repository.put(&tribute(id, owner, 7)),
             Err(TributeRepositoryError::Storage(_))
         ));
-        assert_eq!(
-            storage
-                .get(namespace("tributes"), &id_key(id))
-                .unwrap()
-                .is_some(),
-            fail_after >= 1
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_owner"), &owner_key(owner, id))
-                .unwrap()
-                .is_some(),
-            fail_after >= 2
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_day"), &day_key(7, id))
-                .unwrap()
-                .is_some(),
-            fail_after >= 3
-        );
+        assert!(storage
+            .get(namespace("tributes"), &id_key(id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("tributes_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("tributes_by_day"), &day_key(7, id))
+            .unwrap()
+            .is_none());
     }
 
     for fail_after in 1..=5 {
@@ -502,33 +491,29 @@ fn failures_after_each_tribute_write_step_expose_the_documented_partial_state() 
             Err(TributeRepositoryError::Storage(_))
         ));
         assert_eq!(
-            storage
-                .get(namespace("tributes_by_owner"), &owner_key(new_owner, id),)
+            TributeRepositoryReader::new(storage.clone())
+                .get(id)
                 .unwrap()
-                .is_some(),
-            fail_after >= 2
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_day"), &day_key(8, id))
                 .unwrap()
-                .is_some(),
-            fail_after >= 3
+                .owner,
+            owner
         );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_owner"), &owner_key(owner, id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 4
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_day"), &day_key(7, id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 5
-        );
+        assert!(storage
+            .get(namespace("tributes_by_owner"), &owner_key(new_owner, id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("tributes_by_day"), &day_key(8, id))
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get(namespace("tributes_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_some());
+        assert!(storage
+            .get(namespace("tributes_by_day"), &day_key(7, id))
+            .unwrap()
+            .is_some());
     }
 
     for fail_after in 1..=3 {
@@ -545,27 +530,18 @@ fn failures_after_each_tribute_write_step_expose_the_documented_partial_state() 
             repository.delete(id),
             Err(TributeRepositoryError::Storage(_))
         ));
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_owner"), &owner_key(owner, id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 1
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes_by_day"), &day_key(7, id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 2
-        );
-        assert_eq!(
-            storage
-                .get(namespace("tributes"), &id_key(id))
-                .unwrap()
-                .is_none(),
-            fail_after >= 3
-        );
+        assert!(storage
+            .get(namespace("tributes_by_owner"), &owner_key(owner, id))
+            .unwrap()
+            .is_some());
+        assert!(storage
+            .get(namespace("tributes_by_day"), &day_key(7, id))
+            .unwrap()
+            .is_some());
+        assert!(storage
+            .get(namespace("tributes"), &id_key(id))
+            .unwrap()
+            .is_some());
     }
 }
 

@@ -2,16 +2,16 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_offchain_storage::{
-    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageReaderHandle, StorageWriterHandle,
-    Value, MAX_SCAN_ENTRIES,
+    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
+    StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use thiserror::Error;
 
 use crate::{NodBucketState, NodItemState};
 
-const NODS_NAMESPACE: &str = "nods";
-const NOD_BUCKETS_NAMESPACE: &str = "nod_buckets";
-const NODS_BY_OWNER_NAMESPACE: &str = "nods_by_owner";
+pub(crate) const NODS_NAMESPACE: &str = "nods";
+pub(crate) const NOD_BUCKETS_NAMESPACE: &str = "nod_buckets";
+pub(crate) const NODS_BY_OWNER_NAMESPACE: &str = "nods_by_owner";
 const PRIMARY_KEY_LEN: usize = 32;
 const OWNER_INDEX_KEY_LEN: usize = 20 + PRIMARY_KEY_LEN;
 
@@ -31,6 +31,11 @@ pub struct NodPage {
     /// Exclusive cursor for the next page, when more records exist.
     pub next_after: Option<U256>,
 }
+
+/// One decoded Nod item and optional primary storage metadata.
+pub type NodItemRecordWithMetadata = (NodItemState, Option<StorageMetadata>);
+/// One decoded Nod bucket and optional primary storage metadata.
+pub type NodBucketRecordWithMetadata = (NodBucketState, Option<StorageMetadata>);
 
 /// Failure at the typed Nod persistence boundary.
 #[derive(Debug, Error)]
@@ -63,6 +68,9 @@ pub enum NodRepositoryError {
     /// Owner-index values must be exactly empty.
     #[error("Nod owner index value is not empty")]
     NonEmptyIndexValue,
+    /// Owner-index documents must not carry primary provenance.
+    #[error("Nod owner index unexpectedly carries metadata")]
+    IndexMetadata,
     /// An owner index selects a missing primary body.
     #[error("Nod owner index points to missing body {nod_id}")]
     DanglingIndex { nod_id: U256 },
@@ -92,11 +100,46 @@ impl NodRepositoryReader {
 
     /// Loads one Nod item and verifies its embedded identity.
     pub fn get(&self, nod_id: U256) -> Result<Option<NodItemState>, NodRepositoryError> {
+        Ok(self
+            .get_with_metadata(nod_id)?
+            .map(|(body, _metadata)| body))
+    }
+
+    /// Loads one Nod item together with optional primary provenance.
+    pub fn get_with_metadata(
+        &self,
+        nod_id: U256,
+    ) -> Result<Option<(NodItemState, Option<StorageMetadata>)>, NodRepositoryError> {
         let key = item_key(nod_id)?;
-        let Some(value) = self.storage.get(namespace(NODS_NAMESPACE)?, &key)? else {
+        let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
             return Ok(None);
         };
-        decode_item(nod_id, value.as_bytes()).map(Some)
+        decode_item(nod_id, record.value.as_bytes()).map(|body| Some((body, record.metadata)))
+    }
+
+    /// Batch-loads Nod items and metadata in the same order as the supplied identities.
+    pub fn get_many_with_metadata(
+        &self,
+        nod_ids: &[U256],
+    ) -> Result<Vec<Option<NodItemRecordWithMetadata>>, NodRepositoryError> {
+        let keys = nod_ids
+            .iter()
+            .copied()
+            .map(item_key)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.storage
+            .get_records(namespace(NODS_NAMESPACE)?, &keys)?
+            .into_iter()
+            .zip(nod_ids.iter().copied())
+            .map(|(record, nod_id)| {
+                record
+                    .map(|record| {
+                        decode_item(nod_id, record.value.as_bytes())
+                            .map(|body| (body, record.metadata))
+                    })
+                    .transpose()
+            })
+            .collect()
     }
 
     /// Loads one Nod bucket and verifies its embedded key.
@@ -104,11 +147,49 @@ impl NodRepositoryReader {
         &self,
         bucket_key: B256,
     ) -> Result<Option<NodBucketState>, NodRepositoryError> {
+        Ok(self
+            .get_bucket_with_metadata(bucket_key)?
+            .map(|(body, _metadata)| body))
+    }
+
+    /// Loads one Nod bucket together with optional primary provenance.
+    pub fn get_bucket_with_metadata(
+        &self,
+        bucket_key: B256,
+    ) -> Result<Option<(NodBucketState, Option<StorageMetadata>)>, NodRepositoryError> {
         let key = bucket_storage_key(bucket_key)?;
-        let Some(value) = self.storage.get(namespace(NOD_BUCKETS_NAMESPACE)?, &key)? else {
+        let Some(record) = self
+            .storage
+            .get_record(namespace(NOD_BUCKETS_NAMESPACE)?, &key)?
+        else {
             return Ok(None);
         };
-        decode_bucket(bucket_key, value.as_bytes()).map(Some)
+        decode_bucket(bucket_key, record.value.as_bytes()).map(|body| Some((body, record.metadata)))
+    }
+
+    /// Batch-loads Nod buckets and metadata in the supplied key order.
+    pub fn get_buckets_with_metadata(
+        &self,
+        bucket_keys: &[B256],
+    ) -> Result<Vec<Option<NodBucketRecordWithMetadata>>, NodRepositoryError> {
+        let keys = bucket_keys
+            .iter()
+            .copied()
+            .map(bucket_storage_key)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.storage
+            .get_records(namespace(NOD_BUCKETS_NAMESPACE)?, &keys)?
+            .into_iter()
+            .zip(bucket_keys.iter().copied())
+            .map(|(record, bucket_key)| {
+                record
+                    .map(|record| {
+                        decode_bucket(bucket_key, record.value.as_bytes())
+                            .map(|body| (body, record.metadata))
+                    })
+                    .transpose()
+            })
+            .collect()
     }
 
     /// Lists all Nod items by ascending numeric Nod ID.
@@ -165,6 +246,9 @@ impl NodRepositoryReader {
 }
 
 /// Cloneable write authority for Nod item/bucket bodies and the owner index.
+///
+/// Callers must serialize mutations of the same Nod or bucket identity. Each resulting body/index
+/// batch is atomic, but the old-body read used to plan replacement or deletion precedes that batch.
 pub struct NodRepositoryWriter {
     reader: NodRepositoryReader,
     writer: StorageWriterHandle,
@@ -173,9 +257,7 @@ pub struct NodRepositoryWriter {
 impl NodRepositoryWriter {
     /// Creates a writer. Both handles must address the same adapter instance.
     ///
-    /// The read handle is required for replacement and deletion. Until the
-    /// transactional projection introduced by ADR-004, callers must also
-    /// serialize concurrent mutations of the same Nod ID.
+    /// The read handle is required for replacement and deletion.
     #[must_use]
     pub fn new(reader: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {
@@ -185,70 +267,63 @@ impl NodRepositoryWriter {
     }
 
     /// Inserts or replaces one Nod item and its owner index.
-    ///
-    /// Multi-key writes are intentionally non-atomic: the first storage failure
-    /// is returned and already-completed steps are not rolled back.
     pub fn put_nod(&self, nod: &NodItemState) -> Result<(), NodRepositoryError> {
         let old = self.reader.get(nod.nod_id)?;
-        let primary = item_key(nod.nod_id)?;
-        let encoded = encode_item(nod)?;
-        let owner_index = owner_index_key(nod.owner, nod.nod_id)?;
-        let empty = Value::new(Vec::new())?;
-
-        self.writer
-            .put(namespace(NODS_NAMESPACE)?, &primary, &encoded)?;
-        self.writer
-            .put(namespace(NODS_BY_OWNER_NAMESPACE)?, &owner_index, &empty)?;
-        if let Some(old) = old {
-            if old.owner != nod.owner {
-                self.writer.delete(
-                    namespace(NODS_BY_OWNER_NAMESPACE)?,
-                    &owner_index_key(old.owner, old.nod_id)?,
-                )?;
-            }
-        }
+        let batch = crate::projection::plan_nod_item_mutation(
+            old.as_ref(),
+            crate::projection::NodItemMutation::Store {
+                nod_id: nod.nod_id,
+                body: nod,
+                metadata: None,
+            },
+        )?;
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 
     /// Deletes a Nod item and its owner index. Missing bodies are a success.
     pub fn delete_nod(&self, nod_id: U256) -> Result<(), NodRepositoryError> {
-        let Some(old) = self.reader.get(nod_id)? else {
-            return Ok(());
-        };
-        self.writer.delete(
-            namespace(NODS_BY_OWNER_NAMESPACE)?,
-            &owner_index_key(old.owner, nod_id)?,
+        let old = self.reader.get(nod_id)?;
+        let batch = crate::projection::plan_nod_item_mutation(
+            old.as_ref(),
+            crate::projection::NodItemMutation::Delete { nod_id },
         )?;
-        self.writer
-            .delete(namespace(NODS_NAMESPACE)?, &item_key(nod_id)?)?;
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 
     /// Inserts or replaces one independently stored Nod bucket.
     pub fn put_bucket(&self, bucket: &NodBucketState) -> Result<(), NodRepositoryError> {
-        self.writer.put(
-            namespace(NOD_BUCKETS_NAMESPACE)?,
-            &bucket_storage_key(bucket.bucket_key)?,
-            &encode_bucket(bucket)?,
+        let old = self.reader.get_bucket(bucket.bucket_key)?;
+        let batch = crate::projection::plan_nod_bucket_mutation(
+            old.as_ref(),
+            crate::projection::NodBucketMutation::Store {
+                bucket_key: bucket.bucket_key,
+                body: bucket,
+                metadata: None,
+            },
         )?;
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 
     /// Deletes one Nod bucket. Missing buckets are a success.
     pub fn delete_bucket(&self, bucket_key: B256) -> Result<(), NodRepositoryError> {
-        self.writer.delete(
-            namespace(NOD_BUCKETS_NAMESPACE)?,
-            &bucket_storage_key(bucket_key)?,
+        let old = self.reader.get_bucket(bucket_key)?;
+        let batch = crate::projection::plan_nod_bucket_mutation(
+            old.as_ref(),
+            crate::projection::NodBucketMutation::Delete { bucket_key },
         )?;
+        self.writer.apply_atomic(&batch)?;
         Ok(())
     }
 }
 
-fn namespace(name: &'static str) -> Result<Namespace, NodRepositoryError> {
+pub(crate) fn namespace(name: &'static str) -> Result<Namespace, NodRepositoryError> {
     Ok(Namespace::new(name)?)
 }
 
-fn encode_item(nod: &NodItemState) -> Result<Value, NodRepositoryError> {
+pub(crate) fn encode_item(nod: &NodItemState) -> Result<Value, NodRepositoryError> {
     let bytes = postcard::to_stdvec(nod).map_err(NodRepositoryError::ItemEncode)?;
     Ok(Value::new(bytes)?)
 }
@@ -270,7 +345,7 @@ fn decode_item(nod_id: U256, bytes: &[u8]) -> Result<NodItemState, NodRepository
     Ok(body)
 }
 
-fn encode_bucket(bucket: &NodBucketState) -> Result<Value, NodRepositoryError> {
+pub(crate) fn encode_bucket(bucket: &NodBucketState) -> Result<Value, NodRepositoryError> {
     let bytes = postcard::to_stdvec(bucket).map_err(NodRepositoryError::BucketEncode)?;
     Ok(Value::new(bytes)?)
 }
@@ -292,15 +367,15 @@ fn decode_bucket(bucket_key: B256, bytes: &[u8]) -> Result<NodBucketState, NodRe
     Ok(body)
 }
 
-fn item_key(nod_id: U256) -> Result<Key, NodRepositoryError> {
+pub(crate) fn item_key(nod_id: U256) -> Result<Key, NodRepositoryError> {
     Ok(Key::new(nod_id.to_be_bytes::<PRIMARY_KEY_LEN>())?)
 }
 
-fn bucket_storage_key(bucket_key: B256) -> Result<Key, NodRepositoryError> {
+pub(crate) fn bucket_storage_key(bucket_key: B256) -> Result<Key, NodRepositoryError> {
     Ok(Key::new(bucket_key.as_slice().to_vec())?)
 }
 
-fn owner_index_key(owner: Address, nod_id: U256) -> Result<Key, NodRepositoryError> {
+pub(crate) fn owner_index_key(owner: Address, nod_id: U256) -> Result<Key, NodRepositoryError> {
     let mut bytes = Vec::with_capacity(OWNER_INDEX_KEY_LEN);
     bytes.extend_from_slice(owner.as_slice());
     bytes.extend_from_slice(&nod_id.to_be_bytes::<PRIMARY_KEY_LEN>());
@@ -317,6 +392,9 @@ fn parse_primary_key(bytes: &[u8]) -> Result<U256, NodRepositoryError> {
 fn parse_owner_index(entry: &ScanEntry, owner: Address) -> Result<U256, NodRepositoryError> {
     if !entry.value.as_bytes().is_empty() {
         return Err(NodRepositoryError::NonEmptyIndexValue);
+    }
+    if entry.metadata.is_some() {
+        return Err(NodRepositoryError::IndexMetadata);
     }
     let bytes = entry.key.as_bytes();
     if bytes.len() != OWNER_INDEX_KEY_LEN || &bytes[..20] != owner.as_slice() {

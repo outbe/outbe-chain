@@ -3,14 +3,14 @@ use std::collections::BTreeMap;
 use parking_lot::RwLock;
 
 use crate::{
-    Key, Namespace, ScanEntry, ScanPage, ScanRequest, StorageError, StorageReader, StorageWriter,
-    Value, MAX_SCAN_PAGE_VALUE_BYTES,
+    AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
+    StorageError, StorageReader, StorageWriter, StoredValue, MAX_SCAN_PAGE_VALUE_BYTES,
 };
 
 /// Instance-owned in-memory storage adapter.
 #[derive(Debug, Default)]
 pub struct MemoryStorage {
-    records: RwLock<BTreeMap<Namespace, BTreeMap<Key, Value>>>,
+    records: RwLock<BTreeMap<Namespace, BTreeMap<Key, StoredValue>>>,
 }
 
 impl MemoryStorage {
@@ -22,13 +22,34 @@ impl MemoryStorage {
 }
 
 impl StorageReader for MemoryStorage {
-    fn get(&self, namespace: Namespace, key: &Key) -> Result<Option<Value>, StorageError> {
+    fn get_record(
+        &self,
+        namespace: Namespace,
+        key: &Key,
+    ) -> Result<Option<StoredValue>, StorageError> {
         Ok(self
             .records
             .read()
             .get(&namespace)
             .and_then(|records| records.get(key))
             .cloned())
+    }
+
+    fn get_records(
+        &self,
+        namespace: Namespace,
+        keys: &[Key],
+    ) -> Result<Vec<Option<StoredValue>>, StorageError> {
+        let records = self.records.read();
+        let namespace_records = records.get(&namespace);
+        Ok(keys
+            .iter()
+            .map(|key| {
+                namespace_records
+                    .and_then(|records| records.get(key))
+                    .cloned()
+            })
+            .collect())
     }
 
     fn scan_prefix(
@@ -45,7 +66,7 @@ impl StorageReader for MemoryStorage {
         let mut entries = Vec::new();
         let mut value_bytes = 0_usize;
         let mut has_more = false;
-        for (key, value) in records {
+        for (key, record) in records {
             if !key.as_bytes().starts_with(request.prefix()) {
                 continue;
             }
@@ -53,25 +74,44 @@ impl StorageReader for MemoryStorage {
                 continue;
             }
             if entries.len() == request.limit()
-                || value_bytes + value.as_bytes().len() > MAX_SCAN_PAGE_VALUE_BYTES
+                || value_bytes
+                    + record.value.as_bytes().len()
+                    + record
+                        .metadata
+                        .as_ref()
+                        .map_or(0, |metadata| metadata.encoded_len())
+                    > MAX_SCAN_PAGE_VALUE_BYTES
             {
                 has_more = true;
                 break;
             }
-            value_bytes += value.as_bytes().len();
+            value_bytes += record.value.as_bytes().len()
+                + record
+                    .metadata
+                    .as_ref()
+                    .map_or(0, |metadata| metadata.encoded_len());
             entries.push(ScanEntry {
                 key: key.clone(),
-                value: value.clone(),
+                value: record.value.clone(),
+                metadata: record.metadata.clone(),
             });
         }
 
-        let next_after = has_more.then(|| {
-            entries
-                .last()
-                .expect("a valid value always fits in an empty scan page")
-                .key
-                .clone()
-        });
+        let next_after = if has_more {
+            Some(
+                entries
+                    .last()
+                    .ok_or_else(|| {
+                        StorageError::Corruption(
+                            "stored record exceeds the scan page byte bound".to_owned(),
+                        )
+                    })?
+                    .key
+                    .clone(),
+            )
+        } else {
+            None
+        };
         Ok(ScanPage {
             entries,
             next_after,
@@ -80,18 +120,27 @@ impl StorageReader for MemoryStorage {
 }
 
 impl StorageWriter for MemoryStorage {
-    fn put(&self, namespace: Namespace, key: &Key, value: &Value) -> Result<(), StorageError> {
-        self.records
-            .write()
-            .entry(namespace)
-            .or_default()
-            .insert(key.clone(), value.clone());
-        Ok(())
-    }
-
-    fn delete(&self, namespace: Namespace, key: &Key) -> Result<(), StorageError> {
-        if let Some(records) = self.records.write().get_mut(&namespace) {
-            records.remove(key);
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        batch.validate()?;
+        let mut records = self.records.write();
+        for operation in batch.operations() {
+            match operation {
+                AtomicWriteOperation::Put {
+                    namespace,
+                    key,
+                    record,
+                } => {
+                    records
+                        .entry(namespace.clone())
+                        .or_default()
+                        .insert(key.clone(), record.clone());
+                }
+                AtomicWriteOperation::Delete { namespace, key } => {
+                    if let Some(namespace_records) = records.get_mut(namespace) {
+                        namespace_records.remove(key);
+                    }
+                }
+            }
         }
         Ok(())
     }

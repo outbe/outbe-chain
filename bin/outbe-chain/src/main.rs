@@ -11,7 +11,9 @@ use eyre::WrapErr as _;
 use outbe_engine::args::ConsensusArgs;
 use outbe_engine::bridge::ConsensusExecutionBridge;
 use outbe_evm::OutbeEvmSigner;
-use outbe_node::{OutbeBeaconConsensus, OutbeFullNode, OutbeNode};
+use outbe_node::{
+    projection::OffchainDataProjectionConfig, OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
+};
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
@@ -428,11 +430,39 @@ fn run_node() -> eyre::Result<()> {
             None => OutbeNode::with_bridge(bridge.clone()),
         };
 
+        let offchain_data = args.offchain_data()?.map(|config| {
+            let projection_config = OffchainDataProjectionConfig {
+                chain_id: builder.config().chain.chain().id(),
+                genesis_hash: builder.config().chain.genesis_hash(),
+                start_block: config.start_block,
+                mongodb_uri: config.mongodb_uri,
+                mongodb_database: config.mongodb_database,
+            };
+            info!(
+                chain_id = projection_config.chain_id,
+                genesis_hash = %projection_config.genesis_hash,
+                start_block = projection_config.start_block,
+                "finalized offchain-data projection configured"
+            );
+            projection_config
+        });
+        let projection_enabled = offchain_data.is_some();
+
         let NodeHandle {
             node,
             node_exit_future,
         } = builder
             .node(outbe_node)
+            .install_exex_if(
+                projection_enabled,
+                "outbe-offchain-data",
+                move |ctx| async move {
+                    let config = offchain_data.ok_or_else(|| {
+                        eyre::eyre!("offchain-data ExEx installed without projection configuration")
+                    })?;
+                    Ok(outbe_node::projection::run_offchain_data_projection(ctx, config))
+                },
+            )
             .apply(|mut builder| {
                 let discovery = &mut builder.config_mut().network.discovery;
                 discovery.enable_discv5_discovery = true;
