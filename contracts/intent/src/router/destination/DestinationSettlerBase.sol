@@ -148,5 +148,12 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
     function _onSlashed(bytes32 _orderId) internal virtual {}
 
     /// @notice Hook called when an order is claimed (lock collateral)
-    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData) internal virtual {}
+    /// @return locked False if the collateral could not be locked and the claim must not proceed.
+    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData)
+        internal
+        virtual
+        returns (bool locked)
+    {
+        return true;
+    }
 }

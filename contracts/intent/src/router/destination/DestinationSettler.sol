@@ -46,9 +46,14 @@ abstract contract DestinationSettler is DestinationSettlerBase {
             }
         }
 
-        destinationOrderStatus[_orderId] = CLAIMED;
+        // Collateral is locked before the order is marked CLAIMED: a winner whose collateral cannot
+        // be taken into custody forfeits the auction instead of blocking the order.
+        if (!_onClaimed(_orderId, winner, _originData)) {
+            _auction().resetAuction(_orderId, winner);
+            return;
+        }
 
-        _onClaimed(_orderId, winner, _originData);
+        destinationOrderStatus[_orderId] = CLAIMED;
 
         emit OrderClaimed(_orderId, winner, outputAmount);
     }
@@ -112,17 +117,26 @@ abstract contract DestinationSettler is DestinationSettlerBase {
 
     // ========== COLLATERAL HOOKS ==========
 
-    /// @dev Locks collateral when an order is claimed
-    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData) internal override {
+    /// @dev Locks collateral when an order is claimed. The lock takes custody of the winner's
+    ///      ERC-6909, which requires a live operator grant; a winner without one cannot be claimed.
+    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData)
+        internal
+        override
+        returns (bool)
+    {
         ISolverEscrow escrow = _solverEscrow();
-        if (address(escrow) == address(0)) return;
+        if (address(escrow) == address(0)) return true;
 
         OrderData memory orderData = OrderEncoder.decode(_originData);
         address outputToken = TypeCasts.bytes32ToAddress(orderData.outputToken);
         (, uint256 outputAmount) = _auction().getWinner(_orderId);
         uint256 collateralAmount = escrow.getCollateralAmount(outputAmount);
 
-        escrow.lockCollateral(_orderId, _solver, outputToken, collateralAmount);
+        try escrow.lockCollateral(_orderId, _solver, outputToken, collateralAmount) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /// @dev Unlocks collateral when an order is successfully filled
@@ -133,9 +147,8 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     }
 
     /// @dev Slashes collateral when a claimed order expires without being filled.
-    ///      Best-effort: if the solver revoked the ERC-6909 operator grant the seizure transfer reverts;
-    ///      we swallow the revert so the user's refund still proceeds. The lock state is preserved by the
-    ///      atomic revert inside slashCollateral, and the missed slash is surfaced via SlashSkipped.
+    ///      Best-effort: a revert is swallowed so the user's refund still proceeds, and the missed
+    ///      slash is surfaced via SlashSkipped.
     function _onSlashed(bytes32 _orderId) internal override {
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) == address(0)) return;
