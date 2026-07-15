@@ -15,20 +15,22 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 
 /// @title SolverEscrow
 /// @notice Deposit, withdraw, lock, and slash solver collateral managed via The Compact.
-/// @dev Solver holds ERC6909 tokens directly. Escrow acts as an ERC6909 operator
-///      (solver must call COMPACT.setOperator(escrow, true) once).
+/// @dev Solver holds ERC6909 tokens directly while unlocked; the escrow custodies them while locked.
+///      Escrow acts as an ERC6909 operator (solver must call COMPACT.setOperator(escrow, true) once).
 ///      The SolverAllocator.attest() allows transfers where operator == arbiter (escrow).
 ///
 /// Flow:
 ///   deposit:   Solver -> Escrow -> Compact.depositERC20(recipient=solver) -> ERC6909 on solver
 ///   withdraw:  Solver -> Escrow -> transferFrom(solver->escrow) -> allocatedTransfer(escrow->solver)
-///   lock:      DestinationSettler -> Escrow.lockCollateral (internal accounting only)
-///   unlock:    DestinationSettler -> Escrow.unlockCollateral (internal accounting only)
-///   slash:     DestinationSettler -> Escrow.slashCollateral -> transferFrom(solver->escrow)
+///   lock:      DestinationSettler -> Escrow.lockCollateral -> transferFrom(solver->escrow)
+///   unlock:    DestinationSettler -> Escrow.unlockCollateral -> transfer(escrow->solver)
+///   slash:     DestinationSettler -> Escrow.slashCollateral -> credits slashedPool
+///
+/// Invariant: balanceOf(escrow, id) == sum(live locks on id) + slashedPool[id]
 ///
 /// Setup:
 ///   1. Deploy SolverAllocator(_compact)
-///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes)
+///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays)
 ///   3. Deploy SolverEscrow(_compact, lockTag, collateralBps)
 ///   4. allocator.setArbiter(address(escrow))
 ///   5. Deploy Router
@@ -62,7 +64,12 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     }
 
     mapping(bytes32 orderId => Lock) public locks;
+
+    /// @notice ERC6909 held by the escrow on a solver's behalf while locked.
     mapping(address solver => mapping(uint256 id => uint256)) public totalLocked;
+
+    /// @notice Per-id pool of slashed collateral, the only source distributeReward pays from.
+    mapping(uint256 id => uint256) public slashedPool;
 
     // ============ Events ============
 
@@ -152,9 +159,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @param amount Amount to withdraw, or 0 for max available
     function withdraw(address token, uint256 amount) external {
         uint256 id = _lockId(token);
-        uint256 total = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
-        uint256 locked = totalLocked[msg.sender][id];
-        uint256 available = total > locked ? total - locked : 0;
+        uint256 available = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
 
         uint256 withdrawAmount = amount == 0 ? available : amount;
         if (withdrawAmount == 0 || withdrawAmount > available) revert InsufficientAvailableBalance();
@@ -174,7 +179,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         );
 
         uint256 solverBalAfter = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
-        if (solverBalAfter > total - withdrawAmount) revert WithdrawalFailed();
+        if (solverBalAfter > available - withdrawAmount) revert WithdrawalFailed();
 
         emit Withdrawn(msg.sender, token, withdrawAmount);
     }
@@ -182,36 +187,39 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Lock / Unlock / Slash ============
 
     /// @inheritdoc ISolverEscrow
+    /// @dev Takes custody: the collateral moves from the solver's ERC6909 balance to the escrow.
     function lockCollateral(bytes32 orderId, address solver, address token, uint256 amount)
         external
         onlyAuthorizedCaller
     {
+        if (amount == 0) revert InvalidAmount();
+        if (solver == address(0)) revert ZeroAddress();
         if (locks[orderId].amount != 0) revert LockAlreadyExists();
 
         uint256 id = _lockId(token);
-        uint256 total = IERC6909(address(COMPACT)).balanceOf(solver, id);
-        uint256 locked = totalLocked[solver][id];
-        uint256 availableCollateral = total > locked ? total - locked : 0;
-        if (availableCollateral < amount) revert InsufficientAvailableBalance();
+        if (IERC6909(address(COMPACT)).balanceOf(solver, id) < amount) revert InsufficientAvailableBalance();
 
         locks[orderId] = Lock({solver: solver, token: token, amount: amount});
         totalLocked[solver][id] += amount;
+
+        IERC6909(address(COMPACT)).transferFrom(solver, address(this), id, amount);
     }
 
     /// @inheritdoc ISolverEscrow
+    /// @dev Returns custody of the collateral to the solver.
     function unlockCollateral(bytes32 orderId) external onlyAuthorizedCaller {
-        _consumeLock(orderId);
+        Lock memory lock = _consumeLock(orderId);
+
+        IERC6909(address(COMPACT)).transfer(lock.solver, _lockId(lock.token), lock.amount);
     }
 
     /// @inheritdoc ISolverEscrow
-    /// @dev Slashed ERC6909 tokens accumulate on this contract as the reward pool.
+    /// @dev Accounting only: the escrow already holds the collateral, so it is reclassified into
+    ///      slashedPool. Performs no external call.
     function slashCollateral(bytes32 orderId) external onlyAuthorizedCaller {
         Lock memory lock = _consumeLock(orderId);
 
-        uint256 id = _lockId(lock.token);
-
-        // Take ERC6909 from solver to escrow (seized as slashed collateral)
-        IERC6909(address(COMPACT)).transferFrom(lock.solver, address(this), id, lock.amount);
+        slashedPool[_lockId(lock.token)] += lock.amount;
 
         emit CollateralSlashed(orderId, lock.solver, lock.token, lock.amount);
     }
@@ -227,8 +235,9 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         reward = (orderAmountIn * REWARD_BPS) / BPS_DENOMINATOR;
         uint256 id = _lockId(token);
 
-        uint256 available = IERC6909(address(COMPACT)).balanceOf(address(this), id);
-        if (available < reward) return 0;
+        // Only slashed collateral is payable -- the escrow's balance also holds live locks.
+        if (slashedPool[id] < reward) return 0;
+        slashedPool[id] -= reward;
 
         // Release underlying tokens to receiver via allocatedTransfer
         Component[] memory recipients = new Component[](1);
@@ -253,10 +262,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @inheritdoc ISolverEscrow
     function hasMinCollateral(address solver, address token, uint256 outputAmount) external view returns (bool) {
         uint256 required = getCollateralAmount(outputAmount);
-        uint256 id = _lockId(token);
-        uint256 total = IERC6909(address(COMPACT)).balanceOf(solver, id);
-        uint256 locked = totalLocked[solver][id];
-        uint256 available = total > locked ? total - locked : 0;
+        uint256 available = IERC6909(address(COMPACT)).balanceOf(solver, _lockId(token));
         return available >= required;
     }
 
@@ -267,9 +273,9 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         returns (uint256 total, uint256 locked, uint256 available)
     {
         uint256 id = _lockId(token);
-        total = IERC6909(address(COMPACT)).balanceOf(owner, id);
+        available = IERC6909(address(COMPACT)).balanceOf(owner, id);
         locked = totalLocked[owner][id];
-        available = total > locked ? total - locked : 0;
+        total = available + locked;
     }
 
     /// @inheritdoc ISolverEscrow
@@ -277,11 +283,9 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         BalanceInfo[] memory infos = new BalanceInfo[](tokens.length);
         for (uint256 i = 0; i < tokens.length; i++) {
             uint256 id = _lockId(tokens[i]);
-            uint256 total = IERC6909(address(COMPACT)).balanceOf(owner, id);
+            uint256 available = IERC6909(address(COMPACT)).balanceOf(owner, id);
             uint256 locked = totalLocked[owner][id];
-            infos[i] = BalanceInfo({
-                token: tokens[i], total: total, locked: locked, available: total > locked ? total - locked : 0
-            });
+            infos[i] = BalanceInfo({token: tokens[i], total: available + locked, locked: locked, available: available});
         }
         return infos;
     }

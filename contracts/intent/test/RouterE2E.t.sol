@@ -210,6 +210,27 @@ contract RouterE2E is BaseTest {
         assertEq(originRouter.orderStatus(orderId), originRouter.SETTLED(), "order settled on origin");
     }
 
+    /// @dev The claim takes custody of the winner's collateral, so it needs a live operator grant.
+    ///      A winner without one must forfeit the auction rather than leave the order unclaimable.
+    function test_claimOrder_revokedOperator_restartsAuction() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+
+        _doFullAuction(vegeta, orderId, amount, order.orderData);
+
+        vm.prank(vegeta);
+        destCompact.setOperator(address(destEscrow), false);
+
+        destinationRouter.claimOrder(orderId, order.orderData);
+
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.UNKNOWN(), "order not claimed");
+        assertEq(auction.getQuoteCount(orderId), 0, "auction restarted with quotes cleared");
+
+        // The order is still claimable by a solver whose collateral can be taken into custody.
+        _doFullAuction(kakaroto, orderId, amount, order.orderData);
+        destinationRouter.claimOrder(orderId, order.orderData);
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "claimed by other");
+    }
+
     function test_open_refund() public {
         (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
 
