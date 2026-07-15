@@ -3,6 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::StorageKey;
+use serde::{Deserialize, Serialize};
 
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
 /// `NodContract::nod_id(owner, worldwide_day)`; `cost_amount_minor` is computed
@@ -24,6 +25,7 @@ pub struct NodIssueParams {
     pub reference_currency: u16,
 }
 
+#[derive(Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
 pub struct NodItemState {
     #[key]
@@ -62,6 +64,7 @@ pub struct NodItemState {
 
 /// Bucket record exists while `total_nods > 0`; when the last NOD in the bucket is mined,
 /// `nod_buckets.delete(bucket_key)` drops the entry.
+#[derive(Serialize, Deserialize)]
 #[storage_record(exists_field = total_nods)]
 pub struct NodBucketState {
     #[key]

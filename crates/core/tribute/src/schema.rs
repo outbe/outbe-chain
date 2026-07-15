@@ -2,7 +2,9 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
 pub struct TributeData {
     #[key]

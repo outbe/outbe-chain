@@ -7798,10 +7798,14 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
+ "mongodb",
  "outbe-common",
  "outbe-macros",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "postcard",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -8139,9 +8143,13 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "mongodb",
  "outbe-common",
  "outbe-macros",
+ "outbe-offchain-storage",
  "outbe-primitives",
+ "postcard",
+ "serde",
  "thiserror 2.0.18",
 ]
 
