@@ -69,6 +69,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         mapping(uint256 tokenId => mapping(address holder => uint256 index)) seriesHolderIndex;
         /// @dev Whether address is in seriesHolders[tokenId].
         mapping(uint256 tokenId => mapping(address holder => bool isHolder)) isSeriesHolder;
+        /// @dev Series ids issued per worldwide day.
+        mapping(uint32 worldwideDay => uint32[] seriesIds) seriesOfDay;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -155,6 +157,16 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function worldwideDayOf(uint32 seriesId) external view returns (uint32) {
+        return _s().seriesData[uint256(seriesId)].worldwideDay;
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory) {
+        return _s().seriesOfDay[worldwideDay];
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = uint256(params.seriesId);
@@ -184,7 +196,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             calledAt: 0,
             totalSupply: 0,
             status: IIntexNFT1155.IntexStatus.Issued,
-            state: IIntexNFT1155.IntexState.Issued
+            state: IIntexNFT1155.IntexState.Issued,
+            worldwideDay: params.seriesId
         });
 
         // Register the Settled token id so reverse lookups and status checks work for either class.
@@ -195,6 +208,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
+        $.seriesOfDay[params.seriesId].push(params.seriesId);
 
         emit MetadataUpdate(iTok);
     }

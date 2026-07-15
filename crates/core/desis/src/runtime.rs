@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::date_key_to_utc_timestamp;
+use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
@@ -29,6 +29,7 @@ use crate::sol_ext::IOriginRouter;
 pub fn start_auction(
     storage: StorageHandle<'_>,
     series_id: u32,
+    auction_timestamp: u64,
     mut config: AuctionConfig,
 ) -> Result<()> {
     if series_id == 0 {
@@ -72,16 +73,19 @@ pub fn start_auction(
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
 
+    let auction_at = u32::try_from(auction_timestamp)
+        .map_err(|_| PrecompileError::Revert("auction timestamp exceeds u32".into()))?;
+
     contract.write_auction_config(series_id, &config)?;
     contract.write_stage(series_id, AuctionStage::Started)?;
+    contract.auction_at.write(&series_id, auction_at)?;
     contract.emit(IDesis::AuctionCreated {
         seriesId: series_id,
     })?;
 
     // Send AUCTION_STAGE_START to BNB.
-    // revealEnd = noon of the series day; commitEnd/issuanceEnd are protocol offsets.
-    let noon = u32::try_from(date_key_to_utc_timestamp(series_id) + 12 * 3600)
-        .map_err(|_| PrecompileError::Revert("series day noon exceeds u32".into()))?;
+    // revealEnd = noon of the auction day; commitEnd/issuanceEnd are protocol offsets.
+    let noon = auction_noon(auction_timestamp)?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
     let floor_price = config
@@ -130,6 +134,12 @@ pub fn start_auction(
     )?;
 
     Ok(())
+}
+
+/// Noon (12:00 UTC) of the day containing `auction_timestamp`.
+pub(crate) fn auction_noon(auction_timestamp: u64) -> Result<u32> {
+    u32::try_from(date_key_to_utc_timestamp(timestamp_to_date_key(auction_timestamp)) + 12 * 3600)
+        .map_err(|_| PrecompileError::Revert("auction day noon exceeds u32".into()))
 }
 
 /// Signal `Started` → `Revealing` (green day) or `Started` → `Cancelled` (red day).

@@ -64,6 +64,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
+        assert_eq!(r.worldwide_day, 7);
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
         assert_eq!(r.intex_call_period, CALL_PERIOD);

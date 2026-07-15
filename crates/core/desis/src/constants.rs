@@ -20,7 +20,7 @@ pub const PROMIS_LOAD: u128 = 100_000;
 /// target chain (`BridgeMsgCodec` / `IntexAuction`).
 pub const RATE_SCALE: u32 = 1_000_000;
 
-/// BNB-side auction phase timing: bid-reveal window before noon of the series day.
+/// BNB-side auction phase timing: bid-reveal window before noon of the auction day.
 pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
-/// BNB-side auction phase timing: issuance window after noon of the series day.
+/// BNB-side auction phase timing: issuance window after noon of the auction day.
 pub const ISSUANCE_WINDOW_SECONDS: u32 = 12 * 3600;

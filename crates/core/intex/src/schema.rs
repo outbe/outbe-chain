@@ -109,6 +109,10 @@ pub struct SeriesRecord {
     /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
     #[attribute(order = 12)]
     pub state: u8,
+
+    /// Worldwide day whose tributes fed this series (== series_id until multi-currency).
+    #[attribute(order = 13, default = 0)]
+    pub worldwide_day: u32,
 }
 
 impl SeriesRecord {
