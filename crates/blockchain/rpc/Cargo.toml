@@ -12,6 +12,7 @@ test-support = []
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-tee.workspace = true
 outbe-validatorset.workspace = true
 outbe-staking.workspace = true
 outbe-rewards.workspace = true

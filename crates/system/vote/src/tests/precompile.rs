@@ -101,14 +101,8 @@ fn dispatch_views_return_abi_shaped_data() {
     with_vote_provider(200, |storage| {
         let mut governance = Vote::new(storage.clone());
         let payload = update_json_payload_for_test(200);
-        let proposal_id = create_proposal_test(
-            &mut governance,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &payload,
-            200,
-        )
-        .unwrap();
+        let proposal_id =
+            create_proposal_test(&mut governance, PROPOSER, UPDATE_ADDRESS, &payload, 200).unwrap();
         governance
             .cast_vote_approve(proposal_id, VOTER_A, true, 201)
             .unwrap();

@@ -484,6 +484,30 @@ pub fn verify_tribute_offer_attestation(
         .map_err(|e| TransportError::TributeOfferAttestation(format!("signature invalid: {e}")))
 }
 
+/// Verify a Gratis-op attestation tag — an Ed25519 signature over
+/// [`crate::protocol::gratis_op_attestation_preimage`] — against the enclave's
+/// pinned attestation key. Same verify-then-discard semantics as
+/// [`verify_tribute_offer_attestation`]: the tag proves the encrypted-state
+/// transition was computed inside the attested enclave and is never persisted.
+pub fn verify_gratis_op_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::GratisOpResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(attestation_pub)
+        .map_err(|e| TransportError::GratisOpAttestation(format!("bad attestation key: {e}")))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::GratisOpAttestation(format!("bad tag length {}", tag.len()))
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    let preimage = crate::protocol::gratis_op_attestation_preimage(inputs_canonical_hash, result);
+    vk.verify_strict(&preimage, &sig)
+        .map_err(|e| TransportError::GratisOpAttestation(format!("signature invalid: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

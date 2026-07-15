@@ -6,12 +6,6 @@ pub const GRATIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// Gratis factory precompile address.
 pub const GRATIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
 
-/// Gratis shielded-pool precompile address (Tornado-style commitment pool).
-///
-/// Owns the per-denomination Merkle tree of commitments + per-denomination
-/// nullifier set + recent-roots window backing shielded Gratis pledges.
-pub const GRATIS_POOL_ADDRESS: Address = address!("0x0000000000000000000000000000000000002004");
-
 /// Promis token precompile address.
 pub const PROMIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001337");
 

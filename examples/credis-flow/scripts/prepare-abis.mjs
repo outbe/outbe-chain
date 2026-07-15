@@ -16,9 +16,10 @@ const outDir = resolve(projectRoot, "abi");
 const MAPPING = {
   IGratis: "precompiles/abi-export/IGratis.json",
   IGratisFactory: "precompiles/abi-export/IGratisFactory.json",
+  IPromis: "precompiles/abi-export/IPromis.json",
+  IPromisFactory: "precompiles/abi-export/IPromisFactory.json",
   ICredis: "precompiles/abi-export/ICredis.json",
   ICredisFactory: "precompiles/abi-export/ICredisFactory.json",
-  IGratisPool: "precompiles/abi-export/IGratisPool.json",
   IVaultProvider: "precompiles/abi-export/IVaultProvider.json",
   SmartAccountFactory: "smart-account/abi-export/SmartAccountFactory.json",
   ITokenBundle: "smart-account/abi-export/ITokenBundle.json",

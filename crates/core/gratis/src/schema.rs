@@ -1,31 +1,32 @@
-use alloy_primitives::{Address, U256};
-use outbe_macros::{contract, storage_schema};
+use alloy_primitives::{Address, B256, U256};
+use outbe_macros::contract;
 use outbe_primitives::addresses::GRATIS_ADDRESS;
+use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 
-/// EVM storage layout for the Gratis token contract.
+/// EVM storage layout for the confidential Gratis token.
+///
+/// Per-account balances and pledged amounts are **ciphertext at rest**: the
+/// enclave is the only party that can decrypt them (and the account's view-key
+/// holder, client-side). Only two non-attributable aggregates are kept in
+/// plaintext.
+///
+/// Blob layout for every ciphertext slot: `version(8, big-endian) || AEAD-ct`.
+/// The version is produced by the enclave and stored verbatim; it feeds the
+/// deterministic nonce so a slot overwrite never reuses a `(key, nonce)` pair.
 ///
 /// Storage slots:
-///   0: total_supply (U256)
-///   1: mapping(address => U256) — available balance
-///   2: mapping(address => U256) — per-account pledged amount
-///
-/// The aggregate pledged supply (`pledged_total_supply()`) is derived as
-/// `balances[CREDIS_ADDRESS]` and is no longer stored separately.
-///
-/// Per-account pledged balances live here; ticket-level metadata
-/// (expiry, ID, …) remains the responsibility of higher-level modules.
-#[storage_schema]
+///   0: total_supply (U256, plaintext aggregate — feeds `GratisMined/Burned`)
+///   1: pledged_total_supply (U256, plaintext aggregate — per-account hidden)
+///   2: mapping(address => bytes)  — encrypted balance blob
+///   3: mapping(address => bytes)  — encrypted pledged-ledger blob
+///   4: mapping(address => u64)    — modify-auth replay counter (monotonic)
+///   5: mapping(bytes32 => bytes)  — pledge records keyed by pledge_handle
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
-    // Slot 0: Total supply of gratis tokens
-    #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<U256>,
-
-    // Slot 1: mapping(address => balance)
-    #[attribute(order = 1)]
-    pub balances: outbe_primitives::storage::dsl::Map<Address, U256>,
-
-    // Slot 2: mapping(address => amount currently pledged by that address)
-    #[attribute(order = 2)]
-    pub pledged_balances: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub total_supply: Slot<U256>,
+    pub pledged_total_supply: Slot<U256>,
+    pub balance_ct: Mapping<Address, StorageBytes>,
+    pub pledged_ct: Mapping<Address, StorageBytes>,
+    pub op_nonce: Mapping<Address, u64>,
+    pub pledge_records: Mapping<B256, StorageBytes>,
 }

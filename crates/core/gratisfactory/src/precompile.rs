@@ -1,11 +1,11 @@
-//! Gratisfactory precompile at `0x2003`. ABI dispatch only — the heavy
-//! lifting (Gratis-balance movement + pool commitment / nullifier
-//! bookkeeping) lives in [`crate::runtime`].
+//! Gratisfactory precompile at `0x2003`. ABI dispatch only — the Gratis balance
+//! movement + Fidelity bookkeeping lives in [`crate::runtime`]. Writes are
+//! authorized by the caller's Gratis modify key (`mac` + `opNonce`).
 
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolEvent, SolInterface};
 
-use outbe_gratispool::SpendArgs;
+use outbe_gratis::api::ModifyAuth;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
@@ -30,31 +30,34 @@ pub fn dispatch(
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
                 pledgeGratis(c) => mutate(c, caller, |sender, c| {
-                    let (new_root, _leaf_index, _amount) =
-                        runtime::pledge_gratis(storage.clone(), sender, c.denomId, c.commitment)?;
-                    emit_pledged(&storage, sender, c.denomId, c.commitment)?;
-                    Ok(new_root)
+                    let auth = ModifyAuth {
+                        mac: c.mac.0,
+                        op_nonce: c.opNonce,
+                    };
+                    let handle = runtime::pledge_gratis(storage.clone(), sender, c.amount, auth)?;
+                    emit_pledged(&storage, sender, c.amount, handle)?;
+                    Ok(handle)
                 }),
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
-                    let args = SpendArgs {
-                        merkle_root: c.args.merkleRoot,
-                        nullifier_hash: c.args.nullifierHash,
-                        denom_id: c.args.denomId,
-                        receiver_binding: c.args.receiverBinding,
-                        proof: c.args.proof.to_vec(),
+                    let auth = ModifyAuth {
+                        mac: c.mac.0,
+                        op_nonce: c.opNonce,
                     };
-                    let denom_id = args.denom_id;
-                    let nullifier = args.nullifier_hash;
-                    let amount = runtime::unpledge_gratis(storage.clone(), &args, sender)?;
-                    emit_unpledged(&storage, sender, denom_id, amount)?;
-                    outbe_gratispool::precompile::emit_nullifier_spent(
-                        &storage,
-                        nullifier,
-                        outbe_gratispool::constants::ACTION_UNPLEDGE as u8,
-                    )
+                    runtime::unpledge_gratis(
+                        storage.clone(),
+                        sender,
+                        c.amount,
+                        c.pledgeHandle,
+                        auth,
+                    )?;
+                    emit_unpledged(&storage, sender, c.amount)
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
-                    runtime::mine_coen(storage.clone(), sender, c.amount)
+                    let auth = ModifyAuth {
+                        mac: c.mac.0,
+                        op_nonce: c.opNonce,
+                    };
+                    runtime::mine_coen(storage.clone(), sender, c.amount, auth)
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
@@ -68,31 +71,22 @@ pub fn dispatch(
 fn emit_pledged(
     storage: &StorageHandle<'_>,
     account: Address,
-    denom_id: u8,
-    commitment: U256,
+    amount: U256,
+    pledge_handle: B256,
 ) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
+        SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
             account,
-            denomId: denom_id,
-            commitment,
+            amount,
+            pledgeHandle: pledge_handle,
         }),
     )
 }
 
-fn emit_unpledged(
-    storage: &StorageHandle<'_>,
-    account: Address,
-    denom_id: u8,
-    amount: U256,
-) -> Result<()> {
+fn emit_unpledged(storage: &StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
-            account,
-            denomId: denom_id,
-            amount,
-        }),
+        SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged { account, amount }),
     )
 }

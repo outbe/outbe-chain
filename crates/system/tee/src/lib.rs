@@ -22,8 +22,8 @@ pub mod tee_dkg;
 
 pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistration};
 pub use client::{
-    verify_peer_quote, verify_tribute_offer_attestation, AttestedPeerKeys, EnclaveClient,
-    QuotePolicy,
+    verify_gratis_op_attestation, verify_peer_quote, verify_tribute_offer_attestation,
+    AttestedPeerKeys, EnclaveClient, QuotePolicy,
 };
 pub use client_global::{
     install_enclave_client, is_enclave_configured, seal_offer_key_for_registry, try_with_enclave,
@@ -51,3 +51,29 @@ pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
 /// payload — the only public input the client must know besides the on-chain
 /// offer public key. Value: ASCII `"outbe/tribute/offer-salt/v1"`, zero-padded.
 pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
+
+/// HKDF `info` for the resident Gratis state key, derived from the DKG group
+/// signature (`info = GRATIS_STATE_HKDF_INFO || epoch`, `salt = chain_id`, `ikm = group_sig`).
+pub const GRATIS_STATE_HKDF_INFO: &[u8] = b"outbe/gratis/state-key/v1/";
+
+/// HKDF `info` for a per-account **view key** (read capability).
+/// Derived inside the enclave as `HKDF(salt = gratis_state_key, ikm = account, info =
+/// GRATIS_VIEW_KEY_INFO)`. The view key IS the per-account AEAD key: the client
+/// uses it to decrypt its own balance/pledged ciphertext.
+pub const GRATIS_VIEW_KEY_INFO: &[u8] = b"outbe/gratis/view-key/v1";
+
+/// HKDF `info` for a per-account **modify key** (write capability). Derived as
+/// `HKDF(salt = gratis_state_key, ikm = account, info = GRATIS_MODIFY_KEY_INFO)`.
+/// Used only to MAC a write authorization; it never decrypts state.
+pub const GRATIS_MODIFY_KEY_INFO: &[u8] = b"outbe/gratis/modify-key/v1";
+
+/// HKDF `info` for the per-slot deterministic AEAD nonce. The nonce is a pure
+/// function of `(account, field_tag, version)` so every validator writes
+/// byte-identical ciphertext, and folding the monotonic `version` guarantees a
+/// `(key, nonce)` pair is never reused when a slot is overwritten.
+pub const GRATIS_NONCE_INFO: &[u8] = b"outbe/gratis/nonce/v1";
+
+/// HKDF `info` for the deterministic per-pledge handle:
+/// `HKDF(salt = gratis_state_key, ikm = account ‖ amount ‖ op_nonce,
+/// info = GRATIS_PLEDGE_HANDLE_INFO)`.
+pub const GRATIS_PLEDGE_HANDLE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";

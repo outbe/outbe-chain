@@ -65,10 +65,9 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 35] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
-        GRATIS_POOL_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
@@ -5753,8 +5752,8 @@ mod tests {
     #[test]
     fn pre_exec_hooks_emit_whitelisted_update_activation_event() {
         use alloy_sol_types::SolEvent;
-        use outbe_update::precompile::IUpdate;
         use outbe_update::payload::encode_schedule_update_json;
+        use outbe_update::precompile::IUpdate;
         use serde_json::Value;
 
         let proposer = test_evm_signer().address();
@@ -5801,8 +5800,8 @@ mod tests {
     #[test]
     fn hook_events_receipt_carries_whitelisted_update_activation_log() {
         use alloy_sol_types::SolEvent;
-        use outbe_update::precompile::IUpdate;
         use outbe_update::payload::encode_schedule_update_json;
+        use outbe_update::precompile::IUpdate;
         use serde_json::Value;
 
         let proposer = test_evm_signer().address();

@@ -7,12 +7,51 @@ use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
+use alloy_primitives::{FixedBytes, B256};
+use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratisfactory::api::ModifyAuth;
+use outbe_tee::protocol::GratisOp;
+use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+
 use crate::api as factory_api;
 use crate::precompile::{dispatch, INodFactory};
 use crate::runtime;
 
 /// Reference timestamp used as the baseline "issue time" in test fixtures.
 const T_NOW: u64 = 1_700_000_000;
+/// Chain id of the test storage provider (`HashMapStorageProvider::new(1)`),
+/// as the enclave binds it into a modify authorization.
+const CHAIN_ID: u64 = 1;
+
+/// Authorization that is never actually verified — used by tests whose
+/// `mine_gratis` call fails (owner/pow/qualification/asset checks) before the
+/// gratis mint reaches the enclave.
+fn dummy_auth() -> ModifyAuth {
+    ModifyAuth {
+        mac: [0u8; 32],
+        op_nonce: 0,
+    }
+}
+
+/// Install the in-process enclave and build a valid Mine authorization for
+/// `owner` minting `amount` at op-nonce 0 (a fresh account), exactly as a client
+/// holding the owner's modify key would.
+fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
+    test_enclave::install();
+    let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+    let chain = B256::from(U256::from(CHAIN_ID));
+    ModifyAuth {
+        mac: modify_mac(&mk, owner, GratisOp::Mint, amount, 0, chain),
+        op_nonce: 0,
+    }
+}
+
+/// Decrypt `owner`'s confidential gratis balance with its view key.
+fn view_balance(s: &StorageHandle<'_>, owner: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    let blob = outbe_gratis::api::balance_ct(s.clone(), owner).unwrap();
+    decrypt_balance(&vk, owner, &blob).unwrap()
+}
 
 fn sample_params() -> NodIssueParams {
     NodIssueParams {
@@ -142,8 +181,15 @@ fn test_mine_gratis_requires_qualification() {
 
     provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
-        let err = factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
-            .unwrap_err();
+        let err = factory_api::mine_gratis(
+            &storage,
+            params.owner,
+            nod_id,
+            nonce,
+            Address::ZERO,
+            dummy_auth(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("qualified"));
     });
 }
@@ -162,8 +208,10 @@ fn test_mine_gratis_with_valid_pow() {
 
     provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
         let gratis =
-            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO).unwrap();
+            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO, auth)
+                .unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
         let nod = NodContract::new(storage);
         assert_eq!(nod.total_supply().unwrap(), 0);
@@ -178,10 +226,15 @@ fn test_mine_gratis_wrong_owner_fails() {
         let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
 
         let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        assert!(
-            factory_api::mine_gratis(&storage, wrong_owner, nod_id, U256::ZERO, Address::ZERO)
-                .is_err()
-        );
+        assert!(factory_api::mine_gratis(
+            &storage,
+            wrong_owner,
+            nod_id,
+            U256::ZERO,
+            Address::ZERO,
+            dummy_auth()
+        )
+        .is_err());
     });
 }
 
@@ -204,10 +257,15 @@ fn test_mine_gratis_invalid_pow_fails() {
 
     provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(
-            factory_api::mine_gratis(&storage, params.owner, nod_id, bad_nonce, Address::ZERO)
-                .is_err()
-        );
+        assert!(factory_api::mine_gratis(
+            &storage,
+            params.owner,
+            nod_id,
+            bad_nonce,
+            Address::ZERO,
+            dummy_auth()
+        )
+        .is_err());
     });
 }
 
@@ -248,7 +306,8 @@ fn test_nods_by_owner_sparse_after_mine() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
-        factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO).unwrap();
+        let auth = mine_auth(alice, p1.gratis_load_minor);
+        factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO, auth).unwrap();
 
         let nod = NodContract::new(s);
         let nods = nod.get_nods_by_owner(alice).unwrap();
@@ -272,17 +331,19 @@ fn test_mine_gratis_atomic_burn_and_gratis_mint() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
         let gratis_load =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO, auth).unwrap();
         assert!(!gratis_load.is_zero());
 
         let nod = NodContract::new(s.clone());
-        let gratis = outbe_gratis::Gratis::new(s);
-
         assert_eq!(nod.total_supply().unwrap(), 0);
         assert!(nod.get_item(nod_id).unwrap().is_none());
-        assert_eq!(gratis.balance_of(params.owner).unwrap(), gratis_load);
-        assert_eq!(gratis.total_supply().unwrap(), gratis_load);
+        assert_eq!(view_balance(&s, params.owner), gratis_load);
+        assert_eq!(
+            outbe_gratis::api::total_supply(s.clone()).unwrap(),
+            gratis_load
+        );
     });
 }
 
@@ -296,7 +357,14 @@ fn test_mine_gratis_failure_no_partial_loss() {
 
         let supply_before = NodContract::new(s.clone()).total_supply().unwrap();
         let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        let result = factory_api::mine_gratis(&s, wrong_owner, nod_id, U256::ZERO, Address::ZERO);
+        let result = factory_api::mine_gratis(
+            &s,
+            wrong_owner,
+            nod_id,
+            U256::ZERO,
+            Address::ZERO,
+            dummy_auth(),
+        );
         assert!(result.is_err());
 
         let nod = NodContract::new(s);
@@ -327,12 +395,13 @@ fn test_mine_gratis_supply_invariant() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
-        let load1 = factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO).unwrap();
+        let auth = mine_auth(p1.owner, p1.gratis_load_minor);
+        let load1 =
+            factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO, auth).unwrap();
         let nod = NodContract::new(s.clone());
-        let gratis = outbe_gratis::Gratis::new(s);
         assert_eq!(nod.total_supply().unwrap(), 1);
-        assert_eq!(gratis.total_supply().unwrap(), load1);
-        assert_eq!(gratis.balance_of(p1.owner).unwrap(), load1);
+        assert_eq!(outbe_gratis::api::total_supply(s.clone()).unwrap(), load1);
+        assert_eq!(view_balance(&s, p1.owner), load1);
     });
 }
 
@@ -351,10 +420,13 @@ fn test_precompile_mine_gratis_burns_and_mints() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
         let call = INodFactory::mineGratisCall {
             nodId: nod_id,
             nonce,
             asset: Address::ZERO,
+            mac: FixedBytes(auth.mac),
+            opNonce: auth.op_nonce,
         };
         let calldata = call.abi_encode();
         let output = dispatch(s.clone(), &calldata, params.owner, U256::ZERO).unwrap();
@@ -363,8 +435,7 @@ fn test_precompile_mine_gratis_burns_and_mints() {
 
         let nod = NodContract::new(s.clone());
         assert!(nod.get_item(nod_id).unwrap().is_none());
-        let gratis = outbe_gratis::Gratis::new(s);
-        assert_eq!(gratis.balance_of(params.owner).unwrap(), mined);
+        assert_eq!(view_balance(&s, params.owner), mined);
     });
 }
 
@@ -379,6 +450,8 @@ fn test_precompile_rejects_msg_value() {
             nodId: nod_id,
             nonce: U256::ZERO,
             asset: Address::ZERO,
+            mac: FixedBytes([0u8; 32]),
+            opNonce: 0,
         };
         let calldata = call.abi_encode();
         let result = dispatch(storage, &calldata, params.owner, U256::from(1u64));
@@ -412,7 +485,8 @@ fn test_set_clear_does_not_corrupt_root() {
         // stays marked because we don't touch the bin-tree on mine.
         // That's the documented invariant — the qualifier loop's
         // stale-bucket branch handles dangling bin entries.
-        factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
+        factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO, auth).unwrap();
     });
 }
 
@@ -442,7 +516,9 @@ fn test_mine_gratis_pays_cost_amount() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
-        let gratis = factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET).unwrap();
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
+        let gratis =
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET, auth).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
         let nod = NodContract::new(s);
         assert!(nod.get_item(nod_id).unwrap().is_none());
@@ -468,7 +544,8 @@ fn test_mine_gratis_rejects_zero_asset_when_cost_nonzero() {
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
         let err =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO, dummy_auth())
+                .unwrap_err();
         assert!(
             err.to_string().contains("asset"),
             "expected asset error: {err}"
@@ -497,8 +574,9 @@ fn test_mine_gratis_skips_payment_when_cost_zero() {
 
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |s| {
+        let auth = mine_auth(params.owner, params.gratis_load_minor);
         let gratis =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
+            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO, auth).unwrap();
         assert_eq!(gratis, params.gratis_load_minor);
     });
 }

@@ -6,16 +6,11 @@ import {
   SmartAccountFactory__factory,
   IERC20__factory,
   IVaultProvider__factory,
-  IGratisPool__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
-  DEFAULT_GRATIS_POOL_ADDRESS,
   DEFAULT_CREDIS_ADDRESS,
   DEFAULT_CREDIS_FACTORY_ADDRESS,
-  GRATIS_DENOMINATIONS,
-  TokenMeta,
-  formatToken,
   formatTokenMeta,
   formatTokenDiff,
   fetchTokenMeta,
@@ -23,27 +18,20 @@ import {
   loadEnv,
   requireEnv,
 } from "./utils.js";
-import {
-  ACTION_REQUEST_CREDIS,
-  buildMerkleProof,
-  fieldToHex32,
-  nullifierHash,
-  proveUnpledge,
-  receiverBinding,
-} from "./shielded.js";
-import {
-  deleteTicket,
-  findLatestTicket,
-  readTicket,
-  type Ticket,
-} from "./ticket.js";
+import { pledgeSecret as derivePledgeSecret, spendAuth, positionId as computePositionId } from "./confidential.js";
+import { findLatestTicket, readTicket, writeTicket, type Ticket } from "./ticket.js";
 
 const SALT = 0n;
 
-// Parse CLI args: [ticketPath?] [envName?]
+// The CCA calls requestCredis with the confidential pledge handle + a spend
+// authorization that binds it to the user's bundle account. The CCA holds the
+// `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
+// hold the user's view key, so it cannot read the user's encrypted Gratis
+// balance — only the pledge is consumed and the loan disbursed to the bundle.
+//
+// CLI: [ticketPath?] [envName?]
 let ticketPath: string | undefined;
 let envName = DEFAULT_ENV;
-
 for (const a of process.argv.slice(2)) {
   if (a.endsWith(".json")) ticketPath = a;
   else envName = a;
@@ -57,79 +45,17 @@ const ccaPrivateKey = requireEnv("CCA_PRIVATE_KEY", envContext);
 const ccaAddress = requireEnv("CCA_ADDRESS", envContext);
 const userAddress = requireEnv("USER_ADDRESS", envContext);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
-const gratisPoolAddress = process.env["GRATIS_POOL_ADDRESS"] || DEFAULT_GRATIS_POOL_ADDRESS;
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
 const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
 
-interface State {
-  gratisBalance: bigint;
-  pledged: bigint;
-  pledgedTotalSupply: bigint;
-  smartAccountErc20Balance: bigint;
-  poolLeafCount: bigint;
-  poolRoot: bigint;
-  nullifierSpent: boolean;
-}
-
-async function getState(
-  gratis: ReturnType<typeof IGratis__factory.connect>,
-  pool: ReturnType<typeof IGratisPool__factory.connect>,
-  token: ReturnType<typeof IERC20__factory.connect>,
-  smartAccountAddr: string,
-  denomId: number,
-  nullifier: bigint,
-): Promise<State> {
-  const [
-    gratisBalance,
-    pledged,
-    pledgedTotalSupply,
-    smartAccountErc20Balance,
-    poolLeafCount,
-    poolRoot,
-    nullifierSpent,
-  ] = await Promise.all([
-    gratis.balanceOf(userAddress),
-    gratis.pledgedOf(userAddress),
-    gratis.pledgedTotalSupply(),
-    token.balanceOf(smartAccountAddr),
-    pool.leafCount(denomId),
-    pool.currentRoot(denomId),
-    pool.isSpent(nullifier),
-  ]);
-  return {
-    gratisBalance,
-    pledged,
-    pledgedTotalSupply,
-    smartAccountErc20Balance,
-    poolLeafCount: BigInt(poolLeafCount),
-    poolRoot: BigInt(poolRoot),
-    nullifierSpent,
-  };
-}
-
-function printState(label: string, state: State, denomId: number, gratisMeta: TokenMeta, erc20Meta: TokenMeta) {
-  console.log(`\n=== ${label} ===`);
-  console.log(`  User Gratis balance:  ${formatTokenMeta(state.gratisBalance, gratisMeta)}`);
-  console.log(`  User pledged:         ${formatTokenMeta(state.pledged, gratisMeta)}`);
-  console.log(`  Pledged total:        ${formatTokenMeta(state.pledgedTotalSupply, gratisMeta)} (system-wide)`);
-  console.log(`  Pool leafCount:       ${state.poolLeafCount} (denom ${denomId})`);
-  console.log(`  Pool root:            ${fieldToHex32(state.poolRoot)}`);
-  console.log(`  Nullifier spent:      ${state.nullifierSpent}`);
-  console.log(`  Bundle account ERC20: ${formatTokenMeta(state.smartAccountErc20Balance, erc20Meta)}`);
-}
-
 function loadTicket(): { ticket: Ticket; path: string } {
-  if (ticketPath) {
-    return { ticket: readTicket(ticketPath), path: ticketPath };
-  }
+  if (ticketPath) return { ticket: readTicket(ticketPath), path: ticketPath };
   const latest = findLatestTicket();
   if (!latest) {
-    console.error(
-      "No ticket file found under examples/credis-flow/tickets/. Run `npm run pledge-gratis` first or pass an explicit ticket path.",
-    );
+    console.error("No ticket found under tickets/. Run `npm run pledge-gratis` first.");
     process.exit(1);
   }
   return latest;
@@ -137,18 +63,14 @@ function loadTicket(): { ticket: Ticket; path: string } {
 
 async function main() {
   const { ticket, path: usedTicketPath } = loadTicket();
-  const denom = GRATIS_DENOMINATIONS.find((d) => d.id === ticket.denomId);
-  if (!denom) {
-    throw new Error(`Ticket denomId ${ticket.denomId} not in known ladder`);
-  }
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const ccaWallet = new Wallet(ccaPrivateKey, provider);
 
-  // Predict Bundle account address — this is the credis receiver and the
-  // `target` slot folded into receiver_binding for ACTION_REQUEST_CREDIS.
+  // Predict the bundle account address — the credis receiver, and the account
+  // the pledge spend is bound to.
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
-  const smartAccountAddr = await saFactory.getAccountAddress(
+  const bundleAccount = await saFactory.getAccountAddress(
     userAddress,
     ccaAddress,
     [erc20Address],
@@ -156,223 +78,94 @@ async function main() {
     SALT,
   );
 
-  // Connect contracts
   const credisFactory = ICredisFactory__factory.connect(credisFactoryAddress, ccaWallet);
-  const gratis = IGratis__factory.connect(gratisAddress, provider);
-  const gratisPool = IGratisPool__factory.connect(gratisPoolAddress, provider);
+  const credis = ICredis__factory.connect(credisAddress, provider);
   const token = IERC20__factory.connect(erc20Address, provider);
+  const gratis = IGratis__factory.connect(gratisAddress, provider);
 
-  const [gratisMeta, erc20Meta, network] = await Promise.all([
-    fetchTokenMeta(gratis),
-    fetchTokenMeta(token),
-    provider.getNetwork(),
-  ]);
+  const [erc20Meta, network] = await Promise.all([fetchTokenMeta(token), provider.getNetwork()]);
 
-  // Decode ticket secrets.
-  const secret = BigInt(ticket.secret);
-  const nullifierSecret = BigInt(ticket.nullifierSecret);
-  const commitment = BigInt(ticket.commitment);
-  const denomId = ticket.denomId;
-  const leafIndex = ticket.leafIndex;
+  // Bind the pledge to this bundle account with the spend authorization derived
+  // from the pledge secret the user handed to the CCA.
+  const secret = ethers.getBytes(ticket.pledgeSecret);
+  const spend = spendAuth(secret, bundleAccount);
 
-  // Reclaim is no longer supplied here — it moved to per-installment
-  // `anadosis` calls. Each payment generates its own reclaim note (worth one
-  // tenth of the pledge) and inserts it into the anadosis pool immediately.
-  console.log("=== Request Credis (shielded) ===");
-  console.log(`Env:               ${envName} (${envPath})`);
-  console.log(`RPC:               ${rpcUrl}`);
-  console.log(`Ticket:            ${usedTicketPath}`);
-  console.log(`CCA:               ${ccaAddress}`);
-  console.log(`User (owner):      ${userAddress}`);
-  console.log(`CredisFactory:     ${credisFactoryAddress}`);
-  console.log(`GratisPool:        ${gratisPoolAddress}`);
-  console.log(`SA Factory:        ${smartAccountFactoryAddress}`);
-  console.log(`Vault:             ${vaultProviderAddress}`);
-  console.log(`ERC20:             ${erc20Address}`);
-  console.log(`Bundle account:    ${smartAccountAddr}`);
-  console.log(`Denom:             ${denomId} = ${formatToken(denom.amount, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`Commitment (old):  ${fieldToHex32(commitment)}`);
-  console.log(`Leaf index (old):  ${leafIndex}`);
-  console.log(`Chain ID:          ${network.chainId}`);
+  console.log("=== Request Credis (confidential / TEE) ===");
+  console.log(`Env:            ${envName}`);
+  console.log(`Ticket:         ${usedTicketPath}`);
+  console.log(`CCA:            ${ccaAddress}`);
+  console.log(`User (pledger): ${userAddress}`);
+  console.log(`CredisFactory:  ${credisFactoryAddress}`);
+  console.log(`Bundle account: ${bundleAccount}`);
+  console.log(`ERC20:          ${erc20Address} (${erc20Meta.symbol})`);
+  console.log(`Pledge handle:  ${ticket.pledgeHandle}`);
+  console.log(`Spend auth:     ${spend}`);
+  console.log(`Chain ID:       ${network.chainId}`);
 
-  // Pre-flight: cheap on-chain checks before paying for proof generation.
-  const nullifier = await nullifierHash(nullifierSecret);
-  const [onChainRoot, onChainLeafCount, alreadySpent] = await Promise.all([
-    gratisPool.currentRoot(denomId),
-    gratisPool.leafCount(denomId),
-    gratisPool.isSpent(nullifier),
-  ]);
+  const bundleErc20Before = await token.balanceOf(bundleAccount);
+  console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
 
-  if (Number(onChainLeafCount) <= leafIndex) {
-    throw new Error(
-      `Pool leafCount ${onChainLeafCount} <= ticket.leafIndex ${leafIndex} — ticket points past the tree`,
-    );
-  }
-  if (alreadySpent) {
-    deleteTicket(usedTicketPath);
-    throw new Error(
-      `Nullifier ${fieldToHex32(nullifier)} is already spent on-chain — ticket has been deleted (cannot be reused for credis)`,
-    );
-  }
-
-  // Replay CommitmentInserted events to rebuild the local Merkle tree.
-  console.log("\nReplaying CommitmentInserted events to rebuild the Merkle tree...");
-  const filter = gratisPool.filters["CommitmentInserted(uint8,uint256,uint32,uint256)"](denomId);
-  const events = await gratisPool.queryFilter(filter, 0, "latest");
-
-  const commitments: bigint[] = [];
-  for (const ev of events) {
-    const idx = Number(ev.args.leafIndex);
-    commitments[idx] = BigInt(ev.args.commitment);
-  }
-  for (let i = 0; i < commitments.length; i++) {
-    if (commitments[i] === undefined) {
-      throw new Error(`Missing CommitmentInserted event for leaf ${i} of denom ${denomId}`);
-    }
-  }
-  console.log(`  Replayed ${commitments.length} commitments for denom ${denomId}`);
-
-  if (commitments[leafIndex] !== commitment) {
-    throw new Error(
-      `Replayed commitment[${leafIndex}] = ${fieldToHex32(commitments[leafIndex])} does not match ticket commitment ${fieldToHex32(commitment)}`,
-    );
-  }
-
-  const merkle = await buildMerkleProof(commitments, leafIndex);
-  if (merkle.root !== BigInt(onChainRoot)) {
-    throw new Error(
-      `Locally-rebuilt root ${fieldToHex32(merkle.root)} does not match on-chain currentRoot ${fieldToHex32(BigInt(onChainRoot))} — likely Poseidon param drift.`,
-    );
-  }
-  console.log(`  Rebuilt root matches on-chain currentRoot: ${fieldToHex32(merkle.root)}`);
-
-  // receiver_binding for ACTION_REQUEST_CREDIS:
-  //   target = bundleAccount, nonce = 0.
-  // Reclaim moved to per-installment pay_anadosis, so there is no reclaim leg
-  // to bind here; the binding still pins the loan to bundleAccount. Matches
-  // crates/core/gratispool/src/state.rs::receiver_binding and
-  // crates/core/credisfactory/src/runtime.rs::request_credis.
-  const binding = await receiverBinding(
-    ACTION_REQUEST_CREDIS,
-    smartAccountAddr,
-    network.chainId,
-    0n,
-  );
-
-  console.log("\nGenerating UltraHonkKeccak spend proof (this typically takes 3-8s)...");
-  const tProveStart = Date.now();
-  const proof = await proveUnpledge({
-    secret,
-    nullifierSecret,
-    denomId,
-    merklePath: merkle.siblings,
-    merkleIndex: leafIndex,
-    merkleRoot: merkle.root,
-    nullifierHashValue: nullifier,
-    receiverBindingValue: binding,
-  });
-  console.log(`  Proof generated in ${((Date.now() - tProveStart) / 1000).toFixed(2)}s (${proof.length} bytes)`);
-
-  // State before
-  const before = await getState(gratis, gratisPool, token, smartAccountAddr, denomId, nullifier);
-  printState("State BEFORE", before, denomId, gratisMeta, erc20Meta);
-
-  // Request credis
-  console.log("\nSending requestCredis tx...");
-  // requestCredis(asset, bundleAccount, args): the asset self-reports its ISO
-  // currency via isoCode(), which the factory uses to pin the refinancing rate.
-  const tx = await credisFactory.requestCredis(
-    erc20Address,
-    smartAccountAddr,
-    {
-      merkleRoot: merkle.root,
-      nullifierHash: nullifier,
-      denomId,
-      receiverBinding: binding,
-      proof: ethers.hexlify(proof),
-    },
-  );
+  // `userAddress` is the pledger EOA: the chain checks it against the pledge
+  // record and debits its pledged ledger into the credis escrow.
+  console.log("\nSending requestCredis(asset, bundleAccount, eoaAccount, pledgeHandle, spendAuth)...");
+  const tx = await credisFactory.requestCredis(erc20Address, bundleAccount, userAddress, ticket.pledgeHandle, spend);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");
   console.log(`  Block:   ${receipt.blockNumber}`);
-  console.log(`  Gas:     ${receipt.gasUsed}`);
 
-  // Parse all events from the transaction
-  const credisIface = ICredis__factory.createInterface();
+  // Log the events across the involved interfaces.
   const interfaces = [
     { name: "ICredisFactory", iface: ICredisFactory__factory.createInterface() },
-    { name: "ICredis", iface: credisIface },
+    { name: "ICredis", iface: ICredis__factory.createInterface() },
     { name: "VaultProvider", iface: IVaultProvider__factory.createInterface() },
     { name: "IGratis", iface: IGratis__factory.createInterface() },
-    { name: "IGratisPool", iface: IGratisPool__factory.createInterface() },
     { name: "ERC20", iface: IERC20__factory.createInterface() },
   ];
-
-  let createdPositionId: bigint | null = null;
-
+  let eventPositionId: bigint | null = null;
   console.log("\n=== Transaction Events ===");
   for (const log of receipt.logs ?? []) {
-    let parsed = false;
-    for (const { name: contractName, iface } of interfaces) {
+    for (const { name, iface } of interfaces) {
       try {
         const event = iface.parseLog({ topics: log.topics as string[], data: log.data });
         if (event) {
-          console.log(`  [${contractName}] ${event.name}:`);
-          const fragment = event.fragment;
-          for (let i = 0; i < fragment.inputs.length; i++) {
-            const paramName = fragment.inputs[i].name;
-            const value = event.args[i];
-            console.log(`    ${paramName}: ${value}`);
-          }
-          if (event.name === "PositionCreated") {
-            createdPositionId = event.args[0];
-          }
-          parsed = true;
+          console.log(`  [${name}] ${event.name}`);
+          if (event.name === "PositionCreated") eventPositionId = event.args[0] as bigint;
           break;
         }
       } catch {
-        // Not from this interface
+        // not from this interface
       }
     }
-    if (!parsed) {
-      console.log(`  [Unknown] address=${log.address} topics=${log.topics[0]}`);
-    }
   }
 
-  if (createdPositionId !== null) {
-    console.log(`\n=== Created Position ID: ${createdPositionId} ===`);
-
-    // Read back the pinned Anadosis terms: principal (disbursed loan) vs.
-    // total debt (principal + refinancing-rate markup) and the issuance currency.
-    const credis = ICredis__factory.connect(credisAddress, provider);
-    const position = await credis.getPosition(createdPositionId);
-    console.log(`  Issuance currency (ISO 4217): ${position.issuanceCurrency}`);
-    console.log(`  Refinancing rate (1e18):      ${position.refinancingRate}`);
-    console.log(`  Credis principal:             ${position.credisPrincipal}`);
-    console.log(`  Total Anadosis debt:          ${position.totalAnadosisAmount}`);
+  // Position id is deterministic: keccak256(pledgeHandle || bundleAccount).
+  const positionId = computePositionId(ticket.pledgeHandle, bundleAccount);
+  if (eventPositionId !== null && eventPositionId !== positionId) {
+    throw new Error(
+      `PositionCreated id ${eventPositionId} != computed ${positionId} — check position_id parity`,
+    );
   }
 
-  // State after
-  const after = await getState(gratis, gratisPool, token, smartAccountAddr, denomId, nullifier);
-  printState("State AFTER", after, denomId, gratisMeta, erc20Meta);
+  const bundleErc20After = await token.balanceOf(bundleAccount);
+  const position = await credis.getPosition(positionId);
 
-  // Diff
-  console.log("\n=== CHANGES ===");
-  console.log(`  Gratis balance:     ${formatTokenDiff(after.gratisBalance - before.gratisBalance, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged:            ${formatTokenDiff(after.pledged - before.pledged, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged total:      ${formatTokenDiff(after.pledgedTotalSupply - before.pledgedTotalSupply, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  SA ERC20 balance:   ${formatTokenDiff(after.smartAccountErc20Balance - before.smartAccountErc20Balance, erc20Meta.decimals, erc20Meta.symbol)}`);
-  console.log(`  Nullifier spent:    ${before.nullifierSpent} -> ${after.nullifierSpent}`);
+  console.log("\n=== Position ===");
+  console.log(`  positionId:        ${positionId}`);
+  console.log(`  bundleAccount:     ${position.bundleAccount}`);
+  console.log(`  credisPrincipal:   ${formatTokenMeta(position.credisPrincipal, erc20Meta)}`);
+  console.log(`  totalAnadosis:     ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
+  console.log(`  totalGratis:       ${position.totalGratisAmount}`);
+  console.log(`  refinancingRate:   ${position.refinancingRate}`);
+  console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
+  console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 
-  // The original ticket's secret is now useless — its nullifier is on-chain.
-  deleteTicket(usedTicketPath);
-  console.log(`\nOriginal ticket deleted: ${usedTicketPath}`);
-
-  console.log("\nReclaim is now per-installment: run `npm run user-pays-anadosis <positionId>`");
-  console.log("for each installment — it generates and inserts that installment's reclaim note");
-  console.log("(worth one tenth of the pledge) and writes a ticket you can unpledge immediately");
-  console.log("via `npm run unpledge-gratis-fast`.");
+  // Persist the position + bundle for pay-anadosis.
+  ticket.positionId = positionId.toString();
+  ticket.bundleAccount = bundleAccount;
+  writeTicket(ticket);
+  console.log(`\nTicket updated: ${usedTicketPath}`);
+  console.log("Run `npm run user-pays-anadosis` to pay an installment (and unlock 1/N of the collateral).");
 }
 
 main().catch((error) => {

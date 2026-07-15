@@ -22,9 +22,9 @@ use reth_ethereum::storage::{
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
-    ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo,
-    ValidatorDetailInfo, ValidatorInfo,
+    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo,
+    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -119,6 +119,62 @@ where
         + Sync
         + 'static,
 {
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+
+        // Prove the caller controls `account` before the enclave derives its
+        // (secret) modify key: recover the EIP-191 personal_sign signer over
+        // `"outbe/gratis/derive-keys/v1" || account || ephemeralPubkey` and require
+        // it to equal `account`.
+        let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
+            invalid_params_err(format!(
+                "signature must be 65 bytes (r||s||v), got {}",
+                signature.len()
+            ))
+        })?;
+        let prehash = eip191_hash(&derive_gratis_keys_message(account, ephemeral_pubkey));
+        let recovered = outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65)
+            .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
+        if recovered != account {
+            return Err(invalid_params_err(format!(
+                "signature signer {recovered} does not control account {account}"
+            )));
+        }
+
+        // Off-chain key delivery via the process-global enclave client (no state).
+        let response = outbe_tee::try_with_enclave(|client| {
+            client.request(&EnclaveRequest::DeriveAccountKeys {
+                account,
+                requester_ephemeral_pubkey: ephemeral_pubkey.0,
+            })
+        })
+        .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
+        .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;
+        match response {
+            EnclaveResponse::AccountKeysSealed {
+                sealed,
+                nonce,
+                enclave_ephemeral_pubkey,
+                ..
+            } => Ok(GratisKeysSealed {
+                sealed: sealed.into(),
+                nonce: nonce.to_vec().into(),
+                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
+            }),
+            EnclaveResponse::Error { message } => {
+                Err(internal_err(format!("enclave error: {message}")))
+            }
+            other => Err(internal_err(format!(
+                "unexpected enclave response: {other:?}"
+            ))),
+        }
+    }
+
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -341,4 +397,33 @@ fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
         msg,
         None::<()>,
     )
+}
+
+/// Create an invalid-params JSON-RPC error (a client-side fault).
+fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+    jsonrpsee::types::ErrorObject::owned(
+        jsonrpsee::types::error::INVALID_PARAMS_CODE,
+        msg,
+        None::<()>,
+    )
+}
+
+/// Domain-tagged message a caller personal-signs to prove control of `account`
+/// before `outbe_deriveGratisKeys` reveals its keys:
+/// `"outbe/gratis/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
+fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
+    let mut m = Vec::with_capacity(27 + 20 + 32);
+    m.extend_from_slice(b"outbe/gratis/derive-keys/v1");
+    m.extend_from_slice(account.as_slice());
+    m.extend_from_slice(ephemeral_pubkey.as_slice());
+    m
+}
+
+/// EIP-191 `personal_sign` digest of `message` — matches ethers `signMessage`.
+fn eip191_hash(message: &[u8]) -> B256 {
+    let mut buf = Vec::with_capacity(message.len() + 40);
+    buf.extend_from_slice(b"\x19Ethereum Signed Message:\n");
+    buf.extend_from_slice(message.len().to_string().as_bytes());
+    buf.extend_from_slice(message);
+    alloy_primitives::keccak256(buf)
 }

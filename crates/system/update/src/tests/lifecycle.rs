@@ -89,15 +89,7 @@ fn activate_scheduled_update_cancels_stale_lower_version() {
             current,
         )
         .unwrap();
-        schedule_update(
-            &mut update,
-            U256::from(2),
-            PV,
-            activation_late,
-            "",
-            current,
-        )
-        .unwrap();
+        schedule_update(&mut update, U256::from(2), PV, activation_late, "", current).unwrap();
 
         update.process_begin_block_test(activation_early).unwrap();
         assert_eq!(get_active_version(storage.clone()).unwrap(), PV);
@@ -132,15 +124,8 @@ fn multiple_due_updates_cannot_reduce_active_version() {
         let current = 200u64;
         let activation = min_activation(current) + 1000;
         schedule_update(&mut update, U256::from(1), PV, activation, "", current).unwrap();
-        schedule_update(
-            &mut update,
-            U256::from(2),
-            PV,
-            activation,
-            "",
-            current + 1,
-        )
-        .expect_err("conflicting activation height must be rejected at schedule time");
+        schedule_update(&mut update, U256::from(2), PV, activation, "", current + 1)
+            .expect_err("conflicting activation height must be rejected at schedule time");
         schedule_update(
             &mut update,
             U256::from(2),

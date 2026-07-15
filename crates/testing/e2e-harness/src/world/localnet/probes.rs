@@ -45,7 +45,8 @@ impl Localnet {
 
     /// Whether validator `index`'s log contains `needle` (`e2e_joiner_log_has`).
     pub fn log_has(&self, index: usize, needle: &str) -> bool {
-        self.node_log(&format!("validator-{index}")).contains(needle)
+        self.node_log(&format!("validator-{index}"))
+            .contains(needle)
     }
 
     /// Count of log LINES containing `needle` (matches shell `grep -c`).

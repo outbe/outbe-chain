@@ -355,6 +355,70 @@ pub fn dispatch(
                 attestation_tag,
             }
         }
+        EnclaveRequest::ApplyGratisOp { request } => {
+            // Derive the resident Gratis state key from the same DKG group
+            // signature as the offer key — identical on every enclave, so the
+            // re-encrypted state is byte-identical (consensus determinism).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyGratisOp: no resident group key (DKG not complete)".to_string(),
+                };
+            };
+            let state_key =
+                match crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        return EnclaveResponse::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+            let mut result = crate::gratis::apply_op(&state_key, &request);
+            // Sign (inputs_canonical_hash ‖ result) with the attestation key so the
+            // host can prove the result came from this attested enclave.
+            let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
+                result.inputs_canonical_hash,
+                &result,
+            );
+            result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+            EnclaveResponse::GratisOpApplied {
+                result: Box::new(result),
+            }
+        }
+        EnclaveRequest::DeriveAccountKeys {
+            account,
+            requester_ephemeral_pubkey,
+        } => {
+            // OFF-CHAIN key delivery only (served over RPC, never during block
+            // execution): derive the account's view + modify keys and seal them to
+            // the requester's ephemeral X25519 key.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "DeriveAccountKeys: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
+                let state_key =
+                    crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)?;
+                let view_key = crate::gratis::derive_view_key(&state_key, account)?;
+                let modify_key = crate::gratis::derive_modify_key(&state_key, account)?;
+                let mut plaintext = view_key.to_vec();
+                plaintext.extend_from_slice(&modify_key);
+                crate::crypto::encrypt_share(&requester_ephemeral_pubkey, &plaintext)
+            })();
+            match sealed {
+                Ok(blob) => EnclaveResponse::AccountKeysSealed {
+                    account,
+                    sealed: blob.ciphertext,
+                    nonce: blob.nonce,
+                    enclave_ephemeral_pubkey: blob.ephemeral_pub,
+                },
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
         EnclaveRequest::SealTributeOfferHandoff { recipient_x25519 } => {
             // Key-handoff SERVER: seal the resident group signature to the
             // newcomer's attested X25519 key. The host already verified the

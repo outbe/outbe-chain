@@ -46,7 +46,6 @@ members = [
     "crates/core/promislimit",
     "crates/core/tributefactory",
     "crates/core/gratisfactory",
-    "crates/core/gratispool",
     "crates/core/governance",
     "crates/core/e2e",
     "crates/core/common",
@@ -103,6 +102,7 @@ outbe-cycle = { path = "crates/system/cycle" }
 outbe-accounting = { path = "crates/system/accounting" }
 outbe-zkproof = { path = "crates/system/zkproof" }
 outbe-tee = { path = "crates/system/tee" }
+outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
@@ -128,7 +128,6 @@ outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }
 outbe-gratisfactory = { path = "crates/core/gratisfactory" }
-outbe-gratispool = { path = "crates/core/gratispool" }
 outbe-governance = { path = "crates/core/governance" }
 outbe-e2e = { path = "crates/core/e2e" }
 outbe-common = { path = "crates/core/common" }

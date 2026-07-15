@@ -1,5 +1,5 @@
-//! Gratisfactory precompile (`0x2003`). Thin orchestration layer on top of
-//! the shielded gratis pool (`outbe_gratispool`, `0x2004`).
+//! Gratisfactory precompile (`0x2003`). Thin orchestration layer on top of the
+//! confidential Gratis token (`outbe_gratis`) and the Fidelity ledger.
 
 pub mod api;
 pub mod errors;

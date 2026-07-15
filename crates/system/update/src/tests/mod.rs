@@ -18,8 +18,8 @@ mod lifecycle;
 mod precompile;
 mod records;
 mod scheduled;
-mod vote_dispatch;
 mod unset_version;
+mod vote_dispatch;
 
 static EMPTY_UPGRADE_HANDLER_REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(&[]);
 

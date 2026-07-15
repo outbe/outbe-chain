@@ -38,7 +38,10 @@ fn joiner_active_persisted_share(world: &mut World) {
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
     world.rpc.offer_until_supply(&v0, &wwd, primary, "1", 5);
 
-    world.localnet.provision_joiner(idx).expect("provision joiner");
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
@@ -91,8 +94,14 @@ fn resumes_without_new_ceremony(world: &mut World) {
     let restart_h = world.state.marker_height.expect("restart height");
     let pre_ceremony = world.state.marker_count.expect("pre ceremony count");
 
-    let h = world.rpc.wait_block(joiner_port, restart_h, 30).unwrap_or(0);
-    assert!(h >= restart_h, "restarted node did not catch up (head {h} < {restart_h})");
+    let h = world
+        .rpc
+        .wait_block(joiner_port, restart_h, 30)
+        .unwrap_or(0);
+    assert!(
+        h >= restart_h,
+        "restarted node did not catch up (head {h} < {restart_h})"
+    );
     assert!(
         world.localnet.log_has(idx, "threshold material ready"),
         "node did not resume from saved DKG state"

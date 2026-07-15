@@ -30,6 +30,7 @@ pub fn mine_gratis(
     nod_id: U256,
     nonce: U256,
     asset: Address,
+    auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    runtime::mine_gratis(storage, caller, nod_id, nonce, asset)
+    runtime::mine_gratis(storage, caller, nod_id, nonce, asset, auth)
 }

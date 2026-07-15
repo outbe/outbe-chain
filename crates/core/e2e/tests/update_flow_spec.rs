@@ -3,29 +3,29 @@
 //! Complements crate-local unit tests by wiring validator set, vote tallying,
 //! update scheduling/activation, and (where needed) pre-execution hooks in one runtime.
 
-use alloy_primitives::{address, Address, B256, Log, U256};
+use alloy_primitives::{address, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_evm::handlers;
 use outbe_primitives::addresses::UPDATE_ADDRESS;
-use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_update::lifecycle::UpdateLifecycle;
+use outbe_update::payload::encode_schedule_update_json;
 use outbe_update::precompile::{dispatch, IUpdate};
 use outbe_update::schema::Update;
 use outbe_update::state::ScheduledUpdateStatus;
-use outbe_primitives::chain::DEVNET_CHAIN_ID;
-use outbe_update::payload::encode_schedule_update_json;
 use outbe_update::{encode_protocol_version, ProtocolVersion};
-use serde_json::Value;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::lifecycle::VoteLifecycle;
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
+use serde_json::Value;
 
 const CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 const PROPOSER: Address = address!("0x1111111111111111111111111111111111111111");
@@ -118,8 +118,9 @@ fn schedule_update(
     activation: u64,
     current: u64,
 ) {
-    let payload: Value = serde_json::from_str(&encode_schedule_update_json(version, activation, ""))
-        .expect("schedule update JSON should parse");
+    let payload: Value =
+        serde_json::from_str(&encode_schedule_update_json(version, activation, ""))
+            .expect("schedule update JSON should parse");
     update
         .schedule_update_from_propose(proposal_id, &payload, current)
         .expect("schedule_update_from_propose should succeed");
@@ -293,9 +294,9 @@ fn lifecycle_events_visible_in_hook_events_receipt_partition() {
         .collect();
     let (whitelisted, tracing_only) = partition_hook_events(&hook_logs);
     assert!(
-        whitelisted
-            .iter()
-            .any(|log| log.data.topics().first() == Some(&IUpdate::UpgradeActivated::SIGNATURE_HASH)),
+        whitelisted.iter().any(
+            |log| log.data.topics().first() == Some(&IUpdate::UpgradeActivated::SIGNATURE_HASH)
+        ),
         "whitelisted update hook events must include UpgradeActivated for HookEvents receipt"
     );
     assert!(
@@ -386,10 +387,7 @@ fn full_vote_update_flow_2_of_4_yes_expires_without_update_state_change() {
 
     let update = Update::new(storage);
     assert!(update.read_scheduled_update(proposal_id).unwrap().is_none());
-    assert_eq!(
-        update.get_active_version().unwrap(),
-        ProtocolVersion::ZERO
-    );
+    assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
     assert_eq!(update.get_active_version_height().unwrap(), 0);
     assert!(!has_update_event(
         &provider,
@@ -460,10 +458,7 @@ fn conflicting_update_proposal_rejected_without_update_state_change() {
         let update = Update::new(storage.clone());
         assert!(update.read_scheduled_update(first).unwrap().is_some());
         assert!(update.read_scheduled_update(second).unwrap().is_none());
-    assert_eq!(
-        update.get_active_version().unwrap(),
-        ProtocolVersion::ZERO
-    );
+        assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
     });
 }
 

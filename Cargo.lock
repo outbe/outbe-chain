@@ -7060,10 +7060,11 @@ dependencies = [
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-gratisfactory",
- "outbe-gratispool",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
@@ -7110,12 +7111,15 @@ dependencies = [
  "outbe-evm",
  "outbe-governance",
  "outbe-gratis",
+ "outbe-gratisfactory",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-update",
  "outbe-validatorset",
@@ -7236,7 +7240,6 @@ dependencies = [
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
- "outbe-gratispool",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-metadosis",
@@ -7360,6 +7363,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -7370,24 +7375,9 @@ dependencies = [
  "alloy-sol-types",
  "outbe-fidelity",
  "outbe-gratis",
- "outbe-gratispool",
  "outbe-primitives",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-gratispool"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ark-bn254 0.6.0",
- "ark-ff 0.6.0",
- "outbe-macros",
- "outbe-poseidon",
- "outbe-primitives",
- "outbe-zk-backend",
- "outbe-zk-canonical",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "thiserror 2.0.18",
 ]
 
@@ -7557,6 +7547,8 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-nod",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultprovider",
  "ring",
  "thiserror 2.0.18",
@@ -7643,6 +7635,8 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -7710,6 +7704,7 @@ dependencies = [
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-staking",
+ "outbe-tee",
  "outbe-update",
  "outbe-validatorset",
  "outbe-vote",

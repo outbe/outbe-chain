@@ -41,10 +41,11 @@
 //!   - Reth payload building, state-root computation, and txpool admission
 //!     (we drive only the pre-execution hook phase, not the full executor).
 
-use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
-use outbe_gratis::Gratis;
+use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratisfactory::api::ModifyAuth;
 use outbe_metadosis::{
     constants::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
@@ -70,6 +71,8 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_tee::protocol::GratisOp;
+use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 use outbe_tribute::{TributeContract, TributeData};
 
 // Mainnet-style id — effective_hours() returns DEFAULT_LOOKBACK / DEFAULT_OFFERING
@@ -252,6 +255,16 @@ fn find_valid_nonce(nod_id: U256) -> U256 {
 /// responsible for first seeding an exchange rate high enough that
 /// `NodLifecycle::begin_block` qualified the bucket; `mine_gratis` itself does
 /// not query oracle.
+/// Decrypt `owner`'s confidential gratis balance with its view key.
+fn view_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    let blob = outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_balance(&vk, owner, &blob).unwrap()
+}
+
 fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
     let nod = NodContract::new(storage.clone());
     let nods = nod.get_nods_by_owner(owner).unwrap();
@@ -259,12 +272,31 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
     let item = nod.get_item(nods[0]).unwrap().unwrap();
 
     let nonce = find_valid_nonce(item.nod_id);
-    let balance_before = Gratis::new(storage.clone()).balance_of(owner).unwrap();
+    let balance_before = view_balance(&storage, owner);
+
+    // Owner-authorized mint: the Nod owner (== gratis recipient) signs the mint
+    // with its modify key, binding the exact gratis load + its current op-nonce.
+    let op_nonce = outbe_gratis::api::op_nonce(storage.clone(), owner).unwrap();
+    let modify_key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+    let chain = B256::from(U256::from(CHAIN_ID));
+    let auth = ModifyAuth {
+        mac: modify_mac(
+            &modify_key,
+            owner,
+            GratisOp::Mint,
+            item.gratis_load_minor,
+            op_nonce,
+            chain,
+        ),
+        op_nonce,
+    };
 
     let call = INodFactory::mineGratisCall {
         nodId: item.nod_id,
         nonce,
         asset: MINE_GRATIS_ASSET,
+        mac: FixedBytes(auth.mac),
+        opNonce: auth.op_nonce,
     };
     let output =
         nodfactory_dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO).unwrap();
@@ -276,13 +308,15 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
         .get_item(item.nod_id)
         .unwrap()
         .is_none());
-    let balance_after = Gratis::new(storage).balance_of(owner).unwrap();
+    let balance_after = view_balance(&storage, owner);
     assert_eq!(balance_after, balance_before + mined);
     mined
 }
 
 #[test]
 fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
+    // The confidential GRATIS mint routes through the in-process enclave engine.
+    test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     // The NOD-cost payment branch deposits into the vault provider via an EVM
     // sub-call to VAULT_PROVIDER_ADDRESS. enable_sub_call_stub covers the ERC-20

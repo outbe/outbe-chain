@@ -39,9 +39,9 @@ fn dispatch_update_call(storage: StorageHandle<'_>, call: IUpdate::IUpdateCalls)
     let update = Update::new(storage.clone());
     use IUpdate::IUpdateCalls::*;
     match call {
-        getActiveVersion(_) => metadata::<IUpdate::getActiveVersionCall>(|| {
-            Ok(update.get_active_version()?.into())
-        }),
+        getActiveVersion(_) => {
+            metadata::<IUpdate::getActiveVersionCall>(|| Ok(update.get_active_version()?.into()))
+        }
         getActiveVersionHeight(_) => {
             metadata::<IUpdate::getActiveVersionHeightCall>(|| update.get_active_version_height())
         }

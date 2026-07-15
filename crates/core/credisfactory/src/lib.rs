@@ -1,15 +1,13 @@
-//! Credis factory precompile (`0x1009`). Orchestrates the credis lifecycle
-//! on top of the shielded gratis pool:
+//! Credis factory precompile (`0x1009`). Orchestrates the credis lifecycle on
+//! top of the confidential Gratis token:
 //!
-//! - `requestCredis` verifies a pledge-commitment spend proof through
-//!   [`outbe_gratispool`], persists the position's `denom_id`, opens an
-//!   [`outbe_credis`] position, and delivers the stablecoin loan via the
-//!   vault sub-call.
-//! - `anadosis` advances the position's installment schedule and inserts the
-//!   caller-supplied reclaim commitment for that installment into the
-//!   gratispool (at the anadosis denomination) so the holder of the reclaim
-//!   secret can `unpledgeGratis(args, destination)` one installment's share
-//!   immediately.
+//! - `requestCredis` consumes a confidential Gratis pledge (pledge handle +
+//!   spend authorization) via [`outbe_gratis`], opens an [`outbe_credis`]
+//!   position bound to the bundle account, persists the pledge linkage, and
+//!   delivers the stablecoin loan via the vault sub-call.
+//! - `anadosis` advances the position's installment schedule and releases 1/N of
+//!   the pledged collateral back to the original pledger's encrypted Gratis
+//!   balance.
 
 pub mod errors;
 pub mod precompile;

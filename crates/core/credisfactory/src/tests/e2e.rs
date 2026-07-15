@@ -1,49 +1,29 @@
-//! End-to-end flow: pledge → request → pay → reclaim → unpledge.
+//! End-to-end flow: mine → pledge → requestCredis → payAnadosis → unlock.
 //!
-//! Vault state is not asserted in these tests: `HashMapStorageProvider` does
-//! not run a real EVM, so the runtime's Rust → Solidity sub-calls into
-//! `IVaultProvider` / `IERC20` are stubbed via
-//! `HashMapStorageProvider::enable_sub_call_stub` (returns
-//! `SubCallOutput::default_success()`).
-//!
-//! Proof verification is similarly stubbed: real Barretenberg proofs take
-//! seconds to generate, so each test wraps the spend-side calls in
-//! `outbe_gratispool::verifier::with_verifier_outcome(true, ...)` to force
-//! the verifier to accept the dummy proof bytes. The runtime gates that
-//! sit in front of the verifier (root window, nullifier set, receiver
-//! binding) still execute against real on-chain state.
+//! The confidential Gratis path runs against the in-process enclave engine
+//! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
+//! asserted by decrypting the ciphertext with the account's view key, exactly as
+//! a client would. `HashMapStorageProvider` does not run a real EVM, so the
+//! runtime's Rust → Solidity sub-calls into `IVaultProvider` / `IERC20` are
+//! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
-use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 
 use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
-use outbe_gratis::Gratis;
+use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
-use outbe_gratispool::constants::{DenomAmount, ACTION_REQUEST_CREDIS, ACTION_UNPLEDGE};
-use outbe_gratispool::schema::GratisPoolContract;
-use outbe_gratispool::verifier::with_verifier_outcome;
-use outbe_gratispool::zkp_utils::{commitment_hash, nullifier_hash, receiver_binding};
-use outbe_gratispool::SpendArgs;
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::{CREDIS_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_tee::protocol::{GratisOp, ModifyAuth};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+    pledge_secret, spend_auth_mac,
+};
 
 use crate::runtime;
 use crate::tests::common::*;
-
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    let mut oracle = OracleContract::new(storage);
-    oracle.register_pair("COEN", "0xUSD").unwrap();
-    oracle
-        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
-        .unwrap();
-    // Seed the refinancing rate for USD (840); the factory reads it after the
-    // asset self-reports its ISO code via `isoCode()`.
-    oracle
-        .reference_refinancing_rate
-        .write(&ISSUANCE_ISO, refi_rate())
-        .unwrap();
-}
 
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
@@ -53,6 +33,26 @@ fn refi_rate() -> U256 {
     U256::from(43_000_000_000_000_000u128)
 }
 
+fn one_e18() -> U256 {
+    U256::from(10u64).pow(U256::from(18u64))
+}
+
+fn chain_b256() -> B256 {
+    B256::from(U256::from(CHAIN_ID))
+}
+
+fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
+    let mut oracle = OracleContract::new(storage);
+    oracle.register_pair("COEN", "0xUSD").unwrap();
+    oracle
+        .set_exchange_rate(Address::ZERO, "COEN", "0xUSD", rate_1e18, 0, 0)
+        .unwrap();
+    oracle
+        .reference_refinancing_rate
+        .write(&ISSUANCE_ISO, refi_rate())
+        .unwrap();
+}
+
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
 fn iso_word(iso: u16) -> Bytes {
     let mut b = vec![0u8; 32];
@@ -60,12 +60,12 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(b)
 }
 
-/// Gives `account` a positive RCFI by recording a gratis cohort acquired one
-/// year before the test's block time. The fidelity gate now lives in
-/// `gratisfactory::pledge_gratis` (it requires `get_rcfi(caller) > 0`), so the
-/// e2e flow must seed this before its pledge leg or `pledge_gratis` rejects.
-/// The zero-RCFI rejection itself is asserted in the gratisfactory crate
-/// (`pledge_rejects_zero_rcfi`).
+/// 32-byte zero word — the stubbed `uint256` return for the vault sub-calls.
+fn zero_word() -> Bytes {
+    Bytes::from(vec![0u8; 32])
+}
+
+/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     outbe_fidelity::api::cohort_in(
@@ -77,102 +77,99 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     .unwrap();
 }
 
-fn one_e18() -> U256 {
-    U256::from(10u64).pow(U256::from(18u64))
-}
-
-/// 32-byte zero word — the stubbed `uint256` return for the vault provider's
-/// `withdrawLiquidity` / `depositLiquidity` sub-calls (decodes to 0; the burn /
-/// share amounts are unused by credisfactory).
-fn zero_word() -> Bytes {
-    Bytes::from(vec![0u8; 32])
-}
-
-fn build_spend_args(
-    storage: StorageHandle<'_>,
-    nullifier_secret: U256,
-    denom_id: u8,
-    action_tag: u64,
-    target: Address,
-    nonce: U256,
-) -> SpendArgs {
-    let pool_state = GratisPoolContract::new(storage);
-    SpendArgs {
-        merkle_root: pool_state.current_root(denom_id).unwrap(),
-        nullifier_hash: nullifier_hash(nullifier_secret).unwrap(),
-        denom_id,
-        receiver_binding: receiver_binding(action_tag, target, CHAIN_ID, nonce).unwrap(),
-        proof: vec![0x00; 32], // dummy — verifier outcome forced via with_verifier_outcome
+fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
+    let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+    ModifyAuth {
+        mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
+        op_nonce,
     }
 }
 
-#[test]
-fn full_request_pay_reclaim_unpledge_flow() {
+fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::balance_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_balance(&vk, a, &blob).unwrap()
+}
+
+fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
+    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
+    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
+    if blob.is_empty() {
+        return U256::ZERO;
+    }
+    decrypt_pledged(&vk, a, &blob).unwrap()
+}
+
+/// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
+/// destination bundle account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
+fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
+    let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
+    spend_auth_mac(&pledge_secret(&mk, handle), bundle)
+}
+
+/// Storage set up with the block time, sub-call stubs, and the enclave installed.
+fn env() -> HashMapStorageProvider {
+    test_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    storage
+}
+
+#[test]
+fn full_pledge_request_pay_unlock_flow() {
+    let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis1;
-        let denom_id = denom.id();
-        let pledge_amount = denom.amount();
+        let pledge_amount = one_e18();
+        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
-        // Each installment unlocks one tenth, in the anadosis (one-decade-down)
-        // pool. For a Gratis1 pledge that is the reserved Gratis0_1 sub-rung.
-        let anadosis_denom = denom.anadosis_denomination().unwrap();
-        let anadosis_denom_id = anadosis_denom.id();
-        let installment_amount = anadosis_denom.amount();
-        assert_eq!(
-            installment_amount * U256::from(NUMBER_OF_ANADOSIS),
+        // Mine + pledge. Alice is both the pledger EOA and the bundle account here.
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
             pledge_amount,
-        );
-
-        // Mint Alice enough Gratis to pledge.
-        Gratis::new(storage.clone())
-            .mint(alice(), pledge_amount)
-            .unwrap();
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        let handle = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
+        )
+        .unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), pledge_amount);
 
-        // Pledge-side note, spent at requestCredis.
-        let pledge_secret = U256::from(0x1111u64);
-        let pledge_null = U256::from(0x2222u64);
-        let pledge_commitment = commitment_hash(pledge_secret, pledge_null, denom).unwrap();
-
-        // 1) Pledge: shielded deposit into the per-denomination pool.
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_commitment).unwrap();
-
-        // 2) Request credis: Alice is also the bundleAccount. The binding nonce
-        //    slot is zero now that reclaim is supplied per installment.
-        let args = SpendArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(pledge_null).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0x00; 32],
-        };
-
-        let (position_id, amount_stables) = with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
-        });
+        // requestCredis bound to alice's bundle account, with alice as the pledger
+        // EOA. The collateral moves out of alice's pledged ledger into the escrow.
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, amount_stables) = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            handle,
+            spend,
+        )
+        .unwrap();
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, CREDIS_ADDRESS), pledge_amount);
 
         // amount_stables = pledge_amount * 2e18 / (1e12 * 1e18) for rate 2.0.
         let expected_stables = pledge_amount * U256::from(2u64) * one_e18()
             / (U256::from(1_000_000_000_000u128) * one_e18());
         assert_eq!(amount_stables, expected_stables);
 
-        // Position created with the right backing. The loan disbursed is the
-        // principal (`amount_stables`); the repayment schedule carries the
-        // refinancing-rate markup: total_debt = principal * (1 + rate*10/12).
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.bundle_account, alice());
@@ -181,245 +178,167 @@ fn full_request_pay_reclaim_unpledge_flow() {
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
             one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
-        let expected_total_debt = amount_stables * multiplier / one_e18();
-        assert_eq!(position.total_anadosis_amount, expected_total_debt);
+        assert_eq!(
+            position.total_anadosis_amount,
+            amount_stables * multiplier / one_e18()
+        );
         assert_eq!(position.total_gratis_amount, pledge_amount);
 
-        // 3) Pay each installment with a distinct reclaim note and immediately
-        //    unpledge it — proving the unlock is available instantly, one
-        //    installment at a time, without waiting for the loan to complete.
+        // Pay each installment; each releases 1/10 of the collateral from the
+        // escrow back to alice's encrypted balance, one installment at a time.
         for n in 1..=NUMBER_OF_ANADOSIS {
-            let secret = U256::from(0x3000u64 + n as u64);
-            let null_s = U256::from(0x4000u64 + n as u64);
-            let reclaim_commitment = commitment_hash(secret, null_s, anadosis_denom).unwrap();
-
-            let pre = GratisPoolContract::new(storage.clone())
-                .leaf_count(anadosis_denom_id)
-                .unwrap();
             storage
                 .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
                 .unwrap();
-            runtime::pay_anadosis(storage.clone(), alice(), position_id, reclaim_commitment)
-                .unwrap();
-            let post = GratisPoolContract::new(storage.clone())
-                .leaf_count(anadosis_denom_id)
-                .unwrap();
-            assert_eq!(
-                post,
-                pre + 1,
-                "installment {n} inserts exactly one reclaim note"
-            );
+            runtime::pay_anadosis(storage.clone(), alice(), position_id, alice()).unwrap();
 
-            // Unlock this installment's share right away.
-            let unpledge_args = build_spend_args(
-                storage.clone(),
-                null_s,
-                anadosis_denom_id,
-                ACTION_UNPLEDGE,
-                alice(),
-                U256::ZERO,
-            );
-            let returned = with_verifier_outcome(true, || {
-                outbe_gratisfactory::runtime::unpledge_gratis(
-                    storage.clone(),
-                    &unpledge_args,
-                    alice(),
-                )
-                .unwrap()
-            });
-            assert_eq!(returned, installment_amount);
-
-            // Escrow released proportionally: n tenths unlocked so far.
-            let gratis = Gratis::new(storage.clone());
-            let unlocked = U256::from(n) * installment_amount;
-            assert_eq!(gratis.balance_of(alice()).unwrap(), unlocked);
+            let unlocked = U256::from(n) * installment;
+            assert_eq!(view_balance(&storage, alice()), unlocked, "installment {n}");
             assert_eq!(
-                gratis.pledged_of(alice()).unwrap(),
+                view_balance(&storage, CREDIS_ADDRESS),
                 pledge_amount - unlocked
             );
         }
 
-        // Final: escrow fully drained, Alice holds the whole pledge again.
-        let gratis = Gratis::new(storage.clone());
-        assert_eq!(gratis.balance_of(alice()).unwrap(), pledge_amount);
-        assert_eq!(gratis.pledged_of(alice()).unwrap(), U256::ZERO);
+        // Fully drained: alice holds the whole pledge again; escrow empty.
+        assert_eq!(view_balance(&storage, alice()), pledge_amount);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, CREDIS_ADDRESS), U256::ZERO);
     });
+    test_enclave::uninstall();
 }
 
-/// Pay a single installment and unpledge its reclaim note. Uses `Gratis10` so
-/// the anadosis denom is the ordinary `Gratis1` rung — covering a non-reserved
-/// mapping (the full flow above covers `Gratis1` → reserved `Gratis0_1`), and
-/// proving the unlock needs only one installment paid, not all ten.
 #[test]
-fn anadosis_inserts_per_installment_reclaim_note() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    storage.set_block_number(BLOCK_NUMBER);
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+fn pay_anadosis_unlocks_one_installment() {
+    let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis10;
-        let denom_id = denom.id();
-        let pledge_amount = denom.amount();
-        let anadosis_denom = denom.anadosis_denomination().unwrap();
-        assert_eq!(anadosis_denom, DenomAmount::Gratis1);
+        let pledge_amount = one_e18();
+        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
-        Gratis::new(storage.clone())
-            .mint(alice(), pledge_amount)
-            .unwrap();
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        let handle = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_amount,
+            auth(GratisOp::Pledge, alice(), pledge_amount, 1),
+        )
+        .unwrap();
 
-        let pledge_commitment =
-            commitment_hash(U256::from(0x51u64), U256::from(0x52u64), denom).unwrap();
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_commitment).unwrap();
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            handle,
+            spend,
+        )
+        .unwrap();
 
-        let args = SpendArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(U256::from(0x52u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0x00; 32],
-        };
-        let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
-        });
-
-        // Pay one installment carrying a reclaim note in the anadosis pool.
-        let reclaim_null = U256::from(0x54u64);
-        let reclaim_commitment =
-            commitment_hash(U256::from(0x53u64), reclaim_null, anadosis_denom).unwrap();
-        let pre = GratisPoolContract::new(storage.clone())
-            .leaf_count(anadosis_denom.id())
-            .unwrap();
+        // Pay a single installment: unlocks exactly pledge/10 right away, without
+        // waiting for the loan to complete.
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
             .unwrap();
-        runtime::pay_anadosis(storage.clone(), alice(), position_id, reclaim_commitment).unwrap();
-        let post = GratisPoolContract::new(storage.clone())
-            .leaf_count(anadosis_denom.id())
-            .unwrap();
-        assert_eq!(post, pre + 1);
+        runtime::pay_anadosis(storage.clone(), alice(), position_id, alice()).unwrap();
 
-        // The single note unpledges for exactly one installment (pledge / 10).
-        let unpledge_args = build_spend_args(
-            storage.clone(),
-            reclaim_null,
-            anadosis_denom.id(),
-            ACTION_UNPLEDGE,
-            alice(),
-            U256::ZERO,
-        );
-        let returned = with_verifier_outcome(true, || {
-            outbe_gratisfactory::runtime::unpledge_gratis(storage.clone(), &unpledge_args, alice())
-                .unwrap()
-        });
-        assert_eq!(returned, anadosis_denom.amount());
-        assert_eq!(returned, pledge_amount / U256::from(NUMBER_OF_ANADOSIS));
-
-        // One tenth unlocked; nine tenths still escrowed.
-        let gratis = Gratis::new(storage.clone());
-        assert_eq!(gratis.balance_of(alice()).unwrap(), anadosis_denom.amount());
+        assert_eq!(view_balance(&storage, alice()), installment);
         assert_eq!(
-            gratis.pledged_of(alice()).unwrap(),
-            pledge_amount - anadosis_denom.amount(),
+            view_balance(&storage, CREDIS_ADDRESS),
+            pledge_amount - installment
         );
     });
+    test_enclave::uninstall();
 }
 
 #[test]
 fn request_credis_rejects_overdue_anadosis() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    storage.set_block_number(BLOCK_NUMBER);
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis1;
-        let denom_id = denom.id();
-        let amount = denom.amount();
-        Gratis::new(storage.clone())
-            .mint(alice(), amount * U256::from(2u64))
-            .unwrap();
+        let amount = one_e18();
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount * U256::from(2u64),
+            auth(GratisOp::Mint, alice(), amount * U256::from(2u64), 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
 
-        let c1 = commitment_hash(U256::from(1u64), U256::from(2u64), denom).unwrap();
-        let c2 = commitment_hash(U256::from(3u64), U256::from(4u64), denom).unwrap();
-
         // First pledge + request.
-        let (root1, _, _) = gf::pledge_gratis(storage.clone(), alice(), denom_id, c1).unwrap();
-        let args1 = SpendArgs {
-            merkle_root: root1,
-            nullifier_hash: nullifier_hash(U256::from(2u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0u8; 32],
-        };
-        with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args1).unwrap();
-        });
+        let h1 = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+        )
+        .unwrap();
+        let spend1 = credis_spend_auth(alice(), h1, alice());
+        runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            h1,
+            spend1,
+        )
+        .unwrap();
 
-        // Second pledge — then attempt a second request once anadosis-1 is
-        // overdue on the first position.
-        let (root2, _, _) = gf::pledge_gratis(storage.clone(), alice(), denom_id, c2).unwrap();
-        let args2 = SpendArgs {
-            merkle_root: root2,
-            nullifier_hash: nullifier_hash(U256::from(4u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0u8; 32],
-        };
+        // Second pledge — then attempt a second request once anadosis-1 is overdue
+        // on the first position.
+        let h2 = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 2),
+        )
+        .unwrap();
+        let spend2 = credis_spend_auth(alice(), h2, alice());
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
             .unwrap();
-        let err = with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args2).unwrap_err()
-        });
-        assert!(err.to_string().contains("overdue"));
+        let err = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            h2,
+            spend2,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("overdue"), "got: {err}");
     });
+    test_enclave::uninstall();
 }
-
-// Zero-RCFI rejection is no longer a credisfactory concern: the fidelity gate
-// moved to `gratisfactory::pledge_gratis`. The rejection is asserted in the
-// gratisfactory crate (`pledge_rejects_zero_rcfi`).
 
 #[test]
 fn request_credis_rejects_zero_asset() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let args = SpendArgs {
-            merkle_root: U256::ZERO,
-            nullifier_hash: U256::ZERO,
-            denom_id: DenomAmount::Gratis1.id(),
-            receiver_binding: U256::ZERO,
-            proof: vec![],
-        };
-        let err = runtime::request_credis(storage.clone(), alice(), Address::ZERO, alice(), args)
-            .unwrap_err();
-        assert!(err.to_string().contains("asset"));
+        let err = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            Address::ZERO,
+            alice(),
+            alice(),
+            B256::ZERO,
+            [0u8; 32],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("asset"), "got: {err}");
     });
 }
 
@@ -428,128 +347,100 @@ fn request_credis_rejects_zero_bundle_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let args = SpendArgs {
-            merkle_root: U256::ZERO,
-            nullifier_hash: U256::ZERO,
-            denom_id: DenomAmount::Gratis1.id(),
-            receiver_binding: U256::ZERO,
-            proof: vec![],
-        };
-        let err = runtime::request_credis(storage.clone(), alice(), asset(), Address::ZERO, args)
-            .unwrap_err();
-        assert!(err.to_string().contains("bundle account"));
+        let err = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            Address::ZERO,
+            alice(),
+            B256::ZERO,
+            [0u8; 32],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("bundle account"), "got: {err}");
     });
 }
 
 #[test]
 fn pay_anadosis_rejects_non_owner_caller() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    storage.set_block_number(BLOCK_NUMBER);
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis1;
-        let denom_id = denom.id();
-        let amount = denom.amount();
-        Gratis::new(storage.clone()).mint(alice(), amount).unwrap();
+        let amount = one_e18();
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        let handle = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+        )
+        .unwrap();
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            handle,
+            spend,
+        )
+        .unwrap();
 
-        let pledge_c = commitment_hash(U256::from(11u64), U256::from(12u64), denom).unwrap();
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
-
-        let args = SpendArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(U256::from(12u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0u8; 32],
-        };
-        let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
-        });
-
-        // bob is not the bundleAccount on this position. The non-zero reclaim
-        // commitment must not matter: the caller-authorization check fires
-        // first.
-        let dummy_reclaim = U256::from(0xDEADu64);
-        let err =
-            runtime::pay_anadosis(storage.clone(), bob(), position_id, dummy_reclaim).unwrap_err();
-        assert!(
-            err.to_string().contains("bundleAccount"),
-            "expected bundleAccount-mismatch error, got: {err}",
-        );
+        // bob is not the position's bundle account.
+        let err = runtime::pay_anadosis(storage.clone(), bob(), position_id, alice()).unwrap_err();
+        assert!(err.to_string().contains("bundleAccount"), "got: {err}");
     });
+    test_enclave::uninstall();
 }
 
 #[test]
-fn pay_anadosis_rejects_zero_reclaim_commitment() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    storage.set_block_number(BLOCK_NUMBER);
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+fn pay_anadosis_rejects_wrong_eoa_account() {
+    let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let denom = DenomAmount::Gratis1;
-        let denom_id = denom.id();
-        let amount = denom.amount();
-        Gratis::new(storage.clone()).mint(alice(), amount).unwrap();
+        let amount = one_e18();
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
         seed_fidelity(storage.clone(), alice());
         seed_oracle(storage.clone(), U256::from(2u64) * one_e18());
+        let handle = gf::pledge_gratis(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+        )
+        .unwrap();
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) = runtime::request_credis(
+            storage.clone(),
+            alice(),
+            asset(),
+            alice(),
+            alice(),
+            handle,
+            spend,
+        )
+        .unwrap();
 
-        let pledge_c = commitment_hash(U256::from(21u64), U256::from(22u64), denom).unwrap();
-        let (pledge_root, _, _) =
-            gf::pledge_gratis(storage.clone(), alice(), denom_id, pledge_c).unwrap();
-        let args = SpendArgs {
-            merkle_root: pledge_root,
-            nullifier_hash: nullifier_hash(U256::from(22u64)).unwrap(),
-            denom_id,
-            receiver_binding: receiver_binding(
-                ACTION_REQUEST_CREDIS,
-                alice(),
-                CHAIN_ID,
-                U256::ZERO,
-            )
-            .unwrap(),
-            proof: vec![0u8; 32],
-        };
-        let (position_id, _) = with_verifier_outcome(true, || {
-            runtime::request_credis(storage.clone(), alice(), asset(), alice(), args).unwrap()
-        });
-
-        // The owner pays, but supplies a zero reclaim commitment.
-        let err =
-            runtime::pay_anadosis(storage.clone(), alice(), position_id, U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("reclaim commitment must be non-zero"),
-            "expected zero-reclaim rejection, got: {err}",
-        );
+        // Caller is the bundle account (alice) but names the wrong pledger EOA
+        // (bob); the enclave rejects because it does not match the pledge record.
+        storage
+            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
+            .unwrap();
+        let err = runtime::pay_anadosis(storage.clone(), alice(), position_id, bob()).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "got: {err}");
     });
-}
-
-/// Sanity check: the commitment-hash helper is deterministic for the same
-/// inputs (used as the position-id input in `create_position`, so a
-/// regression would break replay).
-#[test]
-fn commitment_hash_deterministic() {
-    let h1 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis1).unwrap();
-    let h2 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis1).unwrap();
-    let h3 = commitment_hash(U256::from(1u64), U256::from(2u64), DenomAmount::Gratis10).unwrap();
-    assert_eq!(h1, h2);
-    assert_ne!(h1, h3);
-    // Anchor against an unrelated keccak so a change in the Poseidon
-    // instance is caught visually if someone swaps it out.
-    let stray = U256::from_be_bytes(keccak256(b"unrelated").0);
-    assert_ne!(h1, stray);
+    test_enclave::uninstall();
 }

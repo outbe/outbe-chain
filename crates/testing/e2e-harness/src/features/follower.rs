@@ -60,7 +60,10 @@ fn drive_past_reshare(world: &mut World) {
     let mut reshared = false;
     for _ in 0..70 {
         sleep(Duration::from_secs(5));
-        if let Some(v) = world.rpc.consensus_status_field(primary, "vrfMaterialVersion") {
+        if let Some(v) = world
+            .rpc
+            .consensus_status_field(primary, "vrfMaterialVersion")
+        {
             if v != "0" && v != "null" && !v.is_empty() {
                 reshared = true;
                 break;
@@ -99,7 +102,10 @@ fn chained_follower(world: &mut World) {
         .consensus_status_field(f1, "lastFinalizedBlock")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
-    assert!(tip > 0, "follower1 did not publish lastFinalizedBlock ({tip})");
+    assert!(
+        tip > 0,
+        "follower1 did not publish lastFinalizedBlock ({tip})"
+    );
     world
         .localnet
         .launch_follower("follower2", FOLLOWER2_SLOT, FOLLOWER1_SLOT, 0)
@@ -146,7 +152,10 @@ fn warm_promotion(world: &mut World) {
 
     world.localnet.stop_followers().expect("stop followers");
     sleep(Duration::from_secs(3));
-    world.localnet.provision_joiner(idx).expect("provision joiner");
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
     world
         .localnet
         .move_datadir("follower/data", &format!("validator-{idx}/data"))
@@ -156,7 +165,10 @@ fn warm_promotion(world: &mut World) {
     let addr = world.rpc.address_of(&key).expect("joiner addr");
     world.state.joiner_addr = Some(addr);
     world.rpc.stake(&key, 1000).expect("stake");
-    world.localnet.launch_joiner(idx, &[]).expect("launch warm joiner");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("launch warm joiner");
     assert!(
         wait_lockstep(&world.rpc, primary, joiner_port, 30),
         "warm-restarted joiner did not sync"

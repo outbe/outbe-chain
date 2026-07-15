@@ -7,6 +7,16 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -23,21 +33,26 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "denomId",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "commitment",
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
       {
-        "name": "newRoot",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "pledgeHandle",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "nonpayable"
@@ -66,36 +81,24 @@
     "name": "unpledgeGratis",
     "inputs": [
       {
-        "name": "args",
-        "type": "tuple",
-        "internalType": "struct IGratisFactory.SpendArgs",
-        "components": [
-          {
-            "name": "merkleRoot",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nullifierHash",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "denomId",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "receiverBinding",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "proof",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pledgeHandle",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -122,6 +125,25 @@
   },
   {
     "type": "event",
+    "name": "GratisMined",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "GratisPledged",
     "inputs": [
       {
@@ -131,16 +153,16 @@
         "internalType": "address"
       },
       {
-        "name": "denomId",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "commitment",
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "pledgeHandle",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -154,12 +176,6 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "denomId",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
       },
       {
         "name": "amount",
