@@ -122,7 +122,7 @@ pub struct ParticipantAnnounce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
     /// Mint `amount` to `account` (credit balance; `total_supply += amount`).
-    Mine,
+    Mint,
     /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
     Burn,
     /// Move `amount` from `account`'s balance into its pledged ledger and open a

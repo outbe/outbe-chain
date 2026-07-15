@@ -72,7 +72,7 @@ fn write_account_blobs(
 }
 
 /// Mint `amount` gratis to `caller` (owner-authorized).
-pub(crate) fn mine(
+pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
@@ -81,7 +81,7 @@ pub(crate) fn mine(
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
     let req = GratisOpRequest {
-        op: GratisOp::Mine,
+        op: GratisOp::Mint,
         chain_id: chain_id_b256(&storage)?,
         account: caller,
         amount,

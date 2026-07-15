@@ -84,10 +84,10 @@ pub fn request_credis(
 
     // Open the credis position. The `commitment` argument to `create_position`
     // builds the position_id; we use the globally-unique pledge handle.
-    let commitment = U256::from_be_bytes(pledge_handle.0);
+    let handle_id = U256::from_be_bytes(pledge_handle.0);
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.create_position(
-        commitment,
+        handle_id,
         bundle_account,
         asset,
         issuance_currency,

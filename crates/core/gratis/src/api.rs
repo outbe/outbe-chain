@@ -1,18 +1,4 @@
 //! Cross-module API for the confidential Gratis token.
-//!
-//! This is the surface other crates use to move Gratis. Owner-authorized writes
-//! carry a [`ModifyAuth`] (the client's HMAC over the op + the account's current
-//! `op_nonce`); the credis-driven entry points ([`pledge_to_bundle`],
-//! [`unlock_to_eoa`]) are gated by the pledge-record state machine instead.
-//! Reads return **ciphertext** — the caller decrypts with the account's view key
-//! (see `outbe_tee_enclave::gratis::decrypt_balance`), never the host.
-//!
-//! Current production callers:
-//! - `outbe_gratisfactory` — [`mine`]/[`burn`] acquisition & sale, [`pledge`]/
-//!   [`unpledge`] the credis escrow.
-//! - `outbe_nodfactory` — [`mine`] via the Nod acquisition path.
-//! - `outbe_credisfactory` — [`pledge_to_bundle`] (requestCredis) and
-//!   [`unlock_to_eoa`] (payAnadosis).
 
 use alloy_primitives::{Address, B256, U256};
 
@@ -55,13 +41,13 @@ pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
 // --- Owner-authorized mutations ---
 
 /// Mint `amount` gratis to `caller`.
-pub fn mine(
+pub fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    runtime::mine(storage, caller, amount, auth)
+    runtime::mint(storage, caller, amount, auth)
 }
 
 /// Burn `amount` gratis from `caller`. Returns the remaining total supply.

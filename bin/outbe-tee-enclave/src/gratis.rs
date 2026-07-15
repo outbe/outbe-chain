@@ -343,7 +343,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
 
 fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     match req.op {
-        GratisOp::Mine | GratisOp::Burn | GratisOp::Pledge | GratisOp::Unpledge => {
+        GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge | GratisOp::Unpledge => {
             apply_owner_op(state_key, req)
         }
         GratisOp::PledgeToBundle => apply_pledge_to_bundle(state_key, req),
@@ -381,7 +381,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
     r.next_op_nonce = req.modify_auth.op_nonce.saturating_add(1);
 
     match req.op {
-        GratisOp::Mine => {
+        GratisOp::Mint => {
             let new_balance = match balance.checked_add(req.amount) {
                 Some(v) => v,
                 None => return Ok(reject("gratis balance overflow")),
@@ -617,8 +617,8 @@ mod tests {
     #[test]
     fn mine_is_deterministic_across_calls() {
         let sk = state_key();
-        let mut r = req(GratisOp::Mine, alice(), U256::from(1000u64), 0);
-        r.modify_auth = auth(&sk, alice(), GratisOp::Mine, r.amount, 0);
+        let mut r = req(GratisOp::Mint, alice(), U256::from(1000u64), 0);
+        r.modify_auth = auth(&sk, alice(), GratisOp::Mint, r.amount, 0);
         let a = apply_op(&sk, &r);
         let b = apply_op(&sk, &r);
         assert_eq!(a, b, "same state key + request → byte-identical result");
@@ -629,8 +629,8 @@ mod tests {
     #[test]
     fn view_key_decrypts_minted_balance() {
         let sk = state_key();
-        let mut r = req(GratisOp::Mine, alice(), U256::from(4242u64), 0);
-        r.modify_auth = auth(&sk, alice(), GratisOp::Mine, r.amount, 0);
+        let mut r = req(GratisOp::Mint, alice(), U256::from(4242u64), 0);
+        r.modify_auth = auth(&sk, alice(), GratisOp::Mint, r.amount, 0);
         let res = apply_op(&sk, &r);
         // A holder with only the view key can decrypt the balance blob.
         let vk = derive_view_key(&sk, alice()).unwrap();
@@ -642,8 +642,8 @@ mod tests {
     #[test]
     fn mine_rejects_forged_modify_auth() {
         let sk = state_key();
-        let mut r = req(GratisOp::Mine, alice(), U256::from(1u64), 0);
-        r.modify_auth = auth(&sk, alice(), GratisOp::Mine, r.amount, 0);
+        let mut r = req(GratisOp::Mint, alice(), U256::from(1u64), 0);
+        r.modify_auth = auth(&sk, alice(), GratisOp::Mint, r.amount, 0);
         r.modify_auth.mac[0] ^= 0xff;
         assert!(matches!(
             apply_op(&sk, &r).status,
@@ -655,8 +655,8 @@ mod tests {
     fn burn_requires_sufficient_balance() {
         let sk = state_key();
         // mint 100
-        let mut m = req(GratisOp::Mine, alice(), U256::from(100u64), 0);
-        m.modify_auth = auth(&sk, alice(), GratisOp::Mine, m.amount, 0);
+        let mut m = req(GratisOp::Mint, alice(), U256::from(100u64), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
         let minted = apply_op(&sk, &m);
         // burn 200 → reject
         let mut b = req(GratisOp::Burn, alice(), U256::from(200u64), 1);
@@ -672,8 +672,8 @@ mod tests {
     fn pledge_request_credis_and_unlock_flow() {
         let sk = state_key();
         // mine 1000 to alice
-        let mut m = req(GratisOp::Mine, alice(), U256::from(1000u64), 0);
-        m.modify_auth = auth(&sk, alice(), GratisOp::Mine, m.amount, 0);
+        let mut m = req(GratisOp::Mint, alice(), U256::from(1000u64), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
         let minted = apply_op(&sk, &m);
 
         // pledge 1000 (10 installments)
@@ -751,8 +751,8 @@ mod tests {
 
     /// Helper: mine `amount` then pledge it, returning `(handle, pledge_result)`.
     fn mine_and_pledge(sk: &[u8; 32], amount: U256) -> (B256, GratisOpResult) {
-        let mut m = req(GratisOp::Mine, alice(), amount, 0);
-        m.modify_auth = auth(sk, alice(), GratisOp::Mine, amount, 0);
+        let mut m = req(GratisOp::Mint, alice(), amount, 0);
+        m.modify_auth = auth(sk, alice(), GratisOp::Mint, amount, 0);
         let minted = apply_op(sk, &m);
         let mut p = req(GratisOp::Pledge, alice(), amount, 1);
         p.current_balance = minted.new_balance.clone();

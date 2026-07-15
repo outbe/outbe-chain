@@ -222,7 +222,7 @@ fn convert_to_gratis_burns_promis_mints_gratis_preserving_fidelity() {
 
         // convertToGratis on the promisfactory precompile. The confidential gratis
         // mint is authorized by alice's modify key at her current op-nonce (0).
-        let a = auth(GratisOp::Mine, alice(), amount, 0);
+        let a = auth(GratisOp::Mint, alice(), amount, 0);
         let call = dispatch_call_bytes(IPromisFactory::IPromisFactoryCalls::convertToGratis(
             IPromisFactory::convertToGratisCall {
                 amount,

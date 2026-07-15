@@ -130,11 +130,11 @@ fn full_pledge_request_pay_unlock_flow() {
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         // Mine + pledge. Alice is both the pledger EOA and the bundle account here.
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             pledge_amount,
-            auth(GratisOp::Mine, alice(), pledge_amount, 0),
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -201,11 +201,11 @@ fn pay_anadosis_unlocks_one_installment() {
         let pledge_amount = one_e18();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             pledge_amount,
-            auth(GratisOp::Mine, alice(), pledge_amount, 0),
+            auth(GratisOp::Mint, alice(), pledge_amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -241,11 +241,11 @@ fn request_credis_rejects_overdue_anadosis() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let amount = one_e18();
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             amount * U256::from(2u64),
-            auth(GratisOp::Mine, alice(), amount * U256::from(2u64), 0),
+            auth(GratisOp::Mint, alice(), amount * U256::from(2u64), 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -323,11 +323,11 @@ fn pay_anadosis_rejects_non_owner_caller() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let amount = one_e18();
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());

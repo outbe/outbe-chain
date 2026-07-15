@@ -283,7 +283,7 @@ fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
         mac: modify_mac(
             &modify_key,
             owner,
-            GratisOp::Mine,
+            GratisOp::Mint,
             item.gratis_load_minor,
             op_nonce,
             chain,

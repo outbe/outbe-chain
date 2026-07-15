@@ -61,15 +61,11 @@ pub fn mint(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    gratis::mine(storage.clone(), account, amount, auth)?;
+    gratis::mint(storage.clone(), account, amount, auth)?;
 
     let now = storage.timestamp()?.to::<u64>();
     outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
 
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisMined { account, amount }),
-    )?;
     Ok(())
 }
 
@@ -77,14 +73,14 @@ pub fn mint(
 /// cohort (unlike [`mint`]). Used by the promis→gratis conversion, where the
 /// original promis acquisition cohort is preserved so loyalty aging carries over.
 /// Authorized by the account owner's modify key; the `GratisMinted` event is
-/// emitted by [`outbe_gratis::api::mine`].
+/// emitted by [`outbe_gratis::api::mint`].
 pub fn mint_from_promis(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    gratis::mine(storage, account, amount, auth)
+    gratis::mint(storage, account, amount, auth)
 }
 
 pub fn mine_coen(

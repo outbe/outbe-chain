@@ -41,7 +41,7 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
     let chain = B256::from(U256::from(CHAIN_ID));
     ModifyAuth {
-        mac: modify_mac(&mk, owner, GratisOp::Mine, amount, 0, chain),
+        mac: modify_mac(&mk, owner, GratisOp::Mint, amount, 0, chain),
         op_nonce: 0,
     }
 }

@@ -69,11 +69,11 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 fn mine_credits_encrypted_balance() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
 
@@ -83,11 +83,11 @@ fn mine_credits_encrypted_balance() {
 
         // Second mine advances the op nonce and accumulates the (hidden) balance.
         let more = U256::from(500u64);
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             more,
-            auth(GratisOp::Mine, alice(), more, 1),
+            auth(GratisOp::Mint, alice(), more, 1),
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(1500u64));
@@ -102,10 +102,10 @@ fn mine_credits_encrypted_balance() {
 fn mine_rejects_replayed_op_nonce() {
     with_env(|storage| {
         let amount = U256::from(100u64);
-        let a = auth(GratisOp::Mine, alice(), amount, 0);
-        api::mine(storage.clone(), alice(), amount, a.clone()).unwrap();
+        let a = auth(GratisOp::Mint, alice(), amount, 0);
+        api::mint(storage.clone(), alice(), amount, a.clone()).unwrap();
         // Replaying the same (amount, nonce=0, mac) must fail — nonce advanced to 1.
-        assert!(api::mine(storage.clone(), alice(), amount, a).is_err());
+        assert!(api::mint(storage.clone(), alice(), amount, a).is_err());
     });
 }
 
@@ -113,20 +113,20 @@ fn mine_rejects_replayed_op_nonce() {
 fn mine_rejects_forged_auth() {
     with_env(|storage| {
         let amount = U256::from(100u64);
-        let mut a = auth(GratisOp::Mine, alice(), amount, 0);
+        let mut a = auth(GratisOp::Mint, alice(), amount, 0);
         a.mac[0] ^= 0xff;
-        assert!(api::mine(storage.clone(), alice(), amount, a).is_err());
+        assert!(api::mint(storage.clone(), alice(), amount, a).is_err());
     });
 }
 
 #[test]
 fn burn_reduces_balance_and_supply() {
     with_env(|storage| {
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             U256::from(1000u64),
-            auth(GratisOp::Mine, alice(), U256::from(1000u64), 0),
+            auth(GratisOp::Mint, alice(), U256::from(1000u64), 0),
         )
         .unwrap();
         let remaining = api::burn(
@@ -148,11 +148,11 @@ fn burn_reduces_balance_and_supply() {
 #[test]
 fn burn_insufficient_balance_reverts() {
     with_env(|storage| {
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             U256::from(100u64),
-            auth(GratisOp::Mine, alice(), U256::from(100u64), 0),
+            auth(GratisOp::Mint, alice(), U256::from(100u64), 0),
         )
         .unwrap();
         assert!(api::burn(
@@ -171,11 +171,11 @@ fn pledge_request_credis_and_pay_anadosis_flow() {
         let amount = U256::from(1000u64);
         let sk = test_enclave::state_key();
         // Mine + pledge (10 installments).
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         let handle = api::pledge(
@@ -229,11 +229,11 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let sk = test_enclave::state_key();
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         let handle = api::pledge(
@@ -295,11 +295,11 @@ fn precompile_balance_of_returns_ciphertext() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     let out = StorageHandle::enter(&mut storage, |storage| {
         let amount = U256::from(777u64);
-        api::mine(
+        api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         let call = Bytes::from(

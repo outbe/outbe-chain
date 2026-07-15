@@ -96,11 +96,11 @@ fn pledge_debits_balance_and_credits_pledged_ledger() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let seed = amount * U256::from(2u64);
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             seed,
-            auth(GratisOp::Mine, alice(), seed, 0),
+            auth(GratisOp::Mint, alice(), seed, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -130,11 +130,11 @@ fn pledge_debits_balance_and_credits_pledged_ledger() {
 fn pledge_rejects_wrong_op_nonce() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -155,11 +155,11 @@ fn pledge_rejects_wrong_op_nonce() {
 fn unpledge_returns_collateral_to_pledger() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
@@ -210,7 +210,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
 
@@ -235,7 +235,7 @@ fn mine_rejects_zero_amount() {
             storage.clone(),
             alice(),
             U256::ZERO,
-            auth(GratisOp::Mine, alice(), U256::ZERO, 0),
+            auth(GratisOp::Mint, alice(), U256::ZERO, 0),
         )
         .unwrap_err();
         assert!(
@@ -250,11 +250,11 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     with_env(|storage| {
         let amount = U256::from(1_000u64);
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             amount,
-            auth(GratisOp::Mine, alice(), amount, 0),
+            auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
         outbe_fidelity::api::cohort_in(
@@ -299,11 +299,11 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
 #[test]
 fn mine_coen_rejects_insufficient_balance() {
     with_env(|storage| {
-        outbe_gratis::api::mine(
+        outbe_gratis::api::mint(
             storage.clone(),
             alice(),
             U256::from(100u64),
-            auth(GratisOp::Mine, alice(), U256::from(100u64), 0),
+            auth(GratisOp::Mint, alice(), U256::from(100u64), 0),
         )
         .unwrap();
 
