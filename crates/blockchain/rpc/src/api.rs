@@ -61,6 +61,34 @@ pub struct ConsensusStatusInfo {
     pub is_validator: bool,
     /// Phase-1 finalized-parent certificate verification policy for this node.
     pub phase1_verification_mode: Phase1VerificationMode,
+    /// Local Mongo materialization and business-readiness state.
+    pub projection: ProjectionStatusInfo,
+}
+
+/// Operator-visible local projection state. This is local health, not consensus data.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionStatusInfo {
+    pub state: ProjectionHealth,
+    pub checkpoint_number: Option<u64>,
+    pub checkpoint_hash: Option<B256>,
+    pub reth_finalized_number: Option<u64>,
+    pub reth_finalized_hash: Option<B256>,
+    pub lag_blocks: Option<u64>,
+    pub ready: bool,
+    pub unavailable_for_millis: Option<u64>,
+    pub last_failure_class: Option<String>,
+}
+
+/// Stable JSON projection-health vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectionHealth {
+    Starting,
+    CatchingUp,
+    Ready,
+    MongoUnavailable,
+    Fatal,
 }
 
 /// Operator-visible Phase-1 finalized-parent verification boundary.
@@ -225,6 +253,20 @@ pub trait OutbeApi {
 mod tests {
     use super::*;
 
+    fn ready_projection() -> ProjectionStatusInfo {
+        ProjectionStatusInfo {
+            state: ProjectionHealth::Ready,
+            checkpoint_number: Some(41),
+            checkpoint_hash: Some(B256::repeat_byte(0x41)),
+            reth_finalized_number: Some(41),
+            reth_finalized_hash: Some(B256::repeat_byte(0x41)),
+            lag_blocks: Some(0),
+            ready: true,
+            unavailable_for_millis: None,
+            last_failure_class: None,
+        }
+    }
+
     #[test]
     fn test_consensus_status_info_serialization_camel_case() {
         let info = ConsensusStatusInfo {
@@ -241,6 +283,7 @@ mod tests {
             vrf_expiry_height: 21621,
             is_validator: true,
             phase1_verification_mode: Phase1VerificationMode::ValidatorEnforced,
+            projection: ready_projection(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -321,6 +364,7 @@ mod tests {
             vrf_expiry_height: 21700,
             is_validator: false,
             phase1_verification_mode: Phase1VerificationMode::TrustedFinality,
+            projection: ready_projection(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -342,6 +386,8 @@ mod tests {
             deserialized.phase1_verification_mode,
             Phase1VerificationMode::TrustedFinality
         );
+        assert!(deserialized.projection.ready);
+        assert_eq!(deserialized.projection.checkpoint_number, Some(41));
     }
 
     #[test]

@@ -1,12 +1,43 @@
 use crate::algorithm::*;
 use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_nod::NodContract;
+use outbe_nod::{precompile::INod, NodRepositoryReader};
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_oracle::contract::OracleContract;
+use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
-use outbe_tribute::{TributeContract, TributeData};
+use outbe_tribute::{
+    TributeContract, TributeData, TributeRepositoryReader, TributeRepositoryWriter,
+};
+use std::sync::Arc;
+
+struct TestBodyRepository {
+    tribute_reader: TributeRepositoryReader,
+    tribute_writer: TributeRepositoryWriter,
+    nod_reader: NodRepositoryReader,
+}
+
+impl TestBodyRepository {
+    fn new() -> Self {
+        let storage = Arc::new(MemoryStorage::new());
+        let reader: StorageReaderHandle = storage.clone();
+        let writer: StorageWriterHandle = storage;
+        Self {
+            tribute_reader: TributeRepositoryReader::new(reader.clone()),
+            tribute_writer: TributeRepositoryWriter::new(reader.clone(), writer),
+            nod_reader: NodRepositoryReader::new(reader),
+        }
+    }
+
+    fn issue(&self, contract: &mut TributeContract<'_>, tribute: &TributeData) {
+        contract.issue(&self.tribute_reader, tribute).unwrap();
+        self.tribute_writer.put(tribute).unwrap();
+    }
+}
 
 fn gas_audit_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
@@ -35,7 +66,7 @@ fn gas_audit_tribute(
 }
 
 #[test]
-fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
+fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     const DENSE_TRIBUTE_COUNT: u64 = 512;
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260525);
@@ -45,8 +76,9 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
+    let bodies = TestBodyRepository::new();
 
-    StorageHandle::enter(&mut storage, |storage| {
+    let result = StorageHandle::enter(&mut storage, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
         // Register ISO 840 (USD) → COEN/0xUSD pair so the runtime's
@@ -74,22 +106,31 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
-        let mut owners = Vec::with_capacity(DENSE_TRIBUTE_COUNT as usize);
         for token_id in 1..=DENSE_TRIBUTE_COUNT {
             let owner = gas_audit_address(token_id);
-            tribute
-                .issue(&gas_audit_tribute(token_id, owner, wwd, nominal))
-                .unwrap();
-            owners.push(owner);
+            bodies.issue(
+                &mut tribute,
+                &gas_audit_tribute(token_id, owner, wwd, nominal),
+            );
         }
         assert_eq!(
-            tribute.get_all_day_tributes(wwd).unwrap().len(),
+            tribute
+                .get_all_day_tributes(&bodies.tribute_reader, wwd)
+                .unwrap()
+                .len(),
             DENSE_TRIBUTE_COUNT as usize,
             "GAS-08 fixture must seed a dense but valid Lysis day"
         );
 
-        let result = crate::runtime::lysis(storage.clone(), wwd, T_NOW, gratis_allocation)
-            .expect("GAS-08 dense Lysis day must complete");
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &bodies.tribute_reader,
+            &bodies.nod_reader,
+            wwd,
+            T_NOW,
+            gratis_allocation,
+        )
+        .expect("GAS-08 dense Lysis day must complete");
 
         assert_eq!(
             result.tribute_ids.len(),
@@ -103,10 +144,6 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
         );
 
         let tribute = TributeContract::new(storage.clone());
-        assert!(
-            tribute.get_all_day_tributes(wwd).unwrap().is_empty(),
-            "GAS-08: day tribute index must be cleared after full dense Lysis processing"
-        );
         assert_eq!(
             tribute.total_supply().unwrap(),
             0,
@@ -119,36 +156,29 @@ fn gas_08_lysis_dense_day_completes_issues_nods_and_clears_day_index() {
             DENSE_TRIBUTE_COUNT,
             "GAS-08: dense Lysis must persist every issued NOD"
         );
-        let mut issued_gratis = U256::ZERO;
-        for (idx, nod_id) in result.nod_ids.iter().enumerate() {
-            let item = nod
-                .get_item(*nod_id)
-                .unwrap()
-                .expect("GAS-08 issued NOD must be readable");
-            assert_eq!(item.owner, owners[idx]);
-            assert_eq!(item.worldwide_day, wwd);
-            // league_id now comes from the Fidelity league. These owners have no
-            // gratis cohort history, so no account has qualified (the global
-            // synthetic-max ceiling is zero) → everyone lands in the minimum
-            // league (MIN_LEAGUE == 1).
-            assert_eq!(item.league_id, 1);
-            assert!(
-                !item.gratis_load_minor.is_zero(),
-                "GAS-08: issued dense NOD must carry positive gratis load"
-            );
-            assert_eq!(
-                item.cost_amount_minor,
-                cost_of_gratis * item.gratis_load_minor / SCALE_1E18,
-                "GAS-08: dense NOD cost accounting must preserve the 1e18 scale"
-            );
-            issued_gratis += item.gratis_load_minor;
-        }
-        assert_eq!(
-            issued_gratis + result.remaining_gratis,
-            gratis_allocation,
-            "GAS-08: dense Lysis must conserve gratis allocation across issued load + remainder"
-        );
+        result
     });
+
+    let stored_items = storage
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
+        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(stored_items.len(), DENSE_TRIBUTE_COUNT as usize);
+    let mut issued_gratis = U256::ZERO;
+    for (idx, item) in stored_items.iter().enumerate() {
+        assert_eq!(item.owner, gas_audit_address(idx as u64 + 1));
+        assert_eq!(item.worldwideDay, u32::from(wwd));
+        assert_eq!(item.leagueId, 1);
+        assert!(!item.gratisLoadMinor.is_zero());
+        assert_eq!(
+            item.costAmountMinor,
+            cost_of_gratis * item.gratisLoadMinor / SCALE_1E18,
+        );
+        issued_gratis += item.gratisLoadMinor;
+    }
+    assert_eq!(issued_gratis + result.remaining_gratis, gratis_allocation);
 }
 
 #[test]
@@ -453,14 +483,13 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 /// `settle_mine_payment` is a no-op today, but every nominal-scale consumer
 /// (token URI, `nodData`, future settlement) was wrong.
 #[test]
-fn test_lysis_cost_amount_lives_in_minor_scale() {
+fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     use alloy_primitives::{address, U256};
     use outbe_common::WorldwideDay;
-    use outbe_nod::NodContract;
     use outbe_oracle::contract::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_tribute::{TributeContract, TributeData};
+    use outbe_tribute::TributeData;
 
     use crate::runtime::lysis;
 
@@ -473,7 +502,8 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
 
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
+    let bodies = TestBodyRepository::new();
+    let result = StorageHandle::enter(&mut storage, |s| {
         // 1. Register COEN/0xUSD pair and seed its WorldwideDay VWAP. We
         //    write directly into the oracle schema (no real vote tally),
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
@@ -501,13 +531,11 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
             .write(&0u32, cost_of_gratis)
             .unwrap();
 
-        // 2. Open the day and issue a single tribute. With no cohort history the
-        //    owner's Fidelity league is MIN_LEAGUE (see `FidelityContract::league`);
-        //    the single-FI fast path is independent of the index value.
-        let mut tribute = TributeContract::new(s.clone());
-        tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(&TributeData {
+        // Seed only the off-chain repository. No Tribute EVM body or body index
+        // is written, so successful Lysis proves the production read cutover.
+        bodies
+            .tribute_writer
+            .put(&TributeData {
                 token_id: U256::from(1u64),
                 owner,
                 worldwide_day: wwd,
@@ -524,35 +552,44 @@ fn test_lysis_cost_amount_lives_in_minor_scale() {
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
         let gratis_allocation = nominal / U256::from(10u64);
-        let result = lysis(s.clone(), wwd, T_NOW, gratis_allocation).unwrap();
+        let result = lysis(
+            s.clone(),
+            &bodies.tribute_reader,
+            &bodies.nod_reader,
+            wwd,
+            T_NOW,
+            gratis_allocation,
+        )
+        .unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
-
-        // 4. Read back the NOD and assert the documented scale invariant.
-        let nod = NodContract::new(s.clone());
-        let item = nod.get_item(result.nod_ids[0]).unwrap().expect("NOD");
-
-        // reference_currency must propagate from the originating Tribute.
-        assert_eq!(item.reference_currency, 840);
-
-        let expected = cost_of_gratis * item.gratis_load_minor / SCALE_1E18;
-        assert_eq!(
-            item.cost_amount_minor,
-            expected,
-            "cost_amount_minor must equal cost_of_gratis * gratis_load / SCALE_1E18; \
-             pre-fix value (missing /SCALE) would be {}",
-            cost_of_gratis * item.gratis_load_minor
-        );
-
-        // 5. Sanity bound: minor-unit cost cannot exceed a reasonable cap.
-        //    The buggy value (~4 * 10^36 for these inputs) blows past 10^21.
-        let upper_bound = U256::in_units(1_000u64);
-        assert!(
-            item.cost_amount_minor <= upper_bound,
-            "cost_amount_minor {} looks like a 10^36-scaled value; \
-             likely a scale-mismatch regression",
-            item.cost_amount_minor
-        );
+        result
     });
+
+    // 4. Decode the canonical projection event and assert the documented scale invariant.
+    let item = storage
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
+        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .expect("NOD body event");
+    assert_eq!(item.nodId, result.nod_ids[0]);
+    assert_eq!(item.referenceCurrency, 840);
+
+    let expected = cost_of_gratis * item.gratisLoadMinor / SCALE_1E18;
+    assert_eq!(
+        item.costAmountMinor,
+        expected,
+        "cost_amount_minor must equal cost_of_gratis * gratis_load / SCALE_1E18; \
+         pre-fix value (missing /SCALE) would be {}",
+        cost_of_gratis * item.gratisLoadMinor
+    );
+
+    let upper_bound = U256::in_units(1_000u64);
+    assert!(
+        item.costAmountMinor <= upper_bound,
+        "cost_amount_minor {} looks like a 10^36-scaled value; likely a scale-mismatch regression",
+        item.costAmountMinor
+    );
 }
 
 /// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
@@ -739,7 +776,6 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     use alloy_primitives::{address, U256};
     use outbe_common::WorldwideDay;
-    use outbe_nod::NodContract;
     use outbe_oracle::contract::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
@@ -759,7 +795,8 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
 
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
+    let bodies = TestBodyRepository::new();
+    let result = StorageHandle::enter(&mut storage, |s| {
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
         // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
@@ -786,8 +823,9 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
 
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(&TributeData {
+        bodies.issue(
+            &mut tribute,
+            &TributeData {
                 token_id: U256::from(1u64),
                 owner,
                 worldwide_day: wwd,
@@ -797,10 +835,18 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
                 reference_currency: 840,
                 exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::ZERO,
-            })
-            .unwrap();
+            },
+        );
 
-        let result = lysis(s.clone(), wwd, T_NOW, gratis_allocation).unwrap();
+        let result = lysis(
+            s.clone(),
+            &bodies.tribute_reader,
+            &bodies.nod_reader,
+            wwd,
+            T_NOW,
+            gratis_allocation,
+        )
+        .unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -810,26 +856,22 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
             "scarce-gratis day must still issue the NOD (floor adapts to the 4% deficit)"
         );
 
-        let nod = NodContract::new(s.clone());
-        let item = nod.get_item(result.nod_ids[0]).unwrap().expect("NOD");
-
-        // Single-FI fast path returns f_fp == deficit (4%), so load == 4% of nominal,
-        // which is the full scarce allocation — strictly below an 8% load.
-        assert_eq!(
-            item.gratis_load_minor, gratis_allocation,
-            "scarce day must load the full 4% allocation, not a pinned 8%"
-        );
-        assert!(
-            item.gratis_load_minor < eight_percent_load,
-            "gratis load {} must be below the 8% pin {} (floor adapted down)",
-            item.gratis_load_minor,
-            eight_percent_load
-        );
         assert!(
             result.remaining_gratis.is_zero(),
             "the full scarce allocation must be consumed"
         );
+        result
     });
+
+    let item = storage
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
+        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .expect("NOD body event");
+    assert_eq!(item.nodId, result.nod_ids[0]);
+    assert_eq!(item.gratisLoadMinor, gratis_allocation);
+    assert!(item.gratisLoadMinor < eight_percent_load);
 }
 
 // ---------------------------------------------------------------------
@@ -843,6 +885,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
+    let bodies = TestBodyRepository::new();
 
     StorageHandle::enter(&mut storage, |storage| {
         // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
@@ -877,15 +920,18 @@ fn lysis_records_contributors_aggregated_by_owner() {
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(&gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)))
-            .unwrap();
-        tribute
-            .issue(&gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)))
-            .unwrap();
-        tribute
-            .issue(&gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)))
-            .unwrap();
+        bodies.issue(
+            &mut tribute,
+            &gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)),
+        );
+        bodies.issue(
+            &mut tribute,
+            &gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)),
+        );
+        bodies.issue(
+            &mut tribute,
+            &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
+        );
 
         let total_nominal = U256::in_units(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);
@@ -893,8 +939,15 @@ fn lysis_records_contributors_aggregated_by_owner() {
         // The auction runs weeks after the tribute day; its date key — not the
         // wwd — is the series id the map must land under.
         const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
-        let result = crate::runtime::lysis(storage.clone(), wwd, AUCTION_TS, gratis_allocation)
-            .expect("lysis must complete");
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &bodies.tribute_reader,
+            &bodies.nod_reader,
+            wwd,
+            AUCTION_TS,
+            gratis_allocation,
+        )
+        .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
             3,

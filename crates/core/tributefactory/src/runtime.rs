@@ -5,10 +5,19 @@ use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus};
-use outbe_tribute::{TributeContract, TributeData};
+use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
+
+pub(crate) struct OfferTributeInput<'a> {
+    pub caller: Address,
+    pub cipher_text: &'a [u8],
+    pub nonce: &'a [u8],
+    pub ephemeral_pubkey: U256,
+    pub reference_currency: u16,
+    pub exclude_from_intex_issuance: bool,
+}
 
 impl TributeFactoryContract<'_> {
     /// Single live offer path: an encrypted offer arrives; the host reads the
@@ -17,15 +26,19 @@ impl TributeFactoryContract<'_> {
     /// `TributeOfferResult` without recomputing economics or `token_id`.
     /// `worldwide_day`/`currency` are NOT ABI args — they live in the encrypted
     /// payload; the enclave reads them and they come back in the result.
-    pub fn offer_tribute(
+    pub(crate) fn offer_tribute(
         &mut self,
-        caller: Address,
-        cipher_text: &[u8],
-        nonce: &[u8],
-        ephemeral_pubkey: U256,
-        reference_currency: u16,
-        exclude_from_intex_issuance: bool,
+        tribute_bodies: &TributeRepositoryReader,
+        input: OfferTributeInput<'_>,
     ) -> Result<U256> {
+        let OfferTributeInput {
+            caller,
+            cipher_text,
+            nonce,
+            ephemeral_pubkey,
+            reference_currency,
+            exclude_from_intex_issuance,
+        } = input;
         check_currency(reference_currency)?;
 
         // Current USDC/COEN rate at this block. There is a single active OFFERING
@@ -82,7 +95,7 @@ impl TributeFactoryContract<'_> {
         let tribute_id = U256::from_be_bytes(result.token_id.0);
 
         let tribute = TributeContract::new(self.storage.clone());
-        if tribute.get_tribute(tribute_id)?.is_some() {
+        if tribute.get_tribute(tribute_bodies, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
         }
 
@@ -92,17 +105,20 @@ impl TributeFactoryContract<'_> {
         validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
         let mut tribute = TributeContract::new(self.storage.clone());
-        tribute.issue(&TributeData {
-            token_id: tribute_id,
-            owner: caller,
-            worldwide_day: result_day,
-            issuance_amount_minor: result.issuance_amount_minor,
-            issuance_currency: result.issuance_currency,
-            nominal_amount_minor: result.nominal_amount_minor,
-            reference_currency: result.reference_currency,
-            exclude_from_intex_issuance: result.exclude_from_intex_issuance,
-            tribute_price_minor: result.tribute_price_minor,
-        })?;
+        tribute.issue(
+            tribute_bodies,
+            &TributeData {
+                token_id: tribute_id,
+                owner: caller,
+                worldwide_day: result_day,
+                issuance_amount_minor: result.issuance_amount_minor,
+                issuance_currency: result.issuance_currency,
+                nominal_amount_minor: result.nominal_amount_minor,
+                reference_currency: result.reference_currency,
+                exclude_from_intex_issuance: result.exclude_from_intex_issuance,
+                tribute_price_minor: result.tribute_price_minor,
+            },
+        )?;
 
         if !result.wallet_addresses.is_empty() && !result.sra_addresses.is_empty() {
             let mut agent_reward = AgentRewardContract::new(self.storage.clone());

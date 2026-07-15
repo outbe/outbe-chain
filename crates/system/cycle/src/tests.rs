@@ -14,11 +14,14 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, U256};
+use outbe_nod::NodRepositoryReader;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_tribute::TributeRepositoryReader;
+use std::sync::Arc;
 
 use crate::lifecycle::CycleLifecycle;
-use crate::runtime::dispatch_triggers;
 use crate::schema::Cycle;
 use crate::triggers::{next_fire_at, TriggerId};
 
@@ -44,6 +47,26 @@ fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
         outbe_accounting::record_phase1_progress(ctx, block_number - 1).unwrap();
     }
+}
+
+fn with_body_readers<R>(f: impl FnOnce(&TributeRepositoryReader, &NodRepositoryReader) -> R) -> R {
+    let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+    f(
+        &TributeRepositoryReader::new(storage.clone()),
+        &NodRepositoryReader::new(storage),
+    )
+}
+
+fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    with_body_readers(|tribute_bodies, nod_bodies| {
+        crate::runtime::dispatch_triggers(ctx, tribute_bodies, nod_bodies)
+    })
+}
+
+fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    with_body_readers(|tribute_bodies, nod_bodies| {
+        crate::handler::run_emission_limit_daily(ctx, tribute_bodies, nod_bodies)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +416,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         account_parent(&ctx, 2);
 
         // First settlement of prev_day = 20240101: mints the pools + seals.
-        crate::handler::run_emission_limit_daily(&ctx).unwrap();
+        run_emission_limit_daily(&ctx).unwrap();
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         assert!(
             rewards.daily_settled.read(&20_240_101).unwrap(),
@@ -415,7 +438,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early — no double-mint.
-        crate::handler::run_emission_limit_daily(&ctx).unwrap();
+        run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)

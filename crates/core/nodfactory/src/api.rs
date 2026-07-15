@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use outbe_nod::schema::NodIssueParams;
+use outbe_nod::{schema::NodIssueParams, NodRepositoryReader};
 
 use crate::runtime;
 
@@ -18,6 +18,15 @@ use crate::runtime;
 /// `NOD_FACTORY_ADDRESS`. Returns the new nod id.
 pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result<U256> {
     runtime::issue_nod(storage, params)
+}
+
+/// Issue a new Nod with the explicit off-chain body reader.
+pub fn issue_nod_with_reader(
+    storage: &StorageHandle<'_>,
+    reader: &NodRepositoryReader,
+    params: &NodIssueParams,
+) -> Result<U256> {
+    runtime::issue_nod_with_reader(storage, reader, params)
 }
 
 /// Burn the caller-owned Nod after a PoW + qualification check,
@@ -32,4 +41,16 @@ pub fn mine_gratis(
     asset: Address,
 ) -> Result<U256> {
     runtime::mine_gratis(storage, caller, nod_id, nonce, asset)
+}
+
+/// Mine a Nod with the explicit off-chain body reader.
+pub fn mine_gratis_with_reader(
+    storage: &StorageHandle<'_>,
+    reader: &NodRepositoryReader,
+    caller: Address,
+    nod_id: U256,
+    nonce: U256,
+    asset: Address,
+) -> Result<U256> {
+    runtime::mine_gratis_with_reader(storage, reader, caller, nod_id, nonce, asset)
 }

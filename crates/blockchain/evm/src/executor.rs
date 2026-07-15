@@ -15,6 +15,7 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
+use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, GenesisValidators},
@@ -422,6 +423,23 @@ pub fn run_outbe_pre_execution_hooks(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
 ) -> outbe_primitives::error::Result<()> {
+    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, None)
+}
+
+/// Runs pre-execution hooks with explicit off-chain body read authority.
+pub fn run_outbe_pre_execution_hooks_with_readers(
+    hook_ctx: &BlockRuntimeContext,
+    genesis_validators: Option<&GenesisValidators>,
+    readers: &RuntimeBodyReaders,
+) -> outbe_primitives::error::Result<()> {
+    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, Some(readers))
+}
+
+fn run_outbe_pre_execution_hooks_inner(
+    hook_ctx: &BlockRuntimeContext,
+    genesis_validators: Option<&GenesisValidators>,
+    readers: Option<&RuntimeBodyReaders>,
+) -> outbe_primitives::error::Result<()> {
     let block_number = hook_ctx.block.block_number;
     let timestamp = hook_ctx.block.timestamp;
 
@@ -495,7 +513,11 @@ pub fn run_outbe_pre_execution_hooks(
 
     // NOD: promote unqualified buckets whose floor_price <= current COEN/0xUSD
     // exchange rate. Runs after Oracle so it observes the just-tallied rate.
-    <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    if let Some(readers) = readers {
+        outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, readers.nod())?;
+    } else {
+        <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    }
 
     // GEM: promote unqualified gems whose floor_price < current COEN/<reference>
     // exchange rate AND whose maturity has elapsed. Reads the same Oracle
@@ -752,6 +774,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// fresh per block, so this resets per block; it is identical on the
     /// proposer (build) and validator (re-execution) paths.
     zero_fee_soft_failures: u32,
+    /// Least-authority off-chain readers used by lifecycle body reads.
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_read_budget_guard: Option<ExecutionReadBudgetGuard>,
 }
 
 // test-only opt-out: scoped flag that disables the Phase 1
@@ -825,7 +850,22 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             pending_tee_bootstrap: None,
             whitelisted_hook_event_logs: Vec::new(),
             zero_fee_soft_failures: 0,
+            runtime_body_readers: None,
+            execution_read_budget_guard: None,
         }
+    }
+
+    pub(crate) fn with_runtime_body_readers(
+        mut self,
+        readers: Option<RuntimeBodyReaders>,
+        budget: Option<outbe_primitives::projection::ExecutionReadBudget>,
+    ) -> Self {
+        self.execution_read_budget_guard = readers
+            .as_ref()
+            .zip(budget)
+            .map(|(readers, budget)| readers.enter_execution_budget(budget));
+        self.runtime_body_readers = readers;
+        self
     }
 
     /// Proposer-path builder: attach the one-time `TeeBootstrap` payload the
@@ -2344,7 +2384,18 @@ where
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
-                run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
+                let result = match self.runtime_body_readers.as_ref() {
+                    Some(readers) => run_outbe_pre_execution_hooks_with_readers(
+                        hook_ctx,
+                        genesis_validators.as_ref(),
+                        readers,
+                    ),
+                    None => run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref()),
+                };
+                if let (Some(readers), Err(error)) = (self.runtime_body_readers.as_ref(), &result) {
+                    readers.report_precompile_error(error);
+                }
+                result
             })?
         };
         // Provider dropped here — mutable DB borrow released.
@@ -3431,6 +3482,7 @@ mod tests {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 
@@ -5756,8 +5808,8 @@ mod tests {
     #[test]
     fn pre_exec_hooks_emit_whitelisted_update_activation_event() {
         use alloy_sol_types::SolEvent;
-        use outbe_update::precompile::IUpdate;
         use outbe_update::payload::encode_schedule_update_json;
+        use outbe_update::precompile::IUpdate;
         use serde_json::Value;
 
         let proposer = test_evm_signer().address();
@@ -5804,8 +5856,8 @@ mod tests {
     #[test]
     fn hook_events_receipt_carries_whitelisted_update_activation_log() {
         use alloy_sol_types::SolEvent;
-        use outbe_update::precompile::IUpdate;
         use outbe_update::payload::encode_schedule_update_json;
+        use outbe_update::precompile::IUpdate;
         use serde_json::Value;
 
         let proposer = test_evm_signer().address();

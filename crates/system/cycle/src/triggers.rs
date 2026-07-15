@@ -6,7 +6,9 @@
 //! [`crate::runtime`] iterates this slice on every block and fires any
 //! trigger whose next slot has been reached.
 
+use outbe_nod::NodRepositoryReader;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+use outbe_tribute::TributeRepositoryReader;
 
 /// Stable on-chain identifier for each trigger. The numeric values
 /// must remain byte-equal forever — they are emitted as the indexed
@@ -28,7 +30,7 @@ impl TriggerId {
 }
 
 /// One trigger's static configuration plus its handler function
-/// pointer. Handler signature is `fn(&BlockRuntimeContext) -> Result<()>`.
+/// pointer. Handlers receive only typed, read-only body capabilities.
 #[derive(Clone, Copy)]
 pub struct TriggerSpec {
     pub id: u32,
@@ -51,7 +53,24 @@ pub struct TriggerSpec {
     pub requires_accounting_window: bool,
     /// Handler invoked when a slot fires. Failure rolls back the
     /// trigger's checkpoint and leaves `last_executed_at` unchanged.
-    pub handler: fn(&BlockRuntimeContext) -> Result<()>,
+    pub handler:
+        fn(&BlockRuntimeContext, &TributeRepositoryReader, &NodRepositoryReader) -> Result<()>,
+}
+
+fn run_intex_daily(
+    ctx: &BlockRuntimeContext,
+    _tribute_bodies: &TributeRepositoryReader,
+    _nod_bodies: &NodRepositoryReader,
+) -> Result<()> {
+    outbe_intexfactory::called::run_daily(ctx)
+}
+
+fn advance_wwd_noon(
+    ctx: &BlockRuntimeContext,
+    _tribute_bodies: &TributeRepositoryReader,
+    _nod_bodies: &NodRepositoryReader,
+) -> Result<()> {
+    outbe_metadosis::runtime::advance_active_worldwide_days(ctx)
 }
 
 /// Active trigger table. Order is informational only — the dispatcher
@@ -77,7 +96,7 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // Reads finalized oracle VWAP history and marks series Called; no
         // dependency on the parent block's settlement accounting.
         requires_accounting_window: false,
-        handler: outbe_intexfactory::called::run_daily,
+        handler: run_intex_daily,
     },
     TriggerSpec {
         id: TriggerId::WwdAdvanceNoon.as_u32(),
@@ -92,7 +111,7 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // settlement accounting. Day creation and READY settlement stay
         // on the midnight `emission_limit_1` trigger.
         requires_accounting_window: false,
-        handler: outbe_metadosis::runtime::advance_active_worldwide_days,
+        handler: advance_wwd_noon,
     },
 ];
 

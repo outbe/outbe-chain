@@ -16,6 +16,7 @@ outbe-tribute.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [lints]
 workspace = true

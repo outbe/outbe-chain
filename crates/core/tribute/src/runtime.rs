@@ -5,35 +5,32 @@ use outbe_primitives::error::Result;
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::{TributeContract, TributeData};
+use crate::TributeRepositoryReader;
 
 impl TributeContract<'_> {
-    pub fn get_tributes_by_owner(&self, owner: Address) -> Result<Vec<TributeData>> {
-        let mut tributes = Vec::new();
-        for token_id in self.get_tribute_ids_by_owner(owner)? {
-            if let Some(tribute) = self.get_tribute(token_id)? {
-                tributes.push(tribute);
-            }
-        }
-        Ok(tributes)
+    pub fn get_tributes_by_owner(
+        &self,
+        bodies: &TributeRepositoryReader,
+        owner: Address,
+    ) -> Result<Vec<TributeData>> {
+        Self::read_all_by_owner(bodies, owner)
     }
 
-    pub fn get_all_day_tributes(&self, day: WorldwideDay) -> Result<Vec<TributeData>> {
-        let mut tributes = Vec::new();
-        for token_id in self.get_tribute_ids_by_day(day)? {
-            if let Some(tribute) = self.get_tribute(token_id)? {
-                tributes.push(tribute);
-            }
-        }
-        Ok(tributes)
+    pub fn get_all_day_tributes(
+        &self,
+        bodies: &TributeRepositoryReader,
+        day: WorldwideDay,
+    ) -> Result<Vec<TributeData>> {
+        Self::read_all_by_day(bodies, day)
     }
 
-    pub fn issue(&mut self, tribute: &TributeData) -> Result<()> {
+    pub fn issue(&mut self, bodies: &TributeRepositoryReader, tribute: &TributeData) -> Result<()> {
         self.validate_tribute_for_issue(tribute)?;
         self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
+        if self.get_tribute(bodies, tribute.token_id)?.is_some() {
+            return Err(TributeError::TributeAlreadyExists.into());
+        }
 
-        self.tributes.create(tribute)?;
-        self.add_to_day_index(tribute.worldwide_day, tribute.token_id)?;
-        self.add_to_owner_index(tribute.owner, tribute.token_id)?;
         self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
 
         let supply = self.total_supply.read()?;
@@ -62,12 +59,15 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    pub fn burn(&mut self, token_id: U256) -> Result<()> {
+    pub fn burn(&mut self, bodies: &TributeRepositoryReader, token_id: U256) -> Result<()> {
         let tribute = self
-            .get_tribute(token_id)?
+            .get_tribute(bodies, token_id)?
             .ok_or(TributeError::TributeNotFound)?;
 
-        self.tributes.delete(token_id)?;
+        self.burn_loaded(&tribute)
+    }
+
+    fn burn_loaded(&mut self, tribute: &TributeData) -> Result<()> {
         self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
 
         let supply = self.total_supply.read()?;
@@ -75,9 +75,11 @@ impl TributeContract<'_> {
             self.total_supply.write(supply - 1)?;
         }
 
-        self.emit(ITribute::TributeBodyDeleted { tokenId: token_id })?;
+        self.emit(ITribute::TributeBodyDeleted {
+            tokenId: tribute.token_id,
+        })?;
         self.emit(ITribute::TributeBurned {
-            tokenId: token_id,
+            tokenId: tribute.token_id,
             owner: tribute.owner,
             worldwideDay: tribute.worldwide_day.into(),
         })?;
@@ -85,12 +87,15 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    pub fn burn_all_by_wwd(&mut self, day: WorldwideDay) -> Result<()> {
-        let token_ids = self.get_tribute_ids_by_day(day)?;
-        for token_id in token_ids {
-            self.burn(token_id)?;
+    pub fn burn_all_by_wwd(
+        &mut self,
+        bodies: &TributeRepositoryReader,
+        day: WorldwideDay,
+    ) -> Result<()> {
+        for tribute in self.get_all_day_tributes(bodies, day)? {
+            self.burn_loaded(&tribute)?;
         }
-        self.clear_day_index(day)
+        Ok(())
     }
 
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {

@@ -1,10 +1,13 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Bson, Document},
-    error::{Error as MongoError, ErrorKind as MongoErrorKind},
-    options::Collation,
-    sync::{Client, Collection},
+    error::{Error as MongoError, ErrorKind as MongoErrorKind, WriteFailure},
+    options::{
+        Acknowledgment, ClientOptions, Collation, DatabaseOptions, ReadConcern, ReadPreference,
+        SelectionCriteria, WriteConcern,
+    },
+    sync::{Client, Collection, Database},
 };
 
 use crate::{
@@ -13,10 +16,18 @@ use crate::{
     MAX_SCAN_PAGE_VALUE_BYTES,
 };
 
+const EXECUTION_READ_TIMEOUT: Duration = Duration::from_secs(1);
+
+const WRITE_CONCERN_FAILED_CODE: i32 = 64;
+const READ_CONCERN_MAJORITY_NOT_AVAILABLE_CODE: i32 = 134;
+
 /// Connection settings for the persistent adapter.
 #[derive(Clone, Eq, PartialEq)]
 pub struct MongoStorageConfig {
     /// MongoDB connection string.
+    ///
+    /// Read/write consistency options may be omitted or set to the required
+    /// primary/majority contract. Conflicting URI options are rejected.
     pub uri: String,
     /// Database containing the namespace collections.
     pub database: String,
@@ -35,14 +46,14 @@ impl fmt::Debug for MongoStorageConfig {
 /// Persistent MongoDB storage adapter.
 pub struct MongoStorage {
     client: Client,
-    database: Box<str>,
+    database: Database,
 }
 
 impl fmt::Debug for MongoStorage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MongoStorage")
-            .field("database", &self.database)
+            .field("database", &self.database.name())
             .finish_non_exhaustive()
     }
 }
@@ -50,17 +61,41 @@ impl fmt::Debug for MongoStorage {
 impl MongoStorage {
     /// Connects to the configured database.
     pub fn connect(config: MongoStorageConfig) -> Result<Self, StorageError> {
-        let client = Client::with_uri_str(&config.uri).map_err(map_configuration_error)?;
-        Ok(Self {
-            client,
-            database: config.database.into_boxed_str(),
-        })
+        let mut options = ClientOptions::parse(&config.uri)
+            .run()
+            .map_err(map_configuration_error)?;
+        cap_execution_timeouts(&mut options);
+        let client = Client::with_options(options).map_err(map_configuration_error)?;
+        if !matches!(
+            client.selection_criteria(),
+            None | Some(SelectionCriteria::ReadPreference(ReadPreference::Primary))
+        ) {
+            return Err(StorageError::invalid_argument(
+                "MongoDB execution storage requires primary read preference",
+            ));
+        }
+        if client
+            .read_concern()
+            .is_some_and(|concern| concern != &ReadConcern::majority())
+        {
+            return Err(StorageError::invalid_argument(
+                "MongoDB execution storage requires majority read concern",
+            ));
+        }
+        if client
+            .write_concern()
+            .is_some_and(|concern| !matches!(concern.w.as_ref(), Some(Acknowledgment::Majority)))
+        {
+            return Err(StorageError::invalid_argument(
+                "MongoDB execution storage requires majority write concern",
+            ));
+        }
+        let database = client.database_with_options(&config.database, execution_database_options());
+        Ok(Self { client, database })
     }
 
     fn collection(&self, namespace: &Namespace) -> Collection<Document> {
-        self.client
-            .database(&self.database)
-            .collection(namespace.as_str())
+        self.database.collection(namespace.as_str())
     }
 
     /// Verifies that the server exposes sessions and a transaction-capable topology.
@@ -82,6 +117,53 @@ impl MongoStorage {
         }
         Ok(())
     }
+
+    /// Proves recovery with a server-acknowledged operation inside a transaction.
+    ///
+    /// The projection state collection is guaranteed to exist after projector
+    /// startup. The impossible filter keeps this probe side-effect free while
+    /// still forcing the driver to start and commit a real transaction.
+    pub fn verify_acknowledged_transaction(&self) -> Result<(), StorageError> {
+        let mut session = self
+            .client
+            .start_session()
+            .run()
+            .map_err(map_operation_error)?;
+        session
+            .start_transaction()
+            .selection_criteria(primary_selection())
+            .read_concern(ReadConcern::majority())
+            .write_concern(majority_write_concern())
+            .max_commit_time(EXECUTION_READ_TIMEOUT)
+            .and_run(|session| {
+                self.database
+                    .collection::<Document>("projection_state")
+                    .update_one(
+                        doc! { "_id": { "$exists": false } },
+                        doc! { "$set": { "_outbe_transaction_probe": true } },
+                    )
+                    .upsert(false)
+                    .session(&mut *session)
+                    .run()?;
+                Ok(())
+            })
+            .map_err(map_operation_error)
+    }
+}
+
+fn cap_execution_timeouts(options: &mut ClientOptions) {
+    options.server_selection_timeout = Some(
+        options
+            .server_selection_timeout
+            .unwrap_or(EXECUTION_READ_TIMEOUT)
+            .min(EXECUTION_READ_TIMEOUT),
+    );
+    options.connect_timeout = Some(
+        options
+            .connect_timeout
+            .unwrap_or(EXECUTION_READ_TIMEOUT)
+            .min(EXECUTION_READ_TIMEOUT),
+    );
 }
 
 fn transaction_topology_supported(hello: &Document) -> bool {
@@ -103,6 +185,7 @@ impl StorageReader for MongoStorage {
         self.collection(&namespace)
             .find_one(doc! { "_id": &encoded_key })
             .collation(simple_binary_collation())
+            .max_time(EXECUTION_READ_TIMEOUT)
             .run()
             .map_err(map_operation_error)?
             .map(|document| {
@@ -130,6 +213,7 @@ impl StorageReader for MongoStorage {
             .collection(&namespace)
             .find(doc! { "_id": { "$in": encoded_keys } })
             .collation(simple_binary_collation())
+            .max_time(EXECUTION_READ_TIMEOUT)
             .run()
             .map_err(map_operation_error)?;
         let mut records = std::collections::HashMap::new();
@@ -163,6 +247,7 @@ impl StorageReader for MongoStorage {
             .sort(doc! { "_id": 1 })
             .collation(simple_binary_collation())
             .limit(internal_limit)
+            .max_time(EXECUTION_READ_TIMEOUT)
             .run()
             .map_err(map_operation_error)?;
 
@@ -219,6 +304,10 @@ impl StorageReader for MongoStorage {
 }
 
 impl StorageWriter for MongoStorage {
+    fn verify_transaction_capability(&self) -> Result<(), StorageError> {
+        MongoStorage::verify_acknowledged_transaction(self)
+    }
+
     fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
         batch.validate()?;
         if batch.is_empty() {
@@ -236,6 +325,10 @@ impl StorageWriter for MongoStorage {
             .map_err(map_operation_error)?;
         session
             .start_transaction()
+            .selection_criteria(primary_selection())
+            .read_concern(ReadConcern::majority())
+            .write_concern(majority_write_concern())
+            .max_commit_time(EXECUTION_READ_TIMEOUT)
             .and_run(|session| {
                 for operation in &operations {
                     match operation {
@@ -267,6 +360,25 @@ impl StorageWriter for MongoStorage {
             })
             .map_err(map_operation_error)
     }
+}
+
+fn execution_database_options() -> DatabaseOptions {
+    DatabaseOptions::builder()
+        .selection_criteria(primary_selection())
+        .read_concern(ReadConcern::majority())
+        .write_concern(majority_write_concern())
+        .build()
+}
+
+fn primary_selection() -> SelectionCriteria {
+    SelectionCriteria::ReadPreference(ReadPreference::Primary)
+}
+
+fn majority_write_concern() -> WriteConcern {
+    WriteConcern::builder()
+        .w(Acknowledgment::Majority)
+        .w_timeout(EXECUTION_READ_TIMEOUT)
+        .build()
 }
 
 enum PreparedMongoOperation {
@@ -469,16 +581,37 @@ fn map_operation_error(error: MongoError) -> StorageError {
         MongoErrorKind::DnsResolve { .. }
         | MongoErrorKind::Io(_)
         | MongoErrorKind::ConnectionPoolCleared { .. }
-        | MongoErrorKind::ServerSelection { .. } => StorageError::unavailable(error),
+        | MongoErrorKind::ServerSelection { .. }
+        | MongoErrorKind::Write(WriteFailure::WriteConcernError(_)) => {
+            StorageError::unavailable(error)
+        }
+        MongoErrorKind::Command(command)
+            if matches!(
+                command.code,
+                WRITE_CONCERN_FAILED_CODE | READ_CONCERN_MAJORITY_NOT_AVAILABLE_CODE
+            ) =>
+        {
+            StorageError::unavailable(error)
+        }
         _ => StorageError::backend(error),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mongodb::bson::doc;
+    use std::time::Duration;
 
-    use super::{transaction_topology_supported, MongoStorageConfig};
+    use mongodb::{
+        bson::{doc, from_document},
+        error::{CommandError, Error as MongoError, ErrorKind, WriteConcernError, WriteFailure},
+        options::ClientOptions,
+    };
+
+    use super::{
+        cap_execution_timeouts, map_operation_error, transaction_topology_supported,
+        MongoStorageConfig, EXECUTION_READ_TIMEOUT,
+    };
+    use crate::StorageErrorKind;
 
     #[test]
     fn topology_capability_rejects_standalone_and_accepts_supported_deployments() {
@@ -510,5 +643,48 @@ mod tests {
         assert!(!debug.contains("user:secret"));
         assert!(debug.contains("uri: \"<redacted>\""));
         assert!(debug.contains("database: \"projection\""));
+    }
+
+    #[test]
+    fn unsatisfied_majority_concerns_are_unavailable() {
+        let read_concern_error: CommandError = from_document(doc! {
+            "code": 134,
+            "codeName": "ReadConcernMajorityNotAvailableYet",
+            "errmsg": "majority read concern is temporarily unavailable",
+        })
+        .unwrap();
+        let read_concern_error: MongoError = ErrorKind::Command(read_concern_error).into();
+        assert_eq!(
+            map_operation_error(read_concern_error).kind(),
+            StorageErrorKind::Unavailable
+        );
+
+        let write_concern_error: WriteConcernError = from_document(doc! {
+            "code": 64,
+            "codeName": "WriteConcernFailed",
+            "errmsg": "majority acknowledgement timed out",
+        })
+        .unwrap();
+        let write_concern_error: MongoError =
+            ErrorKind::Write(WriteFailure::WriteConcernError(write_concern_error)).into();
+        assert_eq!(
+            map_operation_error(write_concern_error).kind(),
+            StorageErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn execution_connection_attempts_cannot_exceed_the_one_second_read_budget() {
+        let mut options = ClientOptions::default();
+        options.server_selection_timeout = Some(Duration::from_secs(30));
+        options.connect_timeout = Some(Duration::from_secs(15));
+
+        cap_execution_timeouts(&mut options);
+
+        assert_eq!(
+            options.server_selection_timeout,
+            Some(EXECUTION_READ_TIMEOUT)
+        );
+        assert_eq!(options.connect_timeout, Some(EXECUTION_READ_TIMEOUT));
     }
 }

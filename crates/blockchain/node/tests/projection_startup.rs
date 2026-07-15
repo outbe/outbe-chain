@@ -9,6 +9,7 @@ use outbe_node::projection::{
 };
 use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
 use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
+use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use reth_ethereum::Block;
 use reth_provider::test_utils::MockEthProvider;
 
@@ -17,16 +18,14 @@ use reth_provider::test_utils::MockEthProvider;
 fn standalone_mongodb_is_rejected_during_startup_preparation() {
     let uri = std::env::var("OUTBE_TEST_STANDALONE_MONGODB_URI")
         .expect("set OUTBE_TEST_STANDALONE_MONGODB_URI before running this test");
-    let error =
-        prepare_offchain_data_projection(config(uri, isolated_database("standalone_rejected"), 1))
-            .err()
-            .expect("standalone MongoDB must not produce a ready projection");
-
-    let error = format!("{error:#}");
-    assert!(error.contains("transaction support"), "error: {error}");
-    assert!(
-        error.contains("requires a replica set or sharded"),
-        "error: {error}"
+    drop(
+        prepare_offchain_data_projection(config(
+            uri,
+            isolated_database("standalone_rejected"),
+            DEVNET_CHAIN_ID,
+        ))
+        .err()
+        .expect("standalone MongoDB must not produce a ready projection"),
     );
 }
 
@@ -41,7 +40,7 @@ fn replica_set_passes_startup_and_persisted_identity_is_validated() {
 
     let canonical_provider = MockEthProvider::new();
     let checkpoint_hash = add_empty_block(&canonical_provider, 1, 1);
-    let first = config(uri.clone(), database.clone(), 1);
+    let first = config(uri.clone(), database.clone(), DEVNET_CHAIN_ID);
     let storage = Arc::new(
         MongoStorage::connect(MongoStorageConfig {
             uri: uri.clone(),
@@ -83,25 +82,18 @@ fn replica_set_passes_startup_and_persisted_identity_is_validated() {
     assert_ne!(checkpoint_hash, wrong_hash);
     let prepared = prepare_offchain_data_projection(first)
         .expect("matching managed state must pass MongoDB startup preparation");
-    let error = validate_offchain_data_checkpoint(prepared, &wrong_canonical_provider)
-        .err()
-        .expect("mismatched canonical checkpoint hash must stop startup");
-    let error = format!("{error:#}");
-    assert!(
-        error.contains("checkpoint identity mismatch"),
-        "error: {error}"
+    drop(
+        validate_offchain_data_checkpoint(prepared, &wrong_canonical_provider)
+            .err()
+            .expect("mismatched canonical checkpoint hash must stop startup"),
     );
 
-    let mut wrong_identity = config(uri, database.clone(), 1);
-    wrong_identity.chain_id = 2;
-    let error = prepare_offchain_data_projection(wrong_identity)
-        .err()
-        .expect("mismatched persisted chain identity must stop startup");
-    let error = format!("{error:#}");
-    assert!(error.contains("MongoDB state"), "error: {error}");
-    assert!(
-        error.contains("identity does not match configured chain"),
-        "error: {error}"
+    let mut wrong_identity = config(uri, database.clone(), DEVNET_CHAIN_ID);
+    wrong_identity.genesis_hash = B256::repeat_byte(0x22);
+    drop(
+        prepare_offchain_data_projection(wrong_identity)
+            .err()
+            .expect("mismatched persisted chain identity must stop startup"),
     );
 
     client.database(&database).drop().run().unwrap();

@@ -23,12 +23,14 @@ use outbe_cycle::{
     state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
     triggers::TriggerSpec,
 };
+use outbe_nod::NodRepositoryReader;
 use outbe_primitives::{
     accounting_progress::AccountingProgressView,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::hashmap::HashMapStorageProvider,
 };
+use outbe_tribute::TributeRepositoryReader;
 use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;
@@ -37,7 +39,11 @@ const DAY: u64 = 86_400;
 const WEEK: u64 = 604_800;
 const MONTH: u64 = 30 * DAY;
 
-fn dummy_handler(_ctx: &BlockRuntimeContext) -> Result<()> {
+fn dummy_handler(
+    _ctx: &BlockRuntimeContext,
+    _tribute_bodies: &TributeRepositoryReader,
+    _nod_bodies: &NodRepositoryReader,
+) -> Result<()> {
     Ok(())
 }
 

@@ -97,6 +97,7 @@ use outbe_consensus::{
 use outbe_node::OutbeFullNode;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
+    projection::ProjectionReadinessHandle,
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
@@ -1633,6 +1634,7 @@ async fn run_follow_stack<E>(
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
     upstream: String,
+    projection_readiness: ProjectionReadinessHandle,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1713,6 +1715,7 @@ where
         bridge,
         upstream,
         epoch_length,
+        projection_readiness,
     )
     .await
 }
@@ -1728,6 +1731,7 @@ async fn run_certified_follow_stack<E>(
     bridge: ConsensusExecutionBridge,
     upstream: String,
     epoch_length_blocks: u32,
+    projection_readiness: ProjectionReadinessHandle,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1932,6 +1936,7 @@ where
         genesis_hash,
         last_execution_height,
         last_execution_hash,
+        projection_readiness,
         Some(execution_finalized_height_tx),
     );
     let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
@@ -1974,6 +1979,7 @@ pub async fn run_consensus_stack<E>(
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
+    projection_readiness: ProjectionReadinessHandle,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1992,7 +1998,7 @@ where
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before any validator material is loaded.
     if let Some(upstream) = args.upstream.clone() {
-        return run_follow_stack(ctx, args, node, bridge, upstream).await;
+        return run_follow_stack(ctx, args, node, bridge, upstream, projection_readiness).await;
     }
 
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
@@ -3033,6 +3039,7 @@ where
         genesis_hash,
         last_execution_height,
         last_execution_hash,
+        projection_readiness.clone(),
         Some(execution_finalized_height_tx.clone()),
     );
 
@@ -3316,13 +3323,13 @@ where
         vrf_safety: vrf_safety.clone(),
         epoch_fence: application_epoch_fence.clone(),
         ancestry_readiness: ancestry_readiness.clone(),
+        projection_readiness,
         finalization_view: finalization_view.clone(),
         block_cache: finalization_block_cache.clone(),
         finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
         ),
         payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
-        payload_return_time: std::time::Duration::from_millis(args.payload_return_time_ms),
         min_block_time: bt.min_block_time,
         proposer_evm_address,
         trust_el_head: args.trust_el_head,

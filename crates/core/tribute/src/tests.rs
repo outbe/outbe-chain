@@ -1,23 +1,128 @@
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
 use alloy_primitives::{address, U256};
 use alloy_sol_types::SolEvent;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::{TributeContract, TributeData};
+use crate::{TributeContract, TributeData, TributeRepositoryReader, TributeRepositoryWriter};
 
-fn with_tribute<R>(f: impl FnOnce(&mut TributeContract) -> R) -> R {
+struct TestTribute<'a> {
+    contract: TributeContract<'a>,
+    reader: TributeRepositoryReader,
+    writer: TributeRepositoryWriter,
+}
+
+impl<'a> Deref for TestTribute<'a> {
+    type Target = TributeContract<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.contract
+    }
+}
+
+impl DerefMut for TestTribute<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.contract
+    }
+}
+
+impl TestTribute<'_> {
+    fn issue(&mut self, tribute: &TributeData) -> PrecompileResult<()> {
+        self.contract.issue(&self.reader, tribute)?;
+        self.writer.put(tribute).map_err(PrecompileError::from)
+    }
+
+    fn burn(&mut self, token_id: U256) -> PrecompileResult<()> {
+        self.contract.burn(&self.reader, token_id)?;
+        self.writer.delete(token_id).map_err(PrecompileError::from)
+    }
+
+    fn burn_all_by_wwd(&mut self, day: outbe_common::WorldwideDay) -> PrecompileResult<()> {
+        let ids = self.contract.get_tribute_ids_by_day(&self.reader, day)?;
+        self.contract.burn_all_by_wwd(&self.reader, day)?;
+        for token_id in ids {
+            self.writer
+                .delete(token_id)
+                .map_err(PrecompileError::from)?;
+        }
+        Ok(())
+    }
+
+    fn get_tribute(&self, token_id: U256) -> PrecompileResult<Option<TributeData>> {
+        self.contract.get_tribute(&self.reader, token_id)
+    }
+
+    fn balance_of(&self, owner: alloy_primitives::Address) -> PrecompileResult<u64> {
+        self.contract.balance_of(&self.reader, owner)
+    }
+
+    fn token_uri(&self, token_id: U256) -> PrecompileResult<String> {
+        self.contract.token_uri(&self.reader, token_id)
+    }
+
+    fn get_tribute_ids_by_owner(
+        &self,
+        owner: alloy_primitives::Address,
+    ) -> PrecompileResult<Vec<U256>> {
+        self.contract.get_tribute_ids_by_owner(&self.reader, owner)
+    }
+
+    fn get_tribute_ids_by_day(
+        &self,
+        day: outbe_common::WorldwideDay,
+    ) -> PrecompileResult<Vec<U256>> {
+        self.contract.get_tribute_ids_by_day(&self.reader, day)
+    }
+
+    fn get_tributes_by_owner(
+        &self,
+        owner: alloy_primitives::Address,
+    ) -> PrecompileResult<Vec<TributeData>> {
+        self.contract.get_tributes_by_owner(&self.reader, owner)
+    }
+
+    fn get_all_day_tributes(
+        &self,
+        day: outbe_common::WorldwideDay,
+    ) -> PrecompileResult<Vec<TributeData>> {
+        self.contract.get_all_day_tributes(&self.reader, day)
+    }
+}
+
+fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = storage.clone();
+    let writer: StorageWriterHandle = storage;
+    (
+        TributeRepositoryReader::new(reader.clone()),
+        TributeRepositoryWriter::new(reader, writer),
+    )
+}
+
+fn with_tribute<R>(f: impl FnOnce(&mut TestTribute<'_>) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
+    let (reader, writer) = body_repository();
     StorageHandle::enter(&mut storage, |storage| {
-        let mut tc = TributeContract::new(storage.clone());
+        let mut tc = TestTribute {
+            contract: TributeContract::new(storage.clone()),
+            reader,
+            writer,
+        };
         f(&mut tc)
     })
 }
 
-fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
+fn with_provider<R>(
+    f: impl FnOnce(&mut HashMapStorageProvider, &TributeRepositoryReader, &TributeRepositoryWriter) -> R,
+) -> R {
     let mut storage = HashMapStorageProvider::new(1);
-    f(&mut storage)
+    let (reader, writer) = body_repository();
+    f(&mut storage, &reader, &writer)
 }
 
 fn sample_tribute() -> TributeData {
@@ -291,13 +396,14 @@ fn test_burn_all_by_wwd() {
 
 #[test]
 fn test_events_emitted_for_issue_and_burn() {
-    with_provider(|provider| {
+    with_provider(|provider, reader, writer| {
         let tribute = sample_tribute();
         StorageHandle::enter(provider, |storage| {
             let mut tc = TributeContract::new(storage.clone());
             tc.unseal_day(tribute.worldwide_day).unwrap();
-            tc.issue(&tribute).unwrap();
+            tc.issue(reader, &tribute).unwrap();
         });
+        writer.put(&tribute).unwrap();
 
         let events = provider.get_events(TRIBUTE_ADDRESS).to_vec();
         assert_eq!(
@@ -307,12 +413,7 @@ fn test_events_emitted_for_issue_and_burn() {
         );
         let stored = crate::precompile::ITribute::TributeBodyStored::decode_log_data(&events[1])
             .expect("issue must emit a decodable full-body event first");
-        let persisted = StorageHandle::enter(provider, |storage| {
-            TributeContract::new(storage)
-                .get_tribute(tribute.token_id)
-                .unwrap()
-                .unwrap()
-        });
+        let persisted = reader.get(tribute.token_id).unwrap().unwrap();
         assert_eq!(stored.tokenId, persisted.token_id);
         assert_eq!(stored.owner, persisted.owner);
         assert_eq!(stored.worldwideDay, u32::from(persisted.worldwide_day));
@@ -332,7 +433,7 @@ fn test_events_emitted_for_issue_and_burn() {
 
         StorageHandle::enter(provider, |storage| {
             TributeContract::new(storage)
-                .burn(tribute.token_id)
+                .burn(reader, tribute.token_id)
                 .unwrap();
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
@@ -350,6 +451,7 @@ fn test_events_emitted_for_issue_and_burn() {
 #[test]
 fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
     let mut provider = HashMapStorageProvider::new(1);
+    let (reader, writer) = body_repository();
     let tribute = sample_tribute();
     StorageHandle::enter(&mut provider, |storage| {
         TributeContract::new(storage.clone())
@@ -360,14 +462,11 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let reverted: PrecompileResult<()> = storage.with_checkpoint(|| {
-            TributeContract::new(storage.clone()).issue(&tribute)?;
+            TributeContract::new(storage.clone()).issue(&reader, &tribute)?;
             Err(PrecompileError::Revert("nested caller reverted".into()))
         });
         assert!(reverted.is_err());
-        assert!(TributeContract::new(storage)
-            .get_tribute(tribute.token_id)
-            .unwrap()
-            .is_none());
+        assert!(reader.get(tribute.token_id).unwrap().is_none());
     });
     assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
 
@@ -375,35 +474,38 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
     oog_tribute.token_id = U256::from(2u64);
     StorageHandle::enter(&mut provider, |storage| {
         let out_of_gas: PrecompileResult<()> = storage.with_checkpoint(|| {
-            TributeContract::new(storage.clone()).issue(&oog_tribute)?;
+            TributeContract::new(storage.clone()).issue(&reader, &oog_tribute)?;
             Err(PrecompileError::OutOfGas)
         });
         assert!(matches!(out_of_gas, Err(PrecompileError::OutOfGas)));
-        assert!(TributeContract::new(storage)
-            .get_tribute(oog_tribute.token_id)
-            .unwrap()
-            .is_none());
-    });
-    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
-
-    StorageHandle::enter(&mut provider, |storage| {
-        TributeContract::new(storage).issue(&tribute).unwrap();
-    });
-    provider.clear_events(TRIBUTE_ADDRESS);
-    StorageHandle::enter(&mut provider, |storage| {
-        assert!(TributeContract::new(storage).issue(&tribute).is_err());
+        assert!(reader.get(oog_tribute.token_id).unwrap().is_none());
     });
     assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
 
     StorageHandle::enter(&mut provider, |storage| {
         TributeContract::new(storage)
-            .burn(tribute.token_id)
+            .issue(&reader, &tribute)
             .unwrap();
     });
+    writer.put(&tribute).unwrap();
     provider.clear_events(TRIBUTE_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(TributeContract::new(storage)
-            .burn(tribute.token_id)
+            .issue(&reader, &tribute)
+            .is_err());
+    });
+    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .burn(&reader, tribute.token_id)
+            .unwrap();
+    });
+    writer.delete(tribute.token_id).unwrap();
+    provider.clear_events(TRIBUTE_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(TributeContract::new(storage)
+            .burn(&reader, tribute.token_id)
             .is_err());
     });
     assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());

@@ -17,6 +17,8 @@ outbe-intex.workspace = true
 alloy-primitives.workspace = true
 
 [dev-dependencies]
+outbe-offchain-storage.workspace = true
+alloy-sol-types.workspace = true
 
 [lints]
 workspace = true

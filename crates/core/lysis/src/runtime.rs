@@ -27,9 +27,11 @@ pub struct LysisResult {
 /// 3. Runs the distribution algorithm (fixed-point)
 /// 4. Creates NODs for each tribute
 /// 5. Leaves gratis unminted until a later NOD mine step
-/// 6. Deletes processed tributes and clears the day index
+/// 6. Emits deletion receipts for processed tributes; projection removes bodies and indexes
 pub fn lysis(
     storage: StorageHandle,
+    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
+    nod_bodies: &outbe_nod::NodRepositoryReader,
     wwd: WorldwideDay,
     auction_timestamp: u64,
     gratis_allocation: U256,
@@ -37,7 +39,7 @@ pub fn lysis(
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
 
     // 1. Load all tributes for the day
-    let tributes = tribute_contract.get_all_day_tributes(wwd)?;
+    let tributes = tribute_contract.get_all_day_tributes(tribute_bodies, wwd)?;
     if tributes.is_empty() {
         return Ok(LysisResult {
             nod_ids: vec![],
@@ -122,8 +124,9 @@ pub fn lysis(
         // 10^18-scaled (oracle price × minor units); divide once to land in
         // minor units.
         let cost_amount_minor = entry_price_minor * gratis_load / SCALE_1E18;
-        let nod_id = outbe_nodfactory::api::issue_nod(
+        let nod_id = outbe_nodfactory::api::issue_nod_with_reader(
             &storage,
+            nod_bodies,
             &outbe_nod::NodIssueParams {
                 owner: tribute.owner,
                 worldwide_day: wwd,
@@ -160,11 +163,7 @@ pub fn lysis(
     // Only delete tributes that were successfully processed (NOD issued).
     // Skipped tributes are preserved for potential reprocessing.
     for token_id in &processed_tribute_ids {
-        tribute_contract.burn(*token_id)?;
-    }
-    // Only clear the day index if ALL tributes were processed.
-    if processed_tribute_ids.len() == tributes.len() {
-        tribute_contract.clear_day_index(wwd)?;
+        tribute_contract.burn(tribute_bodies, *token_id)?;
     }
 
     Ok(LysisResult {

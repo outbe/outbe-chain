@@ -12,7 +12,8 @@ use reth_primitives_traits::{AlloyBlockHeader as _, BlockBody as _, SealedBlock}
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    consensus_metadata::CertifiedParentAccountingMetadata, OutbeBlock, OutbeHeader, OutbePrimitives,
+    consensus_metadata::CertifiedParentAccountingMetadata, projection::ExecutionReadBudget,
+    OutbeBlock, OutbeHeader, OutbePrimitives,
 };
 
 /// RPC payload attributes extended with an encoded millisecond timestamp remainder.
@@ -25,6 +26,8 @@ pub struct OutbePayloadAttributes {
     extra_data: Bytes,
     parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     proposer_evm_address: Option<Address>,
+    #[serde(skip)]
+    execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 impl OutbePayloadAttributes {
@@ -52,6 +55,7 @@ impl OutbePayloadAttributes {
             extra_data,
             parent_consensus_metadata,
             proposer_evm_address,
+            execution_read_budget: None,
         }
     }
 
@@ -81,6 +85,18 @@ impl OutbePayloadAttributes {
     pub const fn proposer_evm_address(&self) -> Option<Address> {
         self.proposer_evm_address
     }
+
+    /// Installs the caller's remaining local execution-read budget.
+    #[must_use]
+    pub fn with_execution_read_budget(mut self, budget: ExecutionReadBudget) -> Self {
+        self.execution_read_budget = Some(budget);
+        self
+    }
+
+    /// Returns local-only execution metadata excluded from payload identity and serialization.
+    pub const fn execution_read_budget(&self) -> Option<&ExecutionReadBudget> {
+        self.execution_read_budget.as_ref()
+    }
 }
 
 impl From<EthPayloadAttributes> for OutbePayloadAttributes {
@@ -91,6 +107,7 @@ impl From<EthPayloadAttributes> for OutbePayloadAttributes {
             extra_data: Bytes::new(),
             parent_consensus_metadata: None,
             proposer_evm_address: None,
+            execution_read_budget: None,
         }
     }
 }
@@ -161,6 +178,25 @@ impl BuiltPayload for OutbeBuiltPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutbeExecutionData {
     pub block: Arc<SealedBlock<OutbeBlock>>,
+    /// Local-only request budget; it is never encoded into block bytes.
+    #[serde(skip)]
+    pub execution_read_budget: Option<ExecutionReadBudget>,
+}
+
+impl OutbeExecutionData {
+    #[must_use]
+    pub fn new(block: Arc<SealedBlock<OutbeBlock>>) -> Self {
+        Self {
+            block,
+            execution_read_budget: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_execution_read_budget(mut self, budget: ExecutionReadBudget) -> Self {
+        self.execution_read_budget = Some(budget);
+        self
+    }
 }
 
 impl reth_node_builder::ExecutionPayload for OutbeExecutionData {
@@ -222,9 +258,7 @@ impl PayloadTypes for OutbePayloadTypes {
     type PayloadAttributes = OutbePayloadAttributes;
 
     fn block_to_payload(block: SealedBlock<OutbeBlock>) -> Self::ExecutionData {
-        Self::ExecutionData {
-            block: Arc::new(block),
-        }
+        Self::ExecutionData::new(Arc::new(block))
     }
 }
 

@@ -51,6 +51,52 @@ fn mongo_configuration_and_unavailability_are_backend_neutral() {
     assert_eq!(error.kind(), StorageErrorKind::Unavailable);
 }
 
+#[test]
+fn mongo_configuration_rejects_non_primary_read_preference() {
+    let error = MongoStorage::connect(MongoStorageConfig {
+        uri: "mongodb://127.0.0.1:27017/?readPreference=secondary".to_owned(),
+        database: "downgraded_read_preference".to_owned(),
+    })
+    .expect_err("execution storage must never read from a secondary");
+
+    assert_eq!(error.kind(), StorageErrorKind::InvalidArgument);
+}
+
+#[test]
+fn mongo_configuration_rejects_non_majority_read_concern() {
+    let error = MongoStorage::connect(MongoStorageConfig {
+        uri: "mongodb://127.0.0.1:27017/?readConcernLevel=local".to_owned(),
+        database: "downgraded_read_concern".to_owned(),
+    })
+    .expect_err("execution storage must use majority-committed reads");
+
+    assert_eq!(error.kind(), StorageErrorKind::InvalidArgument);
+}
+
+#[test]
+fn mongo_configuration_rejects_non_majority_write_concern() {
+    let error = MongoStorage::connect(MongoStorageConfig {
+        uri: "mongodb://127.0.0.1:27017/?w=1".to_owned(),
+        database: "downgraded_write_concern".to_owned(),
+    })
+    .expect_err("projection storage must require majority write acknowledgement");
+
+    assert_eq!(error.kind(), StorageErrorKind::InvalidArgument);
+}
+
+#[test]
+fn mongo_configuration_accepts_the_required_consistency_contract() {
+    let storage = MongoStorage::connect(MongoStorageConfig {
+        uri:
+            "mongodb://127.0.0.1:27017/?readPreference=primary&readConcernLevel=majority&w=majority"
+                .to_owned(),
+        database: "required_consistency".to_owned(),
+    })
+    .expect("the exact primary/majority contract must be accepted");
+
+    drop(storage);
+}
+
 fn assert_invalid<T: std::fmt::Debug>(result: Result<T, outbe_offchain_storage::StorageError>) {
     assert_eq!(
         result.expect_err("argument must be rejected").kind(),

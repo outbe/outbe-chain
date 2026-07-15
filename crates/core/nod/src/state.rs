@@ -1,4 +1,7 @@
-use alloy_primitives::{Address, B256, U256};
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_primitives::Address;
+use alloy_primitives::{B256, U256};
+#[cfg(any(test, feature = "test-utils"))]
 use base64::Engine;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -7,11 +10,14 @@ use outbe_primitives::math::{
     tree_math::{self, BinTreeStorage},
 };
 
+#[cfg(any(test, feature = "test-utils"))]
+use crate::constants::{TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE};
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE},
+    constants::BIN_STEP_BP,
     errors::NodError,
     precompile::INod,
     schema::{NodBucketState, NodContract, NodItemState},
+    NodRepositoryReader,
 };
 
 impl NodContract<'_> {
@@ -37,19 +43,23 @@ impl NodContract<'_> {
         self.total_supply.read()
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn owner_of(&self, nod_id: U256) -> Result<Address> {
         let item = self.get_item(nod_id)?.ok_or(NodError::NodNotFound)?;
         Ok(item.owner)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_item(&self, nod_id: U256) -> Result<Option<NodItemState>> {
         self.nod_items.get(nod_id)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_bucket(&self, bucket_key: B256) -> Result<Option<NodBucketState>> {
         self.nod_buckets.get(bucket_key)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn token_uri(&self, nod_id: U256) -> Result<String> {
         let item = self.get_item(nod_id)?.ok_or(NodError::NodNotFound)?;
         let bucket_key = self
@@ -87,6 +97,7 @@ impl NodContract<'_> {
 
     // --- Enumeration index helpers ---
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
         let mut buf = [0u8; 24];
         buf[0..20].copy_from_slice(owner.as_slice());
@@ -94,6 +105,7 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_nods_by_owner(&self, owner: Address) -> Result<Vec<U256>> {
         let count = self.owner_nod_counts.read(&owner)?;
         (0..count)
@@ -102,6 +114,7 @@ impl NodContract<'_> {
             .collect::<Result<Vec<_>>>()
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_nod_by_owner_idx(&self, owner: Address, index: u32) -> Result<U256> {
         let count = self.owner_nod_counts.read(&owner)?;
         if index >= count {
@@ -111,6 +124,7 @@ impl NodContract<'_> {
         self.owner_nod_ids.read(&key)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_nods_count_by_owner(&self, owner: Address) -> Result<u32> {
         self.owner_nod_counts.read(&owner)
     }
@@ -118,6 +132,7 @@ impl NodContract<'_> {
     /// Swap-and-pop the per-owner index for `nod_id`, keeping the array dense.
     /// The owner's index has no reverse lookup, so finds the slot via linear
     /// scan over the current count (bounded by the owner's balance).
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn compact_owner_index(&mut self, owner: Address, nod_id: U256) -> Result<()> {
         let count = self.owner_nod_counts.read(&owner)?;
         let last = count.checked_sub(1).ok_or(NodError::NodNotFound)?;
@@ -142,7 +157,7 @@ impl NodContract<'_> {
     }
 
     /// Test-only direct bucket setup without projection emission.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn set_qualified(&mut self, bucket_key: B256, is_qualified: bool) -> Result<()> {
         if let Some(mut state) = self.nod_buckets.get(bucket_key)? {
             state.is_qualified = is_qualified;
@@ -167,6 +182,7 @@ impl NodContract<'_> {
     /// this call; it is not stored on `NodItemState` so the caller passes it
     /// explicitly. Caller is responsible for asserting non-existence of
     /// `item.nod_id` and validating inputs before calling.
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn add_nod(&mut self, item: &NodItemState, entry_price_minor: U256) -> Result<()> {
         self.nod_items.create(item)?;
 
@@ -218,6 +234,7 @@ impl NodContract<'_> {
     /// authorization plus any business preconditions (e.g. bucket qualified).
     /// Does not touch the unqualified bin-tree: qualified buckets are no
     /// longer parked there.
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn remove_nod(&mut self, item: &NodItemState) -> Result<()> {
         self.nod_items.delete(item.nod_id)?;
 
@@ -269,6 +286,66 @@ impl NodContract<'_> {
         }
 
         Ok(())
+    }
+
+    /// Records compact issuance state and emits the complete projected bodies.
+    ///
+    /// Full Nod and bucket bodies remain exclusively in the off-chain repository.
+    pub(crate) fn record_nod_issued(
+        &mut self,
+        reader: &NodRepositoryReader,
+        item: &NodItemState,
+        entry_price_minor: U256,
+    ) -> Result<()> {
+        let final_bucket = match reader.get_bucket(item.bucket_key)? {
+            Some(mut bucket) => {
+                bucket.total_nods = bucket.total_nods.saturating_add(1);
+                bucket
+            }
+            None => {
+                let bucket = NodBucketState {
+                    bucket_key: item.bucket_key,
+                    worldwide_day: item.worldwide_day,
+                    floor_price_minor: item.floor_price_minor,
+                    is_qualified: false,
+                    total_nods: 1,
+                    entry_price_minor,
+                };
+                self.insert_unqualified(item.bucket_key, item.floor_price_minor)?;
+                bucket
+            }
+        };
+
+        let supply = self.total_supply.read()?;
+        self.total_supply.write(supply + 1)?;
+        self.emit_nod_body_stored(item)?;
+        self.emit_bucket_body_stored(&final_bucket)
+    }
+
+    /// Records compact removal state and emits the projected body deletions/update.
+    pub(crate) fn record_nod_removed(
+        &mut self,
+        reader: &NodRepositoryReader,
+        item: &NodItemState,
+    ) -> Result<()> {
+        let mut bucket = reader
+            .get_bucket(item.bucket_key)?
+            .ok_or(NodError::BucketNotFound)?;
+        bucket.total_nods = bucket.total_nods.saturating_sub(1);
+
+        let supply = self.total_supply.read()?;
+        if supply > 0 {
+            self.total_supply.write(supply - 1)?;
+        }
+
+        self.emit(INod::NodBodyDeleted { nodId: item.nod_id })?;
+        if bucket.total_nods == 0 {
+            self.emit(INod::NodBucketBodyDeleted {
+                bucketKey: item.bucket_key,
+            })
+        } else {
+            self.emit_bucket_body_stored(&bucket)
+        }
     }
 
     fn emit_nod_body_stored(&mut self, item: &NodItemState) -> Result<()> {

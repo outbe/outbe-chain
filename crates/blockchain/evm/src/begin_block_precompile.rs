@@ -9,7 +9,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_primitives::{
     addresses::SYSTEM_ADDRESS,
-    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
+    block::{BlockContext, BlockRuntimeContext},
     consensus::{DkgBoundaryArtifact, LATE_FINALIZE_WINDOW_K},
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::{PrecompileError, Result},
@@ -86,6 +86,37 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, None)
+}
+
+/// Dispatches begin-block work with explicit read-only body authority.
+pub fn dispatch_with_readers(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
+    nod_bodies: &outbe_nod::NodRepositoryReader,
+) -> Result<Bytes> {
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        Some((tribute_bodies, nod_bodies)),
+    )
+}
+
+fn dispatch_inner(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+    body_readers: Option<(
+        &outbe_tribute::TributeRepositoryReader,
+        &outbe_nod::NodRepositoryReader,
+    )>,
+) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
             "system precompile can only be called by SYSTEM_ADDRESS".into(),
@@ -111,7 +142,12 @@ pub fn dispatch(
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick(&ctx)?;
+            match body_readers {
+                Some((tribute_bodies, nod_bodies)) => {
+                    run_cycle_tick_with_readers(&ctx, tribute_bodies, nod_bodies)?;
+                }
+                None => run_cycle_tick(&ctx)?,
+            }
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -500,6 +536,42 @@ pub(crate) fn run_finalization_and_slashing(
 
 /// CycleTick system tx: record the proposer identity and run the Cycle begin-block tick.
 pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+
+    #[cfg(test)]
+    {
+        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+        use std::sync::Arc;
+
+        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        outbe_cycle::lifecycle::CycleLifecycle::begin_block_with_readers(
+            ctx,
+            &outbe_tribute::TributeRepositoryReader::new(storage.clone()),
+            &outbe_nod::NodRepositoryReader::new(storage),
+        )
+    }
+
+    #[cfg(not(test))]
+    Err(PrecompileError::Fatal(
+        "Cycle execution body read authority was not supplied".into(),
+    ))
+}
+
+/// Production CycleTick path with explicit read-only body authority.
+pub(crate) fn run_cycle_tick_with_readers(
+    ctx: &BlockRuntimeContext,
+    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
+    nod_bodies: &outbe_nod::NodRepositoryReader,
+) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+    outbe_cycle::lifecycle::CycleLifecycle::begin_block_with_readers(
+        ctx,
+        tribute_bodies,
+        nod_bodies,
+    )
+}
+
+fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
     let allow_boundary_proposer = current_preloaded_system_tx_context()
         .map(|context| context.allow_boundary_proposer)
         .unwrap_or(false);
@@ -517,7 +589,7 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
             ctx.block.proposer
         )));
     }
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(ctx)
+    Ok(())
 }
 
 /// BoundaryOutcome system tx: activate a DKG/reshare boundary before user transactions.

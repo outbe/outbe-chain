@@ -70,6 +70,7 @@ fn staticcall_returns_contract_returndata() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

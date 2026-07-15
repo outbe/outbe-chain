@@ -55,6 +55,7 @@ fn sub_call_to_reverting_contract_returns_revert_payload() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

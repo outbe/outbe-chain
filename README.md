@@ -350,13 +350,15 @@ outbe-cli staking stake|unstake|claim         # staking flow
 outbe-cli rewards emission|history            # emission params (validator emission is paid in gems)
 ```
 
-Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`.
+Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`. During the ADR-005 staged profile, a non-validator must use the certified-follower `--upstream` path. Plain EL-only sync is rejected because it has no exact finalized-parent projection barrier.
 
 ### Required finalized offchain-data projection
 
 Every validator and full node materializes finalized Tribute and Nod bodies and indexes into
-MongoDB. Projection configuration is mandatory, but MongoDB does not replace EVM-backed runtime or
-RPC reads during ADR-004. Start the node with both MongoDB settings:
+MongoDB. In the ADR-005 pre-production profile, typed Mongo repositories are also the only runtime
+source for complete Tribute/Nod bodies; there is no EVM body fallback. This profile is hard-disabled
+outside the assigned Outbe devnet and testnet chain IDs and must not be activated on production or
+mainnet before ADR-006/ADR-007 are complete. Start the node with both MongoDB settings:
 
 ```bash
 outbe-chain node \
@@ -370,16 +372,29 @@ variables. The URI and database flags must be supplied together; omitting either
 The start block defaults to the first executable block, block 1. Each node projector exclusively owns
 one logical database; do not point multiple active nodes at the same database. MongoDB must be a
 transaction-capable replica set (including a single-node replica set) or sharded cluster.
+Execution uses `primary` read preference plus `majority` read and write concern; URI options that
+weaken this contract are rejected.
 The bundled Docker Compose uses a persistent MongoDB volume and fixed per-validator databases; run
 `docker compose down -v` before bootstrapping it with a different genesis.
 
-Before launch completes, startup validates the MongoDB connection, transaction capability, managed
-schema, chain/genesis/start-block identity, and any locally available durable checkpoint against
-canonical Reth history. A failure in those checks stops startup. If Reth has not synchronized to a
-restored checkpoint yet, canonical validation remains pending and the projector waits without
-advancing it. After startup succeeds, a later projection failure stalls only the materialization: it
-does not stop consensus, synchronization, execution, or existing RPC behavior, and the projector
-keeps its last durable finalized checkpoint and retries.
+Before business execution becomes ready, startup validates the MongoDB connection, transaction
+capability, managed schema, chain/genesis/start-block identity, and the durable checkpoint against
+local Reth history. Mongo ahead of local Reth is rejected; Mongo behind remains non-ready until ExEx
+replays every retained finalized block. Proposal, verification, and certified-follower execution
+wait for the exact projected parent `(number, hash)` and never substitute a moving height or poll
+MongoDB on those hot paths.
+
+Mongo availability failures immediately close the local participation/business-readiness gate. The
+long-lived ExEx continues draining notifications, retries immediately and then once per second, and
+keeps both its durable checkpoint and Reth `FinishedHeight` unchanged. Recovery has one eight-second
+total deadline; expiry or deterministic corruption reports a structured terminal projection failure
+and requests graceful whole-node shutdown. A healthy but lagging projection only consumes the
+caller's existing proposal/verification budget and does not start the Mongo outage timer.
+
+`outbe_consensusStatus` includes the local projection state, exact checkpoint, local Reth finalized
+point, lag, readiness, outage duration, and structured failure class. Prometheus also exports
+`outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
+local operational signals, not consensus acknowledgements.
 
 ## Documentation
 

@@ -226,6 +226,7 @@ where
                     // `block_has_tee_bootstrap`) needs the same payload the body
                     // builder injects below, so both deterministic paths agree.
                     pending_tee_bootstrap: pending_tee_bootstrap.clone(),
+                    execution_read_budget: attributes.execution_read_budget().cloned(),
                 },
             )
             .map_err(PayloadBuilderError::other)?;

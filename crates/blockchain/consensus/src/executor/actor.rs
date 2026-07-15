@@ -19,7 +19,10 @@ use commonware_runtime::{Clock, Handle, Metrics, Spawner};
 use commonware_utils::acknowledgement::Acknowledgement;
 use commonware_utils::channel::oneshot;
 use futures::StreamExt;
-use outbe_primitives::{OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes};
+use outbe_primitives::{
+    projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
+    OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
+};
 use reth_node_builder::ConsensusEngineHandle;
 use tracing::{debug, error, info, warn};
 
@@ -220,6 +223,28 @@ enum HeadOrFinalized {
     Finalized,
 }
 
+async fn wait_for_finalized_parent(
+    readiness: ProjectionReadinessHandle,
+    required: ProjectionCheckpoint,
+) -> eyre::Result<()> {
+    match readiness.wait_for(required, std::future::pending()).await {
+        WaitOutcome::Ready => Ok(()),
+        WaitOutcome::BudgetExpired => Err(eyre::eyre!(
+            "finalized parent projection wait expired without a request budget"
+        )),
+        WaitOutcome::ProjectionAhead => Err(eyre::eyre!(
+            "projection is ahead of finalized parent {} at height {}",
+            required.block_hash,
+            required.block_number
+        )),
+        WaitOutcome::Fatal(failure) => Err(eyre::eyre!(
+            "projection readiness failed ({:?}): {}",
+            failure.class,
+            failure.message
+        )),
+    }
+}
+
 /// The executor actor.
 pub struct ExecutorActor<E> {
     context: E,
@@ -231,6 +256,7 @@ pub struct ExecutorActor<E> {
     // with no timer/spawn dependency — runtime-agnostic, so it does not pull the
     // tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
+    projection_readiness: ProjectionReadinessHandle,
     ancestry_readiness: Option<AncestryReadiness>,
     fcu_heartbeat_interval: Duration,
     next_fcu_heartbeat_deadline: SystemTime,
@@ -248,6 +274,7 @@ where
         genesis_hash: B256,
         last_finalized_height: u64,
         last_finalized_hash: B256,
+        projection_readiness: ProjectionReadinessHandle,
         execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     ) -> (Self, Mailbox) {
         let (tx, rx) = futures::channel::mpsc::unbounded();
@@ -265,6 +292,7 @@ where
             state,
             mailbox_rx: rx,
             execution_finalized_height_tx,
+            projection_readiness,
             ancestry_readiness: None,
             fcu_heartbeat_interval,
             next_fcu_heartbeat_deadline,
@@ -678,9 +706,22 @@ where
         digest: crate::digest::Digest,
         block: crate::block::ConsensusBlock,
     ) -> eyre::Result<()> {
-        let execution_data = OutbeExecutionData {
-            block: std::sync::Arc::new(block.clone().into_inner()),
-        };
+        let parent_height = height.get().checked_sub(1).ok_or_else(|| {
+            eyre::eyre!(
+                "cannot execute finalized genesis block through successor path: digest {digest}"
+            )
+        })?;
+        wait_for_finalized_parent(
+            self.projection_readiness.clone(),
+            ProjectionCheckpoint {
+                block_number: parent_height,
+                block_hash: block.parent_hash(),
+            },
+        )
+        .await?;
+
+        let execution_data =
+            OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()));
 
         if crate::test_faults::should_drop_new_payload_for_test(height) {
             warn!(
@@ -786,7 +827,13 @@ mod tests {
     use commonware_consensus::types::Height;
     use commonware_runtime::{Clock as _, Runner as _, Spawner as _, Supervisor as _};
     use commonware_utils::acknowledgement::{Acknowledgement as _, Exact};
-    use outbe_primitives::OutbeHeader;
+    use outbe_primitives::{
+        projection::{
+            projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
+            ProjectionReadinessHandle, ProjectionReadinessPublisher, ProjectionStatus,
+        },
+        OutbeHeader,
+    };
     use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
     use reth_ethereum::{primitives::SealedBlock, Block};
     use reth_node_builder::ConsensusEngineHandle;
@@ -802,6 +849,100 @@ mod tests {
         block.header.extra_data = Bytes::from(vec![seed]);
         let block = block.map_header(OutbeHeader::new);
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+    }
+
+    fn ready_projection(
+        baseline_hash: B256,
+        checkpoint: ProjectionCheckpoint,
+    ) -> (ProjectionReadinessPublisher, ProjectionReadinessHandle) {
+        projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: baseline_hash,
+            },
+            ProjectionStatus::Ready { checkpoint },
+        )
+    }
+
+    fn ready_projection_for_block(
+        genesis_hash: B256,
+        block: &ConsensusBlock,
+    ) -> (ProjectionReadinessPublisher, ProjectionReadinessHandle) {
+        ready_projection(
+            genesis_hash,
+            ProjectionCheckpoint {
+                block_number: block.number().saturating_sub(1),
+                block_hash: block.parent_hash(),
+            },
+        )
+    }
+
+    #[test]
+    fn finalized_parent_wait_blocks_until_the_exact_checkpoint_is_published() {
+        commonware_runtime::deterministic::Runner::default().start(|_| async move {
+            let baseline = ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: B256::ZERO,
+            };
+            let required = ProjectionCheckpoint {
+                block_number: 4,
+                block_hash: B256::repeat_byte(0x44),
+            };
+            let (publisher, readiness) =
+                projection_readiness(baseline, ProjectionStatus::CatchingUp { checkpoint: None });
+            let wait = super::wait_for_finalized_parent(readiness, required);
+            futures::pin_mut!(wait);
+
+            assert!(matches!(
+                futures::poll!(&mut wait),
+                std::task::Poll::Pending
+            ));
+
+            publisher.publish(ProjectionStatus::Ready {
+                checkpoint: required,
+            });
+            wait.await
+                .expect("finalized execution must resume at the exact projected parent");
+        });
+    }
+
+    #[test]
+    fn finalized_parent_wait_fails_closed_for_ahead_and_fatal_projection() {
+        commonware_runtime::deterministic::Runner::default().start(|_| async move {
+            let baseline = ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: B256::ZERO,
+            };
+            let required = ProjectionCheckpoint {
+                block_number: 4,
+                block_hash: B256::repeat_byte(0x44),
+            };
+            let ahead = ProjectionCheckpoint {
+                block_number: 5,
+                block_hash: B256::repeat_byte(0x55),
+            };
+            let (_publisher, ahead_readiness) =
+                projection_readiness(baseline, ProjectionStatus::Ready { checkpoint: ahead });
+            let error = super::wait_for_finalized_parent(ahead_readiness, required)
+                .await
+                .expect_err("an ahead projection must fail finalized execution closed");
+            assert!(error.to_string().contains("projection is ahead"));
+
+            let (_publisher, fatal_readiness) = projection_readiness(
+                baseline,
+                ProjectionStatus::Fatal {
+                    checkpoint: None,
+                    error: ProjectionFailure::new(
+                        ProjectionFailureClass::CorruptBody,
+                        "test corrupt body",
+                    ),
+                },
+            );
+            let error = super::wait_for_finalized_parent(fatal_readiness, required)
+                .await
+                .expect_err("a fatal projection must fail finalized execution closed");
+            assert!(error.to_string().contains("test corrupt body"));
+        });
     }
 
     #[test]
@@ -981,8 +1122,22 @@ mod tests {
             let target = B256::repeat_byte(0xAA);
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
-            let (mut actor, _mailbox) =
-                super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
             actor.state = actor.state.update_finalized(Height::new(7), Digest(target));
 
             let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
@@ -1020,8 +1175,17 @@ mod tests {
             let finalized_hash = block.block_hash();
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
-            let (mut actor, _mailbox) =
-                super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection_for_block(genesis, &block);
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
 
             let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
                 let Some(message) = engine_rx.recv().await else {
@@ -1101,8 +1265,17 @@ mod tests {
             let block = executor_test_block(7, 0x77);
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
-            let (mut actor, _mailbox) =
-                super::ExecutorActor::new(context.child("test"), engine, genesis, 0, genesis, None);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection_for_block(genesis, &block);
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
 
             // Execution layer rejects the finalized block.
             let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
@@ -1153,6 +1326,8 @@ mod tests {
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
             let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
+            let (_projection_publisher, projection_readiness) =
+                ready_projection_for_block(genesis, &block);
 
             let mut actor = super::ExecutorActor {
                 context: context.child("test"),
@@ -1160,6 +1335,7 @@ mod tests {
                 state: LastCanonicalized::new(genesis),
                 mailbox_rx,
                 execution_finalized_height_tx: None,
+                projection_readiness,
                 ancestry_readiness: None,
                 // Heartbeat far in the future so the biased mailbox arm wins.
                 fcu_heartbeat_interval: std::time::Duration::from_secs(3600),
@@ -1207,6 +1383,13 @@ mod tests {
             let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
             let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
 
             let mut actor = super::ExecutorActor {
                 context: context.child("test"),
@@ -1214,6 +1397,7 @@ mod tests {
                 state: LastCanonicalized::new(genesis),
                 mailbox_rx,
                 execution_finalized_height_tx: None,
+                projection_readiness,
                 ancestry_readiness: None,
                 fcu_heartbeat_interval: std::time::Duration::ZERO,
                 next_fcu_heartbeat_deadline: context.current(),
@@ -1278,8 +1462,22 @@ mod tests {
             let finalized = B256::repeat_byte(0x07);
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
-            let (mut actor, _mailbox) =
-                super::ExecutorActor::new(context, engine, genesis, 7, finalized, None);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context,
+                engine,
+                genesis,
+                7,
+                finalized,
+                projection_readiness,
+                None,
+            );
             let (response, rx) = commonware_utils::channel::oneshot::channel();
 
             actor.handle_subscribe_finalized(Height::new(7), response);
@@ -1296,8 +1494,22 @@ mod tests {
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
             let readiness = AncestryReadiness::new(0, 3);
-            let (actor, _mailbox) =
-                super::ExecutorActor::new(context, engine, genesis, 0, genesis, None);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context,
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
             let actor = actor.with_ancestry_readiness(readiness.clone());
 
             assert!(!readiness.is_ready());
@@ -1314,8 +1526,22 @@ mod tests {
             let genesis = B256::repeat_byte(0x01);
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
-            let (mut actor, _mailbox) =
-                super::ExecutorActor::new(context, engine, genesis, 0, genesis, None);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context,
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
             let (response, rx) = commonware_utils::channel::oneshot::channel();
 
             actor.handle_subscribe_finalized(Height::new(3), response);
@@ -1614,6 +1840,14 @@ mod tests {
                 let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
                 let engine = ConsensusEngineHandle::new(engine_tx);
 
+                let (_projection_publisher, projection_readiness) = ready_projection(
+                    genesis,
+                    ProjectionCheckpoint {
+                        block_number: 0,
+                        block_hash: genesis,
+                    },
+                );
+
                 // Executor at finalized height 0 (fresh bootstrap from genesis).
                 let (actor, _mailbox) = super::ExecutorActor::new(
                     context.child("exec"),
@@ -1621,6 +1855,7 @@ mod tests {
                     genesis,
                     0,
                     genesis,
+                    projection_readiness,
                     None,
                 );
 

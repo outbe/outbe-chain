@@ -47,6 +47,7 @@ fn staticcall_attempting_sstore_halts() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

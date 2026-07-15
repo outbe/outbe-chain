@@ -52,6 +52,15 @@ pub trait StorageReader: Send + Sync {
 
 /// Write authority for an off-chain storage adapter.
 pub trait StorageWriter: Send + Sync {
+    /// Performs one acknowledged transaction-capability operation.
+    ///
+    /// Durable adapters override this to prove that a recovered connection can
+    /// actually start transactions. In-memory/test adapters are transaction-capable
+    /// by construction.
+    fn verify_transaction_capability(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// Atomically inserts or completely replaces one value.
     fn put(&self, namespace: Namespace, key: &Key, value: &Value) -> Result<(), StorageError> {
         self.apply_atomic(&AtomicWriteBatch::from_operations(vec![

@@ -34,9 +34,11 @@ use reth_provider::HeaderProvider;
 use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     consensus_metadata::CertifiedParentAccountingMetadata,
+    projection::ExecutionReadBudget,
     reshare_artifact::{
         decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
         OutbeBlockArtifacts,
@@ -264,6 +266,8 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// `expected_begin_system_txs`). Flows into the executor and into
     /// `build_begin_system_txs` so both proposer paths inject it identically.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 /// Attributes needed to construct the next Outbe block.
@@ -286,6 +290,8 @@ pub struct OutbeNextBlockEnvAttributes {
     /// tribute-DKG bootstrap producer. Flows into
     /// [`OutbeBlockExecutionCtx::pending_tee_bootstrap`].
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
@@ -301,6 +307,7 @@ impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 }
@@ -380,6 +387,7 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -396,6 +404,7 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
             .finish()
     }
 }
@@ -439,6 +448,27 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
+            runtime_body_readers: None,
+        }
+    }
+
+    /// Creates a config whose EVM factory installs typed, read-only Tribute and
+    /// Nod body readers into the precompile dispatch seam.
+    pub fn new_with_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: None,
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
         }
     }
 
@@ -457,6 +487,7 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
+            runtime_body_readers: None,
         }
     }
 
@@ -464,14 +495,19 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
         }
     }
 
@@ -493,7 +529,33 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: None,
         }
+    }
+
+    fn new_with_provider_and_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+        }
+    }
+
+    /// Returns the typed runtime body readers installed for block execution.
+    #[must_use]
+    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+        self.runtime_body_readers.as_ref()
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
@@ -911,6 +973,8 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let execution_read_budget = ctx.execution_read_budget.clone();
 
         OutbeBlockExecutor::new(
             EthBlockExecutor::new(
@@ -935,6 +999,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             prebuilt_phase1_tx,
             parent_artifact_hint,
         )
+        .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
         .with_pending_tee_bootstrap(pending_tee_bootstrap)
     }
 }
@@ -1043,6 +1108,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             // Validator path: a `TeeBootstrap` in the body is read via
             // `expected_begin_system_txs`, not injected here.
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         })
     }
 
@@ -1075,6 +1141,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             prebuilt_phase1_tx: attributes.prebuilt_phase1_tx,
             parent_artifact_hint: attributes.parent_artifact_hint,
             pending_tee_bootstrap: attributes.pending_tee_bootstrap,
+            execution_read_budget: attributes.execution_read_budget,
         })
     }
 
@@ -1104,6 +1171,7 @@ impl ConfigureEvm for OutbeEvmConfig {
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
 
         OutbeBlockBuilder::new(
             OutbeBlockExecutor::new(
@@ -1129,6 +1197,7 @@ impl ConfigureEvm for OutbeEvmConfig {
                 prebuilt_phase1_tx,
                 parent_artifact_hint,
             )
+            .with_runtime_body_readers(runtime_body_readers, ctx.execution_read_budget.clone())
             .with_pending_tee_bootstrap(pending_tee_bootstrap),
             ctx,
             self.bridge.clone(),
@@ -1154,7 +1223,9 @@ impl ConfigureEngineEvm<OutbeExecutionData> for OutbeEvmConfig {
         &self,
         payload: &'a OutbeExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
-        self.context_for_block(&payload.block)
+        let mut ctx = self.context_for_block(&payload.block)?;
+        ctx.execution_read_budget = payload.execution_read_budget.clone();
+        Ok(ctx)
     }
 
     fn tx_iterator_for_payload(
@@ -1184,6 +1255,8 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Required read-only Tribute and Nod body authority for live execution.
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1194,6 +1267,7 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
             .finish()
     }
 }
@@ -1204,11 +1278,18 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_body_readers: None,
         }
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
+        self
+    }
+
+    /// Installs the mandatory read-only Tribute and Nod body bundle.
+    pub fn with_runtime_body_readers(mut self, readers: RuntimeBodyReaders) -> Self {
+        self.runtime_body_readers = Some(readers);
         self
     }
 }
@@ -1223,6 +1304,9 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        let runtime_body_readers = self.runtime_body_readers.ok_or_else(|| {
+            eyre::eyre!("live Outbe EVM construction requires RuntimeBodyReaders")
+        })?;
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -1237,14 +1321,16 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
+                    runtime_body_readers,
                 )
             }
-            None => OutbeEvmConfig::new_with_provider_only(
+            None => OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
                 ctx.chain_spec(),
                 Arc::new(RethAccountedParentArtifactProvider::new(
                     ctx.provider().clone(),
                     None,
                 )),
+                runtime_body_readers,
             ),
         };
 
@@ -1398,6 +1484,7 @@ mod tests {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 

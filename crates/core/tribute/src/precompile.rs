@@ -7,6 +7,7 @@ use outbe_primitives::erc::{
 use outbe_primitives::error::Result;
 
 use crate::schema::TributeContract;
+use crate::TributeRepositoryReader;
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -15,6 +16,7 @@ sol!(
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
+    bodies: &TributeRepositoryReader,
     data: &[u8],
     _caller: Address,
     value: U256,
@@ -30,18 +32,20 @@ pub fn dispatch(
                 Ok(alloy_primitives::U256::from(tribute.total_supply()?))
             }),
             balanceOf(c) => view(c, |c| {
-                Ok(alloy_primitives::U256::from(tribute.balance_of(c.owner)?))
+                Ok(alloy_primitives::U256::from(
+                    tribute.balance_of(bodies, c.owner)?,
+                ))
             }),
-            ownerOf(c) => view(c, |c| tribute.owner_of(c.tokenId)),
-            tokenURI(c) => view(c, |c| tribute.token_uri(c.tokenId)),
+            ownerOf(c) => view(c, |c| tribute.owner_of(bodies, c.tokenId)),
+            tokenURI(c) => view(c, |c| tribute.token_uri(bodies, c.tokenId)),
             getDayTotals(c) => view(c, |c| {
                 let dt = tribute.get_day_totals(c.worldwideDay.into())?;
                 Ok((dt.tribute_count, dt.tribute_nominal_amount, dt.is_sealed).into())
             }),
-            getTributesByOwner(c) => view(c, |c| tribute.get_tribute_ids_by_owner(c.owner)),
-            getTributesByDay(c) => {
-                view(c, |c| tribute.get_tribute_ids_by_day(c.worldwideDay.into()))
-            }
+            getTributesByOwner(c) => view(c, |c| tribute.get_tribute_ids_by_owner(bodies, c.owner)),
+            getTributesByDay(c) => view(c, |c| {
+                tribute.get_tribute_ids_by_day(bodies, c.worldwideDay.into())
+            }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID

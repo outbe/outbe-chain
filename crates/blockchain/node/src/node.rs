@@ -8,6 +8,7 @@ use crate::{
     payload_builder::OutbePayloadBuilder,
 };
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
     OutbeTxEnvelope,
@@ -31,12 +32,14 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 /// Uses standard Ethereum primitives, chain spec, storage, and engine types.
 /// Customizes only the executor (stateful precompiles) and consensus
 /// (increased extra_data size for participation bitmap).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutbeNode {
     /// Optional bridge to pass consensus data to the block executor.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Mandatory typed read-only body capabilities for execution.
+    pub runtime_body_readers: RuntimeBodyReaders,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -47,26 +50,33 @@ impl std::fmt::Debug for OutbeNode {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_body_readers", &"configured")
             .finish()
     }
 }
 
 impl OutbeNode {
     /// Creates a new node with a consensus bridge.
-    pub fn with_bridge(bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_bridge(
+        bridge: ConsensusExecutionBridge,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_body_readers,
         }
     }
 
     pub fn with_bridge_and_evm_signer(
         bridge: ConsensusExecutionBridge,
         evm_signer: SharedOutbeEvmSigner,
+        runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
+            runtime_body_readers,
         }
     }
 }
@@ -108,6 +118,7 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
+        let executor = executor.with_runtime_body_readers(self.runtime_body_readers.clone());
 
         ComponentsBuilder::default()
             .node_types::<N>()

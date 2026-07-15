@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
+use outbe_nod::NodRepositoryReader;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     chain,
@@ -10,7 +11,7 @@ use outbe_primitives::{
     },
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{TributeContract, TributeRepositoryReader};
 
 use crate::constants::*;
 use crate::errors::MetadosisError;
@@ -111,7 +112,11 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// Cycle handler at UTC midnight. The `MetadosisLifecycle` wrapper
 /// was deleted altogether in the follow-up cleanup; tests that drive
 /// the WWD state machine sub-day call this function directly.
-pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn start_metadosis(
+    ctx: &BlockRuntimeContext,
+    tribute_bodies: &TributeRepositoryReader,
+    nod_bodies: &NodRepositoryReader,
+) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
 
@@ -127,7 +132,7 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
 
     for wwd in &active {
         if metadosis.get_wwd_status(*wwd)? == status::READY {
-            process_metadosis(&mut metadosis, ctx, *wwd)?;
+            process_metadosis(&mut metadosis, ctx, tribute_bodies, nod_bodies, *wwd)?;
             break;
         }
     }
@@ -399,6 +404,8 @@ fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Res
 fn process_metadosis(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
+    tribute_bodies: &TributeRepositoryReader,
+    nod_bodies: &NodRepositoryReader,
     wwd: WorldwideDay,
 ) -> Result<()> {
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
@@ -477,6 +484,8 @@ fn process_metadosis(
 
     match outbe_lysis::runtime::lysis(
         metadosis.storage.clone(),
+        tribute_bodies,
+        nod_bodies,
         wwd,
         auction_ts,
         metadosis_parameters.gratis_allocation,

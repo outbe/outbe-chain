@@ -399,15 +399,15 @@ impl<'a> ScanRequest<'a> {
         Ok(())
     }
 
-    pub(crate) fn prefix(self) -> &'a [u8] {
+    pub fn prefix(self) -> &'a [u8] {
         self.prefix
     }
 
-    pub(crate) fn after(self) -> Option<&'a Key> {
+    pub fn after(self) -> Option<&'a Key> {
         self.after
     }
 
-    pub(crate) fn limit(self) -> usize {
+    pub const fn limit(self) -> usize {
         self.limit
     }
 }
@@ -443,6 +443,8 @@ pub enum StorageErrorKind {
     Corruption,
     /// Another backend failure.
     Backend,
+    /// The caller's local execution budget expired before the read completed.
+    RequestDeadline,
 }
 
 /// Backend-neutral storage failure.
@@ -468,6 +470,9 @@ pub enum StorageError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
+    /// The caller's local execution budget expired. This is not a backend outage.
+    #[error("execution read request deadline exceeded")]
+    RequestDeadline,
 }
 
 impl StorageError {
@@ -479,6 +484,7 @@ impl StorageError {
             Self::Unavailable { .. } => StorageErrorKind::Unavailable,
             Self::Corruption(_) => StorageErrorKind::Corruption,
             Self::Backend { .. } => StorageErrorKind::Backend,
+            Self::RequestDeadline => StorageErrorKind::RequestDeadline,
         }
     }
 

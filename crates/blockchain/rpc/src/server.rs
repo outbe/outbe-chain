@@ -10,6 +10,7 @@ use jsonrpsee::core::RpcResult;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
+    projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -19,12 +20,13 @@ use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
     BlockNumReader, HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
 };
+use reth_provider::BlockIdReader;
 use std::sync::Arc;
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
-    ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo,
-    ValidatorDetailInfo, ValidatorInfo,
+    ParticipationInfo, Phase1VerificationMode, ProjectionHealth, ProjectionStatusInfo, SlashConfig,
+    SlashInfo, SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -53,36 +55,48 @@ pub struct OutbeApiHandler<P> {
     /// followers) but must report itself as a non-validator / TrustedFinality
     /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
     is_validator: bool,
+    projection_readiness: ProjectionReadinessHandle,
 }
 
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge; plain EL full node).
-    pub fn new(provider: Arc<P>) -> Self {
+    pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
             bridge: None,
             is_validator: false,
+            projection_readiness,
         }
     }
 
     /// Create a validator handler with full access to the consensus bridge.
-    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: true,
+            projection_readiness,
         }
     }
 
     /// Create a `--upstream` follower handler: it holds the bridge so it can
     /// serve `outbe_getFinalization` (chaining followers), but reports itself as
     /// a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_follower_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: false,
+            projection_readiness,
         }
     }
 }
@@ -115,6 +129,7 @@ where
     P: StateProviderFactory
         + HeaderProvider<Header = OutbeHeader>
         + BlockNumReader
+        + BlockIdReader
         + Send
         + Sync
         + 'static,
@@ -211,6 +226,14 @@ where
             .as_ref()
             .map(|b| b.consensus_status())
             .unwrap_or_default();
+        let projection = projection_status_info(
+            self.projection_readiness.current(),
+            self.provider
+                .finalized_block_num_hash()
+                .ok()
+                .flatten()
+                .map(|block| (block.number, block.hash)),
+        );
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -230,6 +253,7 @@ where
             } else {
                 Phase1VerificationMode::TrustedFinality
             },
+            projection,
         })
     }
 
@@ -331,6 +355,55 @@ where
             finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
             block_hex: format!("0x{}", hex::encode(&proof.block)),
         })
+    }
+}
+
+fn projection_status_info(
+    status: ProjectionStatus,
+    reth_finalized: Option<(u64, B256)>,
+) -> ProjectionStatusInfo {
+    let (state, checkpoint, ready, unavailable_for_millis, last_failure_class) = match status {
+        ProjectionStatus::Starting => (ProjectionHealth::Starting, None, false, None, None),
+        ProjectionStatus::CatchingUp { checkpoint } => {
+            (ProjectionHealth::CatchingUp, checkpoint, false, None, None)
+        }
+        ProjectionStatus::Ready { checkpoint } => {
+            (ProjectionHealth::Ready, Some(checkpoint), true, None, None)
+        }
+        ProjectionStatus::MongoUnavailable { checkpoint, since } => (
+            ProjectionHealth::MongoUnavailable,
+            checkpoint,
+            false,
+            Some(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            Some("Unavailable".to_owned()),
+        ),
+        ProjectionStatus::Fatal { checkpoint, error } => (
+            ProjectionHealth::Fatal,
+            checkpoint,
+            false,
+            None,
+            Some(format!("{:?}", error.class)),
+        ),
+    };
+    let checkpoint_number = checkpoint.map(|value| value.block_number);
+    let checkpoint_hash = checkpoint.map(|value| value.block_hash);
+    let reth_finalized_number = reth_finalized.map(|value| value.0);
+    let reth_finalized_hash = reth_finalized.map(|value| value.1);
+    let lag_blocks = checkpoint_number.zip(reth_finalized_number).map(
+        |(checkpoint_number, reth_finalized_number)| {
+            reth_finalized_number.saturating_sub(checkpoint_number)
+        },
+    );
+    ProjectionStatusInfo {
+        state,
+        checkpoint_number,
+        checkpoint_hash,
+        reth_finalized_number,
+        reth_finalized_hash,
+        lag_blocks,
+        ready,
+        unavailable_for_millis,
+        last_failure_class,
     }
 }
 

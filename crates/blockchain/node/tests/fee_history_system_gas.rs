@@ -13,6 +13,8 @@ use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::OutbeNode;
+use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     chain::DEVNET_CHAIN_ID,
@@ -221,6 +223,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let outbe_node = OutbeNode {
         bridge: None,
         evm_signer: Some(signer),
+        runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
     };
     let NodeHandle {
         node,

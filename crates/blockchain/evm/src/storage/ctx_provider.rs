@@ -43,6 +43,7 @@ use revm::{
 use std::cell::RefCell;
 
 use crate::{gas::SubcallGasMeter, sub_call};
+use outbe_offchain_data::RuntimeBodyReaders;
 
 thread_local! {
     /// Per-thread reentrancy stack tracking which outbe precompile addresses
@@ -129,6 +130,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub reentrancy_stack: ReentrancyStack,
     /// EVM spec id, captured at provider construction time.
     pub spec: SpecId,
+    /// Least-authority off-chain body readers propagated to nested precompiles.
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
 }
 
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
@@ -140,6 +143,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         self_address: Address,
         reentrancy_stack: ReentrancyStack,
         spec: SpecId,
+        runtime_body_readers: Option<RuntimeBodyReaders>,
     ) -> Self {
         Self {
             ctx,
@@ -148,6 +152,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             self_address,
             reentrancy_stack,
             spec,
+            runtime_body_readers,
         }
     }
 
@@ -329,6 +334,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             self.self_address,
             self.is_static,
             self.spec,
+            self.runtime_body_readers.clone(),
             input,
         )
     }

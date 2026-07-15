@@ -7389,8 +7389,11 @@ dependencies = [
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
+ "outbe-nod",
+ "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-rewards",
+ "outbe-tribute",
  "proptest",
  "tracing",
 ]
@@ -7551,6 +7554,8 @@ dependencies = [
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
@@ -7752,11 +7757,13 @@ name = "outbe-lysis"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-sol-types",
  "outbe-common",
  "outbe-fidelity",
  "outbe-intex",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
@@ -7784,6 +7791,7 @@ dependencies = [
  "outbe-macros",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -7824,6 +7832,7 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
+ "metrics",
  "mongodb",
  "outbe-evm",
  "outbe-offchain-data",
@@ -7859,6 +7868,7 @@ dependencies = [
  "revm",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -7894,6 +7904,7 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -8058,6 +8069,7 @@ dependencies = [
  "outbe-validatorset",
  "outbe-vote",
  "reth-ethereum",
+ "reth-provider",
  "serde",
  "serde_json",
 ]

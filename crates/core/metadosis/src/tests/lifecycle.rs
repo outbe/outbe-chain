@@ -1,5 +1,4 @@
 use super::*;
-use outbe_nodfactory::api as nodfactory_api;
 use outbe_oracle::contract::OracleContract;
 
 #[test]
@@ -647,6 +646,14 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
 #[test]
 fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
     with_storage(|storage| {
+        let body_storage = std::sync::Arc::new(outbe_offchain_storage::MemoryStorage::new());
+        let body_reader: outbe_offchain_storage::StorageReaderHandle = body_storage.clone();
+        let body_writer: outbe_offchain_storage::StorageWriterHandle = body_storage;
+        let tribute_bodies = outbe_tribute::TributeRepositoryReader::new(body_reader.clone());
+        let tribute_writer =
+            outbe_tribute::TributeRepositoryWriter::new(body_reader.clone(), body_writer.clone());
+        let nod_bodies = outbe_nod::NodRepositoryReader::new(body_reader.clone());
+        let nod_writer = outbe_nod::NodRepositoryWriter::new(body_reader, body_writer);
         let wwd_raw = 20260313u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
         let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
@@ -681,19 +688,19 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
-        tribute
-            .issue(&TributeData {
-                token_id,
-                owner,
-                worldwide_day: wwd,
-                issuance_amount_minor: nominal,
-                issuance_currency: 1,
-                nominal_amount_minor: nominal,
-                reference_currency: 840,
-                exclude_from_intex_issuance: false,
-                tribute_price_minor: U256::ZERO,
-            })
-            .unwrap();
+        let tribute_body = TributeData {
+            token_id,
+            owner,
+            worldwide_day: wwd,
+            issuance_amount_minor: nominal,
+            issuance_currency: 1,
+            nominal_amount_minor: nominal,
+            reference_currency: 840,
+            exclude_from_intex_issuance: false,
+            tribute_price_minor: U256::ZERO,
+        };
+        tribute.issue(&tribute_bodies, &tribute_body).unwrap();
+        tribute_writer.put(&tribute_body).unwrap();
         tribute.seal_day(wwd).unwrap();
 
         // Pre-issue a NOD with the same (owner, worldwide_day) tuple the lysis
@@ -703,23 +710,33 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
         // out of the begin-zone system transaction instead of silently retiring
         // the day. The test asserts the error surfaces and the day is left
         // unsettled (still READY, limit not routed to PROMIS).
-        nodfactory_api::issue_nod(
-            &storage,
-            &outbe_nod::NodIssueParams {
+        let nod_id = outbe_nod::NodContract::generate_nod_id(owner, wwd);
+        let floor_price_minor = U256::from(1u64);
+        nod_writer
+            .put_nod(&outbe_nod::NodItemState {
+                nod_id,
                 owner,
                 gratis_load_minor: U256::from(1u64),
                 worldwide_day: wwd,
                 league_id: 1,
-                floor_price_minor: U256::from(1u64),
-                entry_price_minor: U256::from(1u64),
+                floor_price_minor,
+                bucket_key: outbe_nod::NodContract::bucket_key(wwd, floor_price_minor),
                 cost_amount_minor: U256::from(1u64),
                 issuance_currency: 840,
                 reference_currency: 840,
-            },
-        )
-        .unwrap();
+                issued_at: 0,
+            })
+            .unwrap();
 
-        let result = try_run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                2,
+                scheduled + SECONDS_PER_HOUR,
+                outbe_primitives::chain::CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        let result = crate::runtime::start_metadosis(&ctx, &tribute_bodies, &nod_bodies);
         assert!(
             result.is_err(),
             "lysis failure must propagate out of the begin-zone system transaction"
@@ -870,7 +887,10 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
             storage.clone(),
         );
         crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
-        crate::runtime::start_metadosis(&ctx).unwrap();
+        with_empty_body_readers(|tribute_bodies, nod_bodies| {
+            crate::runtime::start_metadosis(&ctx, tribute_bodies, nod_bodies)
+        })
+        .unwrap();
     });
 
     let events = storage.get_events(contract_addr);

@@ -1,11 +1,14 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_nod::NodRepositoryReader;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData};
+use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use std::sync::Arc;
 
 use crate::constants::*;
 use crate::precompile::{dispatch as metadosis_dispatch, IMetadosis};
@@ -27,6 +30,16 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
+fn with_empty_body_readers<R>(
+    f: impl FnOnce(&TributeRepositoryReader, &NodRepositoryReader) -> R,
+) -> R {
+    let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+    f(
+        &TributeRepositoryReader::new(storage.clone()),
+        &NodRepositoryReader::new(storage),
+    )
+}
+
 /// Drive the WWD lifecycle the way the daily Cycle handler does:
 /// invoke `start_metadosis` on a synthetic context. Production no
 /// longer drives Metadosis through a per-block lifecycle hook (see
@@ -42,7 +55,10 @@ fn run_begin_block_with_chain_id(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage,
     );
-    crate::runtime::start_metadosis(&ctx).unwrap();
+    with_empty_body_readers(|tribute_bodies, nod_bodies| {
+        crate::runtime::start_metadosis(&ctx, tribute_bodies, nod_bodies)
+    })
+    .unwrap();
 }
 
 fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
@@ -52,21 +68,6 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
         timestamp,
         outbe_primitives::chain::CHAIN_ID,
     );
-}
-
-/// Like `run_begin_block`, but returns the result instead of unwrapping, so
-/// tests can assert that a terminal failure propagates out of the begin-zone
-/// system transaction instead of being silently retired.
-fn try_run_begin_block(
-    storage: StorageHandle,
-    block_number: u64,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<()> {
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(block_number, timestamp, outbe_primitives::chain::CHAIN_ID),
-        storage,
-    );
-    crate::runtime::start_metadosis(&ctx)
 }
 
 mod lifecycle;

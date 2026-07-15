@@ -19,6 +19,7 @@ outbe-slashindicator.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["storage-api"] }
+reth-provider.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true

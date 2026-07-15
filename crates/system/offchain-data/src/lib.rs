@@ -4,6 +4,14 @@
 //! normalizes finalized blocks into [`FinalizedBlock`], while the projector
 //! consumes only the shared off-chain storage capabilities.
 
+mod runtime_readers;
+
+pub use outbe_primitives::projection::{
+    projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
+    ProjectionReadinessHandle, ProjectionReadinessPublisher, ProjectionStatus, WaitOutcome,
+};
+pub use runtime_readers::{ExecutionReadBudgetGuard, RuntimeBodyFailure, RuntimeBodyReaders};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, LowerHex},
@@ -57,13 +65,6 @@ pub struct ProjectionConfig {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub start_block: u64,
-}
-
-/// Exact durable block boundary through which all events were applied.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ProjectionCheckpoint {
-    pub block_number: u64,
-    pub block_hash: B256,
 }
 
 /// Portable projector identity and progress persisted beside domain data.

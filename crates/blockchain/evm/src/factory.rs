@@ -12,6 +12,7 @@ use alloy_evm::{
 };
 use alloy_primitives::{Address, Bytes, TxKind};
 use core::ops::{Deref, DerefMut};
+use outbe_offchain_data::RuntimeBodyReaders;
 use reth_ethereum::evm::{
     primitives::{Database, EvmEnv},
     revm::{
@@ -107,6 +108,7 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
         EthFrame,
     >,
     inspect: bool,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
@@ -120,11 +122,18 @@ impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
             EthFrame,
         >,
         inspect: bool,
+        runtime_body_readers: Option<RuntimeBodyReaders>,
     ) -> Self {
         Self {
             inner: evm,
             inspect,
+            runtime_body_readers,
         }
+    }
+
+    /// Readers scoped to this concrete EVM instance and its nested calls.
+    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+        self.runtime_body_readers.as_ref()
     }
 
     /// Consumes self and returns the inner revm instance.
@@ -298,13 +307,42 @@ where
 }
 
 /// Custom EVM factory that registers Outbe stateful precompiles.
-#[derive(Clone, Debug, Default)]
-pub struct OutbeEvmFactory;
+#[derive(Clone, Default)]
+pub struct OutbeEvmFactory {
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+}
+
+impl core::fmt::Debug for OutbeEvmFactory {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("OutbeEvmFactory")
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .finish()
+    }
+}
 
 impl OutbeEvmFactory {
-    /// Construct the Outbe EVM factory.
+    /// Constructs an EVM factory without off-chain runtime body readers.
+    ///
+    /// This transitional constructor supports focused tests and offline tools.
+    /// Live node construction installs the required readers through
+    /// [`Self::with_runtime_body_readers`].
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Constructs an EVM factory with read-only Tribute and Nod body authority.
+    #[must_use]
+    pub fn with_runtime_body_readers(runtime_body_readers: RuntimeBodyReaders) -> Self {
+        Self {
+            runtime_body_readers: Some(runtime_body_readers),
+        }
+    }
+
+    /// Returns the typed runtime body readers installed in this factory.
+    #[must_use]
+    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+        self.runtime_body_readers.as_ref()
     }
 }
 
@@ -322,9 +360,13 @@ impl EvmFactory for OutbeEvmFactory {
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
         let spec = input.cfg_env.spec;
         let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::new(spec).precompiles);
+        let runtime_body_readers = self
+            .runtime_body_readers
+            .as_ref()
+            .map(RuntimeBodyReaders::fork_execution);
 
         // Register Outbe stateful precompiles via dynamic lookup.
-        extend_outbe_precompiles::<DB>(&mut precompiles, spec);
+        extend_outbe_precompiles::<DB>(&mut precompiles, spec, runtime_body_readers.clone());
 
         let evm = Context::mainnet()
             .with_db(db)
@@ -333,7 +375,7 @@ impl EvmFactory for OutbeEvmFactory {
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(precompiles);
 
-        OutbeEvm::new(evm, false)
+        OutbeEvm::new(evm, false, runtime_body_readers)
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>, EthInterpreter>>(
@@ -342,11 +384,12 @@ impl EvmFactory for OutbeEvmFactory {
         input: EvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
+        let evm = self.create_evm(db, input);
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
         OutbeEvm::new(
-            self.create_evm(db, input)
-                .into_inner()
-                .with_inspector(inspector),
+            evm.into_inner().with_inspector(inspector),
             true,
+            runtime_body_readers,
         )
     }
 }
@@ -354,7 +397,13 @@ impl EvmFactory for OutbeEvmFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{Address, U256};
+    use outbe_common::WorldwideDay;
+    use outbe_offchain_data::RuntimeBodyReaders;
+    use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+    use outbe_tribute::{TributeData, TributeRepositoryWriter};
     use revm::database_interface::EmptyDB;
+    use std::sync::Arc;
 
     const USER_BLOCK_GAS_LIMIT: u64 = 30_000_000;
 
@@ -368,6 +417,43 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn runtime_body_reader_clone_reaches_evm_factory_construction() {
+        let storage = Arc::new(MemoryStorage::new());
+        let reader: StorageReaderHandle = storage.clone();
+        let writer: StorageWriterHandle = storage;
+        let readers = RuntimeBodyReaders::new(reader.clone());
+        let factory = OutbeEvmFactory::with_runtime_body_readers(readers.clone());
+        let _evm = factory.create_evm(EmptyDB::default(), test_env());
+        let tribute_id = U256::from(1);
+
+        assert!(readers.tribute().get(tribute_id).unwrap().is_none());
+
+        TributeRepositoryWriter::new(reader, writer)
+            .put(&TributeData {
+                token_id: tribute_id,
+                owner: Address::repeat_byte(0x11),
+                worldwide_day: WorldwideDay::new(20_260_715),
+                issuance_amount_minor: U256::from(100),
+                issuance_currency: 840,
+                nominal_amount_minor: U256::from(90),
+                reference_currency: 978,
+                tribute_price_minor: U256::from(3),
+                exclude_from_intex_issuance: true,
+            })
+            .unwrap();
+
+        let stored = factory
+            .runtime_body_readers()
+            .expect("runtime body readers installed")
+            .tribute()
+            .get(tribute_id)
+            .unwrap()
+            .expect("factory clone observes the shared adapter");
+        assert_eq!(stored.token_id, tribute_id);
+        assert_eq!(stored.owner, Address::repeat_byte(0x11));
     }
 
     #[test]

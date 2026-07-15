@@ -19,6 +19,7 @@
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::Evm,
@@ -44,6 +45,7 @@ pub fn run<DB>(
     self_address: Address,
     outer_is_static: bool,
     spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
@@ -94,7 +96,8 @@ where
     // on the trait.
     let instructions =
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
-    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(spec);
+    let precompiles =
+        crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(spec, runtime_body_readers);
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,

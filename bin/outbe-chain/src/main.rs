@@ -18,6 +18,7 @@ use outbe_node::{
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
+use outbe_primitives::projection::ProjectionReadinessHandle;
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
@@ -189,6 +190,15 @@ fn print_outbe_version() {
     println!();
 }
 
+fn validate_adr005_node_mode(is_validator: bool, has_certified_upstream: bool) -> eyre::Result<()> {
+    if !is_validator && !has_certified_upstream {
+        eyre::bail!(
+            "ADR-005 plain EL full-node mode is disabled: use --upstream so historical execution is gated by exact finalized-parent projection readiness"
+        );
+    }
+    Ok(())
+}
+
 /// Parse DKG CLI's --bls-key-backend into a KeyBackend.
 fn parse_dkg_key_backend(cli: &DkgCli) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
     match cli.bls_key_backend.as_str() {
@@ -263,7 +273,8 @@ fn run_node() -> eyre::Result<()> {
 
     // Channels for validator-mode consensus thread.
     // For full-node mode, no thread is spawned and these are unused.
-    let (node_tx, node_rx) = oneshot::channel::<(OutbeFullNode, ConsensusArgs)>();
+    let (node_tx, node_rx) =
+        oneshot::channel::<(OutbeFullNode, ConsensusArgs, ProjectionReadinessHandle)>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
@@ -272,7 +283,7 @@ fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (node, mut args) = match node_rx.blocking_recv() {
+        let (node, mut args, projection_readiness) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
         };
@@ -350,7 +361,13 @@ fn run_node() -> eyre::Result<()> {
 
         let ret: eyre::Result<()> = runner.start(async move |ctx| {
             tokio::select! {
-                result = outbe_engine::run_consensus_stack(&ctx, args, node, bridge_for_consensus) => {
+                result = outbe_engine::run_consensus_stack(
+                    &ctx,
+                    args,
+                    node,
+                    bridge_for_consensus,
+                    projection_readiness,
+                ) => {
                     if let Err(e) = &result {
                         tracing::error!(%e, "consensus stack failed");
                     }
@@ -429,12 +446,8 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
-        let outbe_node = match evm_signer {
-            Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge.clone(), signer),
-            None => OutbeNode::with_bridge(bridge.clone()),
-        };
-
         let offchain_data = args.offchain_data()?;
+        validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
         let projection_config = OffchainDataProjectionConfig {
             chain_id: builder.config().chain.chain().id(),
             genesis_hash: builder.config().chain.genesis_hash(),
@@ -446,6 +459,19 @@ fn run_node() -> eyre::Result<()> {
             tokio::task::spawn_blocking(move || prepare_offchain_data_projection(projection_config))
                 .await
                 .wrap_err("offchain-data startup validation worker failed")??;
+        let runtime_body_readers = prepared_projection.runtime_body_readers();
+        let projection_readiness = prepared_projection.readiness();
+        let outbe_node = match evm_signer {
+            Some(signer) => OutbeNode::with_bridge_and_evm_signer(
+                bridge.clone(),
+                signer,
+                runtime_body_readers,
+            ),
+            None => OutbeNode::with_bridge(bridge.clone(), runtime_body_readers),
+        };
+        let (projection_exit_tx, mut projection_exit_rx) =
+            tokio::sync::mpsc::unbounded_channel();
+        let projection_readiness_for_rpc = projection_readiness.clone();
 
         let NodeHandle {
             node,
@@ -459,7 +485,11 @@ fn run_node() -> eyre::Result<()> {
                 })
                 .await
                 .wrap_err("offchain-data checkpoint validation worker failed")??;
-                Ok(outbe_node::projection::run_offchain_data_projection(ctx, ready_projection))
+                Ok(outbe_node::projection::supervise_offchain_data_projection(
+                    ctx,
+                    ready_projection,
+                    projection_exit_tx,
+                ))
             })
             .apply(|mut builder| {
                 let discovery = &mut builder.config_mut().network.discovery;
@@ -476,6 +506,7 @@ fn run_node() -> eyre::Result<()> {
                 let bridge = bridge.clone();
                 let is_validator = args.is_validator;
                 let is_follower = args.upstream.is_some();
+                let projection_readiness = projection_readiness_for_rpc.clone();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
@@ -485,11 +516,19 @@ fn run_node() -> eyre::Result<()> {
                     // report validator status; they get a follower-scoped handler
                     // that exposes only the finalization-serving capability.
                     let outbe_api = if is_validator {
-                        outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
+                        outbe_rpc::OutbeApiHandler::with_bridge(
+                            provider,
+                            bridge,
+                            projection_readiness.clone(),
+                        )
                     } else if is_follower {
-                        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
+                        outbe_rpc::OutbeApiHandler::with_follower_bridge(
+                            provider,
+                            bridge,
+                            projection_readiness.clone(),
+                        )
                     } else {
-                        outbe_rpc::OutbeApiHandler::new(provider)
+                        outbe_rpc::OutbeApiHandler::new(provider, projection_readiness.clone())
                     };
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
@@ -517,7 +556,8 @@ fn run_node() -> eyre::Result<()> {
             // follow stack (no consensus engine).
             let consensus_handle = thread::spawn(consensus_thread_fn);
 
-            let _ = node_tx.send((node, args));
+            let shutdown = node.add_ons_handle.engine_shutdown.clone();
+            let _ = node_tx.send((node, args, projection_readiness));
 
             tokio::select! {
                 _ = node_exit_future => {
@@ -525,6 +565,18 @@ fn run_node() -> eyre::Result<()> {
                 }
                 _ = &mut consensus_dead_rx => {
                     info!("consensus node exited");
+                }
+                exit = projection_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "mandatory offchain-data projection requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
@@ -536,6 +588,7 @@ fn run_node() -> eyre::Result<()> {
             handle_consensus_thread_join(consensus_handle.join())?;
         } else {
             info!("outbe node launched in FULL NODE mode — no consensus thread spawned");
+            let shutdown = node.add_ons_handle.engine_shutdown.clone();
 
             tokio::select! {
                 _ = node_exit_future => {
@@ -543,6 +596,18 @@ fn run_node() -> eyre::Result<()> {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
+                }
+                exit = projection_exit_rx.recv() => {
+                    if let Some(exit) = exit {
+                        tracing::error!(
+                            failure_class = ?exit.failure.class,
+                            failure = %exit.failure.message,
+                            "mandatory offchain-data projection requested node shutdown"
+                        );
+                    }
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
                 }
             }
         }
@@ -556,6 +621,17 @@ fn run_node() -> eyre::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn adr005_accepts_validators_and_certified_followers_only() {
+        super::validate_adr005_node_mode(true, false).expect("validator path is parent-gated");
+        super::validate_adr005_node_mode(false, true)
+            .expect("certified follower path is parent-gated");
+
+        let error = super::validate_adr005_node_mode(false, false)
+            .expect_err("plain EL sync has no finalized-parent projection barrier");
+        assert!(error.to_string().contains("--upstream"));
+    }
+
     #[test]
     fn consensus_thread_error_propagates_to_validator_main() {
         let err = super::handle_consensus_thread_join(Ok(Err(eyre::eyre!("watchdog fatal"))))

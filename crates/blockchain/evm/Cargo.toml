@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-offchain-data.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-gratispool.workspace = true
@@ -73,9 +74,11 @@ eyre.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true
 outbe-common.workspace = true
+outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = [] }
 outbe-validatorset.workspace = true
 reth-trie = { workspace = true, features = ["test-utils"] }

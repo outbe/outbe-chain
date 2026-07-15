@@ -18,6 +18,7 @@ ring.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+outbe-nod = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gratis.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }

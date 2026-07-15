@@ -4,6 +4,7 @@ use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 
 use crate::runtime;
+use outbe_nod::NodRepositoryReader;
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -26,6 +27,27 @@ pub fn dispatch(
         match call {
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 runtime::mine_gratis(&storage, sender, c.nodId, c.nonce, c.asset)
+            }),
+        }
+    })
+}
+
+/// Dispatches NodFactory calls with the least-authority off-chain body reader.
+pub fn dispatch_with_reader(
+    storage: outbe_primitives::storage::StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+    reader: &NodRepositoryReader,
+) -> Result<Bytes> {
+    outbe_primitives::dispatch::reject_value(&value)?;
+    dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
+        use INodFactory::INodFactoryCalls::*;
+        match call {
+            mineGratis(c) => mutate(c, caller, |sender, c| {
+                runtime::mine_gratis_with_reader(
+                    &storage, reader, sender, c.nodId, c.nonce, c.asset,
+                )
             }),
         }
     })

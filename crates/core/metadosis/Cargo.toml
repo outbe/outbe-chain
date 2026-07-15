@@ -11,6 +11,7 @@ outbe-common.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-desis.workspace = true
 outbe-tribute.workspace = true
+outbe-nod.workspace = true
 outbe-promislimit.workspace = true
 outbe-lysis.workspace = true
 outbe-oracle.workspace = true
@@ -19,8 +20,8 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
+outbe-offchain-storage.workspace = true
 
 [lints]
 workspace = true

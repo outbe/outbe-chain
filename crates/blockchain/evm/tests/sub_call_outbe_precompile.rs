@@ -12,9 +12,16 @@
 //! `Success` with empty returndata; here we assert the returndata equals the
 //! Poseidon hash of the input.
 
-use alloy_primitives::{Address, Bytes, U256};
+use std::sync::Arc;
+
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_evm::sub_call;
-use outbe_primitives::addresses::ZKPROOF_POSEIDON_ADDRESS;
+use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+use outbe_primitives::addresses::{NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
 use outbe_primitives::storage::{SubCallInput, SubCallStatus};
 use revm::{
     database::{CacheDB, EmptyDB},
@@ -41,6 +48,7 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
         SubCallInput {
             target: ZKPROOF_POSEIDON_ADDRESS,
             value: U256::ZERO,
@@ -72,5 +80,66 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         result.gas_used > 0 && result.gas_used < 1_000_000,
         "gas_used must be within the requested budget, got {}",
         result.gas_used,
+    );
+}
+
+#[test]
+fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
+    let adapter = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = adapter.clone();
+    let writer: StorageWriterHandle = adapter;
+    let readers = RuntimeBodyReaders::new(reader.clone());
+    let nod_id = U256::from(7);
+    let owner = Address::repeat_byte(0x11);
+    let bucket_key = B256::repeat_byte(0x42);
+    let repository = NodRepositoryWriter::new(reader, writer);
+    repository
+        .put_bucket(&NodBucketState {
+            bucket_key,
+            worldwide_day: WorldwideDay::new(20_260_715),
+            floor_price_minor: U256::from(10),
+            is_qualified: true,
+            total_nods: 1,
+            entry_price_minor: U256::from(9),
+        })
+        .unwrap();
+    repository
+        .put_nod(&NodItemState {
+            nod_id,
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day: WorldwideDay::new(20_260_715),
+            league_id: 3,
+            floor_price_minor: U256::from(10),
+            bucket_key,
+            cost_amount_minor: U256::from(12),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_700_000_000,
+        })
+        .unwrap();
+    let calldata = INod::ownerOfCall { nodId: nod_id }.abi_encode();
+    let mut ctx = Context::mainnet().with_db(CacheDB::new(EmptyDB::default()));
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        Some(readers),
+        SubCallInput {
+            target: NOD_ADDRESS,
+            value: U256::ZERO,
+            calldata: Bytes::from(calldata),
+            gas_limit: 1_000_000,
+            is_static: true,
+        },
+    )
+    .expect("repository-backed Nod sub-call must execute");
+
+    assert!(matches!(result.status, SubCallStatus::Success));
+    assert_eq!(
+        INod::ownerOfCall::abi_decode_returns(&result.returndata).unwrap(),
+        owner
     );
 }

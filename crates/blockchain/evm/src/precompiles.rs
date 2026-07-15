@@ -14,6 +14,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
     DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GOVERNANCE_ADDRESS,
@@ -74,6 +75,17 @@ fn vote_dispatch(
         crate::handlers::vote::registry(),
     )
 }
+
+fn body_reader_required_dispatch(
+    _storage: StorageHandle,
+    _data: &[u8],
+    _caller: Address,
+    _value: alloy_primitives::U256,
+) -> outbe_primitives::error::Result<Bytes> {
+    Err(outbe_primitives::error::PrecompileError::Fatal(
+        "off-chain body read authority was not supplied".into(),
+    ))
+}
 /// Resolve outbe address to its dispatch entrypoint. Single source of truth
 /// for the registered outbe stateful-precompile table.
 fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, BaseGasFn)> {
@@ -103,15 +115,11 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             outbe_promisfactory::precompile::dispatch,
             default_base_gas,
         ),
-        a if a == TRIBUTE_ADDRESS => (
-            "tribute",
-            outbe_tribute::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == NOD_ADDRESS => ("nod", outbe_nod::precompile::dispatch, default_base_gas),
+        a if a == TRIBUTE_ADDRESS => ("tribute", body_reader_required_dispatch, default_base_gas),
+        a if a == NOD_ADDRESS => ("nod", body_reader_required_dispatch, default_base_gas),
         a if a == NOD_FACTORY_ADDRESS => (
             "nodfactory",
-            outbe_nodfactory::precompile::dispatch,
+            body_reader_required_dispatch,
             default_base_gas,
         ),
         a if a == GEM_ADDRESS => ("gem", outbe_gem::precompile::dispatch, default_base_gas),
@@ -144,7 +152,7 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
         ),
         a if a == TRIBUTE_FACTORY_ADDRESS => (
             "tributefactory",
-            outbe_tributefactory::precompile::dispatch,
+            body_reader_required_dispatch,
             default_base_gas,
         ),
         a if a == VALIDATOR_SET_ADDRESS => (
@@ -347,8 +355,11 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 /// [`CtxStorageProvider`] borrowing that context, and dispatches the outbe
 /// precompile through a [`StorageHandle`]. Sub-call from precompile body
 /// reaches `sub_call::run` through the provider's `sub_call` method.
-pub fn extend_outbe_precompiles<DB>(precompiles: &mut PrecompilesMap, spec: SpecId)
-where
+pub fn extend_outbe_precompiles<DB>(
+    precompiles: &mut PrecompilesMap,
+    spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+) where
     DB: Database + Debug,
     DB::Error: Debug,
 {
@@ -366,7 +377,7 @@ where
             // `Context<...>` the impl is specialised for (set at
             // `OutbeEvmFactory::create_evm<DB>` call site).
             let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
-            outbe_ctx_dispatch::<DB>(ctx, inputs, spec)
+            outbe_ctx_dispatch::<DB>(ctx, inputs, spec, runtime_body_readers.as_ref())
         },
     );
 }
@@ -376,6 +387,7 @@ fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
     spec: SpecId,
+    runtime_body_readers: Option<&RuntimeBodyReaders>,
 ) -> Result<Option<InterpreterResult>, String>
 where
     DB: Database + Debug,
@@ -442,10 +454,68 @@ where
         "precompile dispatch entry"
     );
 
-    let mut provider =
-        CtxStorageProvider::new(ctx, gas_meter, is_static, address, ReentrancyStack, spec);
+    let mut provider = CtxStorageProvider::new(
+        ctx,
+        gas_meter,
+        is_static,
+        address,
+        ReentrancyStack,
+        spec,
+        runtime_body_readers.cloned(),
+    );
     let storage = StorageHandle::new(&mut provider);
-    let result = dispatch_fn(storage, data.as_ref(), caller, value);
+    let result = match (address, runtime_body_readers) {
+        (TRIBUTE_ADDRESS, Some(readers)) => outbe_tribute::precompile::dispatch(
+            storage,
+            readers.tribute(),
+            data.as_ref(),
+            caller,
+            value,
+        ),
+        (TRIBUTE_FACTORY_ADDRESS, Some(readers)) => outbe_tributefactory::precompile::dispatch(
+            storage,
+            readers.tribute(),
+            data.as_ref(),
+            caller,
+            value,
+        ),
+        (NOD_ADDRESS, Some(readers)) => outbe_nod::precompile::dispatch_with_reader(
+            storage,
+            data.as_ref(),
+            caller,
+            value,
+            readers.nod(),
+        ),
+        (NOD_FACTORY_ADDRESS, Some(readers)) => outbe_nodfactory::precompile::dispatch_with_reader(
+            storage,
+            data.as_ref(),
+            caller,
+            value,
+            readers.nod(),
+        ),
+        (OUTBE_SYSTEM_TX_ADDRESS, Some(readers)) => {
+            crate::begin_block_precompile::dispatch_with_readers(
+                storage,
+                data.as_ref(),
+                caller,
+                value,
+                readers.tribute(),
+                readers.nod(),
+            )
+        }
+        (TRIBUTE_ADDRESS | TRIBUTE_FACTORY_ADDRESS | NOD_ADDRESS | NOD_FACTORY_ADDRESS, None) => {
+            Err(outbe_primitives::error::PrecompileError::Fatal(
+                "execution body read authority was not supplied".into(),
+            ))
+        }
+        _ => dispatch_fn(storage, data.as_ref(), caller, value),
+    };
+
+    if let Some(readers) = runtime_body_readers {
+        if let Err(error) = &result {
+            readers.report_precompile_error(error);
+        }
+    }
 
     let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
     let actual_gas = base_gas + storage_gas;
@@ -487,14 +557,16 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     eth: EthPrecompiles,
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
     _db: PhantomData<fn() -> DB>,
 }
 
 impl<DB> OutbeSubCallPrecompiles<DB> {
-    pub(crate) fn new(spec: SpecId) -> Self {
+    pub(crate) fn new(spec: SpecId, runtime_body_readers: Option<RuntimeBodyReaders>) -> Self {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
+            runtime_body_readers,
             _db: PhantomData,
         }
     }
@@ -523,7 +595,12 @@ where
         // Outbe stateful precompiles first. `outbe_ctx_dispatch` returns
         // `Ok(None)` for any non-outbe address, so this is a cheap no-op for
         // Ethereum precompiles and ordinary contract targets.
-        if let Some(result) = outbe_ctx_dispatch::<DB>(&mut **context, inputs, self.spec)? {
+        if let Some(result) = outbe_ctx_dispatch::<DB>(
+            &mut **context,
+            inputs,
+            self.spec,
+            self.runtime_body_readers.as_ref(),
+        )? {
             return Ok(Some(result));
         }
         // Standard Ethereum precompiles `0x01..0x0a`; `Ok(None)` here lets the
