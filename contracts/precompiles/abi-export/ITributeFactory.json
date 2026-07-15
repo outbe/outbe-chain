@@ -47,6 +47,11 @@
         "name": "zkMerkleRoot",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "Sign",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [

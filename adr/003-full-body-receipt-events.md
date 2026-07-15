@@ -252,7 +252,7 @@ Bucket qualification:
   -> NodBucketQualified
 ```
 
-For Nod issue and mining, item projection precedes bucket projection. This order is part of the receipt contract even though ADR-004 will ultimately apply the complete block projection atomically.
+For Nod issue and mining, item projection precedes bucket projection. This order is part of the receipt contract. ADR-004 will apply all projection mutations from one successful EVM receipt atomically while allowing different receipts in the same block to materialize sequentially.
 
 If any later step in the operation fails, existing EVM journaling reverts state writes and all projection/product logs together. A failed transaction never leaves a canonical projection event.
 
@@ -459,5 +459,5 @@ ADR-004 can install a Reth ExEx that:
 - reads user and `HookEvents` system-transaction receipts in block/log order;
 - reconstructs existing domain records from explicit ABI fields;
 - applies Stored/Deleted events through the ADR-002 typed writers;
-- updates body and identity-index collections atomically per block;
-- records a durable projection checkpoint for replay and restart.
+- updates all bodies and identity indexes emitted by one successful receipt atomically;
+- records a durable finalized-block projection checkpoint for replay and restart.

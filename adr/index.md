@@ -212,33 +212,35 @@ Receipts contain complete Tribute and Nod body changes, while the node still rea
 
 ### Added capability
 
-Automatic receipt-to-Mongo projection through Reth ExEx.
+Automatic finalized receipt-to-Mongo projection through Reth ExEx.
 
 ### Decision
 
-Install a Reth ExEx that processes canonical body events in block, transaction, and log order. Apply idempotent block batches through the storage facade and persist a `{height, block_hash}` checkpoint. Handle canonical replacement or replay according to the pinned Reth notification model.
+Install an optional ExEx on validator or full-node modes. Use `provider.finalized_block_stream()` as the sole finalized target source, replay exact intermediate blocks from a durable number/hash checkpoint, and never advance Reth `FinishedHeight` above that checkpoint.
+
+Validate and simulate the complete block before writes. Apply all body/index mutations from one successful EVM receipt through one backend-neutral atomic storage batch. MongoDB must provide transaction capabilities through a replica set or sharded cluster; topology remains an operator choice. Persist local network/schema identity and exact receipt provenance, while leaving snapshot transport to MongoDB tooling.
 
 ExEx materializes accepted events; it does not rerun Tribute/Nod business rules.
 
 ### Working result
 
-Running the node and submitting Tribute/Nod transactions automatically creates, updates, and deletes Mongo bodies and indexes. Deleting Mongo and replaying retained events reproduces the same materialization. Runtime reads still use EVM.
+Running the node and submitting Tribute/Nod transactions automatically creates, updates, and deletes Mongo bodies and indexes. Duplicate delivery, partial-block crash, and restart converge from the checkpoint. Runtime reads still use EVM.
 
 ### Accepted limitations
 
-Mongo is not yet used by Lysis or other domain logic. Projection correctness is not cryptographically checked, and failure affects only the new materialization.
+Mongo is not yet used by Lysis or other domain logic. Projection failures stall only the new materialization and do not stop the EVM-backed node. Different receipts in a block may become visible progressively. Projection correctness is not cryptographically checked, and there is no built-in snapshot transport or automatic recovery.
 
 ### Verification
 
-Run real node integration tests for upsert, delete, duplicate delivery, restart from checkpoint, and canonical replacement. Compare the memory and Mongo projector results.
+Run storage transaction conformance and real node integration tests for finalized-only filtering, full-block preflight, receipt atomicity, upsert, delete, duplicate delivery, crash replay, restored-checkpoint validation, missing history, and checkpoint/`FinishedHeight` ordering. Compare Memory and Mongo projector results.
 
 ### Reset policy
 
-Mongo may be dropped and rebuilt. A chain reset is unnecessary unless ADR-003 event format changed simultaneously.
+Mongo may be dropped and rebuilt from retained compatible receipts or restored through operator tooling. A chain reset is unnecessary unless ADR-003 event format changed simultaneously.
 
 ### Next unlocked step
 
-Switch body-dependent execution and query paths to the populated repository.
+Switch body-dependent execution and query paths to the populated repository and promote projector health into a node readiness requirement.
 
 ---
 
@@ -246,31 +248,35 @@ Switch body-dependent execution and query paths to the populated repository.
 
 ### Starting system
 
-Mongo is continuously populated from receipts, but all consensus/domain body reads still use EVM records.
+Mongo is continuously populated from finalized receipts, but all consensus/domain body reads still use EVM records.
 
 ### Added capability
 
-The first complete off-chain Tribute/Nod runtime.
+The first complete Mongo-backed Tribute/Nod runtime.
 
 ### Decision
 
 Switch Lysis, Tribute processing/burn, NodFactory mining/payment, Gratis inputs, metadata, and body/query reads to the typed facade backed by MongoDB. Remove active full per-entity EVM body storage while retaining only the protocol aggregates and control structures identified in ADR-002.
 
-Missing, malformed, unavailable, or lagging rows fail explicitly. They are not interpreted as absence and do not fall back to a hidden EVM body source.
+Require state and Mongo projection to catch up together before business readiness or validator participation. Enforce a complete finalized-parent projection before the next Mongo-dependent height. A technical MongoDB outage receives one total eight-second reconnect deadline; recovery replays and catches up, while deadline expiry or deterministic corruption triggers graceful whole-node shutdown.
+
+ADR-005 remains Proposed and blocked until a non-ExEx coordinator seam is verified against the pinned Reth revision for live and historical execution, and the repository's ExEx observability-only rule is updated with the narrow testnet exception through the normal README/debt/ruler workflow.
+
+Missing, malformed, unavailable, or lagging rows fail explicitly. They are not interpreted as absence and do not fall back to a hidden EVM body source. Until the later journaled overlay, same-block body-dependent reuse after mutation is deterministically forbidden.
 
 ### Working result
 
-A Tribute or Nod is created, published in a receipt, projected by ExEx, read from Mongo by domain logic, and consumed by the next operation. Lysis and Nod-to-Gratis flows complete through the off-chain facade.
+A Tribute or Nod is created, published in a receipt, projected by ExEx, and consumed through MongoDB by an eligible later block. Lysis and Nod-to-Gratis flows complete through the off-chain facade. Validator and full-node modes do not advertise their active role while projection is behind.
 
 ### Accepted limitations
 
-MongoDB is deliberately an execution dependency. A well-formed altered row cannot yet be compared with a consensus commitment. There is no SMT, proof service, authenticated list completeness, automatic recovery, or production availability guarantee.
+MongoDB is deliberately an unauthenticated testnet execution dependency. The required execution/projection coordinator is not supplied by standard ExEx and must be resolved before acceptance. A well-formed altered row cannot yet be compared with a consensus commitment. Local Mongo failure may remove a validator from voting. There is no SMT, proof service, authenticated list completeness, automatic snapshot recovery, or production availability guarantee.
 
 These limitations are normal for this stage.
 
 ### Verification
 
-Run end-to-end Tribute -> ExEx -> Mongo -> Lysis and Nod -> ExEx -> Mongo -> mining -> Gratis flows on locally running nodes. Exercise missing, malformed, unavailable, and lagging rows.
+Run end-to-end Tribute -> ExEx -> Mongo -> Lysis and Nod -> ExEx -> Mongo -> mining -> Gratis flows on locally running nodes. Exercise startup gating, finalized-parent lockstep, recovery before and failure at the eight-second deadline, missing/malformed/unavailable rows, same-block guards, graceful shutdown, and proposer/validator parity across independent databases.
 
 ### Reset policy
 
