@@ -41,6 +41,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         intex_call_period: params.call_trigger.intex_call_period,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
+        worldwide_day: params.series_id,
     };
     registry.create_series_record(&record)
 }

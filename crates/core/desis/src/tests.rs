@@ -10,6 +10,7 @@ use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCa
 
 const CHAIN_ID: u64 = 1;
 const SERIES_ID: u32 = 20260101;
+const AUCTION_TS: u64 = 1_767_261_600; // 2026-01-01 10:00 UTC
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 
 fn bidder(n: u8) -> Address {
@@ -49,7 +50,7 @@ fn default_config() -> AuctionConfig {
 #[test]
 fn start_auction_sets_started_stage() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(SERIES_ID).unwrap(),
@@ -66,15 +67,39 @@ fn start_auction_sets_started_stage() {
 #[test]
 fn start_auction_duplicate_fails() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
-        assert!(runtime::start_auction(s.clone(), SERIES_ID, default_config()).is_err());
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        assert!(
+            runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).is_err()
+        );
     });
+}
+
+#[test]
+fn start_auction_records_the_auction_timestamp() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.auction_at.read(&SERIES_ID).unwrap(),
+            AUCTION_TS as u32
+        );
+    });
+}
+
+#[test]
+fn auction_noon_is_derived_from_the_timestamp_not_the_id() {
+    let noon = runtime::auction_noon(AUCTION_TS).unwrap();
+    assert_eq!(u64::from(noon), 1_767_225_600 + 12 * 3600);
+    assert_eq!(
+        runtime::auction_noon(1_767_225_600 + 23 * 3600).unwrap(),
+        noon
+    );
 }
 
 #[test]
 fn reveal_green_day_transitions_to_revealing() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -87,7 +112,7 @@ fn reveal_green_day_transitions_to_revealing() {
 #[test]
 fn reveal_red_day_transitions_to_cancelled() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, false).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -100,7 +125,7 @@ fn reveal_red_day_transitions_to_cancelled() {
 #[test]
 fn begin_clearing_stores_pending() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply_promis = 10 * PROMIS_LOAD_MINOR;
         let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
@@ -115,7 +140,7 @@ fn begin_clearing_stores_pending() {
 fn start_auction_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, 100 * PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
@@ -139,7 +164,13 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
 
         // Second auction for a different series_id: min_bid_qty must be 4% of 100 = 4.
-        runtime::start_auction(s.clone(), SERIES_ID + 1, default_config()).unwrap();
+        runtime::start_auction(
+            s.clone(),
+            SERIES_ID + 1,
+            AUCTION_TS + 86_400,
+            default_config(),
+        )
+        .unwrap();
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
             .config_min_bid_quantity
@@ -152,7 +183,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
 #[test]
 fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         // Stage is Started, not Revealing — must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
@@ -173,7 +204,7 @@ fn process_bids_in_non_revealing_stage_fails() {
 #[test]
 fn process_bids_rejects_non_origin_caller() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         // Series is in Revealing, so the only admission gate left is the caller check.
         let attacker = bidder(99);
@@ -196,7 +227,7 @@ fn process_bids_rejects_non_origin_caller() {
 #[test]
 fn clear_auction_rejects_non_origin_caller() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::process_bids_batch(
             s.clone(),
@@ -236,7 +267,7 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 #[test]
 fn process_bids_accumulate_then_finalize() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         // Two batches of generation 1 (total_batches=2); the stage advances only once
@@ -276,7 +307,7 @@ fn process_bids_accumulate_then_finalize() {
 #[test]
 fn higher_generation_replaces_bids() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         // Gen 1 arrives incomplete (batch 0 of 2), so it never finalizes.
@@ -312,7 +343,7 @@ fn higher_generation_replaces_bids() {
 #[test]
 fn stale_generation_is_rejected() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         runtime::process_bids_batch(
@@ -343,7 +374,7 @@ fn stale_generation_is_rejected() {
 #[test]
 fn no_bids_last_batch_clears_as_no_sale() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR).unwrap();
         // A single empty batch (batch 0 of 1) completes the generation and advances to
@@ -382,7 +413,7 @@ fn no_bids_last_batch_clears_as_no_sale() {
 fn clear_auction_allocates_up_to_supply() {
     with_storage(|s| {
         let supply = 3u32;
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // 5 bidders competing for 3 supply units.
@@ -406,7 +437,7 @@ fn clear_auction_allocates_up_to_supply() {
 #[test]
 fn clear_auction_transitions_to_cleared() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
@@ -432,7 +463,7 @@ fn clear_auction_transitions_to_cleared() {
 #[test]
 fn begin_clearing_accepts_zero_supply() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
         assert_eq!(remainder, 0);
@@ -445,7 +476,7 @@ fn begin_clearing_accepts_zero_supply() {
 #[test]
 fn clear_auction_empty_supply_refunds_all_bidders() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
         runtime::process_bids_batch(
@@ -478,7 +509,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
 #[test]
 fn clear_auction_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
         runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
@@ -524,7 +555,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
 #[test]
 fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap(); // min_bid_price=100
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap(); // min_bid_price=100
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         runtime::begin_clearing(s.clone(), SERIES_ID, 3 * PROMIS_LOAD_MINOR).unwrap();
         let low_bids = vec![
@@ -561,7 +592,7 @@ fn clear_bids_below_min_price_skipped() {
 #[test]
 fn clear_refunds_equal_locked_minus_paid() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 1u32;
         runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
@@ -631,7 +662,7 @@ fn clear_rate_escrow_scales_by_basis() {
             commit_bond_minor: 0,
             entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; escrow basis = promis_load)
         };
-        runtime::start_auction(s.clone(), SERIES_ID, cfg).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, cfg).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
         let supply = 2u32;
         runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
@@ -738,7 +769,8 @@ fn dispatch_stage_start_success_returns_true() {
     with_storage(|s| {
         let accepted = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            SERIES_ID,
+            AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
         .unwrap();
@@ -769,13 +801,15 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
     let (first, second) = StorageHandle::enter(&mut storage, |s| {
         let first = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            SERIES_ID,
+            AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
         .unwrap();
         let second = crate::api::dispatch_stage_start(
             s.clone(),
-            outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID),
+            SERIES_ID,
+            AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
         .unwrap();
@@ -803,14 +837,13 @@ fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis(
     use outbe_promislimit::PromisLimitContract;
 
     with_storage(|s| {
-        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
 
         // Supply = 3 whole PROMIS_LOAD_MINOR units + 7 dust; only whole units can
         // be auctioned, so the dust is the remainder the caller must keep.
         let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), SERIES_ID, supply).unwrap();
 
         // The dispatch returns the dust to the caller instead of writing it to
         // PromisLimit, so it cannot collide with the caller's own set/add. (The
@@ -832,11 +865,10 @@ fn dispatch_stage_clearing_failure_returns_whole_supply() {
     // stage. The best-effort wrapper must return the whole supply so the caller
     // routes the full budget back to PromisLimit and nothing is lost.
     with_storage(|s| {
-        let auction_ts = outbe_primitives::time::date_key_to_utc_timestamp(SERIES_ID);
-        runtime::start_auction(s.clone(), SERIES_ID, default_config()).unwrap();
+        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
 
         let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), auction_ts, supply).unwrap();
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), SERIES_ID, supply).unwrap();
         assert_eq!(remainder, supply);
     });
 }

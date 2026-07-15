@@ -117,6 +117,17 @@ contract IntexNFT1155Test is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, ISSUED_INTEX_COUNT, 0));
     }
 
+    function test_CreateSeries_RecordsWorldwideDay() public {
+        _createSeries(SERIES_ID_1, 0);
+        _createSeries(SERIES_ID_2, 0);
+
+        assertEq(nft.worldwideDayOf(SERIES_ID_1), SERIES_ID_1);
+        uint32[] memory ids = nft.seriesIdsByWorldwideDay(SERIES_ID_1);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], SERIES_ID_1);
+        assertEq(nft.seriesIdsByWorldwideDay(SERIES_ID_2)[0], SERIES_ID_2);
+    }
+
     function test_Mint() public {
         uint256 quantity = 10;
 

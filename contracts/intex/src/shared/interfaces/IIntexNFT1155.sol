@@ -89,6 +89,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         IntexStatus status;
         /// @notice Current series lifecycle state.
         IntexState state;
+        /// @notice Worldwide day whose tributes fed this series (== seriesId until multi-currency allocation).
+        uint32 worldwideDay;
     }
 
     // --- Events ---
@@ -269,6 +271,16 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @return The Settled token id.
     function settledTokenId(uint32 seriesId) external pure returns (uint256);
+
+    /// @notice Worldwide day whose tributes fed the series (0 if the series does not exist).
+    /// @param seriesId Series identifier.
+    /// @return The worldwide day (yyyymmdd).
+    function worldwideDayOf(uint32 seriesId) external view returns (uint32);
+
+    /// @notice Series ids issued for a worldwide day.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @return The series ids of that day.
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory);
 
     /// @notice Both token ids for a series in one call.
     /// @param seriesId Series identifier.
