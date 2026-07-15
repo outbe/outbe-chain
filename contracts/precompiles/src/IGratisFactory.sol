@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title IGratisFactory — confidential Gratis orchestration entry point (0x2003).
+/// @title IGratisFactory — Gratis orchestration entry point.
 interface IGratisFactory {
     /// @notice Emitted when gratis is minted to `account`.
     event GratisMined(address indexed account, uint256 amount);

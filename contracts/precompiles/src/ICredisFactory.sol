@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title ICredisFactory — credis lifecycle orchestrator (0x1009).
-/// @notice After the TEE migration the factory consumes a confidential Gratis
-///         pledge on `requestCredis` (identified by a pledge handle + spend
-///         authorization) and, on each `anadosis`, releases 1/N of the pledged
-///         collateral back to the original pledger's encrypted Gratis balance.
+/// @title ICredisFactory — credis lifecycle orchestrator.
 interface ICredisFactory {
     event CredisRequested(address indexed bundleAccount, uint256 amount);
 
     /// @notice Open a credis position against a confidential Gratis pledge.
-    ///         The bundle account (or CCA) presents `pledgeHandle` (the public id
+    ///         The bundle account presents `pledgeHandle` (the public id
     ///         returned by `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
     ///         "credis-bind" || bundleAccount), where the pledger EOA derived
     ///         `pledgeSecret` from its modify key + the handle off-chain. The
-    ///         pledge is consumed once and bound to `bundleAccount`, so a mempool
-    ///         copy of this call cannot redirect the loan.
+    ///         pledge is consumed once and bound to `bundleAccount`.
     /// @return positionId Derived from `pledgeHandle` and `bundleAccount`.
     /// @return amountStables Stablecoin amount disbursed (oracle-converted).
     function requestCredis(

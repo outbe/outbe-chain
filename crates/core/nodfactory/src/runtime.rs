@@ -111,7 +111,7 @@ pub fn mine_gratis(
     let cost = item.cost_amount_minor;
     if !cost.is_zero() {
         // TODO check that asset aligns with reference_currency
-        if asset.is_zero() {
+        if asset.is_zero() {    
             return Err(NodFactoryError::InvalidAsset.into());
         }
 
