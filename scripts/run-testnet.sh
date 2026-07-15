@@ -8,7 +8,8 @@
 #
 # Example:
 #   ./scripts/bootstrap-testnet.sh 4 /tmp/outbe-testnet
-#   ./scripts/run-testnet.sh start  /tmp/outbe-testnet
+#   OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+#     ./scripts/run-testnet.sh start /tmp/outbe-testnet
 #   ./scripts/run-testnet.sh status /tmp/outbe-testnet
 #   ./scripts/run-testnet.sh stop   /tmp/outbe-testnet
 
@@ -90,6 +91,18 @@ do_start() {
     fi
 
     locate_binary
+    if [ -z "${OUTBE_PROJECTION_MONGODB_URI:-}" ]; then
+        echo "Error: OUTBE_PROJECTION_MONGODB_URI is required for every validator." >&2
+        echo "  Point it at a transaction-capable replica set or sharded cluster." >&2
+        exit 1
+    fi
+    local projection_scope
+    if [ -f "$OUTPUT_DIR/projection-scope" ]; then
+        projection_scope="$(tr -cd '[:alnum:]' < "$OUTPUT_DIR/projection-scope")"
+    else
+        projection_scope="$(printf '%s' "$OUTPUT_DIR" | cksum | awk '{print $1}')"
+    fi
+    local projection_database_prefix="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-outbe_local_${projection_scope}}"
     mkdir -p "$PID_DIR"
 
     # WS-M2 M5: re-apply TEE flags persisted by a previous start for any var the
@@ -353,7 +366,11 @@ do_start() {
         # overflows reth's ~2 MiB tokio blocking-pool thread (`thread '<unknown>'
         # has overflowed its stack`). Release builds optimize the frame away and
         # are unaffected. 16 MiB is ample headroom; operators may override.
-        local -a env_args=(RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}")
+        local -a env_args=(
+            RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+            OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI"
+            OUTBE_PROJECTION_MONGODB_DATABASE="${projection_database_prefix}_validator_${i}"
+        )
         if [ -n "$OUTBE_TEST_VOTING_WINDOW_BLOCKS" ]; then
             env_args+=(OUTBE_TEST_VOTING_WINDOW_BLOCKS="$OUTBE_TEST_VOTING_WINDOW_BLOCKS")
             echo "  Validator $i test hook: voting window $OUTBE_TEST_VOTING_WINDOW_BLOCKS blocks"

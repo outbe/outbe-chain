@@ -47,6 +47,8 @@ the harness reads no configuration from the environment.** Flags:
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
   off by default (that output is captured and shown only if a step fails).
+- `--projection-mongodb-uri <URI>` — required transaction-capable MongoDB replica set or sharded
+  cluster; the harness allocates a distinct logical database per run/scenario/node.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
 - plus cucumber's own `--tags`, `--name`, `--input`.
@@ -63,12 +65,16 @@ cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-encla
 Then, e.g.:
 
 ```sh
+MONGO_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 # tee-less run of the update flow
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee none --validators 4 --projection-mongodb-uri "$MONGO_URI"
 # through the mock enclave
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock --validators 4 --projection-mongodb-uri "$MONGO_URI"
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 5 --all
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock --validators 5 --all --projection-mongodb-uri "$MONGO_URI"
 ```
 
 The skip/fail *logic* is verifiable anywhere (no localnet needed): e.g.

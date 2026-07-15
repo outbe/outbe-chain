@@ -21,12 +21,15 @@ wait_lockstep(){ local port="$1" tries="${2:-30}" i; for i in $(seq 1 "$tries");
 
 launch_follower(){ # $1=dir $2=http $3=p2p $4=disc5 $5=auth $6=upstream_url
   local fd="$1"; mkdir -p "$fd/data" "$fd/logs"
+  local projection_db
+  projection_db="$(e2e_projection_database "follower_$(basename "$fd")")"
   # On a TEE chain a full-execution follower re-runs offer + registerEnclave txs
   # through the enclave (both land in the receipts root), so it needs an enclave
   # holding the (lifetime-constant) offer key — the node's startup guardrail
   # enforces this. Here we share validator-0's enclave (:7000, mock, thread-per-
   # connection) which already holds the offer key; a real follower gets its own
   # via `outbe-cli tee join` before sync.
+  OUTBE_PROJECTION_MONGODB_DATABASE="$projection_db" \
   RUST_MIN_STACK=16777216 RUST_LOG="info,outbe_consensus::follow=debug" \
   setsid nohup env "PATH=$PATH" "$BIN" node \
     --chain "$E2E_DIR/genesis.json" --datadir "$fd/data" \
@@ -76,7 +79,10 @@ H_DOWN=$(e2e_h 8548 2>/dev/null || echo dn)
 echo "  restarting validator-3 (was at ~$H_DOWN, committee $(e2e_h 8545))"
 BOOTNODES=$(paste -sd, "$E2E_DIR/reth-bootnodes.txt")
 V3SECRET=$(tr -d '[:space:]' < "$E2E_DIR/validator-3/reth-p2p-secret.hex")
-sudo env RUST_MIN_STACK=16777216 bash -c "setsid nohup '$BIN' node --validator \
+V3_PROJECTION_DATABASE="$(e2e_projection_database validator_3)"
+sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
+  OUTBE_PROJECTION_MONGODB_DATABASE="$V3_PROJECTION_DATABASE" \
+  RUST_MIN_STACK=16777216 bash -c "setsid nohup '$BIN' node --validator \
   --chain '$E2E_DIR/genesis.json' --datadir '$E2E_DIR/validator-3/data' \
   --http --http.addr 0.0.0.0 --http.port 8548 --http.api eth,net,web3,outbe \
   --port 30306 --discovery.port 30306 --discovery.v5.addr 127.0.0.1 --discovery.v5.port 31306 \

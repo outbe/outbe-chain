@@ -324,6 +324,10 @@ Prerequisites: [`mise`](https://mise.jdx.dev) (provisions the Rust toolchain, Fo
 # 4-validator localnet
 mise run build-release
 mise run localnet-bootstrap     # BLS keys + genesis.json
+docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec outbe-local-mongodb mongosh --quiet --eval \
+  'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 mise run localnet-start
 mise run localnet-status        # all 4 nodes should advance past block 0
 
@@ -348,26 +352,34 @@ outbe-cli rewards emission|history            # emission params (validator emiss
 
 Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`.
 
-### Optional finalized offchain-data projection
+### Required finalized offchain-data projection
 
-The node can materialize finalized Tribute and Nod bodies and indexes into MongoDB. The feature is
-opt-in and does not replace EVM-backed runtime or RPC reads. Enable it with both MongoDB settings:
+Every validator and full node materializes finalized Tribute and Nod bodies and indexes into
+MongoDB. Projection configuration is mandatory, but MongoDB does not replace EVM-backed runtime or
+RPC reads during ADR-004. Start the node with both MongoDB settings:
 
 ```bash
 outbe-chain node \
   --projection.mongodb-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
   --projection.mongodb-database outbe_projection \
-  --projection.start-block 0
+  --projection.start-block 1
 ```
 
 `OUTBE_PROJECTION_MONGODB_URI` and `OUTBE_PROJECTION_MONGODB_DATABASE` are equivalent environment
-variables. The URI and database flags must be supplied together. Each node projector exclusively
-owns one logical database; do not point multiple active nodes at the same database. MongoDB must be
-a transaction-capable replica set (including a single-node replica set) or sharded cluster.
+variables. The URI and database flags must be supplied together; omitting either stops node startup.
+The start block defaults to the first executable block, block 1. Each node projector exclusively owns
+one logical database; do not point multiple active nodes at the same database. MongoDB must be a
+transaction-capable replica set (including a single-node replica set) or sharded cluster.
+The bundled Docker Compose uses a persistent MongoDB volume and fixed per-validator databases; run
+`docker compose down -v` before bootstrapping it with a different genesis.
 
-MongoDB connection, topology, schema, or projection failures stall only this optional
-materialization. They do not stop consensus, synchronization, execution, or existing RPC behavior;
-the projector keeps its last durable finalized checkpoint and retries.
+Before launch completes, startup validates the MongoDB connection, transaction capability, managed
+schema, chain/genesis/start-block identity, and any locally available durable checkpoint against
+canonical Reth history. A failure in those checks stops startup. If Reth has not synchronized to a
+restored checkpoint yet, canonical validation remains pending and the projector waits without
+advancing it. After startup succeeds, a later projection failure stalls only the materialization: it
+does not stop consensus, synchronization, execution, or existing RPC behavior, and the projector
+keeps its last durable finalized checkpoint and retries.
 
 ## Documentation
 

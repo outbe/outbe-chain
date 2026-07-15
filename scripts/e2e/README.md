@@ -14,6 +14,7 @@ and tallies PASS/FAIL assertions. Adapted to the **actual** protocol where
 # cargo build --bin outbe-cli
 # cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 sudo true                       # scripts use sudo for run-testnet.sh / docker
+export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 scripts/e2e/s1_s2_s6_s3_lifecycle.sh   # S1 + S2 + S6 + S3 on one chain
 scripts/e2e/s4_restart_active.sh       # S4
 scripts/e2e/s5_dkg_failure.sh          # S5
@@ -21,6 +22,9 @@ scripts/e2e/s7a_downtime_slash.sh      # S7 (slashing)
 scripts/e2e/s7b_stale_join.sh          # S7 (stale join)
 scripts/e2e/update_operator_flow.sh    # update propose/vote/status smoke
 ```
+
+The MongoDB URI must point to a running transaction-capable replica set or sharded cluster. Each
+committee node, joiner, and follower uses a separate logical database.
 
 Each prints `<NAME> SCENARIO_PASS` / `SCENARIO_FAIL` and an `N passed, M failed`
 tally. `lib.sh` holds the shared harness (bootstrap, joiner provisioning, RPC/

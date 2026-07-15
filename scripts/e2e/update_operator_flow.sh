@@ -47,7 +47,9 @@ esac
 
 e2e_start() {
   if [ "$UPDATE_OP_FLOW_TEE" = true ]; then
-    sudo env OUTBE_TEST_VOTING_WINDOW_BLOCKS="$E2E_VOTE_WINDOW_BLOCKS" \
+    sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
+      OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-}" \
+      OUTBE_TEST_VOTING_WINDOW_BLOCKS="$E2E_VOTE_WINDOW_BLOCKS" \
       OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
       OUTBE_TEE_ENCLAVE_BINARY="$E2E_MOCK" OUTBE_CHAIN_BINARY="$E2E_BIN" PATH="$PATH" \
       ./scripts/run-testnet.sh start "$E2E_DIR" >/tmp/e2e-start.log 2>&1
@@ -55,7 +57,9 @@ e2e_start() {
     for _ in $(seq 1 18); do sleep 5; [ "$(e2e_bootstrapped)" = "true" ] && { ok=true; break; }; done
     e2e_assert "TEE chain bootstrapped" "$([ "$ok" = true ] && echo true || echo false)"
   else
-    sudo env OUTBE_TEST_VOTING_WINDOW_BLOCKS="$E2E_VOTE_WINDOW_BLOCKS" \
+    sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
+      OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-}" \
+      OUTBE_TEST_VOTING_WINDOW_BLOCKS="$E2E_VOTE_WINDOW_BLOCKS" \
       OUTBE_CHAIN_BINARY="$E2E_BIN" PATH="$PATH" \
       ./scripts/run-testnet.sh start "$E2E_DIR" >/tmp/e2e-start.log 2>&1
     local ok=false h

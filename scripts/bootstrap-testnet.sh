@@ -86,6 +86,7 @@ if [ -d "$OUTPUT_DIR" ]; then
     rm -rf "$OUTPUT_DIR"
 fi
 mkdir -p "$OUTPUT_DIR"
+python3 -c 'import secrets; print(secrets.token_hex(8))' > "$OUTPUT_DIR/projection-scope"
 
 # Step 1: DKG bootstrap
 echo "--- Step 1: DKG Bootstrap ---"
@@ -274,6 +275,8 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     VALIDATOR_DIR="$OUTPUT_DIR/validator-$i"
 
     echo "# Validator $i (RPC=$RPC_PORT, P2P=$RETH_P2P_PORT, Consensus=$CONSENSUS_PORT)"
+    echo "OUTBE_PROJECTION_MONGODB_URI=\"\$OUTBE_PROJECTION_MONGODB_URI\" \\"
+    echo "OUTBE_PROJECTION_MONGODB_DATABASE=outbe_validator_$i \\"
     echo "$OUTBE_CHAIN_BINARY node \\"
     echo "  --validator \\"
     echo "  --chain $OUTPUT_DIR/genesis.json \\"

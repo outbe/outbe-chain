@@ -7824,6 +7824,7 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
+ "mongodb",
  "outbe-evm",
  "outbe-offchain-data",
  "outbe-offchain-storage",

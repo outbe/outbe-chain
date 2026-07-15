@@ -66,7 +66,9 @@ e2e_step "S5: restore validator-3 -> ceremony completes on a later retry"
 # Relaunch only the downed validator-3 (its supervisor died, so run-testnet's start
 # sees a dead pid and re-launches it; live validators are skipped). v5 stays down,
 # so on completion it is activated revealed (ACTIVE-but-voteless until it restarts).
-sudo env OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
+sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
+  OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-}" \
+  OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
   OUTBE_TEE_ENCLAVE_BINARY="$E2E_MOCK" OUTBE_CHAIN_BINARY="$E2E_BIN" PATH="$PATH" \
   ./scripts/run-testnet.sh start "$E2E_DIR" >/tmp/e2e-s5-restart.log 2>&1
 e2e_log "restored validator-3; waiting for the ceremony to complete (4 online acking players)..."

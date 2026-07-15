@@ -172,7 +172,18 @@ impl Localnet {
     /// already attached to `<node_dir>/node.log` by the caller (via
     /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
+    fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+        cmd.env(
+            "OUTBE_PROJECTION_MONGODB_URI",
+            &self.cfg.projection_mongodb_uri,
+        )
+        .env(
+            "OUTBE_PROJECTION_MONGODB_DATABASE",
+            format!(
+                "{}_scenario_{}_{}",
+                self.cfg.projection_database_prefix, self.cfg.scenario, label
+            ),
+        );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
             let rest: Vec<String> = cmd

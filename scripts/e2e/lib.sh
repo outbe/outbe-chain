@@ -24,7 +24,15 @@ E2E_MOCK="${E2E_MOCK:-$E2E_REPO/target/release/outbe-tee-enclave-mock}"
 E2E_CLI="${E2E_CLI:-$E2E_REPO/target/debug/outbe-cli}"
 E2E_KEYGEN="${E2E_KEYGEN:-$E2E_REPO/target/debug/outbe-keygen}"
 E2E_SEED="${E2E_SEED:-$E2E_REPO/scripts/seed-testnet-lowstake.json}"
+export OUTBE_PROJECTION_MONGODB_URI="${OUTBE_PROJECTION_MONGODB_URI:-}"
 RPC0="http://localhost:8545"
+
+e2e_projection_database(){
+  local suffix="$1" scope prefix
+  scope=$(tr -cd '[:alnum:]' < "$E2E_DIR/projection-scope")
+  prefix="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-outbe_local_${scope}}"
+  printf '%s_%s' "$prefix" "$suffix"
+}
 
 # Active worldwide-day = the chain's current date, matching how bootstrap-testnet.sh
 # seeds it: WorldwideDay::from_timestamp = date_key(genesis_ts + UTC_PLUS_14_OFFSET).
@@ -130,7 +138,9 @@ e2e_bootstrap(){
 
 # e2e_start  — start the committee with the gramine mock enclave, wait for bootstrap.
 e2e_start(){
-  sudo env OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
+  sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
+    OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="${OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX:-}" \
+    OUTBE_TEE_ENCLAVE=1 OUTBE_TEE_ENCLAVE_MOCK=1 OUTBE_TEE_SEAL=1 \
     OUTBE_TEE_ENCLAVE_BINARY="$E2E_MOCK" OUTBE_CHAIN_BINARY="$E2E_BIN" PATH="$PATH" \
     ./scripts/run-testnet.sh start "$E2E_DIR" >/tmp/e2e-start.log 2>&1
   local ok=false
@@ -169,11 +179,13 @@ e2e_provision_joiner(){
 # launch the joiner node (validator mode, verifier-join args). Honors $V5_EXTRA_ARGS.
 e2e_launch_joiner(){
   local vd="$E2E_DIR/validator-4"; mkdir -p "$vd/data" "$vd/logs"
-  local bootnodes peers secret
+  local bootnodes peers secret projection_database
   bootnodes=$(paste -sd, "$E2E_DIR/reth-bootnodes.txt")
   peers=$(python3 -c "import json;print(','.join(f\"{v['public_key']}@{v['p2p_address']}\" for v in json.load(open('$E2E_DIR/validators.json'))))")
   secret=$(tr -d '[:space:]' < "$vd/reth-p2p-secret.hex")
-  RUST_MIN_STACK=16777216 nohup "$E2E_BIN" node --validator --chain "$E2E_DIR/genesis.json" --datadir "$vd/data" \
+  projection_database="$(e2e_projection_database joiner_4)"
+  OUTBE_PROJECTION_MONGODB_DATABASE="$projection_database" RUST_MIN_STACK=16777216 \
+    nohup "$E2E_BIN" node --validator --chain "$E2E_DIR/genesis.json" --datadir "$vd/data" \
     --http --http.addr 0.0.0.0 --http.port 8549 --http.api eth,net,web3,outbe --port 30307 --discovery.port 30307 \
     --discovery.v5.addr 127.0.0.1 --discovery.v5.port 31307 --bootnodes "$bootnodes" --p2p-secret-key-hex "$secret" \
     --authrpc.port 8555 --ipcpath "$vd/data/reth.ipc" --metrics 0.0.0.0:9105 --log.file.directory "$vd/logs" \

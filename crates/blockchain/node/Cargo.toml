@@ -49,6 +49,7 @@ futures.workspace = true
 
 [dev-dependencies]
 alloy-provider.workspace = true
+mongodb.workspace = true
 outbe-validatorset.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true

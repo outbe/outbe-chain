@@ -208,6 +208,7 @@ run = './scripts/localnet-smoke.sh'
 [tasks.e2e]
 description = "Run the gramine-mock TEE e2e scenario suite (S1-S7 + update operator flow)"
 run = """
+test -n "${OUTBE_PROJECTION_MONGODB_URI:-}" || { echo "OUTBE_PROJECTION_MONGODB_URI is required" >&2; exit 1; }
 cargo build -p outbe-chain --bin outbe-chain
 cargo build --bin outbe-cli
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
@@ -226,9 +227,11 @@ echo "e2e: ALL SCENARIOS PASS"
 [tasks.e2e-rust]
 description = "Run the Rust cucumber e2e harness (gramine-mock TEE, all features)"
 run = """
+test -n "${OUTBE_PROJECTION_MONGODB_URI:-}" || { echo "OUTBE_PROJECTION_MONGODB_URI is required" >&2; exit 1; }
 cargo build --bin outbe-chain --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock \
+  --projection-mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI"
 """
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #

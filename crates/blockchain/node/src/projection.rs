@@ -21,7 +21,7 @@ use reth_chain_state::ForkChoiceSubscriptions;
 use reth_ethereum::exex::{ExExContext, ExExEvent};
 use reth_node_builder::FullNodeComponents;
 use reth_primitives_traits::{Block, BlockBody};
-use reth_provider::{BlockIdReader, BlockReader};
+use reth_provider::{BlockHashReader, BlockIdReader, BlockReader};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 use tracing::{error, info, warn};
 
@@ -41,7 +41,7 @@ impl FinalizedTarget {
 
 type ProjectionAttempt = JoinHandle<eyre::Result<Option<FinalizedTarget>>>;
 
-/// Complete configuration for the optional finalized offchain-data projection.
+/// Complete startup configuration for the required finalized offchain-data projection.
 #[derive(Clone)]
 pub struct OffchainDataProjectionConfig {
     /// EVM chain identity recorded in the managed projection state.
@@ -56,47 +56,87 @@ pub struct OffchainDataProjectionConfig {
     pub mongodb_database: String,
 }
 
-struct ProjectionRuntime {
+/// Projection instance whose MongoDB connection, topology, and managed state passed preflight.
+pub struct PreparedOffchainDataProjection {
+    projector: OffchainDataProjection,
+}
+
+/// Projection instance whose available canonical checkpoint identity passed startup checks.
+pub struct ReadyOffchainDataProjection {
+    projector: OffchainDataProjection,
+}
+
+/// Connects to MongoDB and validates storage prerequisites before Reth component initialization.
+pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
-    projector: Option<OffchainDataProjection>,
+) -> eyre::Result<PreparedOffchainDataProjection> {
+    let projection_config = ProjectionConfig {
+        chain_id: config.chain_id,
+        genesis_hash: config.genesis_hash,
+        start_block: config.start_block,
+    };
+    let storage = Arc::new(
+        MongoStorage::connect(MongoStorageConfig {
+            uri: config.mongodb_uri,
+            database: config.mongodb_database,
+        })
+        .wrap_err("configure offchain-data MongoDB")?,
+    );
+    storage
+        .verify_transaction_support()
+        .wrap_err("validate offchain-data MongoDB transaction support")?;
+    let projector = OffchainDataProjection::open(projection_config, storage.clone(), storage)
+        .wrap_err("validate offchain-data MongoDB state")?;
+    Ok(PreparedOffchainDataProjection { projector })
+}
+
+/// Validates a persisted checkpoint against canonical Reth state during ExEx initialization.
+pub fn validate_offchain_data_checkpoint<P>(
+    prepared: PreparedOffchainDataProjection,
+    canonical_hashes: &P,
+) -> eyre::Result<ReadyOffchainDataProjection>
+where
+    P: BlockHashReader,
+{
+    let projector = prepared.projector;
+    if let Some(checkpoint) = projector.state().checkpoint {
+        match canonical_hashes
+            .block_hash(checkpoint.block_number)
+            .wrap_err("read canonical Reth hash for offchain-data checkpoint validation")?
+        {
+            Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
+            Some(canonical_hash) => bail!(
+                "offchain-data MongoDB checkpoint identity mismatch at block {}: stored {}, canonical {}",
+                checkpoint.block_number,
+                checkpoint.block_hash,
+                canonical_hash
+            ),
+            None => warn!(
+                checkpoint_number = checkpoint.block_number,
+                checkpoint_hash = %checkpoint.block_hash,
+                "canonical checkpoint block is not available yet; validation remains pending until Reth synchronization"
+            ),
+        }
+    }
+    let projection_state = projector.state();
+    info!(
+        chain_id = projection_state.chain_id,
+        genesis_hash = %projection_state.genesis_hash,
+        start_block = projection_state.start_block,
+        "finalized offchain-data projection ready"
+    );
+    Ok(ReadyOffchainDataProjection { projector })
+}
+
+struct ProjectionRuntime {
+    projector: OffchainDataProjection,
 }
 
 impl ProjectionRuntime {
-    const fn new(config: OffchainDataProjectionConfig) -> Self {
+    fn new(ready: ReadyOffchainDataProjection) -> Self {
         Self {
-            config,
-            projector: None,
+            projector: ready.projector,
         }
-    }
-
-    fn projector(&mut self) -> eyre::Result<&mut OffchainDataProjection> {
-        if self.projector.is_none() {
-            let storage = Arc::new(MongoStorage::connect(MongoStorageConfig {
-                uri: self.config.mongodb_uri.clone(),
-                database: self.config.mongodb_database.clone(),
-            })?);
-            storage.verify_transaction_support()?;
-            let projector = OffchainDataProjection::open(
-                ProjectionConfig {
-                    chain_id: self.config.chain_id,
-                    genesis_hash: self.config.genesis_hash,
-                    start_block: self.config.start_block,
-                },
-                storage.clone(),
-                storage,
-            )?;
-            info!(
-                chain_id = self.config.chain_id,
-                genesis_hash = %self.config.genesis_hash,
-                start_block = self.config.start_block,
-                "finalized offchain-data projection connected"
-            );
-            self.projector = Some(projector);
-        }
-
-        self.projector
-            .as_mut()
-            .ok_or_else(|| eyre::eyre!("offchain-data projector was not initialized"))
     }
 }
 
@@ -107,7 +147,7 @@ impl ProjectionRuntime {
 /// that work is in flight.
 pub async fn run_offchain_data_projection<Node>(
     ctx: ExExContext<Node>,
-    config: OffchainDataProjectionConfig,
+    ready: ReadyOffchainDataProjection,
 ) -> eyre::Result<()>
 where
     Node: FullNodeComponents,
@@ -125,7 +165,7 @@ where
         notifications,
         finalized_blocks,
         ctx.events,
-        ProjectionRuntime::new(config),
+        ProjectionRuntime::new(ready),
     )
     .await
 }
@@ -142,7 +182,7 @@ where
     N: Stream<Item = Result<(), String>> + Unpin,
     F: Stream<Item = FinalizedTarget> + Unpin,
 {
-    let start_block = runtime.config.start_block;
+    let start_block = runtime.projector.state().start_block;
     let projector = Arc::new(Mutex::new(runtime));
     let (durable_checkpoint_tx, mut durable_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -354,7 +394,7 @@ where
     let mut runtime = runtime
         .lock()
         .map_err(|_| eyre::eyre!("offchain-data projector lock is poisoned"))?;
-    let projector = runtime.projector()?;
+    let projector = &mut runtime.projector;
     let state = projector.state();
     let checkpoint = state.checkpoint;
     let start_block = state.start_block;
@@ -544,18 +584,24 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
         time::Duration,
     };
 
     use super::{
-        project_through_target, record_finalized_target, run_projection_loop, FinalizedTarget,
-        OffchainDataProjectionConfig, ProjectionRuntime,
+        prepare_offchain_data_projection, project_through_target, record_finalized_target,
+        run_projection_loop, FinalizedTarget, OffchainDataProjectionConfig, ProjectionRuntime,
     };
     use alloy_consensus::Header;
     use alloy_primitives::B256;
     use outbe_offchain_data::{OffchainDataProjection, ProjectionConfig};
-    use outbe_offchain_storage::MemoryStorage;
+    use outbe_offchain_storage::{
+        AtomicWriteBatch, Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError,
+        StorageReader, StorageWriter, StoredValue,
+    };
     use reth_ethereum::{exex::ExExEvent, Block};
     use reth_provider::test_utils::MockEthProvider;
 
@@ -569,6 +615,22 @@ mod tests {
         assert!(record_finalized_target(&mut latest, &mut pending, second).unwrap());
         assert_eq!(latest, Some(second));
         assert_eq!(pending, Some(second));
+    }
+
+    #[test]
+    fn startup_rejects_unavailable_mongodb_before_exex_runs() {
+        let error = prepare_offchain_data_projection(OffchainDataProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+            mongodb_uri: "mongodb://127.0.0.1:1/?directConnection=true&serverSelectionTimeoutMS=50"
+                .to_owned(),
+            mongodb_database: "startup_unavailable".to_owned(),
+        })
+        .err()
+        .expect("unavailable MongoDB must fail startup preparation");
+
+        assert!(error.to_string().contains("MongoDB"), "error: {error:#}");
     }
 
     #[test]
@@ -634,13 +696,7 @@ mod tests {
         );
         assert!(checkpoint_rx.try_recv().is_err());
         let state = runtime.lock().unwrap();
-        let checkpoint = state
-            .projector
-            .as_ref()
-            .unwrap()
-            .state()
-            .checkpoint
-            .unwrap();
+        let checkpoint = state.projector.state().checkpoint.unwrap();
         assert_eq!(checkpoint.block_number, 2);
         assert_eq!(checkpoint.block_hash, second);
     }
@@ -669,13 +725,7 @@ mod tests {
         );
         assert!(checkpoint_rx.try_recv().is_err());
         let state = runtime.lock().unwrap();
-        let checkpoint = state
-            .projector
-            .as_ref()
-            .unwrap()
-            .state()
-            .checkpoint
-            .unwrap();
+        let checkpoint = state.projector.state().checkpoint.unwrap();
         assert_eq!(checkpoint.block_number, 1);
         assert_eq!(checkpoint.block_hash, first);
     }
@@ -725,6 +775,60 @@ mod tests {
         task.abort();
     }
 
+    #[tokio::test]
+    async fn post_startup_projection_failure_does_not_stop_evm_backed_node_loop() {
+        use futures::{channel::mpsc, SinkExt};
+
+        let provider = MockEthProvider::new();
+        let block_hash = add_empty_block(&provider, 1);
+        let storage = Arc::new(FailAfterStartupStorage::default());
+        let projector = OffchainDataProjection::open(
+            ProjectionConfig {
+                chain_id: 1,
+                genesis_hash: B256::repeat_byte(0x11),
+                start_block: 1,
+            },
+            storage.clone(),
+            storage.clone(),
+        )
+        .unwrap();
+        storage.fail_writes.store(true, Ordering::SeqCst);
+
+        let (mut notification_tx, notification_rx) = mpsc::channel(1);
+        let (finality_tx, finality_rx) = mpsc::unbounded();
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_projection_loop(
+            provider,
+            notification_rx,
+            finality_rx,
+            events_tx,
+            ProjectionRuntime { projector },
+        ));
+        finality_tx
+            .unbounded_send(FinalizedTarget::new(1, block_hash))
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while storage.failed_writes.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("projection worker must observe the injected storage failure");
+        assert!(events_rx.try_recv().is_err());
+
+        notification_tx.send(Ok(())).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), notification_tx.send(Ok(())))
+            .await
+            .expect("ExEx must keep draining notifications after projection failure")
+            .unwrap();
+        assert!(
+            !task.is_finished(),
+            "projection failure must not stop the node loop"
+        );
+        task.abort();
+    }
+
     fn add_empty_block(provider: &MockEthProvider, number: u64) -> B256 {
         let header = Header {
             number,
@@ -738,26 +842,63 @@ mod tests {
 
     fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> {
         let storage = Arc::new(MemoryStorage::new());
-        let config = OffchainDataProjectionConfig {
-            chain_id: 1,
-            genesis_hash: B256::repeat_byte(0x11),
-            start_block,
-            mongodb_uri: "mongodb://unused".to_owned(),
-            mongodb_database: "unused".to_owned(),
-        };
         let projector = OffchainDataProjection::open(
             ProjectionConfig {
-                chain_id: config.chain_id,
-                genesis_hash: config.genesis_hash,
+                chain_id: 1,
+                genesis_hash: B256::repeat_byte(0x11),
                 start_block,
             },
             storage.clone(),
             storage,
         )
         .unwrap();
-        Mutex::new(ProjectionRuntime {
-            config,
-            projector: Some(projector),
-        })
+        Mutex::new(ProjectionRuntime { projector })
+    }
+
+    #[derive(Debug, Default)]
+    struct FailAfterStartupStorage {
+        inner: MemoryStorage,
+        fail_writes: AtomicBool,
+        failed_writes: AtomicUsize,
+    }
+
+    impl StorageReader for FailAfterStartupStorage {
+        fn get_record(
+            &self,
+            namespace: Namespace,
+            key: &Key,
+        ) -> Result<Option<StoredValue>, StorageError> {
+            self.inner.get_record(namespace, key)
+        }
+
+        fn get_records(
+            &self,
+            namespace: Namespace,
+            keys: &[Key],
+        ) -> Result<Vec<Option<StoredValue>>, StorageError> {
+            self.inner.get_records(namespace, keys)
+        }
+
+        fn scan_prefix(
+            &self,
+            namespace: Namespace,
+            request: ScanRequest<'_>,
+        ) -> Result<ScanPage, StorageError> {
+            self.inner.scan_prefix(namespace, request)
+        }
+    }
+
+    impl StorageWriter for FailAfterStartupStorage {
+        fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+            if self.fail_writes.load(Ordering::SeqCst) {
+                self.failed_writes.fetch_add(1, Ordering::SeqCst);
+                return Err(StorageError::Unavailable {
+                    source: Box::new(std::io::Error::other(
+                        "injected post-startup storage failure",
+                    )),
+                });
+            }
+            self.inner.apply_atomic(batch)
+        }
     }
 }

@@ -117,6 +117,10 @@ pub struct EnvCli {
     /// `<repo>/scripts/seed-testnet-lowstake.json`.
     #[arg(long)]
     pub seed: Option<PathBuf>,
+
+    /// Transaction-capable MongoDB URI shared by the harness; each node gets a distinct database.
+    #[arg(long)]
+    pub projection_mongodb_uri: String,
 }
 
 /// The resolved environment: every knob and path the harness needs, sourced
@@ -143,6 +147,7 @@ pub struct Environment {
     pub keygen_bin: PathBuf,
     pub mock_bin: PathBuf,
     pub seed: PathBuf,
+    pub projection_mongodb_uri: String,
 }
 
 impl Environment {
@@ -182,6 +187,7 @@ impl Environment {
                 .seed
                 .clone()
                 .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
+            projection_mongodb_uri: cli.projection_mongodb_uri.clone(),
             repo,
         }
     }
@@ -207,6 +213,8 @@ impl Default for Environment {
             keygen_bin: None,
             mock_bin: None,
             seed: None,
+            projection_mongodb_uri:
+                "mongodb://127.0.0.1:27018/?directConnection=true".to_owned(),
         })
     }
 }

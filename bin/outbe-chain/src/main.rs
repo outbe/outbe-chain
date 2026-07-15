@@ -12,7 +12,11 @@ use outbe_engine::args::ConsensusArgs;
 use outbe_engine::bridge::ConsensusExecutionBridge;
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
-    projection::OffchainDataProjectionConfig, OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
+    projection::{
+        prepare_offchain_data_projection, validate_offchain_data_checkpoint,
+        OffchainDataProjectionConfig,
+    },
+    OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
@@ -430,39 +434,33 @@ fn run_node() -> eyre::Result<()> {
             None => OutbeNode::with_bridge(bridge.clone()),
         };
 
-        let offchain_data = args.offchain_data()?.map(|config| {
-            let projection_config = OffchainDataProjectionConfig {
-                chain_id: builder.config().chain.chain().id(),
-                genesis_hash: builder.config().chain.genesis_hash(),
-                start_block: config.start_block,
-                mongodb_uri: config.mongodb_uri,
-                mongodb_database: config.mongodb_database,
-            };
-            info!(
-                chain_id = projection_config.chain_id,
-                genesis_hash = %projection_config.genesis_hash,
-                start_block = projection_config.start_block,
-                "finalized offchain-data projection configured"
-            );
-            projection_config
-        });
-        let projection_enabled = offchain_data.is_some();
+        let offchain_data = args.offchain_data()?;
+        let projection_config = OffchainDataProjectionConfig {
+            chain_id: builder.config().chain.chain().id(),
+            genesis_hash: builder.config().chain.genesis_hash(),
+            start_block: offchain_data.start_block,
+            mongodb_uri: offchain_data.mongodb_uri,
+            mongodb_database: offchain_data.mongodb_database,
+        };
+        let prepared_projection =
+            tokio::task::spawn_blocking(move || prepare_offchain_data_projection(projection_config))
+                .await
+                .wrap_err("offchain-data startup validation worker failed")??;
 
         let NodeHandle {
             node,
             node_exit_future,
         } = builder
             .node(outbe_node)
-            .install_exex_if(
-                projection_enabled,
-                "outbe-offchain-data",
-                move |ctx| async move {
-                    let config = offchain_data.ok_or_else(|| {
-                        eyre::eyre!("offchain-data ExEx installed without projection configuration")
-                    })?;
-                    Ok(outbe_node::projection::run_offchain_data_projection(ctx, config))
-                },
-            )
+            .install_exex("outbe-offchain-data", move |ctx| async move {
+                let projection_provider = ctx.provider().clone();
+                let ready_projection = tokio::task::spawn_blocking(move || {
+                    validate_offchain_data_checkpoint(prepared_projection, &projection_provider)
+                })
+                .await
+                .wrap_err("offchain-data checkpoint validation worker failed")??;
+                Ok(outbe_node::projection::run_offchain_data_projection(ctx, ready_projection))
+            })
             .apply(|mut builder| {
                 let discovery = &mut builder.config_mut().network.discovery;
                 discovery.enable_discv5_discovery = true;
