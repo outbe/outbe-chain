@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityId36, StoredBody,
-    TributeBodyV1,
+    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityId36, EntityRef, IdPage,
+    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -84,6 +84,18 @@ pub enum TributeRepositoryError {
     /// A day index selected a body assigned to another day.
     #[error("Tribute day index/body mismatch for {tribute_id}")]
     IndexedDayMismatch { tribute_id: EntityId36 },
+    /// A day-index cursor belongs to another immutable WWD partition.
+    #[error("Tribute day cursor {cursor} does not belong to {worldwide_day}")]
+    InvalidDayCursor {
+        cursor: EntityId36,
+        worldwide_day: WorldwideDay,
+    },
+    /// An ID-only repository page is not strictly ascending after its cursor.
+    #[error("Tribute {index} ID page is not strictly ascending")]
+    NonAscendingIdPage { index: &'static str },
+    /// The storage adapter returned a continuation that is not the last page key.
+    #[error("Tribute {index} ID page has an invalid continuation")]
+    InvalidPageContinuation { index: &'static str },
     /// A projection session may mutate only identities loaded into its repository snapshot.
     #[error("Tribute projection identity {tribute_id} was not loaded")]
     UntrackedProjectionIdentity { tribute_id: EntityId36 },
@@ -110,6 +122,21 @@ impl TributeRepositoryReader {
         Ok(self
             .get_with_metadata(tribute_id)?
             .map(|(body, _metadata)| body))
+    }
+
+    /// Loads the exact canonical StoredBody used by the execution parent seam.
+    pub fn get_stored_body(
+        &self,
+        tribute_id: EntityId36,
+    ) -> Result<Option<StoredBody>, TributeRepositoryError> {
+        let key = primary_key(tribute_id)?;
+        let Some(record) = self
+            .storage
+            .get_record(namespace(TRIBUTES_NAMESPACE)?, &key)?
+        else {
+            return Ok(None);
+        };
+        decode_stored_body(tribute_id, record.value.as_bytes()).map(Some)
     }
 
     /// Loads one Tribute body together with optional primary provenance.
@@ -201,6 +228,26 @@ impl TributeRepositoryReader {
         })
     }
 
+    /// Lists only one owner's canonical Tribute identities for overlay merging.
+    pub fn list_ids_by_owner(
+        &self,
+        owner: Address,
+        request: IdPageRequest,
+    ) -> Result<IdPage, TributeRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        let after = request
+            .after
+            .map(|id| owner_index_key(owner, id))
+            .transpose()?;
+        let scan = ScanRequest::new(owner.as_slice(), after.as_ref(), limit)?;
+        let page = self
+            .storage
+            .scan_prefix(namespace(TRIBUTES_BY_OWNER_NAMESPACE)?, scan)?;
+        id_page_from_entries(page, request.after, "owner", |entry| {
+            parse_owner_index(entry, owner)
+        })
+    }
+
     /// Lists one worldwide day's Tributes in ascending ID order.
     pub fn list_by_day(
         &self,
@@ -236,6 +283,64 @@ impl TributeRepositoryReader {
             next_after: next_cursor(has_more, &records),
             records,
         })
+    }
+
+    /// Lists only one day's canonical Tribute identities for overlay merging.
+    pub fn list_ids_by_day(
+        &self,
+        worldwide_day: WorldwideDay,
+        request: IdPageRequest,
+    ) -> Result<IdPage, TributeRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        if let Some(cursor) = request.after {
+            if cursor.worldwide_day() != worldwide_day {
+                return Err(TributeRepositoryError::InvalidDayCursor {
+                    cursor,
+                    worldwide_day,
+                });
+            }
+        }
+        let prefix = worldwide_day.value().to_be_bytes();
+        let after = request
+            .after
+            .map(|id| day_index_key(worldwide_day, id))
+            .transpose()?;
+        let scan = ScanRequest::new(&prefix, after.as_ref(), limit)?;
+        let page = self
+            .storage
+            .scan_prefix(namespace(TRIBUTES_BY_DAY_NAMESPACE)?, scan)?;
+        id_page_from_entries(page, request.after, "day", |entry| {
+            parse_day_index(entry, worldwide_day)
+        })
+    }
+}
+
+impl ParentBodySource for TributeRepositoryReader {
+    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
+        let EntityRef::Tribute(tribute_id) = entity else {
+            return Err(ParentBodySourceError::Corruption(
+                "Tribute repository cannot serve a non-Tribute entity".into(),
+            ));
+        };
+        self.get_stored_body(tribute_id)
+            .map_err(map_parent_source_error)
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> Result<IdPage, ParentBodySourceError> {
+        match query {
+            QueryRef::TributeByOwner(owner) => self.list_ids_by_owner(owner, request),
+            QueryRef::TributeByDay(worldwide_day) => self.list_ids_by_day(worldwide_day, request),
+            QueryRef::NodByOwner(_) | QueryRef::NodAll => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Tribute repository cannot serve a Nod query".into(),
+                ));
+            }
+        }
+        .map_err(map_parent_source_error)
     }
 }
 
@@ -298,6 +403,21 @@ pub(crate) fn decode_body(
         });
     }
     Ok(body)
+}
+
+fn decode_stored_body(
+    tribute_id: EntityId36,
+    bytes: &[u8],
+) -> Result<StoredBody, TributeRepositoryError> {
+    let stored = StoredBody::decode(bytes)?;
+    let body = decode_stored_tribute_v1(bytes)?;
+    if body.tribute_id != tribute_id {
+        return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
+            expected: tribute_id,
+            actual: body.tribute_id,
+        });
+    }
+    Ok(stored)
 }
 
 pub(crate) fn primary_key(tribute_id: EntityId36) -> Result<Key, TributeRepositoryError> {
@@ -373,6 +493,63 @@ fn validate_page_limit(limit: usize) -> Result<(), TributeRepositoryError> {
         return Err(TributeRepositoryError::InvalidPageLimit { limit });
     }
     Ok(())
+}
+
+fn map_parent_source_error(error: TributeRepositoryError) -> ParentBodySourceError {
+    use outbe_offchain_storage::StorageErrorKind;
+
+    let message = error.to_string();
+    match &error {
+        TributeRepositoryError::Storage(storage)
+            if matches!(
+                storage.kind(),
+                StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline
+            ) =>
+        {
+            ParentBodySourceError::Unavailable(message)
+        }
+        _ => ParentBodySourceError::Corruption(message),
+    }
+}
+
+fn validate_id_page_request(request: IdPageRequest) -> Result<usize, TributeRepositoryError> {
+    let limit = usize::try_from(request.limit)
+        .map_err(|_| TributeRepositoryError::InvalidPageLimit { limit: usize::MAX })?;
+    validate_page_limit(limit)?;
+    Ok(limit)
+}
+
+fn id_page_from_entries(
+    page: outbe_offchain_storage::ScanPage,
+    after: Option<EntityId36>,
+    index: &'static str,
+    mut parse: impl FnMut(&ScanEntry) -> Result<EntityId36, TributeRepositoryError>,
+) -> Result<IdPage, TributeRepositoryError> {
+    if let Some(continuation) = &page.next_after {
+        if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
+            return Err(TributeRepositoryError::InvalidPageContinuation { index });
+        }
+    }
+    let mut ids = Vec::with_capacity(page.entries.len());
+    let mut previous = after;
+    for entry in &page.entries {
+        let id = parse(entry)?;
+        if previous.is_some_and(|previous| id <= previous) {
+            return Err(TributeRepositoryError::NonAscendingIdPage { index });
+        }
+        ids.push(id);
+        previous = Some(id);
+    }
+    let next_after = if page.next_after.is_some() {
+        Some(
+            ids.last()
+                .copied()
+                .ok_or(TributeRepositoryError::InvalidPageContinuation { index })?,
+        )
+    } else {
+        None
+    };
+    Ok(IdPage { ids, next_after })
 }
 
 fn next_cursor(has_more: bool, records: &[TributeData]) -> Option<EntityId36> {

@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 
 use crate::runtime::OfferTributeInput;
 use crate::schema::TributeFactoryContract;
-use outbe_tribute::TributeRepositoryReader;
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -15,7 +15,8 @@ sol!(
 /// Dispatch for the tribute factory precompile.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    tribute_bodies: &TributeRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     data: &[u8],
     caller: Address,
     value: U256,
@@ -31,7 +32,8 @@ pub fn dispatch(
                     let mut factory = TributeFactoryContract::new(storage);
                     factory
                         .offer_tribute(
-                            tribute_bodies,
+                            scope,
+                            parent,
                             OfferTributeInput {
                                 caller: sender,
                                 cipher_text: &c.cipherText,

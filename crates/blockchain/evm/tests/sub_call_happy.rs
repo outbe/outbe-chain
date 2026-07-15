@@ -71,6 +71,7 @@ fn staticcall_returns_contract_returndata() {
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
         None,
+        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

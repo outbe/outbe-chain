@@ -12,7 +12,7 @@ use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, EntityId36, StoredBody,
+    encode_nod_item_v1, EntityId36, IdPageRequest, StoredBody,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
@@ -461,6 +461,73 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
 fn memory_contract() {
     let storage = Arc::new(MemoryStorage::new());
     run_contract(storage.clone(), storage);
+}
+
+#[test]
+fn parent_seam_returns_exact_stored_bodies_and_strict_id_pages() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader_handle: StorageReaderHandle = storage.clone();
+    let writer_handle: StorageWriterHandle = storage;
+    let reader = NodRepositoryReader::new(reader_handle.clone());
+    let writer = NodRepositoryWriter::new(reader_handle, writer_handle);
+    let owner = Address::repeat_byte(0x29);
+    let ids = [nod_id(1), nod_id(2), nod_id(3)];
+    for id in [ids[2], ids[0], ids[1]] {
+        writer.put_nod(&nod(id, owner)).unwrap();
+    }
+    let selected_bucket = bucket_id(B256::repeat_byte(0x59), WorldwideDay::new(0));
+    writer.put_bucket(&bucket(selected_bucket)).unwrap();
+
+    assert_eq!(
+        reader.get_stored_item(ids[0]).unwrap().unwrap().encode(),
+        stored_nod(&nod(ids[0], owner))
+    );
+    assert_eq!(
+        reader
+            .get_stored_bucket(selected_bucket)
+            .unwrap()
+            .unwrap()
+            .encode(),
+        stored_bucket(&bucket(selected_bucket))
+    );
+    assert!(reader.get_stored_item(nod_id(99)).unwrap().is_none());
+
+    for page in [
+        reader
+            .list_ids_all(IdPageRequest {
+                after: None,
+                limit: 2,
+            })
+            .unwrap(),
+        reader
+            .list_ids_by_owner(
+                owner,
+                IdPageRequest {
+                    after: None,
+                    limit: 2,
+                },
+            )
+            .unwrap(),
+    ] {
+        assert_eq!(page.ids, ids[..2]);
+        assert_eq!(page.next_after, Some(ids[1]));
+    }
+    let tail = reader
+        .list_ids_all(IdPageRequest {
+            after: Some(ids[1]),
+            limit: 2,
+        })
+        .unwrap();
+    assert_eq!(tail.ids, ids[2..]);
+    assert_eq!(tail.next_after, None);
+
+    assert!(matches!(
+        reader.list_ids_all(IdPageRequest {
+            after: None,
+            limit: 0,
+        }),
+        Err(NodRepositoryError::InvalidPageLimit { .. })
+    ));
 }
 
 #[test]

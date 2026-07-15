@@ -14,14 +14,16 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, U256};
-use outbe_nod::NodRepositoryReader;
+use outbe_compressed_entities::{
+    CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, ExecutionScope,
+};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_tribute::TributeRepositoryReader;
 use std::sync::Arc;
 
-use crate::lifecycle::CycleLifecycle;
+use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
 use crate::triggers::{next_fire_at, TriggerId};
 
@@ -49,23 +51,36 @@ fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     }
 }
 
-fn with_body_readers<R>(f: impl FnOnce(&TributeRepositoryReader, &NodRepositoryReader) -> R) -> R {
+fn with_execution_scope(
+    ctx: &BlockRuntimeContext,
+    f: impl FnOnce(&ExecutionScope, &TributeRepositoryReader) -> outbe_primitives::error::Result<()>,
+) -> outbe_primitives::error::Result<()> {
     let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    f(
-        &TributeRepositoryReader::new(storage.clone()),
-        &NodRepositoryReader::new(storage),
-    )
+    let parent = TributeRepositoryReader::new(storage);
+    let scope = ExecutionScope::new();
+    let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+    <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
+    let result = f(&scope, &parent);
+    let cleanup = <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle);
+    result.and(cleanup)
 }
 
 fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    with_body_readers(|tribute_bodies, nod_bodies| {
-        crate::runtime::dispatch_triggers(ctx, tribute_bodies, nod_bodies)
+    with_execution_scope(ctx, |scope, parent| {
+        crate::runtime::dispatch_triggers(ctx, scope, parent)
+    })
+}
+
+fn run_cycle_lifecycle(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    with_execution_scope(ctx, |scope, parent| {
+        let lifecycle = CycleLifecycleContext::new(ctx.clone(), scope, parent);
+        <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
     })
 }
 
 fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    with_body_readers(|tribute_bodies, nod_bodies| {
-        crate::handler::run_emission_limit_daily(ctx, tribute_bodies, nod_bodies)
+    with_execution_scope(ctx, |scope, parent| {
+        crate::handler::run_emission_limit_daily(ctx, scope, parent)
     })
 }
 
@@ -159,7 +174,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
         );
         drop(before);
 
-        CycleLifecycle::begin_block(&ctx).unwrap();
+        run_cycle_lifecycle(&ctx).unwrap();
 
         let metadosis = outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone());
         assert!(
@@ -316,7 +331,7 @@ fn cycle_lifecycle_begin_block_runs_dispatcher() {
         let ctx = BlockRuntimeContext::new(block_ctx(1, block_ts), handle);
         anchor_genesis(&ctx);
 
-        <CycleLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
+        run_cycle_lifecycle(&ctx).unwrap();
 
         // Same as `first_encounter_anchors_without_firing`: begin_block
         // delegates to dispatch_triggers.
@@ -484,7 +499,7 @@ fn noon_trigger_opens_offering_at_noon_not_next_midnight() {
         // triggers without firing.
         let ctx1 = BlockRuntimeContext::new(devnet_ctx(1, GENESIS_TS + 60), handle.clone());
         anchor_genesis(&ctx1);
-        <CycleLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
+        run_cycle_lifecycle(&ctx1).unwrap();
 
         let wwd_jan1 = outbe_common::WorldwideDay::new(20_240_101);
         let wwd_jan2 = outbe_common::WorldwideDay::new(20_240_102);

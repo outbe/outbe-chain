@@ -4,21 +4,21 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, preflight_dynamic_bytes_
 use outbe_primitives::error::Result;
 
 use crate::runtime;
-use outbe_compressed_entities::EntityId36;
-use outbe_nod::NodRepositoryReader;
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/INodFactory.sol"
 );
 
-/// Dispatches NodFactory calls with the least-authority off-chain body reader.
-pub fn dispatch_with_reader(
+/// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
+pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     data: &[u8],
     caller: Address,
     value: U256,
-    reader: &NodRepositoryReader,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
     preflight_entity_id(data)?;
@@ -26,9 +26,10 @@ pub fn dispatch_with_reader(
         use INodFactory::INodFactoryCalls::*;
         match call {
             mineGratis(c) => mutate(c, caller, |sender, c| {
-                runtime::mine_gratis_with_reader(
+                runtime::mine_gratis(
                     &storage,
-                    reader,
+                    scope,
+                    parent,
                     sender,
                     parse_entity_id(&c.nodId)?,
                     c.nonce,

@@ -61,6 +61,9 @@ impl From<TributeRepositoryError> for PrecompileError {
             | TributeRepositoryError::PrimaryKeyBodyMismatch { .. }
             | TributeRepositoryError::IndexedOwnerMismatch { .. }
             | TributeRepositoryError::IndexedDayMismatch { .. }
+            | TributeRepositoryError::InvalidDayCursor { .. }
+            | TributeRepositoryError::NonAscendingIdPage { .. }
+            | TributeRepositoryError::InvalidPageContinuation { .. }
             | TributeRepositoryError::UntrackedProjectionIdentity { .. } => {
                 PrecompileError::BodyReadCorruption(message)
             }

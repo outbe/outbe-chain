@@ -576,6 +576,19 @@ pub enum SystemTxError {
     NonceOverflow { block_number: u64, ordinal: u8 },
     #[error("system tx visible gas overflow for calldata length {len}")]
     VisibleGasOverflow { len: usize },
+    #[error(
+        "system tx gas limit below intrinsic gas: gas_limit={gas_limit}, intrinsic={intrinsic_gas}"
+    )]
+    GasLimitBelowIntrinsic { gas_limit: u64, intrinsic_gas: u64 },
+    #[error(
+        "system tx intrinsic gas exceeds block gas limit: intrinsic={intrinsic_gas}, block_limit={block_gas_limit}"
+    )]
+    VisibleGasPlanExceedsBlock {
+        intrinsic_gas: u64,
+        block_gas_limit: u64,
+    },
+    #[error("system tx visible gas plan contains more than one CycleTick")]
+    DuplicateCycleTickGasBudget,
     #[error("system tx kind {kind:?} is in {actual:?} zone, expected {expected:?}")]
     SystemTxInWrongZone {
         kind: SystemTxKind,
@@ -694,7 +707,7 @@ pub fn system_tx_nonce(block_number: u64, ordinal: u8) -> Result<u64, SystemTxEr
 /// stored in the block body only needs to be valid as an Ethereum legacy
 /// envelope. Charging intrinsic calldata gas keeps system txs visible to
 /// generic replay/import tooling without exposing the 100M internal lane.
-pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError> {
+pub fn system_tx_intrinsic_gas(calldata: &[u8]) -> Result<u64, SystemTxError> {
     calldata
         .iter()
         .try_fold(SYSTEM_TX_VISIBLE_GAS_FLOOR, |gas, byte| {
@@ -710,12 +723,136 @@ pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError
         })
 }
 
+/// Backwards-compatible name for the intrinsic gas of a system envelope.
+pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError> {
+    system_tx_intrinsic_gas(calldata)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SystemTxVisibleGasEntry {
+    intrinsic_gas: u64,
+    gas_limit: u64,
+}
+
+/// Deterministic visible-gas allocation for the complete begin-system zone.
+///
+/// Ordinary system envelopes receive exactly their intrinsic gas. `CycleTick`
+/// receives the remaining block gas as its compressed-entity execution budget,
+/// while preserving enough gas for every other mandatory system envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemTxVisibleGasPlan {
+    entries: Vec<SystemTxVisibleGasEntry>,
+    total_envelope_gas: u64,
+}
+
+impl SystemTxVisibleGasPlan {
+    pub fn new(
+        block_gas_limit: u64,
+        system_txs: &[(SystemTxKind, Bytes)],
+    ) -> Result<Self, SystemTxError> {
+        let mut entries = Vec::with_capacity(system_txs.len());
+        let mut intrinsic_total = 0u64;
+        let mut cycle_ordinal = None;
+
+        for (ordinal, (kind, calldata)) in system_txs.iter().enumerate() {
+            let actual = SystemTxInputV2::decode(calldata)?.kind();
+            if actual != *kind {
+                return Err(SystemTxError::CalldataKindMismatch {
+                    expected: *kind,
+                    actual,
+                });
+            }
+            if *kind == SystemTxKind::CycleTick && cycle_ordinal.replace(ordinal).is_some() {
+                return Err(SystemTxError::DuplicateCycleTickGasBudget);
+            }
+            let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
+            intrinsic_total = intrinsic_total.checked_add(intrinsic_gas).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
+                    intrinsic_gas: u64::MAX,
+                    block_gas_limit,
+                },
+            )?;
+            entries.push(SystemTxVisibleGasEntry {
+                intrinsic_gas,
+                gas_limit: intrinsic_gas,
+            });
+        }
+
+        let remainder = block_gas_limit.checked_sub(intrinsic_total).ok_or(
+            SystemTxError::VisibleGasPlanExceedsBlock {
+                intrinsic_gas: intrinsic_total,
+                block_gas_limit,
+            },
+        )?;
+        let total_envelope_gas = if let Some(ordinal) = cycle_ordinal {
+            let entry = entries
+                .get_mut(ordinal)
+                .ok_or(SystemTxError::DuplicateCycleTickGasBudget)?;
+            entry.gas_limit = entry.gas_limit.checked_add(remainder).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
+                    intrinsic_gas: intrinsic_total,
+                    block_gas_limit,
+                },
+            )?;
+            block_gas_limit
+        } else {
+            intrinsic_total
+        };
+
+        Ok(Self {
+            entries,
+            total_envelope_gas,
+        })
+    }
+
+    #[must_use]
+    pub fn intrinsic_gas(&self, ordinal: usize) -> Option<u64> {
+        self.entries.get(ordinal).map(|entry| entry.intrinsic_gas)
+    }
+
+    #[must_use]
+    pub fn gas_limit(&self, ordinal: usize) -> Option<u64> {
+        self.entries.get(ordinal).map(|entry| entry.gas_limit)
+    }
+
+    #[must_use]
+    pub fn ce_gas_limit(&self, ordinal: usize) -> Option<u64> {
+        self.entries
+            .get(ordinal)
+            .map(|entry| entry.gas_limit - entry.intrinsic_gas)
+    }
+
+    #[must_use]
+    pub const fn total_envelope_gas(&self) -> u64 {
+        self.total_envelope_gas
+    }
+}
+
 pub fn build_unsigned_system_tx(
     kind: SystemTxKind,
     ordinal: u8,
     block_number: u64,
     chain_id: u64,
     calldata: Bytes,
+) -> Result<TxLegacy, SystemTxError> {
+    let gas_limit = system_tx_intrinsic_gas(calldata.as_ref())?;
+    build_unsigned_system_tx_with_gas_limit(
+        kind,
+        ordinal,
+        block_number,
+        chain_id,
+        calldata,
+        gas_limit,
+    )
+}
+
+pub fn build_unsigned_system_tx_with_gas_limit(
+    kind: SystemTxKind,
+    ordinal: u8,
+    block_number: u64,
+    chain_id: u64,
+    calldata: Bytes,
+    gas_limit: u64,
 ) -> Result<TxLegacy, SystemTxError> {
     let actual = SystemTxInputV2::decode(calldata.as_ref())?.kind();
     if actual != kind {
@@ -724,12 +861,19 @@ pub fn build_unsigned_system_tx(
             actual,
         });
     }
+    let intrinsic_gas = system_tx_intrinsic_gas(calldata.as_ref())?;
+    if gas_limit < intrinsic_gas {
+        return Err(SystemTxError::GasLimitBelowIntrinsic {
+            gas_limit,
+            intrinsic_gas,
+        });
+    }
 
     Ok(TxLegacy {
         chain_id: Some(chain_id),
         nonce: system_tx_nonce(block_number, ordinal)?,
         gas_price: 0,
-        gas_limit: system_tx_visible_gas_limit(calldata.as_ref())?,
+        gas_limit,
         to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
         value: U256::ZERO,
         input: calldata,
@@ -1190,6 +1334,63 @@ mod tests {
         assert_eq!(tx.to, TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS));
         assert_eq!(tx.value, U256::ZERO);
         assert_eq!(tx.input, input);
+    }
+
+    #[test]
+    fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
+        let inputs = [
+            input_for(SystemTxKind::CertifiedParentAccounting)
+                .encode()
+                .expect("CPA input encodes"),
+            input_for(SystemTxKind::CycleTick)
+                .encode()
+                .expect("CycleTick input encodes"),
+            input_for(SystemTxKind::HookEvents)
+                .encode()
+                .expect("HookEvents input encodes"),
+        ];
+        let entries = [
+            (SystemTxKind::CertifiedParentAccounting, inputs[0].clone()),
+            (SystemTxKind::CycleTick, inputs[1].clone()),
+            (SystemTxKind::HookEvents, inputs[2].clone()),
+        ];
+        let intrinsic_total = inputs
+            .iter()
+            .map(|input| system_tx_intrinsic_gas(input).expect("intrinsic gas computes"))
+            .sum::<u64>();
+        let block_gas_limit = intrinsic_total + 50_000;
+
+        let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
+            .expect("system gas plan fits the block");
+
+        assert_eq!(plan.gas_limit(0), Some(plan.intrinsic_gas(0).unwrap()));
+        assert_eq!(plan.ce_gas_limit(0), Some(0));
+        assert_eq!(plan.ce_gas_limit(1), Some(50_000));
+        assert_eq!(
+            plan.gas_limit(1),
+            Some(plan.intrinsic_gas(1).unwrap() + 50_000)
+        );
+        assert_eq!(plan.gas_limit(2), Some(plan.intrinsic_gas(2).unwrap()));
+        assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+    }
+
+    #[test]
+    fn visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit() {
+        let cycle = input_for(SystemTxKind::CycleTick)
+            .encode()
+            .expect("CycleTick input encodes");
+        let intrinsic = system_tx_intrinsic_gas(&cycle).expect("intrinsic gas computes");
+
+        let error = SystemTxVisibleGasPlan::new(intrinsic - 1, &[(SystemTxKind::CycleTick, cycle)])
+            .expect_err("system envelope cannot exceed the block gas limit");
+
+        assert_eq!(
+            error,
+            SystemTxError::VisibleGasPlanExceedsBlock {
+                intrinsic_gas: intrinsic,
+                block_gas_limit: intrinsic - 1,
+            }
+        );
     }
 
     #[test]

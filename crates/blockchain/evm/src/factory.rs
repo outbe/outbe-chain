@@ -12,6 +12,7 @@ use alloy_evm::{
 };
 use alloy_primitives::{Address, Bytes, TxKind};
 use core::ops::{Deref, DerefMut};
+use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
 use reth_ethereum::evm::{
     primitives::{Database, EvmEnv},
@@ -28,6 +29,7 @@ use reth_ethereum::evm::{
     },
 };
 use revm::handler::{Handler, MainnetHandler};
+use std::sync::Arc;
 
 use crate::precompiles::extend_outbe_precompiles;
 
@@ -109,6 +111,7 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     >,
     inspect: bool,
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
@@ -123,17 +126,25 @@ impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
         >,
         inspect: bool,
         runtime_body_readers: Option<RuntimeBodyReaders>,
+        execution_scope: Arc<ExecutionScope>,
     ) -> Self {
         Self {
             inner: evm,
             inspect,
             runtime_body_readers,
+            execution_scope,
         }
     }
 
     /// Readers scoped to this concrete EVM instance and its nested calls.
     pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
         self.runtime_body_readers.as_ref()
+    }
+
+    /// Block-scoped compressed-entity lifecycle capability shared with every
+    /// top-level and nested precompile dispatch in this EVM.
+    pub fn execution_scope(&self) -> &Arc<ExecutionScope> {
+        &self.execution_scope
     }
 
     /// Consumes self and returns the inner revm instance.
@@ -364,9 +375,15 @@ impl EvmFactory for OutbeEvmFactory {
             .runtime_body_readers
             .as_ref()
             .map(RuntimeBodyReaders::fork_execution);
+        let execution_scope = Arc::new(ExecutionScope::new());
 
         // Register Outbe stateful precompiles via dynamic lookup.
-        extend_outbe_precompiles::<DB>(&mut precompiles, spec, runtime_body_readers.clone());
+        extend_outbe_precompiles::<DB>(
+            &mut precompiles,
+            spec,
+            runtime_body_readers.clone(),
+            execution_scope.clone(),
+        );
 
         let evm = Context::mainnet()
             .with_db(db)
@@ -375,7 +392,7 @@ impl EvmFactory for OutbeEvmFactory {
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(precompiles);
 
-        OutbeEvm::new(evm, false, runtime_body_readers)
+        OutbeEvm::new(evm, false, runtime_body_readers, execution_scope)
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>, EthInterpreter>>(
@@ -386,10 +403,12 @@ impl EvmFactory for OutbeEvmFactory {
     ) -> Self::Evm<DB, I> {
         let evm = self.create_evm(db, input);
         let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let execution_scope = evm.execution_scope().clone();
         OutbeEvm::new(
             evm.into_inner().with_inspector(inspector),
             true,
             runtime_body_readers,
+            execution_scope,
         )
     }
 }

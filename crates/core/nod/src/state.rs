@@ -1,7 +1,7 @@
-use alloy_primitives::{Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
-    Commitment, CommitmentState, EntityId36, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityId36, EntityRef,
+    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -11,11 +11,10 @@ use outbe_primitives::math::{
 };
 
 use crate::{
+    api::{LoadedNodBucket, LoadedNodItem},
     constants::BIN_STEP_BP,
     errors::NodError,
-    precompile::INod,
     schema::{NodBucketState, NodContract, NodItemState},
-    NodRepositoryReader,
 };
 
 impl NodContract<'_> {
@@ -44,107 +43,72 @@ impl NodContract<'_> {
 
     pub(crate) fn get_item_verified(
         &self,
-        reader: &NodRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         nod_id: EntityId36,
-    ) -> Result<Option<NodItemState>> {
-        let Some(expected) = CommitmentState::new(self.storage_handle()).nod_item(nod_id)? else {
-            return Ok(None);
-        };
-        let body = reader.get(nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "CommittedBodyMissing: Nod item {nod_id}"
-            ))
-        })?;
-        self.verify_item(&body, expected)?;
-        Ok(Some(body))
+    ) -> Result<Option<VerifiedBody>> {
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::NodItem(nod_id),
+        )
     }
 
     pub(crate) fn get_bucket_verified(
         &self,
-        reader: &NodRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         bucket_id: EntityId36,
-    ) -> Result<Option<NodBucketState>> {
-        let Some(expected) = CommitmentState::new(self.storage_handle()).nod_bucket(bucket_id)?
-        else {
-            return Ok(None);
-        };
-        let body = reader.get_bucket(bucket_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "CommittedBodyMissing: Nod bucket {bucket_id}"
-            ))
-        })?;
-        self.verify_bucket(&body, expected)?;
-        Ok(Some(body))
-    }
-
-    pub(crate) fn verify_item(&self, body: &NodItemState, expected: Commitment) -> Result<()> {
-        let canonical_id =
-            derive_poseidon_entity_id(body.owner, body.worldwide_day).map_err(|error| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-            })?;
-        if body.nod_id != canonical_id {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
-                    body.nod_id
-                )),
-            );
-        }
-        let payload =
-            encode_nod_item_v1(&crate::repository::canonical_item(body)).map_err(|error| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-            })?;
-        let actual = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            body.nod_id,
-            &payload,
+    ) -> Result<Option<VerifiedBody>> {
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::NodBucket(bucket_id),
         )
-        .map_err(|error| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-        })?;
-        if actual != expected {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod item commitment mismatch for {}",
-                    body.nod_id
-                )),
-            );
-        }
-        Ok(())
     }
 
-    pub(crate) fn verify_bucket(&self, body: &NodBucketState, expected: Commitment) -> Result<()> {
-        let canonical = crate::repository::canonical_bucket(body);
-        let payload = encode_nod_bucket_v1(&canonical).map_err(|error| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-        })?;
-        let actual = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            canonical.entity_id(),
-            &payload,
-        )
-        .map_err(|error| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-        })?;
-        if actual != expected {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod bucket commitment mismatch for {}",
-                    canonical.entity_id()
-                )),
+    pub(crate) fn read_all(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        owner: Option<Address>,
+    ) -> Result<Vec<NodItemState>> {
+        let query = owner.map_or(QueryRef::NodAll, QueryRef::NodByOwner);
+        let mut records = Vec::new();
+        let mut after = None;
+        loop {
+            let page = list(
+                self.storage_handle(),
+                scope,
+                parent,
+                query,
+                IdPageRequest {
+                    after,
+                    limit: MAX_ID_PAGE_LIMIT,
+                },
+            )?;
+            let next_after = page.next_after();
+            let bodies = page.into_bodies();
+            records.extend(
+                bodies
+                    .iter()
+                    .map(nod_item_from_verified)
+                    .collect::<Result<Vec<_>>>()?,
             );
+            let Some(next) = next_after else {
+                return Ok(records);
+            };
+            after = Some(next);
         }
-        Ok(())
     }
 
-    /// Records compact issuance state and emits the complete projected bodies.
-    ///
-    /// Full Nod and bucket bodies remain exclusively in the off-chain repository.
+    /// Records compact issuance state and delegates both bodies to the generic lifecycle.
     pub(crate) fn record_nod_issued(
         &mut self,
-        reader: &NodRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         item: &NodItemState,
         entry_price_minor: U256,
     ) -> Result<()> {
@@ -156,30 +120,20 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
-        let commitments = CommitmentState::new(self.storage_handle());
-        if commitments.nod_item(item.nod_id)?.is_some() {
+        if self
+            .get_item_verified(scope, parent, item.nod_id)?
+            .is_some()
+        {
             return Err(outbe_primitives::error::PrecompileError::Revert(
                 "nod already exists".into(),
             ));
         }
 
-        let item_payload = encode_nod_item_v1(&crate::repository::canonical_item(item))
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        let item_commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            item.nod_id,
-            &item_payload,
-        )
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-
         let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
-        let previous_bucket_commitment = commitments.nod_bucket(bucket_id)?;
-        let final_bucket = match previous_bucket_commitment {
-            Some(_) => {
-                let mut bucket = self
-                    .get_bucket_verified(reader, bucket_id)?
-                    .ok_or(NodError::BucketNotFound)?;
+        let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
+        let final_bucket = match current_bucket.as_ref() {
+            Some(current) => {
+                let mut bucket = nod_bucket_from_verified(current)?;
                 bucket.total_nods = bucket.total_nods.checked_add(1).ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                         "Nod bucket {bucket_id} member count overflow"
@@ -203,57 +157,53 @@ impl NodContract<'_> {
             }
         };
 
-        let bucket_payload = encode_nod_bucket_v1(&crate::repository::canonical_bucket(
-            &final_bucket,
-        ))
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        let bucket_commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            bucket_id,
-            &bucket_payload,
-        )
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
                 "Nod total supply overflow during issuance".into(),
             )
         })?;
         self.total_supply.write(supply)?;
-        commitments.set_nod_item(item.nod_id, item_commitment)?;
-        commitments.set_nod_bucket(bucket_id, bucket_commitment)?;
-        self.emit_nod_body_stored(item, None, item_commitment, item_payload)?;
-        self.emit_bucket_body_stored(
-            bucket_id,
-            previous_bucket_commitment,
-            bucket_commitment,
-            bucket_payload,
-        )
+        let canonical_item = crate::repository::canonical_item(item);
+        mint(
+            self.storage_handle(),
+            scope,
+            BodyInput::NodItem(&canonical_item),
+        )?;
+        let canonical_bucket = crate::repository::canonical_bucket(&final_bucket);
+        if let Some(current) = current_bucket {
+            update(
+                self.storage_handle(),
+                scope,
+                current,
+                BodyInput::NodBucket(&canonical_bucket),
+            )
+        } else {
+            mint(
+                self.storage_handle(),
+                scope,
+                BodyInput::NodBucket(&canonical_bucket),
+            )
+        }
     }
 
-    /// Records compact removal state and emits the projected body deletions/update.
+    /// Records compact removal state using capabilities retained by the caller's checks.
     pub(crate) fn record_nod_removed(
         &mut self,
-        reader: &NodRepositoryReader,
-        item: &NodItemState,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+        bucket: LoadedNodBucket,
     ) -> Result<()> {
-        let commitments = CommitmentState::new(self.storage_handle());
-        let previous_item_commitment = commitments.nod_item(item.nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod item {} became canonically absent during removal",
-                item.nod_id
-            ))
-        })?;
+        let (item, current_item) = item.into_parts();
+        let (mut bucket, current_bucket) = bucket.into_parts();
         let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
-        let previous_bucket_commitment = commitments.nod_bucket(bucket_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod bucket {bucket_id} became canonically absent during removal"
-            ))
-        })?;
-        let mut bucket = self
-            .get_bucket_verified(reader, bucket_id)?
-            .ok_or(NodError::BucketNotFound)?;
+        if current_bucket.entity_id() != bucket_id {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "loaded Nod bucket {} does not match item bucket {bucket_id}",
+                    current_bucket.entity_id()
+                )),
+            );
+        }
         bucket.total_nods = bucket.total_nods.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                 "Nod bucket {bucket_id} has zero members during removal"
@@ -266,73 +216,19 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
-        commitments.clear_nod_item(item.nod_id)?;
-
-        self.emit(INod::NodBodyDeleted {
-            nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
-            previousCommitment: B256::from(*previous_item_commitment.as_bytes()),
-        })?;
+        delete(self.storage_handle(), scope, current_item)?;
         if bucket.total_nods == 0 {
-            commitments.clear_nod_bucket(bucket_id)?;
             self.bucket_worldwide_day.clear(&item.bucket_key)?;
-            self.emit(INod::NodBucketBodyDeleted {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
-                previousCommitment: B256::from(*previous_bucket_commitment.as_bytes()),
-            })
+            delete(self.storage_handle(), scope, current_bucket)
         } else {
-            let payload = encode_nod_bucket_v1(&crate::repository::canonical_bucket(&bucket))
-                .map_err(|error| {
-                    outbe_primitives::error::PrecompileError::Fatal(error.to_string())
-                })?;
-            let new_commitment = body_commitment(
-                ACTIVE_COMMITMENT_SCHEME,
-                BODY_SCHEMA_V1,
-                bucket_id,
-                &payload,
-            )
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-            commitments.set_nod_bucket(bucket_id, new_commitment)?;
-            self.emit_bucket_body_stored(
-                bucket_id,
-                Some(previous_bucket_commitment),
-                new_commitment,
-                payload,
+            let canonical = crate::repository::canonical_bucket(&bucket);
+            update(
+                self.storage_handle(),
+                scope,
+                current_bucket,
+                BodyInput::NodBucket(&canonical),
             )
         }
-    }
-
-    fn emit_nod_body_stored(
-        &mut self,
-        item: &NodItemState,
-        previous: Option<Commitment>,
-        new_commitment: Commitment,
-        payload: Vec<u8>,
-    ) -> Result<()> {
-        self.emit(INod::NodBodyStored {
-            nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
-            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
-            previousCommitment: previous.map_or(B256::ZERO, |value| B256::from(*value.as_bytes())),
-            newCommitment: B256::from(*new_commitment.as_bytes()),
-            canonicalPayload: Bytes::from(payload),
-        })
-    }
-
-    pub(crate) fn emit_bucket_body_stored(
-        &mut self,
-        bucket_id: EntityId36,
-        previous: Option<Commitment>,
-        new_commitment: Commitment,
-        payload: Vec<u8>,
-    ) -> Result<()> {
-        self.emit(INod::NodBucketBodyStored {
-            bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
-            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
-            previousCommitment: previous.map_or(B256::ZERO, |value| B256::from(*value.as_bytes())),
-            newCommitment: B256::from(*new_commitment.as_bytes()),
-            canonicalPayload: Bytes::from(payload),
-        })
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
@@ -404,6 +300,24 @@ impl NodContract<'_> {
         tree_math::add(self, bin_id)?;
         Ok(())
     }
+}
+
+pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
+    let payload = body.payload().as_nod_item().ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Fatal(
+            "compressed-entity read returned a non-Nod-item payload".into(),
+        )
+    })?;
+    Ok(crate::repository::from_canonical_item(payload.clone()))
+}
+
+pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketState> {
+    let payload = body.payload().as_nod_bucket().ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Fatal(
+            "compressed-entity read returned a non-Nod-bucket payload".into(),
+        )
+    })?;
+    Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
 // --- BinTreeStorage impl ---------------------------------------------------

@@ -3,21 +3,22 @@ use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, LogData, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{decode_nod_item_v1, derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{
+    begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityId36, EntityRef,
+    ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
+    StoredBody,
+};
 use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
-use outbe_tribute::{
-    TributeContract, TributeData, TributeRepositoryReader, TributeRepositoryWriter,
-};
+use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 use std::sync::Arc;
 
 struct TestBodyRepository {
     tribute_reader: TributeRepositoryReader,
-    tribute_writer: TributeRepositoryWriter,
     nod_reader: NodRepositoryReader,
 }
 
@@ -25,17 +26,45 @@ impl TestBodyRepository {
     fn new() -> Self {
         let storage = Arc::new(MemoryStorage::new());
         let reader: StorageReaderHandle = storage.clone();
-        let writer: StorageWriterHandle = storage;
         Self {
             tribute_reader: TributeRepositoryReader::new(reader.clone()),
-            tribute_writer: TributeRepositoryWriter::new(reader.clone(), writer),
             nod_reader: NodRepositoryReader::new(reader),
         }
     }
 
-    fn issue(&self, contract: &mut TributeContract<'_>, tribute: &TributeData) {
-        contract.issue(&self.tribute_reader, tribute).unwrap();
-        self.tribute_writer.put(tribute).unwrap();
+    fn issue(
+        &self,
+        contract: &mut TributeContract<'_>,
+        scope: &ExecutionScope,
+        tribute: &TributeData,
+    ) {
+        contract.issue(scope, self, tribute).unwrap();
+    }
+}
+
+impl ParentBodySource for TestBodyRepository {
+    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
+        match entity {
+            EntityRef::Tribute(_) => ParentBodySource::get(&self.tribute_reader, entity),
+            EntityRef::NodItem(_) | EntityRef::NodBucket(_) => {
+                ParentBodySource::get(&self.nod_reader, entity)
+            }
+        }
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> Result<IdPage, ParentBodySourceError> {
+        match query {
+            QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
+                ParentBodySource::list(&self.tribute_reader, query, request)
+            }
+            QueryRef::NodByOwner(_) | QueryRef::NodAll => {
+                ParentBodySource::list(&self.nod_reader, query, request)
+            }
+        }
     }
 }
 
@@ -91,6 +120,8 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     let bodies = TestBodyRepository::new();
 
     let result = StorageHandle::enter(&mut storage, |storage| {
+        let scope = ExecutionScope::new();
+        begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
         // Register ISO 840 (USD) → COEN/0xUSD pair so the runtime's
@@ -122,12 +153,13 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             let owner = gas_audit_address(token_id);
             bodies.issue(
                 &mut tribute,
+                &scope,
                 &gas_audit_tribute(token_id, owner, wwd, nominal),
             );
         }
         assert_eq!(
             tribute
-                .get_all_day_tributes(&bodies.tribute_reader, wwd)
+                .get_all_day_tributes(&scope, &bodies, wwd)
                 .unwrap()
                 .len(),
             DENSE_TRIBUTE_COUNT as usize,
@@ -136,8 +168,8 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
 
         let result = crate::runtime::lysis(
             storage.clone(),
-            &bodies.tribute_reader,
-            &bodies.nod_reader,
+            &scope,
+            &bodies,
             wwd,
             T_NOW,
             gratis_allocation,
@@ -168,6 +200,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             DENSE_TRIBUTE_COUNT,
             "GAS-08: dense Lysis must persist every issued NOD"
         );
+        end_block(storage, &scope).unwrap();
         result
     });
 
@@ -179,8 +212,12 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         .collect::<Vec<_>>();
     assert_eq!(stored_items.len(), DENSE_TRIBUTE_COUNT as usize);
     let mut issued_gratis = U256::ZERO;
-    for (idx, item) in stored_items.iter().enumerate() {
-        assert_eq!(item.owner, gas_audit_address(idx as u64 + 1));
+    let by_owner: std::collections::BTreeMap<_, _> =
+        stored_items.iter().map(|item| (item.owner, item)).collect();
+    for token_id in 1..=DENSE_TRIBUTE_COUNT {
+        let item = by_owner
+            .get(&gas_audit_address(token_id))
+            .expect("every dense-day owner must receive one Nod");
         assert_eq!(item.worldwide_day, wwd);
         assert_eq!(item.league_id, 1);
         assert!(!item.gratis_load_minor.is_zero());
@@ -516,6 +553,8 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
     let result = StorageHandle::enter(&mut storage, |s| {
+        let scope = ExecutionScope::new();
+        begin_block(s.clone(), &scope).unwrap();
         // 1. Register COEN/0xUSD pair and seed its WorldwideDay VWAP. We
         //    write directly into the oracle schema (no real vote tally),
         //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
@@ -559,22 +598,15 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         };
         let mut tribute_contract = TributeContract::new(s.clone());
         tribute_contract.unseal_day(wwd).unwrap();
-        bodies.issue(&mut tribute_contract, &tribute);
+        bodies.issue(&mut tribute_contract, &scope, &tribute);
 
         // 3. Pick a gratis allocation that produces a positive gratis_load.
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
         let gratis_allocation = nominal / U256::from(10u64);
-        let result = lysis(
-            s.clone(),
-            &bodies.tribute_reader,
-            &bodies.nod_reader,
-            wwd,
-            T_NOW,
-            gratis_allocation,
-        )
-        .unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, T_NOW, gratis_allocation).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
+        end_block(s, &scope).unwrap();
         result
     });
 
@@ -810,6 +842,8 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
     let result = StorageHandle::enter(&mut storage, |s| {
+        let scope = ExecutionScope::new();
+        begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
         // Wire ISO 840 → COEN/0xUSD so the runtime's ISO-keyed pair lookup resolves.
@@ -838,6 +872,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         tribute.unseal_day(wwd).unwrap();
         bodies.issue(
             &mut tribute,
+            &scope,
             &TributeData {
                 tribute_id: entity_id(wwd, owner),
                 owner,
@@ -851,15 +886,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
             },
         );
 
-        let result = lysis(
-            s.clone(),
-            &bodies.tribute_reader,
-            &bodies.nod_reader,
-            wwd,
-            T_NOW,
-            gratis_allocation,
-        )
-        .unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, T_NOW, gratis_allocation).unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -873,6 +900,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
             result.remaining_gratis.is_zero(),
             "the full scarce allocation must be consumed"
         );
+        end_block(s, &scope).unwrap();
         result
     });
 
@@ -901,6 +929,8 @@ fn lysis_records_contributors_aggregated_by_owner() {
     let bodies = TestBodyRepository::new();
 
     StorageHandle::enter(&mut storage, |storage| {
+        let scope = ExecutionScope::new();
+        begin_block(storage.clone(), &scope).unwrap();
         // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
@@ -935,14 +965,17 @@ fn lysis_records_contributors_aggregated_by_owner() {
         tribute.unseal_day(wwd).unwrap();
         bodies.issue(
             &mut tribute,
+            &scope,
             &gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)),
         );
         bodies.issue(
             &mut tribute,
+            &scope,
             &gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)),
         );
         bodies.issue(
             &mut tribute,
+            &scope,
             &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
         );
 
@@ -954,8 +987,8 @@ fn lysis_records_contributors_aggregated_by_owner() {
         const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
         let result = crate::runtime::lysis(
             storage.clone(),
-            &bodies.tribute_reader,
-            &bodies.nod_reader,
+            &scope,
+            &bodies,
             wwd,
             AUCTION_TS,
             gratis_allocation,
@@ -988,5 +1021,6 @@ fn lysis_records_contributors_aggregated_by_owner() {
             0,
             "map must not be keyed by the tribute day"
         );
+        end_block(storage, &scope).unwrap();
     });
 }

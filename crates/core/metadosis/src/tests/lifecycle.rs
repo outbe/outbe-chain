@@ -646,14 +646,9 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
 #[test]
 fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
     with_storage(|storage| {
-        let body_storage = std::sync::Arc::new(outbe_offchain_storage::MemoryStorage::new());
-        let body_reader: outbe_offchain_storage::StorageReaderHandle = body_storage.clone();
-        let body_writer: outbe_offchain_storage::StorageWriterHandle = body_storage;
-        let tribute_bodies = outbe_tribute::TributeRepositoryReader::new(body_reader.clone());
-        let tribute_writer =
-            outbe_tribute::TributeRepositoryWriter::new(body_reader.clone(), body_writer.clone());
-        let nod_bodies = outbe_nod::NodRepositoryReader::new(body_reader.clone());
-        let nod_writer = outbe_nod::NodRepositoryWriter::new(body_reader, body_writer);
+        let parent = TestParent::empty();
+        let scope = ExecutionScope::new();
+        begin_block(storage.clone(), &scope).unwrap();
         let wwd_raw = 20260313u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
         let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
@@ -699,8 +694,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
             exclude_from_intex_issuance: false,
             tribute_price_minor: U256::ZERO,
         };
-        tribute.issue(&tribute_bodies, &tribute_body).unwrap();
-        tribute_writer.put(&tribute_body).unwrap();
+        tribute.issue(&scope, &parent, &tribute_body).unwrap();
         tribute.seal_day(wwd).unwrap();
 
         // Pre-issue a NOD with the same (owner, worldwide_day) tuple the lysis
@@ -710,23 +704,24 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
         // out of the begin-zone system transaction instead of silently retiring
         // the day. The test asserts the error surfaces and the day is left
         // unsettled (still READY, limit not routed to PROMIS).
-        let nod_id = outbe_nod::NodContract::generate_nod_id(owner, wwd).unwrap();
         let floor_price_minor = U256::from(1u64);
-        nod_writer
-            .put_nod(&outbe_nod::NodItemState {
-                nod_id,
+        outbe_nodfactory::api::issue_nod(
+            &storage,
+            &scope,
+            &parent,
+            &outbe_nod::NodIssueParams {
                 owner,
                 gratis_load_minor: U256::from(1u64),
                 worldwide_day: wwd,
                 league_id: 1,
                 floor_price_minor,
-                bucket_key: outbe_nod::NodContract::bucket_key(wwd, floor_price_minor),
+                entry_price_minor: U256::from(1u64),
                 cost_amount_minor: U256::from(1u64),
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: 0,
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
@@ -736,11 +731,12 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
             ),
             storage.clone(),
         );
-        let result = crate::runtime::start_metadosis(&ctx, &tribute_bodies, &nod_bodies);
+        let result = crate::runtime::start_metadosis(&ctx, &scope, &parent);
         assert!(
             result.is_err(),
             "lysis failure must propagate out of the begin-zone system transaction"
         );
+        end_block(storage.clone(), &scope).unwrap();
 
         // The error carries the real reason out. `process_metadosis` records the
         // FAILED transition before propagating (observable here because the test
@@ -887,8 +883,8 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
             storage.clone(),
         );
         crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
-        with_empty_body_readers(|tribute_bodies, nod_bodies| {
-            crate::runtime::start_metadosis(&ctx, tribute_bodies, nod_bodies)
+        with_active_scope(storage, |scope, parent| {
+            crate::runtime::start_metadosis(&ctx, scope, parent)
         })
         .unwrap();
     });

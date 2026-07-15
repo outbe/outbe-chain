@@ -10,6 +10,7 @@ pub use repository::{
     canonical_body, from_canonical_body, TributePage, TributePageRequest, TributeRepositoryError,
     TributeRepositoryReader, TributeRepositoryWriter,
 };
+pub use runtime::LoadedTribute;
 pub use schema::{DayTotals, TributeContract, TributeData};
 
 #[cfg(test)]

@@ -10,18 +10,17 @@
 
 use alloy_primitives::U256;
 
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
     block::dispatch_terminal_remainder_at,
     day_emission::day_emission_limit,
 };
-use outbe_nod::NodRepositoryReader;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key},
 };
-use outbe_tribute::TributeRepositoryReader;
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
     ctx.storage.gas_used().unwrap_or(0)
@@ -37,8 +36,8 @@ fn wrap(step: &str, r: Result<()>) -> Result<()> {
 
 pub fn run_emission_limit_daily(
     ctx: &BlockRuntimeContext,
-    tribute_bodies: &TributeRepositoryReader,
-    nod_bodies: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
@@ -179,7 +178,7 @@ pub fn run_emission_limit_daily(
 
     wrap(
         "start_metadosis",
-        outbe_metadosis::runtime::start_metadosis(ctx, tribute_bodies, nod_bodies),
+        outbe_metadosis::runtime::start_metadosis(ctx, scope, parent),
     )?;
 
     let g5 = gas(ctx);

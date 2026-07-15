@@ -1,17 +1,13 @@
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1, Commitment, CommitmentState,
-    EntityId36, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    derive_poseidon_entity_id, list, read, EntityId36, EntityRef, ExecutionScope, IdPageRequest,
+    ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
 };
-use outbe_offchain_storage::MAX_SCAN_ENTRIES;
 use outbe_primitives::error::Result;
 
 use crate::errors::TributeError;
 use crate::schema::{DayTotals, TributeContract, TributeData};
-use crate::{TributePageRequest, TributeRepositoryReader};
-
-const MAX_RUNTIME_QUERY_RECORDS: usize = MAX_SCAN_ENTRIES * 4;
 
 impl TributeContract<'_> {
     pub fn total_supply(&self) -> Result<u64> {
@@ -20,17 +16,23 @@ impl TributeContract<'_> {
 
     pub fn owner_of(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         tribute_id: EntityId36,
     ) -> Result<Address> {
         let tribute = self
-            .get_tribute(bodies, tribute_id)?
+            .get_tribute(scope, parent, tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
         Ok(tribute.owner)
     }
 
-    pub fn balance_of(&self, bodies: &TributeRepositoryReader, owner: Address) -> Result<u64> {
-        let count = self.get_tribute_ids_by_owner(bodies, owner)?.len();
+    pub fn balance_of(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        owner: Address,
+    ) -> Result<u64> {
+        let count = self.get_tribute_ids_by_owner(scope, parent, owner)?.len();
         let count: u64 = count
             .try_into()
             .map_err(|_| TributeError::OwnerBalanceOverflow)?;
@@ -39,11 +41,12 @@ impl TributeContract<'_> {
 
     pub fn token_uri(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         tribute_id: EntityId36,
     ) -> Result<String> {
         let tribute = self
-            .get_tribute(bodies, tribute_id)?
+            .get_tribute(scope, parent, tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
         Ok(format!(
             "data:application/json;utf8,{{\"name\":\"Tribute 0x{}\",\"description\":\"Outbe Tribute\",\"attributes\":[{{\"trait_type\":\"owner\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"nominal_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"reference_currency\",\"value\":\"{}\"}},{{\"trait_type\":\"exclude_from_intex_issuance\",\"value\":{}}}]}}",
@@ -60,20 +63,18 @@ impl TributeContract<'_> {
 
     pub fn get_tribute(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         tribute_id: EntityId36,
     ) -> Result<Option<TributeData>> {
-        let commitments = CommitmentState::new(self.storage_handle());
-        let Some(expected) = commitments.tribute(tribute_id)? else {
-            return Ok(None);
-        };
-        let body = bodies.get(tribute_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "CommittedBodyMissing: Tribute {tribute_id}"
-            ))
-        })?;
-        self.verify_returned_tribute(&body, expected)?;
-        Ok(Some(body))
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::Tribute(tribute_id),
+        )?
+        .map(|current| tribute_from_verified(&current))
+        .transpose()
     }
 
     pub fn get_day_totals(&self, day: WorldwideDay) -> Result<DayTotals> {
@@ -93,11 +94,12 @@ impl TributeContract<'_> {
 
     pub fn get_tribute_ids_by_owner(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         owner: Address,
     ) -> Result<Vec<EntityId36>> {
         Ok(self
-            .read_all_by_owner(bodies, owner)?
+            .read_all_by_owner(scope, parent, owner)?
             .into_iter()
             .map(|tribute| tribute.tribute_id)
             .collect())
@@ -105,11 +107,12 @@ impl TributeContract<'_> {
 
     pub fn get_tribute_ids_by_day(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         day: WorldwideDay,
     ) -> Result<Vec<EntityId36>> {
         Ok(self
-            .read_all_by_day(bodies, day)?
+            .read_all_by_day(scope, parent, day)?
             .into_iter()
             .map(|tribute| tribute.tribute_id)
             .collect())
@@ -197,126 +200,62 @@ impl TributeContract<'_> {
 
     pub(crate) fn read_all_by_owner(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         owner: Address,
     ) -> Result<Vec<TributeData>> {
-        let mut records = Vec::new();
-        let mut after = None;
-        loop {
-            let page = bodies.list_by_owner(
-                owner,
-                TributePageRequest {
-                    after,
-                    limit: MAX_SCAN_ENTRIES,
-                },
-            )?;
-            if records.len().saturating_add(page.records.len()) > MAX_RUNTIME_QUERY_RECORDS {
-                return Err(TributeError::QueryLimitExceeded.into());
-            }
-            self.extend_verified_page(&mut records, page.records, "owner")?;
-            let Some(next) = page.next_after else {
-                return Ok(records);
-            };
-            if records.len() == MAX_RUNTIME_QUERY_RECORDS {
-                return Err(TributeError::QueryLimitExceeded.into());
-            }
-            after = Some(next);
-        }
+        self.read_all(scope, parent, QueryRef::TributeByOwner(owner))
     }
 
     pub(crate) fn read_all_by_day(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         day: WorldwideDay,
+    ) -> Result<Vec<TributeData>> {
+        self.read_all(scope, parent, QueryRef::TributeByDay(day))
+    }
+
+    fn read_all(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        query: QueryRef,
     ) -> Result<Vec<TributeData>> {
         let mut records = Vec::new();
         let mut after = None;
         loop {
-            let page = bodies.list_by_day(
-                day,
-                TributePageRequest {
+            let page = list(
+                self.storage_handle(),
+                scope,
+                parent,
+                query,
+                IdPageRequest {
                     after,
-                    limit: MAX_SCAN_ENTRIES,
+                    limit: MAX_ID_PAGE_LIMIT,
                 },
             )?;
-            if records.len().saturating_add(page.records.len()) > MAX_RUNTIME_QUERY_RECORDS {
-                return Err(TributeError::QueryLimitExceeded.into());
-            }
-            self.extend_verified_page(&mut records, page.records, "day")?;
-            let Some(next) = page.next_after else {
+            let next_after = page.next_after();
+            let bodies = page.into_bodies();
+            records.extend(
+                bodies
+                    .iter()
+                    .map(tribute_from_verified)
+                    .collect::<Result<Vec<_>>>()?,
+            );
+            let Some(next) = next_after else {
                 return Ok(records);
             };
-            if records.len() == MAX_RUNTIME_QUERY_RECORDS {
-                return Err(TributeError::QueryLimitExceeded.into());
-            }
             after = Some(next);
         }
     }
+}
 
-    fn extend_verified_page(
-        &self,
-        records: &mut Vec<TributeData>,
-        page: Vec<TributeData>,
-        index: &'static str,
-    ) -> Result<()> {
-        let commitments = CommitmentState::new(self.storage_handle());
-        for body in page {
-            let expected = commitments.tribute(body.tribute_id)?.ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "{index} index returned canonically absent Tribute {}",
-                    body.tribute_id
-                ))
-            })?;
-            self.verify_returned_tribute(&body, expected)?;
-            if records
-                .last()
-                .is_some_and(|last| last.tribute_id >= body.tribute_id)
-            {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Tribute {index} page contains duplicate or unordered identities"
-                    )),
-                );
-            }
-            records.push(body);
-        }
-        Ok(())
-    }
-
-    fn verify_returned_tribute(&self, body: &TributeData, expected: Commitment) -> Result<()> {
-        let canonical_id =
-            derive_poseidon_entity_id(body.owner, body.worldwide_day).map_err(|error| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-            })?;
-        if body.tribute_id != canonical_id {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Tribute canonical identity mismatch: expected {canonical_id}, found {}",
-                    body.tribute_id
-                )),
-            );
-        }
-        let payload =
-            encode_tribute_v1(&crate::repository::canonical_body(body)).map_err(|error| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-            })?;
-        let actual = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            body.tribute_id,
-            &payload,
+pub(crate) fn tribute_from_verified(body: &VerifiedBody) -> Result<TributeData> {
+    let payload = body.payload().as_tribute().ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::BodyReadCorruption(
+            "compressed-entity read returned a non-Tribute payload".into(),
         )
-        .map_err(|error| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-        })?;
-        if actual != expected {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Tribute commitment mismatch for {}",
-                    body.tribute_id
-                )),
-            );
-        }
-        Ok(())
-    }
+    })?;
+    Ok(crate::repository::from_canonical_body(payload.clone()))
 }

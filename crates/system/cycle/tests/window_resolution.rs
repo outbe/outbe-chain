@@ -21,16 +21,14 @@ use alloy_primitives::Address;
 use outbe_accounting::record_phase1_progress;
 use outbe_cycle::{
     state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
-    triggers::TriggerSpec,
+    triggers::{TriggerHandler, TriggerSpec},
 };
-use outbe_nod::NodRepositoryReader;
 use outbe_primitives::{
     accounting_progress::AccountingProgressView,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::hashmap::HashMapStorageProvider,
 };
-use outbe_tribute::TributeRepositoryReader;
 use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;
@@ -39,14 +37,6 @@ const DAY: u64 = 86_400;
 const WEEK: u64 = 604_800;
 const MONTH: u64 = 30 * DAY;
 
-fn dummy_handler(
-    _ctx: &BlockRuntimeContext,
-    _tribute_bodies: &TributeRepositoryReader,
-    _nod_bodies: &NodRepositoryReader,
-) -> Result<()> {
-    Ok(())
-}
-
 fn gated_spec(period_seconds: u64) -> TriggerSpec {
     TriggerSpec {
         id: 4242,
@@ -54,7 +44,7 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
         period_seconds,
         start_offset_seconds: 0,
         requires_accounting_window: true,
-        handler: dummy_handler,
+        handler: TriggerHandler::IntexDaily,
     }
 }
 
@@ -65,7 +55,7 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
         period_seconds,
         start_offset_seconds: 0,
         requires_accounting_window: false,
-        handler: dummy_handler,
+        handler: TriggerHandler::IntexDaily,
     }
 }
 
@@ -268,7 +258,7 @@ proptest! {
             period_seconds: period,
             start_offset_seconds: offset,
             requires_accounting_window: true,
-            handler: dummy_handler,
+            handler: TriggerHandler::IntexDaily,
         };
         let block = block_ctx(block_number, block_ts);
 

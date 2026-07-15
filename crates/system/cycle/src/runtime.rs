@@ -4,9 +4,8 @@
 //! block during the begin-zone CycleTick phase. Iterates [`crate::triggers::ACTIVE_TRIGGERS`]
 //! and fires any trigger whose next slot has been reached.
 
-use outbe_nod::NodRepositoryReader;
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
-use outbe_tribute::TributeRepositoryReader;
 
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
@@ -24,8 +23,8 @@ use crate::ICycle;
 /// crosses UTC midnight.
 pub fn dispatch_triggers(
     ctx: &BlockRuntimeContext,
-    tribute_bodies: &TributeRepositoryReader,
-    nod_bodies: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
@@ -82,7 +81,7 @@ pub fn dispatch_triggers(
         }
 
         let result = ctx.storage.with_checkpoint(|| {
-            (spec.handler)(ctx, tribute_bodies, nod_bodies)?;
+            spec.handler.run(ctx, scope, parent)?;
             let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
             cycle.last_executed_at.write(&spec.id, scheduled_at)?;
             cycle

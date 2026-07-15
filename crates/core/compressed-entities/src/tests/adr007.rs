@@ -1,0 +1,2316 @@
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
+};
+
+use alloy_primitives::{address, b256, keccak256, Address, Bytes, B256, U256};
+use alloy_sol_types::SolEvent;
+use outbe_common::WorldwideDay;
+use outbe_primitives::{
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS},
+    error::{PrecompileError, Result},
+    storage::{hashmap::HashMapStorageProvider, types::StorageKey, StorageHandle},
+};
+
+use crate::{
+    begin_block, body_commitment, delete, encode_nod_bucket_v1, encode_nod_item_v1,
+    encode_tribute_v1, end_block, list, mint, read, update, BodyInput, CommitmentState, EntityId36,
+    EntityRef, ExecutionScope, IdPage, IdPageRequest, NodBucketBodyV1, NodItemBodyV1,
+    ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1, VerifiedBody,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, MAX_ID_PAGE_LIMIT,
+};
+use crate::{
+    runtime::{
+        NodBodyStored, TributeBodyDeleted, TributeBodyStored, INDEX_RECORD_SCAN_GAS, PARENT_ID_GAS,
+        READ_FIXED_GAS, READ_GAS_PER_CANONICAL_BYTE,
+    },
+    schema::{
+        body_identity_record, body_locator, decode_body_identity_record, Collection,
+        CompressedEntitiesSchema, DeltaStatus, IndexKind, IndexRecord, PendingWord,
+    },
+    state::{
+        State, BODY_TOUCHED_LENGTH_CLEANUP_GAS, FIRST_BODY_TOUCH_CLEANUP_GAS,
+        FIRST_INDEX_TOUCH_CLEANUP_GAS, INDEX_TOUCHED_LENGTH_CLEANUP_GAS, MAX_STORED_BODY_BYTES_V1,
+    },
+};
+
+const FIRST_TRIBUTE_CLEANUP_GAS: u64 = FIRST_BODY_TOUCH_CLEANUP_GAS
+    + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+    + 2 * FIRST_INDEX_TOUCH_CLEANUP_GAS
+    + INDEX_TOUCHED_LENGTH_CLEANUP_GAS;
+
+#[derive(Default)]
+struct MemoryParent {
+    bodies: HashMap<EntityRef, StoredBody>,
+    tribute_by_owner: HashMap<Address, Vec<EntityId36>>,
+    tribute_by_day: HashMap<WorldwideDay, Vec<EntityId36>>,
+    nod_by_owner: HashMap<Address, Vec<EntityId36>>,
+    nod_all: Vec<EntityId36>,
+    get_calls: Cell<u32>,
+    list_calls: Cell<u32>,
+    reverse_pages: bool,
+}
+
+impl MemoryParent {
+    fn insert_tribute(&mut self, body: &TributeBodyV1) -> StoredBody {
+        let stored = stored_tribute(body);
+        self.bodies
+            .insert(EntityRef::Tribute(body.tribute_id), stored.clone());
+        self.tribute_by_owner
+            .entry(body.owner)
+            .or_default()
+            .push(body.tribute_id);
+        self.tribute_by_day
+            .entry(body.worldwide_day)
+            .or_default()
+            .push(body.tribute_id);
+        self.sort_indexes();
+        stored
+    }
+
+    fn insert_nod_item(&mut self, body: &NodItemBodyV1) -> StoredBody {
+        let stored = stored_nod_item(body);
+        self.bodies
+            .insert(EntityRef::NodItem(body.nod_id), stored.clone());
+        self.nod_by_owner
+            .entry(body.owner)
+            .or_default()
+            .push(body.nod_id);
+        self.nod_all.push(body.nod_id);
+        self.sort_indexes();
+        stored
+    }
+
+    fn sort_indexes(&mut self) {
+        for ids in self.tribute_by_owner.values_mut() {
+            ids.sort_unstable();
+        }
+        for ids in self.tribute_by_day.values_mut() {
+            ids.sort_unstable();
+        }
+        for ids in self.nod_by_owner.values_mut() {
+            ids.sort_unstable();
+        }
+        self.nod_all.sort_unstable();
+    }
+
+    fn ids(&self, query: QueryRef) -> Vec<EntityId36> {
+        match query {
+            QueryRef::TributeByOwner(owner) => self
+                .tribute_by_owner
+                .get(&owner)
+                .cloned()
+                .unwrap_or_default(),
+            QueryRef::TributeByDay(day) => {
+                self.tribute_by_day.get(&day).cloned().unwrap_or_default()
+            }
+            QueryRef::NodByOwner(owner) => {
+                self.nod_by_owner.get(&owner).cloned().unwrap_or_default()
+            }
+            QueryRef::NodAll => self.nod_all.clone(),
+        }
+    }
+}
+
+impl ParentBodySource for MemoryParent {
+    fn get(
+        &self,
+        entity: EntityRef,
+    ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
+        self.get_calls.set(self.get_calls.get() + 1);
+        Ok(self.bodies.get(&entity).cloned())
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> core::result::Result<IdPage, ParentBodySourceError> {
+        self.list_calls.set(self.list_calls.get() + 1);
+        let mut ids = self.ids(query);
+        if self.reverse_pages {
+            ids.reverse();
+        }
+        let start = request
+            .after
+            .map_or(0, |after| ids.partition_point(|id| *id <= after));
+        let end = (start + request.limit as usize).min(ids.len());
+        let page_ids = ids[start..end].to_vec();
+        let next_after = (end < ids.len()).then(|| *page_ids.last().expect("non-empty page"));
+        Ok(IdPage {
+            ids: page_ids,
+            next_after,
+        })
+    }
+}
+
+#[derive(Default)]
+struct ScriptedParent {
+    bodies: HashMap<EntityRef, StoredBody>,
+    pages: RefCell<VecDeque<IdPage>>,
+}
+
+impl ParentBodySource for ScriptedParent {
+    fn get(
+        &self,
+        entity: EntityRef,
+    ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
+        Ok(self.bodies.get(&entity).cloned())
+    }
+
+    fn list(
+        &self,
+        _query: QueryRef,
+        _request: IdPageRequest,
+    ) -> core::result::Result<IdPage, ParentBodySourceError> {
+        Ok(self.pages.borrow_mut().pop_front().unwrap_or(IdPage {
+            ids: Vec::new(),
+            next_after: None,
+        }))
+    }
+}
+
+fn entity(day: u32, suffix: u8) -> EntityId36 {
+    EntityId36::new(WorldwideDay::new(day), [suffix; 32])
+}
+
+fn tribute(id: EntityId36, owner: Address, price: u64) -> TributeBodyV1 {
+    TributeBodyV1 {
+        tribute_id: id,
+        owner,
+        worldwide_day: id.worldwide_day(),
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(20),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(price),
+        exclude_from_intex_issuance: false,
+    }
+}
+
+fn nod_item(id: EntityId36, owner: Address) -> NodItemBodyV1 {
+    NodItemBodyV1 {
+        nod_id: id,
+        owner,
+        gratis_load_minor: U256::from(1),
+        worldwide_day: id.worldwide_day(),
+        league_id: 3,
+        floor_price_minor: U256::from(4),
+        bucket_key: B256::repeat_byte(5),
+        cost_amount_minor: U256::from(6),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 7,
+    }
+}
+
+fn stored_tribute(body: &TributeBodyV1) -> StoredBody {
+    StoredBody::new_v1(encode_tribute_v1(body).unwrap()).unwrap()
+}
+
+fn stored_nod_item(body: &NodItemBodyV1) -> StoredBody {
+    StoredBody::new_v1(encode_nod_item_v1(body).unwrap()).unwrap()
+}
+
+fn tribute_commitment(body: &TributeBodyV1) -> crate::Commitment {
+    let payload = encode_tribute_v1(body).unwrap();
+    body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        body.tribute_id,
+        &payload,
+    )
+    .unwrap()
+}
+
+fn nod_item_commitment(body: &NodItemBodyV1) -> crate::Commitment {
+    let payload = encode_nod_item_v1(body).unwrap();
+    body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        body.nod_id,
+        &payload,
+    )
+    .unwrap()
+}
+
+fn seed_parent_tribute(
+    storage: StorageHandle<'_>,
+    parent: &mut MemoryParent,
+    body: &TributeBodyV1,
+) {
+    parent.insert_tribute(body);
+    State::new(storage)
+        .write_commitment(
+            Collection::Tribute,
+            body.tribute_id,
+            tribute_commitment(body),
+        )
+        .unwrap();
+}
+
+fn seed_parent_nod_item(
+    storage: StorageHandle<'_>,
+    parent: &mut MemoryParent,
+    body: &NodItemBodyV1,
+) {
+    parent.insert_nod_item(body);
+    State::new(storage)
+        .write_commitment(Collection::NodItem, body.nod_id, nod_item_commitment(body))
+        .unwrap();
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FixtureBody {
+    Tribute(TributeBodyV1),
+    NodItem(NodItemBodyV1),
+    NodBucket(NodBucketBodyV1),
+}
+
+impl FixtureBody {
+    fn input(&self) -> BodyInput<'_> {
+        match self {
+            Self::Tribute(body) => BodyInput::Tribute(body),
+            Self::NodItem(body) => BodyInput::NodItem(body),
+            Self::NodBucket(body) => BodyInput::NodBucket(body),
+        }
+    }
+
+    fn entity_ref(&self) -> EntityRef {
+        match self {
+            Self::Tribute(body) => EntityRef::Tribute(body.tribute_id),
+            Self::NodItem(body) => EntityRef::NodItem(body.nod_id),
+            Self::NodBucket(body) => EntityRef::NodBucket(body.entity_id()),
+        }
+    }
+
+    fn assert_verified(&self, verified: &VerifiedBody) {
+        match self {
+            Self::Tribute(expected) => {
+                assert_eq!(verified.payload().as_tribute(), Some(expected));
+            }
+            Self::NodItem(expected) => {
+                assert_eq!(verified.payload().as_nod_item(), Some(expected));
+            }
+            Self::NodBucket(expected) => {
+                assert_eq!(verified.payload().as_nod_bucket(), Some(expected));
+            }
+        }
+    }
+
+    fn expected_index_touches(&self) -> u32 {
+        match self {
+            Self::Tribute(_) | Self::NodItem(_) => 2,
+            Self::NodBucket(_) => 0,
+        }
+    }
+
+    fn emitter(&self) -> Address {
+        match self {
+            Self::Tribute(_) => TRIBUTE_ADDRESS,
+            Self::NodItem(_) | Self::NodBucket(_) => NOD_ADDRESS,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BodyVersion {
+    Original,
+    Updated,
+}
+
+#[derive(Clone, Copy)]
+enum MatrixMutation {
+    Mint(BodyVersion),
+    Update(BodyVersion),
+    Delete,
+}
+
+fn exercise_transition_sequence(
+    original: &FixtureBody,
+    updated: &FixtureBody,
+    sequence: &[(MatrixMutation, bool)],
+) {
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    let mut expected: Option<BodyVersion> = None;
+    let mut last_capability: Option<VerifiedBody> = None;
+    let mut successful_operations = 0;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        for (operation, should_succeed) in sequence {
+            let selected = |version: BodyVersion| match version {
+                BodyVersion::Original => original,
+                BodyVersion::Updated => updated,
+            };
+            let result = match operation {
+                MatrixMutation::Mint(version) => {
+                    mint(storage.clone(), &scope, selected(*version).input())
+                }
+                MatrixMutation::Update(version) => {
+                    let current = read(storage.clone(), &scope, &parent, original.entity_ref())
+                        .unwrap()
+                        .or_else(|| last_capability.clone())
+                        .expect("update scenario retains a prior value capability");
+                    last_capability = Some(current.clone());
+                    update(storage.clone(), &scope, current, selected(*version).input())
+                }
+                MatrixMutation::Delete => {
+                    let current = read(storage.clone(), &scope, &parent, original.entity_ref())
+                        .unwrap()
+                        .or_else(|| last_capability.clone())
+                        .expect("delete scenario retains a prior value capability");
+                    last_capability = Some(current.clone());
+                    delete(storage.clone(), &scope, current)
+                }
+            };
+
+            if *should_succeed {
+                result.unwrap();
+                successful_operations += 1;
+                expected = match operation {
+                    MatrixMutation::Mint(version) | MatrixMutation::Update(version) => {
+                        Some(*version)
+                    }
+                    MatrixMutation::Delete => None,
+                };
+            } else {
+                assert!(matches!(result, Err(PrecompileError::Revert(_))));
+            }
+
+            let current = read(storage.clone(), &scope, &parent, original.entity_ref()).unwrap();
+            match (expected, current) {
+                (None, None) => {}
+                (Some(version), Some(verified)) => selected(version).assert_verified(&verified),
+                _ => panic!("transition produced the wrong observable existence state"),
+            }
+        }
+
+        let schema = CompressedEntitiesSchema::new(storage.clone());
+        assert_eq!(schema.touched.len().unwrap(), 1);
+        assert_eq!(
+            schema.touched_index_deltas.len().unwrap(),
+            original.expected_index_touches()
+        );
+        end_block(storage, &scope).unwrap();
+    });
+
+    assert_eq!(provider.get_ordered_events().len(), successful_operations);
+    assert!(provider
+        .get_ordered_events()
+        .iter()
+        .all(|event| event.address == original.emitter()));
+}
+
+#[test]
+fn same_block_transition_matrix_is_overlay_first_and_single_touch() {
+    let owner = address!("1000000000000000000000000000000000000001");
+    let id = entity(7, 1);
+    let first = tribute(id, owner, 100);
+    let second = tribute(id, owner, 200);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+        assert_eq!(parent.get_calls.get(), 0);
+        let minted = read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(minted.payload().as_tribute().unwrap(), &first);
+        assert!(matches!(
+            mint(storage.clone(), &scope, BodyInput::Tribute(&first)),
+            Err(PrecompileError::Revert(_))
+        ));
+
+        update(storage.clone(), &scope, minted, BodyInput::Tribute(&second)).unwrap();
+        let updated = read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.payload().as_tribute().unwrap(), &second);
+        delete(storage.clone(), &scope, updated).unwrap();
+        assert!(
+            read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            delete(
+                storage.clone(),
+                &scope,
+                // A capability can only be acquired while present, so use a
+                // mint/read cycle to test the absent rejection below.
+                {
+                    mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+                    let cap = read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+                        .unwrap()
+                        .unwrap();
+                    delete(storage.clone(), &scope, cap.clone()).unwrap();
+                    cap
+                }
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+        mint(storage.clone(), &scope, BodyInput::Tribute(&second)).unwrap();
+
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.touched.len().unwrap(), 1);
+        // Two memberships, each touched once despite the repeated sequence.
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 2);
+        assert_eq!(parent.get_calls.get(), 0);
+    });
+}
+
+#[test]
+fn same_leaf_aba_capability_remains_value_valid() {
+    let owner = address!("2000000000000000000000000000000000000002");
+    let body = tribute(entity(8, 2), owner, 100);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
+        let old = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(body.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        update(
+            storage.clone(),
+            &scope,
+            old.clone(),
+            BodyInput::Tribute(&body),
+        )
+        .unwrap();
+        // The current authenticated value is identical, so the earlier value
+        // capability deliberately remains valid.
+        delete(storage, &scope, old).unwrap();
+    });
+}
+
+#[test]
+fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
+    let owner = address!("2100000000000000000000000000000000000002");
+    let mut item = nod_item(entity(8, 21), owner);
+    let mut bucket = NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(22),
+        worldwide_day: WorldwideDay::new(8),
+        floor_price_minor: U256::from(10),
+        is_qualified: false,
+        total_nods: 1,
+        entry_price_minor: U256::from(11),
+    };
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodItem(&item)).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodBucket(&bucket)).unwrap();
+        let old_item = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::NodItem(item.nod_id),
+        )
+        .unwrap()
+        .unwrap();
+        let old_bucket = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::NodBucket(bucket.entity_id()),
+        )
+        .unwrap()
+        .unwrap();
+        item.cost_amount_minor = U256::from(99);
+        bucket.is_qualified = true;
+        update(storage.clone(), &scope, old_item, BodyInput::NodItem(&item)).unwrap();
+        update(
+            storage.clone(),
+            &scope,
+            old_bucket,
+            BodyInput::NodBucket(&bucket),
+        )
+        .unwrap();
+        let item_cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::NodItem(item.nod_id),
+        )
+        .unwrap()
+        .unwrap();
+        let bucket_cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::NodBucket(bucket.entity_id()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(item_cap.payload().as_nod_item().unwrap(), &item);
+        assert_eq!(bucket_cap.payload().as_nod_bucket().unwrap(), &bucket);
+        delete(storage.clone(), &scope, item_cap).unwrap();
+        delete(storage.clone(), &scope, bucket_cap).unwrap();
+        assert!(read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::NodItem(item.nod_id)
+        )
+        .unwrap()
+        .is_none());
+        assert!(read(
+            storage,
+            &scope,
+            &parent,
+            EntityRef::NodBucket(bucket.entity_id())
+        )
+        .unwrap()
+        .is_none());
+    });
+    assert!(provider
+        .get_ordered_events()
+        .iter()
+        .all(|log| log.address == NOD_ADDRESS));
+    assert_eq!(provider.get_ordered_events().len(), 6);
+}
+
+#[test]
+fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
+    let owner = address!("2150000000000000000000000000000000000002");
+    let tribute_original = tribute(entity(8, 0x31), owner, 100);
+    let tribute_updated = tribute(tribute_original.tribute_id, owner, 200);
+
+    let nod_original = nod_item(entity(8, 0x32), owner);
+    let mut nod_updated = nod_original.clone();
+    nod_updated.cost_amount_minor = U256::from(99);
+
+    let bucket_original = NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(0x33),
+        worldwide_day: WorldwideDay::new(8),
+        floor_price_minor: U256::from(10),
+        is_qualified: false,
+        total_nods: 1,
+        entry_price_minor: U256::from(11),
+    };
+    let mut bucket_updated = bucket_original.clone();
+    bucket_updated.is_qualified = true;
+
+    let fixtures = [
+        (
+            FixtureBody::Tribute(tribute_original),
+            FixtureBody::Tribute(tribute_updated),
+        ),
+        (
+            FixtureBody::NodItem(nod_original),
+            FixtureBody::NodItem(nod_updated),
+        ),
+        (
+            FixtureBody::NodBucket(bucket_original),
+            FixtureBody::NodBucket(bucket_updated),
+        ),
+    ];
+
+    for (original, updated) in &fixtures {
+        exercise_transition_sequence(
+            original,
+            updated,
+            &[
+                (MatrixMutation::Mint(BodyVersion::Original), true),
+                (MatrixMutation::Mint(BodyVersion::Original), false),
+            ],
+        );
+        exercise_transition_sequence(
+            original,
+            updated,
+            &[
+                (MatrixMutation::Mint(BodyVersion::Original), true),
+                (MatrixMutation::Update(BodyVersion::Updated), true),
+                (MatrixMutation::Update(BodyVersion::Original), true),
+                (MatrixMutation::Delete, true),
+            ],
+        );
+        exercise_transition_sequence(
+            original,
+            updated,
+            &[
+                (MatrixMutation::Mint(BodyVersion::Original), true),
+                (MatrixMutation::Delete, true),
+                (MatrixMutation::Update(BodyVersion::Updated), false),
+                (MatrixMutation::Delete, false),
+                (MatrixMutation::Mint(BodyVersion::Updated), true),
+            ],
+        );
+        exercise_transition_sequence(
+            original,
+            updated,
+            &[
+                (MatrixMutation::Mint(BodyVersion::Original), true),
+                (MatrixMutation::Update(BodyVersion::Original), true),
+            ],
+        );
+    }
+}
+
+#[test]
+fn stale_or_wrong_identity_capability_reverts_without_mutation() {
+    let owner = address!("2200000000000000000000000000000000000002");
+    let first = tribute(entity(8, 23), owner, 100);
+    let second = tribute(first.tribute_id, owner, 200);
+    let other = tribute(entity(8, 24), owner, 300);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+        let stale = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(first.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            update(
+                storage.clone(),
+                &scope,
+                stale.clone(),
+                BodyInput::Tribute(&other)
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+        update(
+            storage.clone(),
+            &scope,
+            stale.clone(),
+            BodyInput::Tribute(&second),
+        )
+        .unwrap();
+        assert!(matches!(
+            delete(storage.clone(), &scope, stale),
+            Err(PrecompileError::Revert(_))
+        ));
+        let current = read(
+            storage,
+            &scope,
+            &parent,
+            EntityRef::Tribute(first.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(current.payload().as_tribute().unwrap(), &second);
+    });
+}
+
+#[test]
+fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
+    let owner = address!("2300000000000000000000000000000000000002");
+    let present = tribute(entity(8, 25), owner, 100);
+    let missing = tribute(entity(8, 26), owner, 200);
+    let absent_id = entity(8, 27);
+    let mut parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_parent_tribute(storage.clone(), &mut parent, &present);
+        State::new(storage.clone())
+            .write_commitment(
+                Collection::Tribute,
+                missing.tribute_id,
+                tribute_commitment(&missing),
+            )
+            .unwrap();
+        begin_block(storage.clone(), &scope).unwrap();
+        let loaded = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(present.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded.payload().as_tribute().unwrap(), &present);
+        assert_eq!(parent.get_calls.get(), 1);
+        assert!(read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(absent_id)
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(parent.get_calls.get(), 1, "mapping zero must bypass parent");
+        assert!(matches!(
+            read(
+                storage,
+                &scope,
+                &parent,
+                EntityRef::Tribute(missing.tribute_id)
+            ),
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+        assert_eq!(parent.get_calls.get(), 2);
+    });
+}
+
+#[test]
+fn canonical_events_use_domain_emitters_and_survive_as_ordered_operations() {
+    let owner = address!("3000000000000000000000000000000000000003");
+    let id = entity(9, 3);
+    let first = tribute(id, owner, 100);
+    let second = tribute(id, owner, 200);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+            .unwrap()
+            .unwrap();
+        update(storage.clone(), &scope, cap, BodyInput::Tribute(&second)).unwrap();
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::Tribute(id))
+            .unwrap()
+            .unwrap();
+        delete(storage, &scope, cap).unwrap();
+    });
+
+    let logs = provider.get_ordered_events();
+    assert_eq!(logs.len(), 3);
+    assert!(logs.iter().all(|log| log.address == TRIBUTE_ADDRESS));
+    let mint_event = TributeBodyStored::decode_log_data(&logs[0].data).unwrap();
+    let update_event = TributeBodyStored::decode_log_data(&logs[1].data).unwrap();
+    let delete_event = TributeBodyDeleted::decode_log_data(&logs[2].data).unwrap();
+    assert_eq!(mint_event.tributeId, Bytes::copy_from_slice(id.as_bytes()));
+    assert_eq!(mint_event.previousCommitment, B256::ZERO);
+    assert_eq!(
+        mint_event.canonicalPayload,
+        encode_tribute_v1(&first).unwrap()
+    );
+    assert_eq!(update_event.previousCommitment, mint_event.newCommitment);
+    assert_ne!(update_event.newCommitment, mint_event.newCommitment);
+    assert_eq!(delete_event.previousCommitment, update_event.newCommitment);
+
+    let nod = nod_item(entity(10, 4), owner);
+    let nod_scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        // Finish the previous scope first; cleanup emits no event.
+        end_block(storage.clone(), &scope).unwrap();
+        begin_block(storage.clone(), &nod_scope).unwrap();
+        mint(storage, &nod_scope, BodyInput::NodItem(&nod)).unwrap();
+    });
+    let last = provider.get_ordered_events().last().unwrap();
+    assert_eq!(last.address, NOD_ADDRESS);
+    assert_eq!(last.data.topics()[0], NodBodyStored::SIGNATURE_HASH);
+}
+
+#[test]
+fn outer_checkpoint_reverts_commitment_overlay_indexes_and_event_together() {
+    let owner = address!("4000000000000000000000000000000000000004");
+    let body = tribute(entity(11, 5), owner, 100);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let transaction_gas = scope.explicit_gas_checkpoint();
+        let failed: Result<()> = storage.with_checkpoint(|| {
+            mint(storage.clone(), &scope, BodyInput::Tribute(&body))?;
+            Err(PrecompileError::Revert("outer transaction reverted".into()))
+        });
+        assert!(matches!(failed, Err(PrecompileError::Revert(_))));
+        assert!(CommitmentState::new(storage.clone())
+            .tribute(body.tribute_id)
+            .unwrap()
+            .is_none());
+        assert!(read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(body.tribute_id)
+        )
+        .unwrap()
+        .is_none());
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.touched.len().unwrap(), 0);
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
+        assert_eq!(
+            scope.explicit_gas_since(transaction_gas).unwrap(),
+            FIRST_TRIBUTE_CLEANUP_GAS,
+            "journal rollback must not refund explicit work gas"
+        );
+    });
+    assert!(provider.get_ordered_events().is_empty());
+}
+
+#[test]
+fn merged_list_applies_removals_additions_pagination_and_overlay_bodies() {
+    let owner1 = address!("5000000000000000000000000000000000000005");
+    let owner2 = address!("6000000000000000000000000000000000000006");
+    let a = tribute(entity(12, 1), owner1, 10);
+    let b = tribute(entity(12, 2), owner1, 20);
+    let c = tribute(entity(12, 3), owner1, 30);
+    let d = tribute(entity(12, 4), owner1, 40);
+    let b_moved = tribute(b.tribute_id, owner2, 21);
+    let mut parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        for body in [&a, &b, &c] {
+            seed_parent_tribute(storage.clone(), &mut parent, body);
+        }
+        begin_block(storage.clone(), &scope).unwrap();
+        let a_cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(a.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        delete(storage.clone(), &scope, a_cap).unwrap();
+        let b_cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(b.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        update(storage.clone(), &scope, b_cap, BodyInput::Tribute(&b_moved)).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&d)).unwrap();
+
+        let first = list(
+            storage.clone(),
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner1),
+            IdPageRequest {
+                after: None,
+                limit: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            first
+                .bodies()
+                .iter()
+                .map(|body| body.entity_id())
+                .collect::<Vec<_>>(),
+            vec![c.tribute_id]
+        );
+        assert_eq!(first.next_after(), Some(c.tribute_id));
+        let second = list(
+            storage.clone(),
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner1),
+            IdPageRequest {
+                after: first.next_after(),
+                limit: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(second.bodies()[0].entity_id(), d.tribute_id);
+        assert_eq!(second.next_after(), None);
+        assert_eq!(second.bodies()[0].payload().as_tribute().unwrap(), &d);
+
+        let moved = list(
+            storage,
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner2),
+            IdPageRequest {
+                after: None,
+                limit: 10,
+            },
+        )
+        .unwrap();
+        assert_eq!(moved.bodies()[0].payload().as_tribute().unwrap(), &b_moved);
+    });
+    assert!(parent.list_calls.get() >= 3);
+}
+
+#[test]
+fn malformed_parent_order_is_rejected_as_corruption() {
+    let owner = address!("7000000000000000000000000000000000000007");
+    let a = tribute(entity(13, 1), owner, 10);
+    let b = tribute(entity(13, 2), owner, 20);
+    let mut parent = MemoryParent {
+        reverse_pages: true,
+        ..MemoryParent::default()
+    };
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_parent_tribute(storage.clone(), &mut parent, &a);
+        seed_parent_tribute(storage.clone(), &mut parent, &b);
+        begin_block(storage.clone(), &scope).unwrap();
+        let result = list(
+            storage,
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner),
+            IdPageRequest {
+                after: None,
+                limit: 2,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+    });
+}
+
+#[test]
+fn page_limit_outside_fork_bound_is_a_deterministic_revert() {
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        for limit in [0, MAX_ID_PAGE_LIMIT + 1] {
+            assert!(matches!(
+                list(
+                    storage.clone(),
+                    &scope,
+                    &parent,
+                    QueryRef::NodAll,
+                    IdPageRequest { after: None, limit }
+                ),
+                Err(PrecompileError::Revert(_))
+            ));
+        }
+    });
+    assert_eq!(parent.list_calls.get(), 0);
+}
+
+#[test]
+fn cleanup_zeroes_overlay_and_phase_rejects_post_end_access() {
+    let owner = address!("8000000000000000000000000000000000000008");
+    let body = tribute(entity(14, 8), owner, 100);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    let mut locator = B256::ZERO;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
+        locator = body_locator(Collection::Tribute, body.tribute_id).unwrap();
+        end_block(storage.clone(), &scope).unwrap();
+
+        assert_eq!(
+            CommitmentState::new(storage.clone())
+                .tribute(body.tribute_id)
+                .unwrap(),
+            Some(tribute_commitment(&body))
+        );
+        let schema = CompressedEntitiesSchema::new(storage.clone());
+        assert_eq!(schema.touched.len().unwrap(), 0);
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
+        assert!(schema.pending_word.read(&locator).unwrap().is_zero());
+        assert!(schema.pending_body.get_bytes(&locator).is_empty().unwrap());
+        assert!(schema
+            .body_identity_record
+            .get_bytes(&locator)
+            .is_empty()
+            .unwrap());
+        assert!(matches!(
+            read(
+                storage.clone(),
+                &scope,
+                &parent,
+                EntityRef::Tribute(body.tribute_id)
+            ),
+            Err(PrecompileError::Fatal(_))
+        ));
+        assert!(matches!(
+            mint(storage, &scope, BodyInput::Tribute(&body)),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+
+    let pending_slot = locator.mapping_slot(U256::from(4));
+    assert_eq!(
+        provider
+            .storage
+            .get(&(COMPRESSED_ENTITIES_ADDRESS, pending_slot))
+            .copied()
+            .unwrap_or_default(),
+        U256::ZERO
+    );
+}
+
+#[test]
+fn begin_block_rejects_a_dirty_prior_overlay_without_repairing_it() {
+    let owner = address!("8100000000000000000000000000000000000008");
+    let body = tribute(entity(14, 81), owner, 100);
+    let first_scope = ExecutionScope::new();
+    let second_scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &first_scope).unwrap();
+        mint(storage.clone(), &first_scope, BodyInput::Tribute(&body)).unwrap();
+        assert!(matches!(
+            begin_block(storage.clone(), &second_scope),
+            Err(PrecompileError::Fatal(_))
+        ));
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.touched.len().unwrap(), 1);
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 2);
+    });
+}
+
+#[test]
+fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_direct_map_write() {
+    let owner = address!("8200000000000000000000000000000000000008");
+    let body = tribute(entity(14, 82), owner, 100);
+    let parent = MemoryParent::default();
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_gas_limit(FIRST_TRIBUTE_CLEANUP_GAS + 100_000);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let first_touch = scope.explicit_gas_checkpoint();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
+        assert_eq!(storage.gas_used().unwrap(), FIRST_TRIBUTE_CLEANUP_GAS);
+        assert_eq!(
+            scope.explicit_gas_since(first_touch).unwrap(),
+            FIRST_TRIBUTE_CLEANUP_GAS
+        );
+        let cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(body.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        let before_repeat = storage.gas_used().unwrap();
+        let repeat_touch = scope.explicit_gas_checkpoint();
+        update(storage.clone(), &scope, cap, BodyInput::Tribute(&body)).unwrap();
+        assert_eq!(
+            storage.gas_used().unwrap(),
+            before_repeat,
+            "repeat body/index touches must not reserve cleanup twice"
+        );
+        assert_eq!(scope.explicit_gas_since(repeat_touch).unwrap(), 0);
+    });
+
+    let mut body_oog = HashMapStorageProvider::new(1);
+    body_oog.set_gas_limit(FIRST_BODY_TOUCH_CLEANUP_GAS - 1);
+    let body_scope = ExecutionScope::new();
+    StorageHandle::enter(&mut body_oog, |storage| {
+        begin_block(storage.clone(), &body_scope).unwrap();
+        let failed_charge = body_scope.explicit_gas_checkpoint();
+        assert!(matches!(
+            mint(storage.clone(), &body_scope, BodyInput::Tribute(&body)),
+            Err(PrecompileError::OutOfGas)
+        ));
+        assert!(CommitmentState::new(storage.clone())
+            .tribute(body.tribute_id)
+            .unwrap()
+            .is_none());
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.touched.len().unwrap(), 0);
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
+        assert_eq!(body_scope.explicit_gas_since(failed_charge).unwrap(), 0);
+    });
+    assert!(body_oog.get_ordered_events().is_empty());
+
+    // The second index reserve fails after temporary body/first-index writes;
+    // the mutation's local checkpoint must still restore every component.
+    let mut index_oog = HashMapStorageProvider::new(1);
+    index_oog.set_gas_limit(
+        FIRST_BODY_TOUCH_CLEANUP_GAS
+            + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+            + 2 * FIRST_INDEX_TOUCH_CLEANUP_GAS
+            + INDEX_TOUCHED_LENGTH_CLEANUP_GAS
+            - 1,
+    );
+    let index_scope = ExecutionScope::new();
+    StorageHandle::enter(&mut index_oog, |storage| {
+        begin_block(storage.clone(), &index_scope).unwrap();
+        let failed_charge = index_scope.explicit_gas_checkpoint();
+        assert!(matches!(
+            mint(storage.clone(), &index_scope, BodyInput::Tribute(&body)),
+            Err(PrecompileError::OutOfGas)
+        ));
+        assert!(CommitmentState::new(storage.clone())
+            .tribute(body.tribute_id)
+            .unwrap()
+            .is_none());
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.touched.len().unwrap(), 0);
+        assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
+        assert_eq!(
+            index_scope.explicit_gas_since(failed_charge).unwrap(),
+            FIRST_BODY_TOUCH_CLEANUP_GAS
+                + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+                + FIRST_INDEX_TOUCH_CLEANUP_GAS
+                + INDEX_TOUCHED_LENGTH_CLEANUP_GAS,
+            "successful explicit deductions remain charged when later work OOGs"
+        );
+    });
+    assert!(index_oog.get_ordered_events().is_empty());
+}
+
+#[test]
+fn explicit_gas_window_stops_a_system_transaction_before_it_exceeds_its_envelope() {
+    let owner = address!("8300000000000000000000000000000000000008");
+    let first = tribute(entity(14, 83), owner, 100);
+    let second = tribute(entity(14, 84), owner, 101);
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_gas_limit(FIRST_TRIBUTE_CLEANUP_GAS * 2);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let window = scope
+            .begin_explicit_gas_window(FIRST_TRIBUTE_CLEANUP_GAS)
+            .expect("system transaction opens its CE gas window");
+
+        mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+        assert!(matches!(
+            mint(storage.clone(), &scope, BodyInput::Tribute(&second)),
+            Err(PrecompileError::OutOfGas)
+        ));
+        assert_eq!(window.gas_used().unwrap(), FIRST_TRIBUTE_CLEANUP_GAS);
+        assert!(CommitmentState::new(storage.clone())
+            .tribute(first.tribute_id)
+            .unwrap()
+            .is_some());
+        assert!(CommitmentState::new(storage)
+            .tribute(second.tribute_id)
+            .unwrap()
+            .is_none());
+    });
+}
+
+#[derive(Clone, Copy)]
+enum FaultMutation {
+    Mint,
+    Update,
+    Delete,
+}
+
+#[derive(Clone, Copy)]
+enum FaultPosition {
+    Before,
+    After,
+}
+
+fn prepare_fault_mutation(
+    provider: &mut HashMapStorageProvider,
+    scope: &ExecutionScope,
+    original: &FixtureBody,
+    mutation: FaultMutation,
+) -> Option<VerifiedBody> {
+    StorageHandle::enter(provider, |storage| {
+        begin_block(storage.clone(), scope).unwrap();
+        if matches!(mutation, FaultMutation::Mint) {
+            return None;
+        }
+        mint(storage.clone(), scope, original.input()).unwrap();
+        read(
+            storage,
+            scope,
+            &MemoryParent::default(),
+            original.entity_ref(),
+        )
+        .unwrap()
+    })
+}
+
+fn apply_fault_mutation(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+    original: &FixtureBody,
+    updated: &FixtureBody,
+    mutation: FaultMutation,
+    capability: Option<VerifiedBody>,
+) -> Result<()> {
+    match mutation {
+        FaultMutation::Mint => mint(storage, scope, original.input()),
+        FaultMutation::Update => update(
+            storage,
+            scope,
+            capability.expect("update fixture has a value capability"),
+            updated.input(),
+        ),
+        FaultMutation::Delete => delete(
+            storage,
+            scope,
+            capability.expect("delete fixture has a value capability"),
+        ),
+    }
+}
+
+fn arm_fault(provider: &mut HashMapStorageProvider, position: FaultPosition, operation: usize) {
+    match position {
+        FaultPosition::Before => provider.fail_mutation_at(operation),
+        FaultPosition::After => provider.fail_after_mutation_at(operation),
+    }
+}
+
+fn exercise_every_fault_boundary(
+    original: &FixtureBody,
+    updated: &FixtureBody,
+    mutation: FaultMutation,
+) {
+    let mut baseline = HashMapStorageProvider::new(1);
+    let baseline_scope = ExecutionScope::new();
+    let capability = prepare_fault_mutation(&mut baseline, &baseline_scope, original, mutation);
+    baseline.clear_mutation_failure();
+    StorageHandle::enter(&mut baseline, |storage| {
+        apply_fault_mutation(
+            storage,
+            &baseline_scope,
+            original,
+            updated,
+            mutation,
+            capability,
+        )
+        .unwrap();
+    });
+    let mutation_operations = baseline.clear_mutation_failure();
+    assert!(mutation_operations > 0);
+
+    for position in [FaultPosition::Before, FaultPosition::After] {
+        for failure_at in 0..mutation_operations {
+            let mut provider = HashMapStorageProvider::new(1);
+            let scope = ExecutionScope::new();
+            let capability = prepare_fault_mutation(&mut provider, &scope, original, mutation);
+            let storage_before = provider.storage.clone();
+            let events_before = provider.get_ordered_events().to_vec();
+            provider.clear_mutation_failure();
+            arm_fault(&mut provider, position, failure_at);
+
+            let error = StorageHandle::enter(&mut provider, |storage| {
+                apply_fault_mutation(storage, &scope, original, updated, mutation, capability)
+                    .unwrap_err()
+            });
+            assert!(matches!(error, PrecompileError::Storage(_)));
+            provider.clear_mutation_failure();
+            assert_eq!(&provider.storage, &storage_before);
+            assert_eq!(provider.get_ordered_events(), events_before);
+
+            StorageHandle::enter(&mut provider, |storage| {
+                let current = read(
+                    storage.clone(),
+                    &scope,
+                    &MemoryParent::default(),
+                    original.entity_ref(),
+                )
+                .unwrap();
+                let schema = CompressedEntitiesSchema::new(storage.clone());
+                if matches!(mutation, FaultMutation::Mint) {
+                    assert!(current.is_none());
+                    assert_eq!(schema.touched.len().unwrap(), 0);
+                    assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
+                } else {
+                    original.assert_verified(&current.unwrap());
+                    assert_eq!(schema.touched.len().unwrap(), 1);
+                    assert_eq!(
+                        schema.touched_index_deltas.len().unwrap(),
+                        original.expected_index_touches()
+                    );
+                }
+                end_block(storage, &scope).unwrap();
+            });
+        }
+    }
+}
+
+#[test]
+fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections() {
+    let owner = address!("8a0000000000000000000000000000000000008a");
+    let moved_owner = address!("8b0000000000000000000000000000000000008b");
+
+    let tribute_original = tribute(entity(14, 0x8a), owner, 100);
+    let mut tribute_updated = tribute(tribute_original.tribute_id, moved_owner, 200);
+    tribute_updated.worldwide_day = tribute_original.worldwide_day;
+
+    let nod_original = nod_item(entity(14, 0x8b), owner);
+    let mut nod_updated = nod_original.clone();
+    nod_updated.owner = moved_owner;
+    nod_updated.cost_amount_minor = U256::from(99);
+
+    let bucket_original = NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(0x8c),
+        worldwide_day: WorldwideDay::new(14),
+        floor_price_minor: U256::from(10),
+        is_qualified: false,
+        total_nods: 1,
+        entry_price_minor: U256::from(11),
+    };
+    let mut bucket_updated = bucket_original.clone();
+    bucket_updated.is_qualified = true;
+
+    for (original, updated) in [
+        (
+            FixtureBody::Tribute(tribute_original),
+            FixtureBody::Tribute(tribute_updated),
+        ),
+        (
+            FixtureBody::NodItem(nod_original),
+            FixtureBody::NodItem(nod_updated),
+        ),
+        (
+            FixtureBody::NodBucket(bucket_original),
+            FixtureBody::NodBucket(bucket_updated),
+        ),
+    ] {
+        for mutation in [
+            FaultMutation::Mint,
+            FaultMutation::Update,
+            FaultMutation::Delete,
+        ] {
+            exercise_every_fault_boundary(&original, &updated, mutation);
+        }
+    }
+}
+
+fn populate_cleanup_fixture(
+    provider: &mut HashMapStorageProvider,
+    scope: &ExecutionScope,
+    fixtures: &[FixtureBody],
+) {
+    StorageHandle::enter(provider, |storage| {
+        begin_block(storage.clone(), scope).unwrap();
+        for fixture in fixtures {
+            mint(storage.clone(), scope, fixture.input()).unwrap();
+        }
+    });
+}
+
+#[test]
+fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
+    let owner = address!("8d0000000000000000000000000000000000008d");
+    let fixtures = [
+        FixtureBody::Tribute(tribute(entity(14, 0x8d), owner, 100)),
+        FixtureBody::NodItem(nod_item(entity(14, 0x8e), owner)),
+        FixtureBody::NodBucket(NodBucketBodyV1 {
+            bucket_key: B256::repeat_byte(0x8f),
+            worldwide_day: WorldwideDay::new(14),
+            floor_price_minor: U256::from(10),
+            is_qualified: false,
+            total_nods: 1,
+            entry_price_minor: U256::from(11),
+        }),
+    ];
+
+    let mut baseline = HashMapStorageProvider::new(1);
+    let baseline_scope = ExecutionScope::new();
+    populate_cleanup_fixture(&mut baseline, &baseline_scope, &fixtures);
+    baseline.clear_mutation_failure();
+    StorageHandle::enter(&mut baseline, |storage| {
+        end_block(storage, &baseline_scope).unwrap();
+    });
+    let cleanup_operations = baseline.clear_mutation_failure();
+    assert!(cleanup_operations > 0);
+
+    for position in [FaultPosition::Before, FaultPosition::After] {
+        for failure_at in 0..cleanup_operations {
+            let mut provider = HashMapStorageProvider::new(1);
+            let scope = ExecutionScope::new();
+            populate_cleanup_fixture(&mut provider, &scope, &fixtures);
+            let storage_before = provider.storage.clone();
+            let events_before = provider.get_ordered_events().to_vec();
+            provider.clear_mutation_failure();
+            arm_fault(&mut provider, position, failure_at);
+
+            let error = StorageHandle::enter(&mut provider, |storage| {
+                end_block(storage, &scope).unwrap_err()
+            });
+            assert!(matches!(error, PrecompileError::Storage(_)));
+            provider.clear_mutation_failure();
+            assert_eq!(&provider.storage, &storage_before);
+            assert_eq!(provider.get_ordered_events(), events_before);
+
+            StorageHandle::enter(&mut provider, |storage| {
+                let schema = CompressedEntitiesSchema::new(storage);
+                assert_eq!(schema.touched.len().unwrap(), 3);
+                assert_eq!(schema.touched_index_deltas.len().unwrap(), 4);
+            });
+        }
+    }
+}
+
+#[test]
+fn storage_layout_uses_exact_slots_zero_through_ten() {
+    let owner = address!("9000000000000000000000000000000000000009");
+    let body = tribute(entity(15, 9), owner, 100);
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    let mut locator = B256::ZERO;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage, &scope, BodyInput::Tribute(&body)).unwrap();
+        locator = body_locator(Collection::Tribute, body.tribute_id).unwrap();
+    });
+
+    let identity_f = U256::from_be_bytes(crate::identity_field(body.tribute_id).unwrap());
+    let commitment_slot = identity_f.mapping_slot(U256::from(1));
+    let pending_slot = locator.mapping_slot(U256::from(4));
+    let identity_record_slot = locator.mapping_slot(U256::from(10));
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)],
+        U256::from(1)
+    );
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, commitment_slot)],
+        tribute_commitment(&body).to_u256()
+    );
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, pending_slot)],
+        tribute_commitment(&body).to_u256()
+    );
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::from(6))],
+        U256::from(1)
+    );
+    assert_ne!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, identity_record_slot)],
+        U256::ZERO
+    );
+    // The fixed schema occupies no base slot beyond 10.
+    assert!(!provider
+        .storage
+        .contains_key(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(11))));
+}
+
+#[test]
+fn body_codecs_cover_all_three_closed_variants() {
+    let owner = address!("a00000000000000000000000000000000000000a");
+    let item = nod_item(entity(16, 10), owner);
+    let bucket = NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(11),
+        worldwide_day: WorldwideDay::new(16),
+        floor_price_minor: U256::from(12),
+        is_qualified: true,
+        total_nods: 13,
+        entry_price_minor: U256::from(14),
+    };
+    assert!(!encode_nod_item_v1(&item).unwrap().is_empty());
+    assert!(!encode_nod_bucket_v1(&bucket).unwrap().is_empty());
+    // Pin the central event signatures independently from their Rust types.
+    assert_eq!(
+        TributeBodyStored::SIGNATURE_HASH,
+        keccak256("TributeBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+    );
+    assert_eq!(
+        NodBodyStored::SIGNATURE_HASH,
+        keccak256("NodBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+    );
+}
+
+#[test]
+fn exact_overlay_locator_and_record_vectors_are_protocol_pinned() {
+    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let cases = [
+        (
+            Collection::Tribute,
+            b256!("3356337959a5e563c030ac2b90e8865a5eb03910600d0308b9a649107973f878"),
+        ),
+        (
+            Collection::NodItem,
+            b256!("6965874280900188b663f3b23a514ff2d9fa7905f973725f8656bcf28d243ee5"),
+        ),
+        (
+            Collection::NodBucket,
+            b256!("1a34a80b8bd45e9c160c3bf941443b5389176f3024ba284d1a93a30c9f42a958"),
+        ),
+    ];
+
+    for (collection, expected_locator) in cases {
+        let record = body_identity_record(collection, id);
+        let mut expected_record = [0_u8; 38];
+        expected_record[0] = 1;
+        expected_record[1] = collection.id();
+        expected_record[2..6].copy_from_slice(&42_u32.to_be_bytes());
+        expected_record[6..].fill(0x11);
+        assert_eq!(record, expected_record);
+        assert_eq!(
+            decode_body_identity_record(&record).unwrap(),
+            (collection, id)
+        );
+        assert_eq!(body_locator(collection, id).unwrap(), expected_locator);
+    }
+}
+
+#[test]
+fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
+    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let owner = Address::repeat_byte(0x22);
+    let cases = [
+        (
+            IndexRecord::owner(IndexKind::TributeByOwner, owner, id),
+            concat!(
+                "010114",
+                "2222222222222222222222222222222222222222",
+                "0000002a",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+            ),
+            b256!("0e268c587c867de1282d3fc167d077e5348c119a859d72f8244a179e5d7dbc1e"),
+        ),
+        (
+            IndexRecord::day(42, id),
+            concat!(
+                "0102040000002a0000002a",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+            ),
+            b256!("6dcc91f2e9813e4334bea7c0d2224a94628dc9fee9f72a235b1940a03e85f8cd"),
+        ),
+        (
+            IndexRecord::owner(IndexKind::NodByOwner, owner, id),
+            concat!(
+                "010314",
+                "2222222222222222222222222222222222222222",
+                "0000002a",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+            ),
+            b256!("d2e4c35a1a17fa5876f5b03bd1e5bea6cc86d33db3d3718687d0c427c25ef873"),
+        ),
+        (
+            IndexRecord::nod_all(id),
+            concat!(
+                "0104000000002a",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+            ),
+            b256!("0faceed4453b5846c1f15dd4895045bd10e30a7847bf9985a9a74d2ac9824de6"),
+        ),
+    ];
+
+    for (record, expected_hex, expected_key) in cases {
+        let expected = hex::decode(expected_hex).unwrap();
+        assert_eq!(record.encode(), expected);
+        assert_eq!(IndexRecord::decode(&expected).unwrap(), record);
+        assert_eq!(record.key(), expected_key);
+    }
+
+    let commitment = tribute_commitment(&tribute(id, owner, 1));
+    assert_eq!(PendingWord::Untouched.encode(), U256::ZERO);
+    assert_eq!(PendingWord::Set(commitment).encode(), commitment.to_u256());
+    assert_eq!(PendingWord::Deleted.encode(), U256::MAX);
+    for (word, expected) in [
+        (U256::ZERO, PendingWord::Untouched),
+        (commitment.to_u256(), PendingWord::Set(commitment)),
+        (U256::MAX, PendingWord::Deleted),
+    ] {
+        assert_eq!(PendingWord::decode(word).unwrap(), expected);
+    }
+    for (status, word) in [
+        (DeltaStatus::NeverTouched, 0_u64),
+        (DeltaStatus::Added, 1),
+        (DeltaStatus::Removed, 2),
+        (DeltaStatus::NoChangeTouched, 3),
+    ] {
+        assert_eq!(status.encode(), U256::from(word));
+        assert_eq!(DeltaStatus::decode(U256::from(word)).unwrap(), status);
+    }
+}
+
+#[test]
+fn overlay_wire_decoders_reject_every_noncanonical_boundary_class() {
+    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let owner = Address::repeat_byte(0x22);
+    let modulus = U256::from_be_bytes::<32>(
+        hex::decode("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001")
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    for invalid in [modulus, modulus + U256::from(1), U256::MAX - U256::from(1)] {
+        assert!(matches!(
+            PendingWord::decode(invalid),
+            Err(PrecompileError::Fatal(_))
+        ));
+    }
+    for invalid in [U256::from(4), U256::from(u64::MAX), U256::MAX] {
+        assert!(matches!(
+            DeltaStatus::decode(invalid),
+            Err(PrecompileError::Fatal(_))
+        ));
+    }
+
+    let valid_body_record = body_identity_record(Collection::Tribute, id);
+    for invalid in [
+        valid_body_record[..37].to_vec(),
+        {
+            let mut value = valid_body_record.to_vec();
+            value[0] = 2;
+            value
+        },
+        {
+            let mut value = valid_body_record.to_vec();
+            value[1] = 4;
+            value
+        },
+        {
+            let mut value = valid_body_record.to_vec();
+            value.push(0);
+            value
+        },
+    ] {
+        assert!(matches!(
+            decode_body_identity_record(&invalid),
+            Err(PrecompileError::Fatal(_))
+        ));
+    }
+
+    let valid_index = IndexRecord::owner(IndexKind::TributeByOwner, owner, id).encode();
+    for invalid in [
+        valid_index[..38].to_vec(),
+        {
+            let mut value = valid_index.clone();
+            value[0] = 2;
+            value
+        },
+        {
+            let mut value = valid_index.clone();
+            value[1] = 9;
+            value
+        },
+        {
+            let mut value = valid_index.clone();
+            value[2] = 19;
+            value
+        },
+        {
+            let mut value = valid_index.clone();
+            value.push(0);
+            value
+        },
+    ] {
+        assert!(matches!(
+            IndexRecord::decode(&invalid),
+            Err(PrecompileError::Fatal(_))
+        ));
+    }
+}
+
+#[test]
+fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
+    let day = WorldwideDay::new(u32::MAX);
+    let id = EntityId36::new(day, [0xff; 32]);
+    let maximum = NodItemBodyV1 {
+        nod_id: id,
+        owner: Address::repeat_byte(0xff),
+        gratis_load_minor: U256::MAX,
+        worldwide_day: day,
+        league_id: u16::MAX,
+        floor_price_minor: U256::MAX,
+        bucket_key: B256::repeat_byte(0xff),
+        cost_amount_minor: U256::MAX,
+        issuance_currency: u16::MAX,
+        reference_currency: u16::MAX,
+        issued_at: u64::MAX,
+    };
+    let shorter = NodItemBodyV1 {
+        nod_id: id,
+        owner: Address::ZERO,
+        gratis_load_minor: U256::ZERO,
+        worldwide_day: day,
+        league_id: 0,
+        floor_price_minor: U256::ZERO,
+        bucket_key: B256::ZERO,
+        cost_amount_minor: U256::ZERO,
+        issuance_currency: 0,
+        reference_currency: 0,
+        issued_at: 0,
+    };
+    let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
+        .unwrap()
+        .encode();
+    let shorter_stored = StoredBody::new_v1(encode_nod_item_v1(&shorter).unwrap())
+        .unwrap()
+        .encode();
+    assert_eq!(maximum_stored.len(), MAX_STORED_BODY_BYTES_V1);
+    assert!(shorter_stored.len().div_ceil(32) < maximum_stored.len().div_ceil(32));
+
+    let scope = ExecutionScope::new();
+    let parent = MemoryParent::default();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodItem(&maximum)).unwrap();
+        let locator = body_locator(Collection::NodItem, id).unwrap();
+        let base = locator.mapping_slot(U256::from(5));
+        let data_start = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
+        let maximum_slots = maximum_stored.len().div_ceil(32);
+        assert_eq!(
+            CompressedEntitiesSchema::new(storage.clone())
+                .pending_body
+                .get_bytes(&locator)
+                .read()
+                .unwrap(),
+            maximum_stored
+        );
+        assert!(!storage
+            .sload(
+                COMPRESSED_ENTITIES_ADDRESS,
+                data_start + U256::from(maximum_slots - 1),
+            )
+            .unwrap()
+            .is_zero());
+
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodItem(id))
+            .unwrap()
+            .unwrap();
+        update(storage.clone(), &scope, cap, BodyInput::NodItem(&shorter)).unwrap();
+        for slot in shorter_stored.len().div_ceil(32)..maximum_slots {
+            assert!(storage
+                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
+                .unwrap()
+                .is_zero());
+        }
+
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodItem(id))
+            .unwrap()
+            .unwrap();
+        delete(storage.clone(), &scope, cap).unwrap();
+        for slot in 0..maximum_slots {
+            assert!(storage
+                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
+                .unwrap()
+                .is_zero());
+        }
+
+        mint(storage.clone(), &scope, BodyInput::NodItem(&maximum)).unwrap();
+        end_block(storage.clone(), &scope).unwrap();
+        assert!(storage
+            .sload(COMPRESSED_ENTITIES_ADDRESS, base)
+            .unwrap()
+            .is_zero());
+        for slot in 0..maximum_slots {
+            assert!(storage
+                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
+                .unwrap()
+                .is_zero());
+        }
+    });
+}
+
+#[test]
+fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
+    assert_eq!(READ_FIXED_GAS, 200);
+    assert_eq!(READ_GAS_PER_CANONICAL_BYTE, 8);
+    assert_eq!(INDEX_RECORD_SCAN_GAS, 300);
+    assert_eq!(PARENT_ID_GAS, 120);
+    assert_eq!(FIRST_BODY_TOUCH_CLEANUP_GAS, 70_000);
+    assert_eq!(BODY_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);
+    assert_eq!(FIRST_INDEX_TOUCH_CLEANUP_GAS, 25_000);
+    assert_eq!(INDEX_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);
+
+    let owner = address!("b00000000000000000000000000000000000000b");
+    let overlay = tribute(entity(20, 4), owner, 100);
+    let overlay_bytes = stored_tribute(&overlay).encode().len() as u64;
+    let parent_a = tribute(entity(20, 2), owner, 200);
+    let parent_b = tribute(entity(20, 3), owner, 300);
+    let parent_bytes = [stored_tribute(&parent_a), stored_tribute(&parent_b)]
+        .map(|body| body.encode().len() as u64);
+    let mut parent = MemoryParent::default();
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_gas_limit(u64::MAX);
+    let scope = ExecutionScope::new();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_parent_tribute(storage.clone(), &mut parent, &parent_a);
+        seed_parent_tribute(storage.clone(), &mut parent, &parent_b);
+        begin_block(storage.clone(), &scope).unwrap();
+        let first_touch = scope.explicit_gas_checkpoint();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&overlay)).unwrap();
+        assert_eq!(
+            scope.explicit_gas_since(first_touch).unwrap(),
+            FIRST_BODY_TOUCH_CLEANUP_GAS
+                + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+                + 2 * FIRST_INDEX_TOUCH_CLEANUP_GAS
+                + INDEX_TOUCHED_LENGTH_CLEANUP_GAS,
+            "70k body + 5k first body-list length + 2*25k indexes + 5k first index-list length"
+        );
+
+        let overlay_read = scope.explicit_gas_checkpoint();
+        read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(overlay.tribute_id),
+        )
+        .unwrap();
+        let read_charge = READ_FIXED_GAS + READ_GAS_PER_CANONICAL_BYTE * overlay_bytes;
+        assert_eq!(scope.explicit_gas_since(overlay_read).unwrap(), read_charge);
+
+        let repeat = scope.explicit_gas_checkpoint();
+        let cap = read(
+            storage.clone(),
+            &scope,
+            &parent,
+            EntityRef::Tribute(overlay.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        update(storage.clone(), &scope, cap, BodyInput::Tribute(&overlay)).unwrap();
+        assert_eq!(scope.explicit_gas_since(repeat).unwrap(), read_charge);
+
+        let delta_scan = scope.explicit_gas_checkpoint();
+        list(
+            storage.clone(),
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner),
+            IdPageRequest {
+                after: Some(parent_b.tribute_id),
+                limit: 10,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            scope.explicit_gas_since(delta_scan).unwrap(),
+            2 * INDEX_RECORD_SCAN_GAS + read_charge
+        );
+
+        let parent_page = scope.explicit_gas_checkpoint();
+        list(
+            storage,
+            &scope,
+            &parent,
+            QueryRef::TributeByOwner(owner),
+            IdPageRequest {
+                after: None,
+                limit: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            scope.explicit_gas_since(parent_page).unwrap(),
+            2 * INDEX_RECORD_SCAN_GAS
+                + 2 * PARENT_ID_GAS
+                + parent_bytes
+                    .into_iter()
+                    .map(|bytes| READ_FIXED_GAS + READ_GAS_PER_CANONICAL_BYTE * bytes)
+                    .sum::<u64>()
+        );
+    });
+
+    let mut body_length_oog = HashMapStorageProvider::new(1);
+    body_length_oog
+        .set_gas_limit(FIRST_BODY_TOUCH_CLEANUP_GAS + BODY_TOUCHED_LENGTH_CLEANUP_GAS - 1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut body_length_oog, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let checkpoint = scope.explicit_gas_checkpoint();
+        assert!(matches!(
+            mint(storage.clone(), &scope, BodyInput::Tribute(&overlay)),
+            Err(PrecompileError::OutOfGas)
+        ));
+        assert_eq!(scope.explicit_gas_since(checkpoint).unwrap(), 0);
+        assert!(CommitmentState::new(storage.clone())
+            .tribute(overlay.tribute_id)
+            .unwrap()
+            .is_none());
+        assert!(CompressedEntitiesSchema::new(storage)
+            .touched
+            .is_empty()
+            .unwrap());
+    });
+
+    let mut index_length_oog = HashMapStorageProvider::new(1);
+    index_length_oog.set_gas_limit(
+        FIRST_BODY_TOUCH_CLEANUP_GAS
+            + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+            + FIRST_INDEX_TOUCH_CLEANUP_GAS
+            + INDEX_TOUCHED_LENGTH_CLEANUP_GAS
+            - 1,
+    );
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut index_length_oog, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let checkpoint = scope.explicit_gas_checkpoint();
+        assert!(matches!(
+            mint(storage.clone(), &scope, BodyInput::Tribute(&overlay)),
+            Err(PrecompileError::OutOfGas)
+        ));
+        assert_eq!(
+            scope.explicit_gas_since(checkpoint).unwrap(),
+            FIRST_BODY_TOUCH_CLEANUP_GAS + BODY_TOUCHED_LENGTH_CLEANUP_GAS
+        );
+        let schema = CompressedEntitiesSchema::new(storage.clone());
+        assert!(schema.touched.is_empty().unwrap());
+        assert!(schema.touched_index_deltas.is_empty().unwrap());
+        assert!(CommitmentState::new(storage)
+            .tribute(overlay.tribute_id)
+            .unwrap()
+            .is_none());
+    });
+}
+
+#[test]
+fn all_four_query_kinds_resolve_same_block_membership_and_overlay_bodies() {
+    let owner = address!("c00000000000000000000000000000000000000c");
+    let tribute = tribute(entity(21, 1), owner, 100);
+    let nod = nod_item(entity(21, 2), owner);
+    let parent = MemoryParent::default();
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&tribute)).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodItem(&nod)).unwrap();
+        for (query, expected) in [
+            (QueryRef::TributeByOwner(owner), tribute.tribute_id),
+            (
+                QueryRef::TributeByDay(tribute.worldwide_day),
+                tribute.tribute_id,
+            ),
+            (QueryRef::NodByOwner(owner), nod.nod_id),
+            (QueryRef::NodAll, nod.nod_id),
+        ] {
+            let page = list(
+                storage.clone(),
+                &scope,
+                &parent,
+                query,
+                IdPageRequest {
+                    after: None,
+                    limit: 10,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                page.bodies()
+                    .iter()
+                    .map(|body| body.entity_id())
+                    .collect::<Vec<_>>(),
+                vec![expected]
+            );
+            assert_eq!(page.next_after(), None);
+        }
+    });
+}
+
+#[test]
+fn all_four_query_kinds_merge_non_empty_parent_pages_with_exact_pagination() {
+    let owner = address!("c10000000000000000000000000000000000000c");
+
+    let tribute_parent = [
+        tribute(entity(24, 1), owner, 101),
+        tribute(entity(24, 3), owner, 103),
+        tribute(entity(24, 5), owner, 105),
+    ];
+    let tribute_added = tribute(entity(24, 2), owner, 102);
+    let mut tribute_source = MemoryParent::default();
+    let tribute_scope = ExecutionScope::new();
+    let mut tribute_provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut tribute_provider, |storage| {
+        for body in &tribute_parent {
+            seed_parent_tribute(storage.clone(), &mut tribute_source, body);
+        }
+        begin_block(storage.clone(), &tribute_scope).unwrap();
+        let removed = read(
+            storage.clone(),
+            &tribute_scope,
+            &tribute_source,
+            EntityRef::Tribute(tribute_parent[1].tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        delete(storage.clone(), &tribute_scope, removed).unwrap();
+        mint(
+            storage.clone(),
+            &tribute_scope,
+            BodyInput::Tribute(&tribute_added),
+        )
+        .unwrap();
+
+        for query in [
+            QueryRef::TributeByOwner(owner),
+            QueryRef::TributeByDay(WorldwideDay::new(24)),
+        ] {
+            let first = list(
+                storage.clone(),
+                &tribute_scope,
+                &tribute_source,
+                query,
+                IdPageRequest {
+                    after: None,
+                    limit: 2,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                first
+                    .bodies()
+                    .iter()
+                    .map(VerifiedBody::entity_id)
+                    .collect::<Vec<_>>(),
+                vec![tribute_parent[0].tribute_id, tribute_added.tribute_id]
+            );
+            assert_eq!(first.next_after(), Some(tribute_added.tribute_id));
+            assert_eq!(
+                first.bodies()[1].payload().as_tribute(),
+                Some(&tribute_added)
+            );
+
+            let second = list(
+                storage.clone(),
+                &tribute_scope,
+                &tribute_source,
+                query,
+                IdPageRequest {
+                    after: first.next_after(),
+                    limit: 2,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                second
+                    .bodies()
+                    .iter()
+                    .map(VerifiedBody::entity_id)
+                    .collect::<Vec<_>>(),
+                vec![tribute_parent[2].tribute_id]
+            );
+            assert_eq!(second.next_after(), None);
+        }
+    });
+    assert!(tribute_source.list_calls.get() >= 6);
+
+    let nod_parent = [
+        nod_item(entity(25, 1), owner),
+        nod_item(entity(25, 3), owner),
+        nod_item(entity(25, 5), owner),
+    ];
+    let nod_added = nod_item(entity(25, 2), owner);
+    let mut nod_source = MemoryParent::default();
+    let nod_scope = ExecutionScope::new();
+    let mut nod_provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut nod_provider, |storage| {
+        for body in &nod_parent {
+            seed_parent_nod_item(storage.clone(), &mut nod_source, body);
+        }
+        begin_block(storage.clone(), &nod_scope).unwrap();
+        let removed = read(
+            storage.clone(),
+            &nod_scope,
+            &nod_source,
+            EntityRef::NodItem(nod_parent[1].nod_id),
+        )
+        .unwrap()
+        .unwrap();
+        delete(storage.clone(), &nod_scope, removed).unwrap();
+        mint(storage.clone(), &nod_scope, BodyInput::NodItem(&nod_added)).unwrap();
+
+        for query in [QueryRef::NodByOwner(owner), QueryRef::NodAll] {
+            let first = list(
+                storage.clone(),
+                &nod_scope,
+                &nod_source,
+                query,
+                IdPageRequest {
+                    after: None,
+                    limit: 2,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                first
+                    .bodies()
+                    .iter()
+                    .map(VerifiedBody::entity_id)
+                    .collect::<Vec<_>>(),
+                vec![nod_parent[0].nod_id, nod_added.nod_id]
+            );
+            assert_eq!(first.next_after(), Some(nod_added.nod_id));
+            assert_eq!(first.bodies()[1].payload().as_nod_item(), Some(&nod_added));
+
+            let second = list(
+                storage.clone(),
+                &nod_scope,
+                &nod_source,
+                query,
+                IdPageRequest {
+                    after: first.next_after(),
+                    limit: 2,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                second
+                    .bodies()
+                    .iter()
+                    .map(VerifiedBody::entity_id)
+                    .collect::<Vec<_>>(),
+                vec![nod_parent[2].nod_id]
+            );
+            assert_eq!(second.next_after(), None);
+        }
+    });
+    assert!(nod_source.list_calls.get() >= 6);
+}
+
+#[test]
+fn pagination_and_parent_corruption_boundaries_fail_closed() {
+    let owner = address!("d00000000000000000000000000000000000000d");
+    let id = entity(22, 1);
+    let wrong_day = entity(23, 1);
+
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let parent = MemoryParent::default();
+        assert!(matches!(
+            list(
+                storage,
+                &scope,
+                &parent,
+                QueryRef::TributeByDay(WorldwideDay::new(22)),
+                IdPageRequest {
+                    after: Some(wrong_day),
+                    limit: 1,
+                },
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+    });
+
+    for (page, query) in [
+        (
+            IdPage {
+                ids: vec![id, entity(22, 2)],
+                next_after: None,
+            },
+            QueryRef::TributeByOwner(owner),
+        ),
+        (
+            IdPage {
+                ids: vec![id],
+                next_after: Some(entity(22, 2)),
+            },
+            QueryRef::TributeByOwner(owner),
+        ),
+        (
+            IdPage {
+                ids: Vec::new(),
+                next_after: Some(id),
+            },
+            QueryRef::TributeByOwner(owner),
+        ),
+        (
+            IdPage {
+                ids: vec![wrong_day],
+                next_after: None,
+            },
+            QueryRef::TributeByDay(WorldwideDay::new(22)),
+        ),
+    ] {
+        let scripted = ScriptedParent {
+            pages: RefCell::new(VecDeque::from([page])),
+            ..ScriptedParent::default()
+        };
+        let scope = ExecutionScope::new();
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            begin_block(storage.clone(), &scope).unwrap();
+            assert!(matches!(
+                list(
+                    storage,
+                    &scope,
+                    &scripted,
+                    query,
+                    IdPageRequest {
+                        after: None,
+                        limit: 1,
+                    },
+                ),
+                Err(PrecompileError::BodyReadCorruption(_))
+            ));
+        });
+    }
+
+    let body = tribute(id, owner, 100);
+    let scripted = ScriptedParent {
+        pages: RefCell::new(VecDeque::from([IdPage {
+            ids: vec![id],
+            next_after: None,
+        }])),
+        ..ScriptedParent::default()
+    };
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
+        assert!(matches!(
+            list(
+                storage,
+                &scope,
+                &scripted,
+                QueryRef::TributeByOwner(owner),
+                IdPageRequest {
+                    after: None,
+                    limit: 1,
+                },
+            ),
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+    });
+
+    let scripted = ScriptedParent {
+        bodies: HashMap::from([(EntityRef::Tribute(id), stored_tribute(&body))]),
+        pages: RefCell::new(VecDeque::from([IdPage {
+            ids: Vec::new(),
+            next_after: None,
+        }])),
+    };
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        State::new(storage.clone())
+            .write_commitment(Collection::Tribute, id, tribute_commitment(&body))
+            .unwrap();
+        begin_block(storage.clone(), &scope).unwrap();
+        let cap = read(storage.clone(), &scope, &scripted, EntityRef::Tribute(id))
+            .unwrap()
+            .unwrap();
+        delete(storage.clone(), &scope, cap).unwrap();
+        assert!(matches!(
+            list(
+                storage,
+                &scope,
+                &scripted,
+                QueryRef::TributeByOwner(owner),
+                IdPageRequest {
+                    after: None,
+                    limit: 1,
+                },
+            ),
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+    });
+}

@@ -5,8 +5,9 @@ use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1, CommitmentState,
-    EntityId36, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
+    end_block, read, update, BodyInput, CommitmentState, EntityId36, EntityRef, ExecutionScope,
+    ParentBodySource,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodContract, NodItemState,
@@ -14,6 +15,7 @@ use outbe_nod::{
 };
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
+    RuntimeBodyReaders,
 };
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
@@ -161,60 +163,52 @@ fn finalized_block(execution: &mut HashMapStorageProvider, number: u64) -> Final
     }
 }
 
-fn emit_tribute_update(storage: &StorageHandle<'_>, body: &TributeData) {
-    let commitments = CommitmentState::new(storage.clone());
-    let previous = commitments.tribute(body.tribute_id).unwrap().unwrap();
-    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
-    let new = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-        body.tribute_id,
-        &payload,
+fn update_tribute(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    body: &TributeData,
+) {
+    let current = read(
+        storage.clone(),
+        scope,
+        parent,
+        EntityRef::Tribute(body.tribute_id),
+    )
+    .unwrap()
+    .unwrap();
+    let canonical = canonical_body(body);
+    update(
+        storage.clone(),
+        scope,
+        current,
+        BodyInput::Tribute(&canonical),
     )
     .unwrap();
-    commitments.set_tribute(body.tribute_id, new).unwrap();
-    storage
-        .emit_event(
-            TRIBUTE_ADDRESS,
-            ITribute::TributeBodyStored {
-                tributeId: Bytes::copy_from_slice(body.tribute_id.as_bytes()),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::from(*previous.as_bytes()),
-                newCommitment: B256::from(*new.as_bytes()),
-                canonicalPayload: Bytes::from(payload),
-            }
-            .encode_log_data(),
-        )
-        .unwrap();
 }
 
-fn emit_nod_item_update(storage: &StorageHandle<'_>, body: &NodItemState) {
-    let commitments = CommitmentState::new(storage.clone());
-    let previous = commitments.nod_item(body.nod_id).unwrap().unwrap();
-    let payload = encode_nod_item_v1(&canonical_item(body)).unwrap();
-    let new = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-        body.nod_id,
-        &payload,
+fn update_nod_item(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    body: &NodItemState,
+) {
+    let current = read(
+        storage.clone(),
+        scope,
+        parent,
+        EntityRef::NodItem(body.nod_id),
+    )
+    .unwrap()
+    .unwrap();
+    let canonical = canonical_item(body);
+    update(
+        storage.clone(),
+        scope,
+        current,
+        BodyInput::NodItem(&canonical),
     )
     .unwrap();
-    commitments.set_nod_item(body.nod_id, new).unwrap();
-    storage
-        .emit_event(
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(body.nod_id.as_bytes()),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::from(*previous.as_bytes()),
-                newCommitment: B256::from(*new.as_bytes()),
-                canonicalPayload: Bytes::from(payload),
-            }
-            .encode_log_data(),
-        )
-        .unwrap();
 }
 
 fn as_b256(commitment: Option<outbe_compressed_entities::Commitment>) -> Option<B256> {
@@ -250,6 +244,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let projected = Arc::new(MemoryStorage::new());
     let tribute_reader = TributeRepositoryReader::new(projected.clone());
     let nod_reader = NodRepositoryReader::new(projected.clone());
+    let parent = RuntimeBodyReaders::new(projected.clone());
     let mut projection = OffchainDataProjection::open(
         ProjectionConfig {
             chain_id: 91,
@@ -296,28 +291,32 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let mut observer = ObserverCommitments::default();
 
     // Block 1: normal domain mint paths emit all three Stored namespaces.
+    let scope = ExecutionScope::new();
     StorageHandle::enter(&mut execution, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
         let mut contract = TributeContract::new(storage.clone());
         contract.unseal_day(day).unwrap();
-        contract.issue(&tribute_reader, &tribute).unwrap();
-        outbe_nod::api::add_nod(&storage, &nod_reader, &nod, U256::from(16)).unwrap();
+        contract.issue(&scope, &parent, &tribute).unwrap();
+        outbe_nod::api::add_nod(&storage, &scope, &parent, &nod, U256::from(16)).unwrap();
+        end_block(storage, &scope).unwrap();
     });
     let block1 = finalized_block(&mut execution, 1);
     observer.replay_block(&block1);
     projection.project_block(&block1).unwrap();
     assert_execution_map(&mut execution, &observer, tribute_id, nod_id, bucket_id);
 
-    // Block 2: update each namespace. Tribute and Nod item currently have no
-    // public domain update method, so the fixture performs their exact journaled
-    // mapping/event transition directly. Bucket qualification uses the real hook path.
+    // Block 2: update each namespace through the generic capability boundary.
     tribute.tribute_price_minor += U256::from(1);
     nod.cost_amount_minor += U256::from(1);
+    let scope = ExecutionScope::new();
     StorageHandle::enter(&mut execution, |storage| {
-        emit_tribute_update(&storage, &tribute);
-        emit_nod_item_update(&storage, &nod);
-        NodContract::new(storage)
-            .qualify_bucket_with_reader(&nod_reader, bucket_key)
+        begin_block(storage.clone(), &scope).unwrap();
+        update_tribute(&storage, &scope, &parent, &tribute);
+        update_nod_item(&storage, &scope, &parent, &nod);
+        NodContract::new(storage.clone())
+            .qualify_bucket(&scope, &parent, bucket_key)
             .unwrap();
+        end_block(storage, &scope).unwrap();
     });
     let block2 = finalized_block(&mut execution, 2);
     observer.replay_block(&block2);
@@ -350,11 +349,20 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
 
     // Block 3: normal domain delete paths clear all three mappings and emit all
     // three Deleted namespaces from the updated projected bodies.
+    let scope = ExecutionScope::new();
     StorageHandle::enter(&mut execution, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
         TributeContract::new(storage.clone())
-            .burn(&tribute_reader, tribute_id)
+            .burn(&scope, &parent, tribute_id)
             .unwrap();
-        outbe_nod::api::remove_nod(&storage, &nod_reader, &projected_nod).unwrap();
+        let item = outbe_nod::api::load_item(&storage, &scope, &parent, nod_id)
+            .unwrap()
+            .unwrap();
+        let bucket = outbe_nod::api::load_bucket(&storage, &scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        outbe_nod::api::remove_nod(&storage, &scope, item, bucket).unwrap();
+        end_block(storage, &scope).unwrap();
     });
     let block3 = finalized_block(&mut execution, 3);
     observer.replay_block(&block3);

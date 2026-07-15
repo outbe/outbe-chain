@@ -3,7 +3,8 @@
 use alloy_primitives::Address;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, CanonicalBodyError, EntityId36, NodBucketBodyV1, NodItemBodyV1, StoredBody,
+    encode_nod_item_v1, CanonicalBodyError, EntityId36, EntityRef, IdPage, IdPageRequest,
+    NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -78,6 +79,12 @@ pub enum NodRepositoryError {
     /// An owner index selected a body owned by someone else.
     #[error("Nod owner index/body mismatch for {nod_id}")]
     IndexedOwnerMismatch { nod_id: EntityId36 },
+    /// An ID-only repository page is not strictly ascending after its cursor.
+    #[error("Nod {index} ID page is not strictly ascending")]
+    NonAscendingIdPage { index: &'static str },
+    /// The storage adapter returned a continuation that is not the last page key.
+    #[error("Nod {index} ID page has an invalid continuation")]
+    InvalidPageContinuation { index: &'static str },
     /// The selecting bucket key and embedded body key disagree.
     #[error("Nod bucket ID/body mismatch: expected {expected}, found {actual}")]
     BucketIdBodyMismatch {
@@ -110,6 +117,18 @@ impl NodRepositoryReader {
         Ok(self
             .get_with_metadata(nod_id)?
             .map(|(body, _metadata)| body))
+    }
+
+    /// Loads the exact canonical item StoredBody used by the execution parent seam.
+    pub fn get_stored_item(
+        &self,
+        nod_id: EntityId36,
+    ) -> Result<Option<StoredBody>, NodRepositoryError> {
+        let key = item_key(nod_id)?;
+        let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
+            return Ok(None);
+        };
+        decode_stored_item(nod_id, record.value.as_bytes()).map(Some)
     }
 
     /// Loads one Nod item together with optional primary provenance.
@@ -157,6 +176,21 @@ impl NodRepositoryReader {
         Ok(self
             .get_bucket_with_metadata(bucket_id)?
             .map(|(body, _metadata)| body))
+    }
+
+    /// Loads the exact canonical bucket StoredBody used by the execution parent seam.
+    pub fn get_stored_bucket(
+        &self,
+        bucket_id: EntityId36,
+    ) -> Result<Option<StoredBody>, NodRepositoryError> {
+        let key = bucket_storage_key(bucket_id)?;
+        let Some(record) = self
+            .storage
+            .get_record(namespace(NOD_BUCKETS_NAMESPACE)?, &key)?
+        else {
+            return Ok(None);
+        };
+        decode_stored_bucket(bucket_id, record.value.as_bytes()).map(Some)
     }
 
     /// Loads one Nod bucket together with optional primary provenance.
@@ -230,6 +264,17 @@ impl NodRepositoryReader {
         })
     }
 
+    /// Lists only canonical Nod item identities for overlay merging.
+    pub fn list_ids_all(&self, request: IdPageRequest) -> Result<IdPage, NodRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        let after = request.after.map(item_key).transpose()?;
+        let scan = ScanRequest::new(&[], after.as_ref(), limit)?;
+        let page = self.storage.scan_prefix(namespace(NODS_NAMESPACE)?, scan)?;
+        id_page_from_entries(page, request.after, "all", |entry| {
+            parse_primary_key(entry.key.as_bytes())
+        })
+    }
+
     /// Lists one owner's Nod items in ascending numeric ID order.
     pub fn list_by_owner(
         &self,
@@ -262,6 +307,58 @@ impl NodRepositoryReader {
             next_after: next_cursor(has_more, &records),
             records,
         })
+    }
+
+    /// Lists only one owner's canonical Nod item identities for overlay merging.
+    pub fn list_ids_by_owner(
+        &self,
+        owner: Address,
+        request: IdPageRequest,
+    ) -> Result<IdPage, NodRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        let after = request
+            .after
+            .map(|id| owner_index_key(owner, id))
+            .transpose()?;
+        let scan = ScanRequest::new(owner.as_slice(), after.as_ref(), limit)?;
+        let page = self
+            .storage
+            .scan_prefix(namespace(NODS_BY_OWNER_NAMESPACE)?, scan)?;
+        id_page_from_entries(page, request.after, "owner", |entry| {
+            parse_owner_index(entry, owner)
+        })
+    }
+}
+
+impl ParentBodySource for NodRepositoryReader {
+    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
+        match entity {
+            EntityRef::NodItem(nod_id) => self.get_stored_item(nod_id),
+            EntityRef::NodBucket(bucket_id) => self.get_stored_bucket(bucket_id),
+            EntityRef::Tribute(_) => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Nod repository cannot serve a Tribute entity".into(),
+                ));
+            }
+        }
+        .map_err(map_parent_source_error)
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> Result<IdPage, ParentBodySourceError> {
+        match query {
+            QueryRef::NodByOwner(owner) => self.list_ids_by_owner(owner, request),
+            QueryRef::NodAll => self.list_ids_all(request),
+            QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Nod repository cannot serve a Tribute query".into(),
+                ));
+            }
+        }
+        .map_err(map_parent_source_error)
     }
 }
 
@@ -343,6 +440,18 @@ pub(crate) fn decode_item(
     Ok(body)
 }
 
+fn decode_stored_item(nod_id: EntityId36, bytes: &[u8]) -> Result<StoredBody, NodRepositoryError> {
+    let stored = StoredBody::decode(bytes)?;
+    let body = decode_stored_nod_item_v1(bytes)?;
+    if body.nod_id != nod_id {
+        return Err(NodRepositoryError::PrimaryKeyBodyMismatch {
+            expected: nod_id,
+            actual: body.nod_id,
+        });
+    }
+    Ok(stored)
+}
+
 pub(crate) fn encode_bucket(bucket: &NodBucketState) -> Result<Value, NodRepositoryError> {
     let payload = encode_nod_bucket_v1(&canonical_bucket(bucket))?;
     Ok(Value::new(StoredBody::new_v1(payload)?.encode())?)
@@ -361,6 +470,22 @@ pub(crate) fn decode_bucket(
         });
     }
     Ok(body)
+}
+
+fn decode_stored_bucket(
+    bucket_id: EntityId36,
+    bytes: &[u8],
+) -> Result<StoredBody, NodRepositoryError> {
+    let stored = StoredBody::decode(bytes)?;
+    let body = decode_stored_nod_bucket_v1(bytes)?;
+    let actual = body.entity_id();
+    if actual != bucket_id {
+        return Err(NodRepositoryError::BucketIdBodyMismatch {
+            expected: bucket_id,
+            actual,
+        });
+    }
+    Ok(stored)
 }
 
 pub(crate) fn item_key(nod_id: EntityId36) -> Result<Key, NodRepositoryError> {
@@ -404,6 +529,62 @@ fn validate_page_limit(limit: usize) -> Result<(), NodRepositoryError> {
         return Err(NodRepositoryError::InvalidPageLimit { limit });
     }
     Ok(())
+}
+
+fn map_parent_source_error(error: NodRepositoryError) -> ParentBodySourceError {
+    let message = error.to_string();
+    match &error {
+        NodRepositoryError::Storage(storage)
+            if matches!(
+                storage.kind(),
+                outbe_offchain_storage::StorageErrorKind::Unavailable
+                    | outbe_offchain_storage::StorageErrorKind::RequestDeadline
+            ) =>
+        {
+            ParentBodySourceError::Unavailable(message)
+        }
+        _ => ParentBodySourceError::Corruption(message),
+    }
+}
+
+fn validate_id_page_request(request: IdPageRequest) -> Result<usize, NodRepositoryError> {
+    let limit = usize::try_from(request.limit)
+        .map_err(|_| NodRepositoryError::InvalidPageLimit { limit: usize::MAX })?;
+    validate_page_limit(limit)?;
+    Ok(limit)
+}
+
+fn id_page_from_entries(
+    page: outbe_offchain_storage::ScanPage,
+    after: Option<EntityId36>,
+    index: &'static str,
+    mut parse: impl FnMut(&ScanEntry) -> Result<EntityId36, NodRepositoryError>,
+) -> Result<IdPage, NodRepositoryError> {
+    if let Some(continuation) = &page.next_after {
+        if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
+            return Err(NodRepositoryError::InvalidPageContinuation { index });
+        }
+    }
+    let mut ids = Vec::with_capacity(page.entries.len());
+    let mut previous = after;
+    for entry in &page.entries {
+        let id = parse(entry)?;
+        if previous.is_some_and(|previous| id <= previous) {
+            return Err(NodRepositoryError::NonAscendingIdPage { index });
+        }
+        ids.push(id);
+        previous = Some(id);
+    }
+    let next_after = if page.next_after.is_some() {
+        Some(
+            ids.last()
+                .copied()
+                .ok_or(NodRepositoryError::InvalidPageContinuation { index })?,
+        )
+    } else {
+        None
+    };
+    Ok(IdPage { ids, next_after })
 }
 
 fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<EntityId36> {

@@ -1,35 +1,29 @@
-//! Cross-module API for NodFactory.
-//!
-//! Lysis calls [`issue_nod_with_reader`] inside its lysis run. The production
-//! ABI surface (only `mineGratis`) lives in [`crate::precompile`] and requires
-//! the same explicit body-read authority.
+//! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-
-use outbe_compressed_entities::EntityId36;
-use outbe_nod::{schema::NodIssueParams, NodRepositoryReader};
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_nod::schema::NodIssueParams;
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
-/// Issue a new Nod with the explicit off-chain body reader.
-pub fn issue_nod_with_reader(
+pub fn issue_nod(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     params: &NodIssueParams,
 ) -> Result<EntityId36> {
-    runtime::issue_nod_with_reader(storage, reader, params)
+    runtime::issue_nod(storage, scope, parent, params)
 }
 
-/// Mine a Nod with the explicit off-chain body reader.
-pub fn mine_gratis_with_reader(
+pub fn mine_gratis(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     caller: Address,
     nod_id: EntityId36,
     nonce: U256,
     asset: Address,
 ) -> Result<U256> {
-    runtime::mine_gratis_with_reader(storage, reader, caller, nod_id, nonce, asset)
+    runtime::mine_gratis(storage, scope, parent, caller, nod_id, nonce, asset)
 }

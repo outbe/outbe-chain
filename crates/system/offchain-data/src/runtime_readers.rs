@@ -1,6 +1,9 @@
 //! Read-only Tribute and Nod body capabilities used by runtime execution.
 
-use outbe_nod::NodRepositoryReader;
+use outbe_compressed_entities::{
+    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
+};
+use outbe_nod::{NodRepositoryError, NodRepositoryReader};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -11,13 +14,13 @@ use std::{
 };
 
 use outbe_offchain_storage::{
-    Key, Namespace, ScanPage, ScanRequest, StorageError, StorageReader, StorageReaderHandle,
-    StoredValue,
+    Key, Namespace, ScanPage, ScanRequest, StorageError, StorageErrorKind, StorageReader,
+    StorageReaderHandle, StoredValue,
 };
 use outbe_primitives::projection::{
     ExecutionReadBudget, ProjectionFailure, ProjectionFailureClass,
 };
-use outbe_tribute::TributeRepositoryReader;
+use outbe_tribute::{TributeRepositoryError, TributeRepositoryReader};
 
 const MAX_CONCURRENT_EXECUTION_READS: usize = 64;
 static ACTIVE_EXECUTION_READS: AtomicUsize = AtomicUsize::new(0);
@@ -307,5 +310,76 @@ impl RuntimeBodyReaders {
             }
             _ => {}
         }
+    }
+}
+
+impl ParentBodySource for RuntimeBodyReaders {
+    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
+        match entity {
+            EntityRef::Tribute(tribute_id) => self
+                .tribute
+                .get_stored_body(tribute_id)
+                .map_err(map_tribute_parent_error),
+            EntityRef::NodItem(nod_id) => self
+                .nod
+                .get_stored_item(nod_id)
+                .map_err(map_nod_parent_error),
+            EntityRef::NodBucket(bucket_id) => self
+                .nod
+                .get_stored_bucket(bucket_id)
+                .map_err(map_nod_parent_error),
+        }
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> Result<IdPage, ParentBodySourceError> {
+        match query {
+            QueryRef::TributeByOwner(owner) => self
+                .tribute
+                .list_ids_by_owner(owner, request)
+                .map_err(map_tribute_parent_error),
+            QueryRef::TributeByDay(worldwide_day) => self
+                .tribute
+                .list_ids_by_day(worldwide_day, request)
+                .map_err(map_tribute_parent_error),
+            QueryRef::NodByOwner(owner) => self
+                .nod
+                .list_ids_by_owner(owner, request)
+                .map_err(map_nod_parent_error),
+            QueryRef::NodAll => self.nod.list_ids_all(request).map_err(map_nod_parent_error),
+        }
+    }
+}
+
+fn map_storage_parent_error(kind: StorageErrorKind, message: String) -> ParentBodySourceError {
+    match kind {
+        StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline => {
+            ParentBodySourceError::Unavailable(message)
+        }
+        StorageErrorKind::InvalidArgument
+        | StorageErrorKind::Corruption
+        | StorageErrorKind::Backend
+        | StorageErrorKind::WriterLeaseLost => ParentBodySourceError::Corruption(message),
+    }
+}
+
+fn map_tribute_parent_error(error: TributeRepositoryError) -> ParentBodySourceError {
+    let message = error.to_string();
+    match &error {
+        TributeRepositoryError::Storage(storage) => {
+            map_storage_parent_error(storage.kind(), message)
+        }
+        _ => ParentBodySourceError::Corruption(message),
+    }
+}
+
+fn map_nod_parent_error(error: NodRepositoryError) -> ParentBodySourceError {
+    let message = error.to_string();
+    match &error {
+        NodRepositoryError::Storage(storage) => map_storage_parent_error(storage.kind(), message),
+        _ => ParentBodySourceError::Corruption(message),
     }
 }

@@ -52,8 +52,8 @@ use crate::{
     factory::OutbeEvmFactory,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, split_system_layout, validate_active_system_tx_set,
-        SystemTxInputV2, SystemTxKind,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, split_system_layout,
+        validate_active_system_tx_set, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 
@@ -572,6 +572,7 @@ impl OutbeEvmConfig {
         &self,
         block_number: u64,
         chain_id: u64,
+        block_gas_limit: u64,
         parent_hash: B256,
         extra_data: &Bytes,
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
@@ -655,15 +656,35 @@ impl OutbeEvmConfig {
             inputs.push(SystemTxInputV2::HookEvents);
         }
 
-        inputs
+        let encoded_inputs = inputs
             .into_iter()
-            .enumerate()
-            .map(|(ordinal, input)| {
+            .map(|input| {
                 let kind = input.kind();
                 let calldata = input.encode().map_err(|error| {
                     BlockExecutionError::Internal(
                         alloy_evm::block::InternalBlockExecutionError::Other(
                             format!("encode system tx input: {error}").into(),
+                        ),
+                    )
+                })?;
+                Ok((kind, calldata))
+            })
+            .collect::<Result<Vec<_>, BlockExecutionError>>()?;
+        let gas_plan =
+            SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs).map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("plan visible system tx gas: {error}").into(),
+                ))
+            })?;
+
+        encoded_inputs
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (kind, calldata))| {
+                let gas_limit = gas_plan.gas_limit(ordinal).ok_or_else(|| {
+                    BlockExecutionError::Internal(
+                        alloy_evm::block::InternalBlockExecutionError::Other(
+                            format!("visible gas plan missing system tx ordinal {ordinal}").into(),
                         ),
                     )
                 })?;
@@ -701,7 +722,7 @@ impl OutbeEvmConfig {
                     }
                 }
 
-                let unsigned = build_unsigned_system_tx(
+                let unsigned = build_unsigned_system_tx_with_gas_limit(
                     kind,
                     ordinal.try_into().map_err(|_| {
                         BlockExecutionError::Internal(
@@ -713,6 +734,7 @@ impl OutbeEvmConfig {
                     block_number,
                     chain_id,
                     calldata,
+                    gas_limit,
                 )
                 .map_err(|error| {
                     BlockExecutionError::Internal(
@@ -974,6 +996,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
         let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let compressed_entities_scope = evm.execution_scope().clone();
         let execution_read_budget = ctx.execution_read_budget.clone();
 
         OutbeBlockExecutor::new(
@@ -999,6 +1022,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             prebuilt_phase1_tx,
             parent_artifact_hint,
         )
+        .with_compressed_entities_scope(compressed_entities_scope)
         .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
         .with_pending_tee_bootstrap(pending_tee_bootstrap)
     }
@@ -1172,6 +1196,7 @@ impl ConfigureEvm for OutbeEvmConfig {
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
         let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let compressed_entities_scope = evm.execution_scope().clone();
 
         OutbeBlockBuilder::new(
             OutbeBlockExecutor::new(
@@ -1197,6 +1222,7 @@ impl ConfigureEvm for OutbeEvmConfig {
                 prebuilt_phase1_tx,
                 parent_artifact_hint,
             )
+            .with_compressed_entities_scope(compressed_entities_scope)
             .with_runtime_body_readers(runtime_body_readers, ctx.execution_read_budget.clone())
             .with_pending_tee_bootstrap(pending_tee_bootstrap),
             ctx,

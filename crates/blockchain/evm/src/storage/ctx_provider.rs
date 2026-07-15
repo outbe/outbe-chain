@@ -26,6 +26,7 @@
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;
+use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{PrecompileStorageProvider, SubCallError, SubCallInput, SubCallOutput},
@@ -40,7 +41,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
     Database,
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Arc};
 
 use crate::{gas::SubcallGasMeter, sub_call};
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -132,6 +133,17 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub spec: SpecId,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    /// The same block-scoped lifecycle capability used by the outer EVM.
+    pub execution_scope: Arc<ExecutionScope>,
+}
+
+pub struct CtxStorageProviderConfig {
+    pub is_static: bool,
+    pub self_address: Address,
+    pub reentrancy_stack: ReentrancyStack,
+    pub spec: SpecId,
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub execution_scope: Arc<ExecutionScope>,
 }
 
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
@@ -139,20 +151,17 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     pub fn new(
         ctx: &'a mut EthEvmContext<DB>,
         gas: SubcallGasMeter,
-        is_static: bool,
-        self_address: Address,
-        reentrancy_stack: ReentrancyStack,
-        spec: SpecId,
-        runtime_body_readers: Option<RuntimeBodyReaders>,
+        config: CtxStorageProviderConfig,
     ) -> Self {
         Self {
             ctx,
             gas,
-            is_static,
-            self_address,
-            reentrancy_stack,
-            spec,
-            runtime_body_readers,
+            is_static: config.is_static,
+            self_address: config.self_address,
+            reentrancy_stack: config.reentrancy_stack,
+            spec: config.spec,
+            runtime_body_readers: config.runtime_body_readers,
+            execution_scope: config.execution_scope,
         }
     }
 
@@ -335,6 +344,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             self.is_static,
             self.spec,
             self.runtime_body_readers.clone(),
+            self.execution_scope.clone(),
             input,
         )
     }

@@ -654,6 +654,7 @@ mod tests {
                 .build_begin_system_txs(
                     2,
                     MAINNET.chain().id(),
+                    30_000_000,
                     parent.hash(),
                     &attrs.inner.extra_data,
                     attrs.parent_consensus_metadata.clone(),
@@ -828,6 +829,7 @@ mod tests {
             .build_begin_system_txs(
                 1,
                 MAINNET.chain().id(),
+                30_000_000,
                 parent.hash(),
                 &attrs.inner.extra_data,
                 attrs.parent_consensus_metadata.clone(),

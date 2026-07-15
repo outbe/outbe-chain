@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
 use crate::schema::TributeContract;
-use crate::TributeRepositoryReader;
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -15,7 +14,8 @@ sol!(
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    bodies: &TributeRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     data: &[u8],
     _caller: Address,
     value: U256,
@@ -33,14 +33,14 @@ pub fn dispatch(
             }),
             balanceOf(c) => view(c, |c| {
                 Ok(alloy_primitives::U256::from(
-                    tribute.balance_of(bodies, c.owner)?,
+                    tribute.balance_of(scope, parent, c.owner)?,
                 ))
             }),
             ownerOf(c) => view(c, |c| {
-                tribute.owner_of(bodies, parse_entity_id(&c.tributeId)?)
+                tribute.owner_of(scope, parent, parse_entity_id(&c.tributeId)?)
             }),
             tokenURI(c) => view(c, |c| {
-                tribute.token_uri(bodies, parse_entity_id(&c.tributeId)?)
+                tribute.token_uri(scope, parent, parse_entity_id(&c.tributeId)?)
             }),
             getDayTotals(c) => view(c, |c| {
                 let dt = tribute.get_day_totals(c.worldwideDay.into())?;
@@ -48,14 +48,14 @@ pub fn dispatch(
             }),
             getTributesByOwner(c) => view(c, |c| {
                 Ok(tribute
-                    .get_tribute_ids_by_owner(bodies, c.owner)?
+                    .get_tribute_ids_by_owner(scope, parent, c.owner)?
                     .into_iter()
                     .map(|id| Bytes::copy_from_slice(id.as_bytes()))
                     .collect::<Vec<_>>())
             }),
             getTributesByDay(c) => view(c, |c| {
                 Ok(tribute
-                    .get_tribute_ids_by_day(bodies, c.worldwideDay.into())?
+                    .get_tribute_ids_by_day(scope, parent, c.worldwideDay.into())?
                     .into_iter()
                     .map(|id| Bytes::copy_from_slice(id.as_bytes()))
                     .collect::<Vec<_>>())

@@ -10,7 +10,9 @@ use std::{
 use alloy_primitives::{Address, U256};
 use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{decode_tribute_v1, encode_tribute_v1, EntityId36, StoredBody};
+use outbe_compressed_entities::{
+    decode_tribute_v1, encode_tribute_v1, EntityId36, IdPageRequest, StoredBody,
+};
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
     StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
@@ -380,6 +382,101 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
 fn memory_contract() {
     let storage = Arc::new(MemoryStorage::new());
     run_contract(storage.clone(), storage);
+}
+
+#[test]
+fn parent_seam_returns_exact_stored_bodies_and_strict_id_pages() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader_handle: StorageReaderHandle = storage.clone();
+    let writer_handle: StorageWriterHandle = storage;
+    let reader = TributeRepositoryReader::new(reader_handle.clone());
+    let writer = TributeRepositoryWriter::new(reader_handle, writer_handle);
+    let owner = Address::repeat_byte(0x19);
+    let day = WorldwideDay::new(7);
+    let ids = [
+        entity_id(U256::from(1), day.value()),
+        entity_id(U256::from(2), day.value()),
+        entity_id(U256::from(3), day.value()),
+    ];
+    for seed in [3_u64, 1, 2] {
+        writer
+            .put(&tribute(U256::from(seed), owner, day.value()))
+            .unwrap();
+    }
+
+    let expected = StoredBody::new_v1(
+        encode_tribute_v1(&outbe_tribute::canonical_body(&tribute(
+            U256::from(1),
+            owner,
+            day.value(),
+        )))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        reader.get_stored_body(ids[0]).unwrap().unwrap().encode(),
+        expected.encode()
+    );
+    assert!(reader
+        .get_stored_body(entity_id(U256::from(99), day.value()))
+        .unwrap()
+        .is_none());
+
+    for page in [
+        reader
+            .list_ids_by_owner(
+                owner,
+                IdPageRequest {
+                    after: None,
+                    limit: 2,
+                },
+            )
+            .unwrap(),
+        reader
+            .list_ids_by_day(
+                day,
+                IdPageRequest {
+                    after: None,
+                    limit: 2,
+                },
+            )
+            .unwrap(),
+    ] {
+        assert_eq!(page.ids, ids[..2]);
+        assert_eq!(page.next_after, Some(ids[1]));
+    }
+    let tail = reader
+        .list_ids_by_owner(
+            owner,
+            IdPageRequest {
+                after: Some(ids[1]),
+                limit: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(tail.ids, ids[2..]);
+    assert_eq!(tail.next_after, None);
+
+    assert!(matches!(
+        reader.list_ids_by_day(
+            day,
+            IdPageRequest {
+                after: Some(entity_id(U256::from(1), day.value() + 1)),
+                limit: 1,
+            },
+        ),
+        Err(TributeRepositoryError::InvalidDayCursor { .. })
+    ));
+    assert!(matches!(
+        reader.list_ids_by_owner(
+            owner,
+            IdPageRequest {
+                after: None,
+                limit: 0,
+            },
+        ),
+        Err(TributeRepositoryError::InvalidPageLimit { .. })
+    ));
 }
 
 #[test]

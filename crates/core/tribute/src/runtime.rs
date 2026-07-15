@@ -1,49 +1,78 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, encode_tribute_v1, CommitmentState, EntityId36, ACTIVE_COMMITMENT_SCHEME,
-    BODY_SCHEMA_V1,
+    delete, mint, read, BodyInput, EntityId36, EntityRef, ExecutionScope, ParentBodySource,
+    VerifiedBody,
 };
 use outbe_primitives::error::Result;
 
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::{TributeContract, TributeData};
-use crate::TributeRepositoryReader;
+use crate::state::tribute_from_verified;
+
+/// A semantic Tribute paired with the exact generic mutation capability that verified it.
+pub struct LoadedTribute {
+    body: TributeData,
+    current: VerifiedBody,
+}
+
+impl LoadedTribute {
+    /// Converts an authenticated generic Tribute body into the domain capability.
+    pub fn from_verified(current: VerifiedBody) -> Result<Self> {
+        let body = tribute_from_verified(&current)?;
+        Ok(Self { body, current })
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> &TributeData {
+        &self.body
+    }
+}
 
 impl TributeContract<'_> {
     pub fn get_tributes_by_owner(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         owner: Address,
     ) -> Result<Vec<TributeData>> {
-        self.read_all_by_owner(bodies, owner)
+        self.read_all_by_owner(scope, parent, owner)
     }
 
     pub fn get_all_day_tributes(
         &self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         day: WorldwideDay,
     ) -> Result<Vec<TributeData>> {
-        self.read_all_by_day(bodies, day)
+        self.read_all_by_day(scope, parent, day)
     }
 
-    pub fn issue(&mut self, bodies: &TributeRepositoryReader, tribute: &TributeData) -> Result<()> {
+    pub fn issue(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        tribute: &TributeData,
+    ) -> Result<()> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| self.issue_inner(scope, parent, tribute))
+    }
+
+    fn issue_inner(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        tribute: &TributeData,
+    ) -> Result<()> {
         self.validate_tribute_for_issue(tribute)?;
         self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        if self.get_tribute(bodies, tribute.tribute_id)?.is_some() {
+        if self
+            .get_tribute(scope, parent, tribute.tribute_id)?
+            .is_some()
+        {
             return Err(TributeError::TributeAlreadyExists.into());
         }
-
-        let payload = encode_tribute_v1(&crate::repository::canonical_body(tribute))
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        let new_commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            tribute.tribute_id,
-            &payload,
-        )
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
 
         self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
 
@@ -54,17 +83,8 @@ impl TributeContract<'_> {
         })?;
         self.total_supply.write(supply)?;
 
-        CommitmentState::new(self.storage_handle())
-            .set_tribute(tribute.tribute_id, new_commitment)?;
-
-        self.emit(ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
-            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
-            previousCommitment: B256::ZERO,
-            newCommitment: B256::from(*new_commitment.as_bytes()),
-            canonicalPayload: Bytes::from(payload),
-        })?;
+        let canonical = crate::repository::canonical_body(tribute);
+        mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
         self.emit(ITribute::TributeIssued {
             owner: tribute.owner,
             tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
@@ -77,22 +97,44 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    pub fn burn(&mut self, bodies: &TributeRepositoryReader, tribute_id: EntityId36) -> Result<()> {
-        let tribute = self
-            .get_tribute(bodies, tribute_id)?
+    pub fn burn(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        tribute_id: EntityId36,
+    ) -> Result<()> {
+        let loaded = self
+            .load_tribute(scope, parent, tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
-
-        self.burn_loaded(&tribute)
+        self.burn_loaded(scope, loaded)
     }
 
-    fn burn_loaded(&mut self, tribute: &TributeData) -> Result<()> {
-        let commitments = CommitmentState::new(self.storage_handle());
-        let previous_commitment = commitments.tribute(tribute.tribute_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Tribute {} became canonically absent during burn",
-                tribute.tribute_id
-            ))
-        })?;
+    /// Loads one Tribute while retaining its verified generic mutation capability.
+    pub fn load_tribute(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        tribute_id: EntityId36,
+    ) -> Result<Option<LoadedTribute>> {
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::Tribute(tribute_id),
+        )?
+        .map(LoadedTribute::from_verified)
+        .transpose()
+    }
+
+    /// Burns a previously loaded Tribute without repeating a parent-body read.
+    pub fn burn_loaded(&mut self, scope: &ExecutionScope, loaded: LoadedTribute) -> Result<()> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| self.burn_loaded_inner(scope, loaded))
+    }
+
+    fn burn_loaded_inner(&mut self, scope: &ExecutionScope, loaded: LoadedTribute) -> Result<()> {
+        let LoadedTribute { body, current } = loaded;
+        let tribute = body;
         self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
 
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
@@ -102,12 +144,7 @@ impl TributeContract<'_> {
         })?;
         self.total_supply.write(supply)?;
 
-        commitments.clear_tribute(tribute.tribute_id)?;
-
-        self.emit(ITribute::TributeBodyDeleted {
-            tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
-            previousCommitment: B256::from(*previous_commitment.as_bytes()),
-        })?;
+        delete(self.storage_handle(), scope, current)?;
         self.emit(ITribute::TributeBurned {
             tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
             owner: tribute.owner,
@@ -119,13 +156,25 @@ impl TributeContract<'_> {
 
     pub fn burn_all_by_wwd(
         &mut self,
-        bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         day: WorldwideDay,
     ) -> Result<()> {
-        for tribute in self.get_all_day_tributes(bodies, day)? {
-            self.burn_loaded(&tribute)?;
-        }
-        Ok(())
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            let tribute_ids = self.get_tribute_ids_by_day(scope, parent, day)?;
+            for tribute_id in tribute_ids {
+                let current = read(
+                    self.storage_handle(),
+                    scope,
+                    parent,
+                    EntityRef::Tribute(tribute_id),
+                )?
+                .ok_or(TributeError::TributeNotFound)?;
+                self.burn_loaded_inner(scope, LoadedTribute::from_verified(current)?)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {

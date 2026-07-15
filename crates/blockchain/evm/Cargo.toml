@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-offchain-data.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
@@ -74,7 +75,6 @@ eyre.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-outbe-compressed-entities.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true

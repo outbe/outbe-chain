@@ -23,7 +23,9 @@
 //!   qualifies a bucket above the rate nor one priced exactly at it.
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{
+    EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
+};
 use outbe_oracle::api::get_exchange_rate;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
@@ -31,9 +33,7 @@ use outbe_primitives::{
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::{
-    constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract, NodRepositoryReader,
-};
+use crate::{api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract};
 
 /// Oracle pair that gates bucket qualification: COEN against the stablecoin.
 const QUALIFIER_BASE: &str = "COEN";
@@ -41,35 +41,56 @@ const QUALIFIER_QUOTE: &str = "0xUSD";
 
 pub struct NodLifecycle;
 
-impl BlockLifecycle for NodLifecycle {
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
-        if rate.is_zero() {
-            return Ok(());
+/// Explicit body authorities required by receipt-visible Nod qualification.
+pub struct NodLifecycleContext<'a, 'storage> {
+    pub runtime: BlockRuntimeContext<'storage>,
+    pub scope: &'a ExecutionScope,
+    parent: ParentBodySourceRef<'a>,
+}
+
+impl<'a, 'storage> NodLifecycleContext<'a, 'storage> {
+    #[must_use]
+    pub fn new(
+        runtime: BlockRuntimeContext<'storage>,
+        scope: &'a ExecutionScope,
+        parent: &'a dyn ParentBodySource,
+    ) -> Self {
+        Self {
+            runtime,
+            scope,
+            parent: ParentBodySourceRef::new(parent),
         }
-        let nod = NodContract::new(ctx.storage.clone());
-        if nod.bin_tree_root.read()?.is_zero() {
-            return Ok(());
-        }
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Nod lifecycle read authority was not supplied".into(),
-        ))
     }
 }
 
-/// Qualifies Nod buckets using only compact EVM worklists and the off-chain body reader.
-pub fn qualify_nods_with_reader(
-    ctx: &BlockRuntimeContext,
-    reader: &NodRepositoryReader,
-) -> Result<()> {
-    let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
-    qualify_buckets_with_rate_and_reader(ctx, reader, rate)
+impl BlockLifecycle for NodLifecycle {
+    type Context<'a, 'storage> = NodLifecycleContext<'a, 'storage>;
+    type EndBlockResult = ();
+
+    fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
+        qualify_nods(&ctx.runtime, ctx.scope, &ctx.parent)
+    }
+
+    fn end_block(_ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {
+        Ok(())
+    }
 }
 
-/// Reader-aware qualification entry point used by the block executor.
-pub fn qualify_buckets_with_rate_and_reader(
+/// Qualifies Nod buckets using the same block scope and parent source as transactions.
+pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
+    qualify_buckets_with_rate(ctx, scope, parent, rate)
+}
+
+/// Qualification entry point used by the block executor and behavioral tests.
+pub fn qualify_buckets_with_rate(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     rate: U256,
 ) -> Result<()> {
     if rate.is_zero() {
@@ -112,11 +133,13 @@ pub fn qualify_buckets_with_rate_and_reader(
             }
             let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
             let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
-            let bucket = nod.get_bucket_verified(reader, bucket_id)?.ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+            let loaded =
+                api::load_bucket(&ctx.storage, scope, parent, bucket_id)?.ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod unqualified-bin entry {next}:{index} references missing bucket {bucket_id}"
                 ))
-            })?;
+                })?;
+            let bucket = loaded.body();
             if bucket.is_qualified || NodContract::price_to_bin(bucket.floor_price_minor)? != next {
                 return Err(
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
@@ -129,7 +152,7 @@ pub fn qualify_buckets_with_rate_and_reader(
                 inspected += 1;
                 continue;
             }
-            nod.qualify_bucket_body(bucket)?;
+            nod.qualify_bucket_loaded(scope, loaded)?;
             let last = count.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod bin {next} count underflow"

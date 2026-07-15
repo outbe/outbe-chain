@@ -15,6 +15,7 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
+use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -45,11 +46,32 @@ use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, expected_begin_block_kinds, is_reserved_system_tx,
-        validate_phase1_witness_against, SystemTxInputV2, SystemTxKind,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
+        expected_begin_block_kinds, is_reserved_system_tx, validate_phase1_witness_against,
+        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 use reth_ethereum::chainspec::ChainSpec;
+
+type ExpectedSystemTransaction = (
+    usize,
+    SystemTxKind,
+    SystemTxInputV2,
+    Option<AccountedParentArtifact>,
+    u64,
+    u64,
+);
+
+struct SystemFailureReceiptInput {
+    tx_type: alloy_consensus::TxType,
+    log_address: Address,
+    code: u16,
+    reason: String,
+    intrinsic_gas: u64,
+    compressed_entities_gas: u64,
+    signed_gas_limit: u64,
+    internal_gas_used: u64,
+}
 
 /// Outbe runtime addresses that receive `0xEF` EIP-161 marker bytecode in every
 /// block's pre-execution step ([`OutbeBlockExecutor::apply_pre_execution_changes`])
@@ -433,14 +455,15 @@ pub fn run_outbe_pre_execution_hooks_with_readers(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
     readers: &RuntimeBodyReaders,
+    scope: &ExecutionScope,
 ) -> outbe_primitives::error::Result<()> {
-    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, Some(readers))
+    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, Some((readers, scope)))
 }
 
 fn run_outbe_pre_execution_hooks_inner(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
-    readers: Option<&RuntimeBodyReaders>,
+    readers: Option<(&RuntimeBodyReaders, &ExecutionScope)>,
 ) -> outbe_primitives::error::Result<()> {
     let block_number = hook_ctx.block.block_number;
     let timestamp = hook_ctx.block.timestamp;
@@ -513,13 +536,10 @@ fn run_outbe_pre_execution_hooks_inner(
     // underperformers EXITING.
     <outbe_oracle::hooks::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // NOD: promote unqualified buckets whose floor_price <= current COEN/0xUSD
-    // exchange rate. Runs after Oracle so it observes the just-tallied rate.
-    if let Some(readers) = readers {
-        outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, readers.nod())?;
-    } else {
-        <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
-    }
+    // Nod qualification mutates compressed bucket bodies and therefore runs
+    // later inside the receipt-visible CycleTick system transaction. Oracle
+    // has already published the rate that transaction observes.
+    let _ = readers;
 
     // GEM: promote unqualified gems whose floor_price < current COEN/<reference>
     // exchange rate AND whose maturity has elapsed. Reads the same Oracle
@@ -779,6 +799,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Least-authority off-chain readers used by lifecycle body reads.
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_read_budget_guard: Option<ExecutionReadBudgetGuard>,
+    /// One lifecycle capability shared with every precompile in this EVM.
+    compressed_entities_scope: Arc<ExecutionScope>,
+    compressed_entities_started: bool,
 }
 
 // test-only opt-out: scoped flag that disables the Phase 1
@@ -854,7 +877,14 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             zero_fee_soft_failures: 0,
             runtime_body_readers: None,
             execution_read_budget_guard: None,
+            compressed_entities_scope: Arc::new(ExecutionScope::new()),
+            compressed_entities_started: false,
         }
+    }
+
+    pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
+        self.compressed_entities_scope = scope;
+        self
     }
 
     pub(crate) fn with_runtime_body_readers(
@@ -962,44 +992,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         }
         self.zero_fee_soft_failures = self.zero_fee_soft_failures.saturating_add(1);
         Ok(())
-    }
-
-    /// Pushes a `status=0` system synthetic receipt with exactly one
-    /// `OutbeFailure(code, reason)` log, charges the visible system tx gas to
-    /// the public block gas lane, and leaves EVM state untouched.
-    pub(crate) fn push_system_failure_receipt(
-        &mut self,
-        tx_type: alloy_consensus::TxType,
-        log_address: Address,
-        code: u16,
-        reason: String,
-        visible_gas_used: u64,
-        internal_gas_used: u64,
-    ) {
-        let log = crate::failure_receipt::build_outbe_failure_log(log_address, code, reason);
-        let system_cumulative_gas_used = self
-            .system_tx_execution_gas
-            .saturating_add(internal_gas_used);
-        let user_cumulative_gas_used = self
-            .inner
-            .cumulative_tx_gas_used
-            .saturating_add(visible_gas_used);
-        self.inner.receipts.push(Receipt {
-            tx_type,
-            success: false,
-            cumulative_gas_used: user_cumulative_gas_used,
-            logs: vec![log],
-        });
-        self.system_tx_execution_gas = system_cumulative_gas_used;
-        self.inner.cumulative_tx_gas_used = user_cumulative_gas_used;
-        self.inner.block_regular_gas_used = self
-            .inner
-            .block_regular_gas_used
-            .saturating_add(visible_gas_used);
-        self.inner.block_state_gas_used = self
-            .inner
-            .block_state_gas_used
-            .saturating_add(visible_gas_used);
     }
 
     /// Pushes a `status=0` synthetic receipt with exactly one
@@ -1218,6 +1210,54 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
+    /// Finalizes the block-scoped compressed-entity overlay while the caller's
+    /// state hook is still installed.
+    ///
+    /// Payload building invokes this before asking the parallel trie task for
+    /// its root. Validator/general execution may rely on [`BlockExecutor::finish`],
+    /// which calls the same helper. A successful call clears `started`, making
+    /// the helper idempotent without permitting a second lifecycle transition.
+    pub fn finalize_compressed_entities(&mut self) -> Result<(), BlockExecutionError> {
+        if !self.compressed_entities_started {
+            return Ok(());
+        }
+
+        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let chain_id = self.inner.evm.chain_id();
+        let proposer = self.inner.evm.block().beneficiary();
+        let scope = self.compressed_entities_scope.clone();
+        let (changes, events) = {
+            let db = self.inner.evm.db_mut();
+            let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+            run_atomic_storage_hooks(db, ctx, |hook_ctx| {
+                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                    hook_ctx.clone(),
+                    scope.as_ref(),
+                );
+                <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+                    &lifecycle,
+                )
+            })?
+        };
+        if !events.is_empty() {
+            return Err(BlockExecutionError::msg(
+                "compressed-entity end_block emitted an unexpected event",
+            ));
+        }
+        if !changes.is_empty() {
+            use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
+            self.inner.system_caller.on_state(
+                StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
+                    "compressed_entities_end_block",
+                )),
+                &changes,
+            );
+        }
+        self.compressed_entities_started = false;
+        Ok(())
+    }
+
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
@@ -1228,8 +1268,15 @@ where
     fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
-        visible_gas_used: u64,
+        intrinsic_gas: u64,
+        compressed_entities_gas: u64,
+        signed_gas_limit: u64,
     ) -> Result<GasOutput, BlockExecutionError> {
+        let visible_gas_used = self.visible_system_gas_with_compressed_entities(
+            intrinsic_gas,
+            compressed_entities_gas,
+            signed_gas_limit,
+        )?;
         let user_cumulative_tx_gas = self.inner.cumulative_tx_gas_used;
         let user_regular_gas = self.inner.block_regular_gas_used;
         let user_state_gas = self.inner.block_state_gas_used;
@@ -1259,6 +1306,109 @@ where
         self.inner.block_regular_gas_used = user_regular_gas.saturating_add(visible_gas_used);
         self.inner.block_state_gas_used = user_state_gas.saturating_add(visible_gas_used);
 
+        Ok(GasOutput::new(visible_gas_used))
+    }
+
+    fn visible_system_gas_with_compressed_entities(
+        &self,
+        intrinsic_gas: u64,
+        compressed_entities_gas: u64,
+        signed_gas_limit: u64,
+    ) -> Result<u64, BlockExecutionError> {
+        let visible_gas = intrinsic_gas
+            .checked_add(compressed_entities_gas)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "system tx visible gas overflow after compressed-entity charge".into(),
+                ))
+            })?;
+        if visible_gas > signed_gas_limit {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "system tx receipt gas exceeds signed gas limit: visible={visible_gas}, \
+                         signed_limit={signed_gas_limit}, intrinsic={intrinsic_gas}, \
+                         compressed_entities={compressed_entities_gas}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        let cumulative = self
+            .inner
+            .cumulative_tx_gas_used
+            .checked_add(visible_gas)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "system tx cumulative visible gas overflow".into(),
+                ))
+            })?;
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        if cumulative > block_gas_limit {
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(
+                    format!(
+                        "system tx visible gas exceeds block gas limit: cumulative={cumulative}, \
+                         block_limit={block_gas_limit}, intrinsic={intrinsic_gas}, \
+                         compressed_entities={compressed_entities_gas}"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        Ok(visible_gas)
+    }
+
+    /// Pushes a `status=0` system synthetic receipt and publishes only the
+    /// signed envelope plus explicit CE gas; unrelated internal-lane work
+    /// remains hidden.
+    fn push_system_failure_receipt(
+        &mut self,
+        input: SystemFailureReceiptInput,
+    ) -> Result<GasOutput, BlockExecutionError> {
+        let visible_gas_used = self.visible_system_gas_with_compressed_entities(
+            input.intrinsic_gas,
+            input.compressed_entities_gas,
+            input.signed_gas_limit,
+        )?;
+        let log = crate::failure_receipt::build_outbe_failure_log(
+            input.log_address,
+            input.code,
+            input.reason,
+        );
+        let system_cumulative_gas_used = self
+            .system_tx_execution_gas
+            .checked_add(input.internal_gas_used)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "system tx internal gas overflow".into(),
+                ))
+            })?;
+        let user_cumulative_gas_used = self
+            .inner
+            .cumulative_tx_gas_used
+            .checked_add(visible_gas_used)
+            .ok_or_else(|| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    "system tx failure visible gas overflow".into(),
+                ))
+            })?;
+        self.inner.receipts.push(Receipt {
+            tx_type: input.tx_type,
+            success: false,
+            cumulative_gas_used: user_cumulative_gas_used,
+            logs: vec![log],
+        });
+        self.system_tx_execution_gas = system_cumulative_gas_used;
+        self.inner.cumulative_tx_gas_used = user_cumulative_gas_used;
+        self.inner.block_regular_gas_used = self
+            .inner
+            .block_regular_gas_used
+            .saturating_add(visible_gas_used);
+        self.inner.block_state_gas_used = self
+            .inner
+            .block_state_gas_used
+            .saturating_add(visible_gas_used);
         Ok(GasOutput::new(visible_gas_used))
     }
 
@@ -1657,11 +1807,47 @@ where
             SystemTxKind,
             SystemTxInputV2,
             Option<AccountedParentArtifact>,
+            u64,
+            u64,
         ),
         BlockExecutionError,
     > {
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        system_txs.into_iter().nth(body_index).ok_or_else(|| {
+        let gas_inputs = system_txs
+            .iter()
+            .map(|(kind, input, _)| {
+                input
+                    .encode()
+                    .map(|calldata| (*kind, calldata))
+                    .map_err(|error| {
+                        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                            format!("encode system tx for visible gas plan: {error}").into(),
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
+            .map_err(|error| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("plan visible system tx gas: {error}").into(),
+                ))
+            })?;
+        let intrinsic_gas = gas_plan.intrinsic_gas(body_index).ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("visible gas plan missing intrinsic gas for body_index={body_index}")
+                    .into(),
+            ))
+        })?;
+        let gas_limit = gas_plan.gas_limit(body_index).ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("visible gas plan missing gas limit for body_index={body_index}").into(),
+            ))
+        })?;
+        system_txs
+            .into_iter()
+            .nth(body_index)
+            .map(|(kind, input, summary)| (kind, input, summary, intrinsic_gas, gas_limit))
+            .ok_or_else(|| {
             let has_boundary_outcome = matches!(
                 block_artifacts.consensus_header_artifact,
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
@@ -1678,7 +1864,7 @@ where
                 )
                 .into(),
             ))
-        })
+            })
     }
 
     /// V2 Phase 1 preflight.
@@ -2031,7 +2217,7 @@ where
         //      `evm_signer`. Determinism preserved because the signer is
         //      RFC 6979 (see `crates/blockchain/evm/src/signer.rs`).
         let chain_id = self.inner.evm.chain_id();
-        let (cached_tx_hash, visible_gas_used) = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
+        let (cached_tx_hash, signed_gas_limit) = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
             let tx_hash = validate_phase1_witness_against(
                 prebuilt.tx(),
                 calldata.as_ref(),
@@ -2077,7 +2263,7 @@ where
                     format!("Phase 1 commit pre-exec: sign witness: {error}").into(),
                 ))
             })?;
-            let visible_gas_used = signed.gas_limit();
+            let signed_gas_limit = signed.gas_limit();
             let tx_hash = validate_phase1_witness_against(
                 &signed,
                 calldata.as_ref(),
@@ -2090,7 +2276,7 @@ where
                     format!("Phase 1 commit pre-exec: invalid signed witness: {error}").into(),
                 ))
             })?;
-            (tx_hash, visible_gas_used)
+            (tx_hash, signed_gas_limit)
         } else {
             // No witness source. Skip the commit move; the legacy main-loop
             // path will run Phase 1 like before. The commit move only binds when a
@@ -2109,7 +2295,16 @@ where
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
         };
 
-        // Execute Phase 1 precompile.
+        // Execute Phase 1 precompile. Only explicit CE charges inside this
+        // system-call boundary are added to the public envelope gas.
+        let gas_window = self
+            .compressed_entities_scope
+            .begin_explicit_gas_window(0)
+            .map_err(|error| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!("Phase 1 commit pre-exec: open CE gas window: {error}").into(),
+                ))
+            })?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
             self.inner.evm.transact_system_call(
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -2128,6 +2323,12 @@ where
                 ));
             }
         };
+        let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!("Phase 1 commit pre-exec: read CE gas window: {error}").into(),
+            ))
+        })?;
+        drop(gas_window);
         if !result.result.is_success() {
             // Phase 1 (CertifiedParentAccounting) is consensus-critical
             // (`SystemTxKind::revert_fails_block()` is true for it), so a revert here
@@ -2152,7 +2353,12 @@ where
             blob_gas_used: 0,
             tx_type: alloy_consensus::TxType::Legacy,
         };
-        self.commit_system_transaction(output, visible_gas_used)?;
+        self.commit_system_transaction(
+            output,
+            signed_gas_limit,
+            compressed_entities_gas,
+            signed_gas_limit,
+        )?;
 
         // Update the cursor with the cached witness hash. The
         // `execute_transaction_with_commit_condition` intercept reads
@@ -2179,15 +2385,7 @@ where
         &self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<
-        (
-            usize,
-            SystemTxKind,
-            SystemTxInputV2,
-            Option<AccountedParentArtifact>,
-        ),
-        BlockExecutionError,
-    > {
+    ) -> Result<ExpectedSystemTransaction, BlockExecutionError> {
         let cursor = self.system_tx_phase_cursor;
         let Some(body_index) = cursor.body_index() else {
             // Cursor=UserTxs: all begin-zone system txs are consumed.
@@ -2202,7 +2400,7 @@ where
             ));
         };
         let body_index_usize = usize::from(body_index);
-        let (resolved_kind, input, finalized_summary) =
+        let (resolved_kind, input, finalized_summary, intrinsic_gas, gas_limit) =
             self.expected_system_tx_at_body_index(body_index_usize, block_number, block_artifacts)?;
         if let Some(expected_kind) = cursor.expected_kind() {
             if expected_kind != resolved_kind {
@@ -2216,7 +2414,14 @@ where
                 ));
             }
         }
-        Ok((body_index_usize, resolved_kind, input, finalized_summary))
+        Ok((
+            body_index_usize,
+            resolved_kind,
+            input,
+            finalized_summary,
+            intrinsic_gas,
+            gas_limit,
+        ))
     }
 }
 
@@ -2324,6 +2529,46 @@ where
             }
         }
 
+        // 3. Open the block-scoped compressed-body overlay before any system
+        // or user transaction can perform a body read or mutation. The scope
+        // is the exact Arc already captured by top-level and nested precompile
+        // dispatch, so end-block permanently closes every execution seam.
+        {
+            let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+            let chain_id = self.inner.evm.chain_id();
+            let proposer = self.inner.evm.block().beneficiary();
+            let scope = self.compressed_entities_scope.clone();
+            let (changes, events) = {
+                let db = self.inner.evm.db_mut();
+                let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+                run_atomic_storage_hooks(db, ctx, |hook_ctx| {
+                    let lifecycle =
+                        outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                            hook_ctx.clone(),
+                            scope.as_ref(),
+                        );
+                    <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+                        &lifecycle,
+                    )
+                })?
+            };
+            if !events.is_empty() {
+                return Err(BlockExecutionError::msg(
+                    "compressed-entity begin_block emitted an unexpected event",
+                ));
+            }
+            if !changes.is_empty() {
+                use alloy_evm::block::{StateChangePreBlockSource, StateChangeSource};
+                self.inner.system_caller.on_state(
+                    StateChangeSource::PreBlock(StateChangePreBlockSource::Other(
+                        "compressed_entities_begin_block",
+                    )),
+                    &changes,
+                );
+            }
+            self.compressed_entities_started = true;
+        }
+
         // Local pending-block RPC construction does not have consensus-only
         // parent certificate or proposer context. Keep the standard Ethereum
         // pre-execution + account-preservation marker updates above, but skip
@@ -2391,6 +2636,7 @@ where
                         hook_ctx,
                         genesis_validators.as_ref(),
                         readers,
+                        self.compressed_entities_scope.as_ref(),
                     ),
                     None => run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref()),
                 };
@@ -2520,8 +2766,14 @@ where
             // exactly once per consumed begin-zone system tx (see the
             // `advance_after_commit` call below). This is the only
             // production reader of `self.system_tx_phase_cursor`.
-            let (body_index, expected_phase, expected_input, finalized_summary) =
-                self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
+            let (
+                body_index,
+                expected_phase,
+                expected_input,
+                finalized_summary,
+                intrinsic_gas,
+                planned_gas_limit,
+            ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
             let actual_input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                     format!("decode system tx at body_index={body_index}: {error}").into(),
@@ -2554,12 +2806,13 @@ where
                     format!("system tx body_index {body_index} exceeds u8 range").into(),
                 ))
             })?;
-            let unsigned = build_unsigned_system_tx(
+            let unsigned = build_unsigned_system_tx_with_gas_limit(
                 expected_phase,
                 ordinal,
                 block_number,
                 self.inner.evm.chain_id(),
                 tx.input().clone(),
+                planned_gas_limit,
             )
             .map_err(|error| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -2576,7 +2829,7 @@ where
                     ),
                 ));
             }
-            let visible_gas_used = tx.gas_limit();
+            let visible_gas_limit = tx.gas_limit();
 
             let proposer = self
                 .begin_zone_proposer(block_number)?
@@ -2600,7 +2853,7 @@ where
                 let has_tee_bootstrap = self.block_has_tee_bootstrap();
                 let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
                 let commit_outcome = self
-                    .push_hook_events_receipt(tx.tx_type(), logs, visible_gas_used)
+                    .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
                     .map(Some);
                 if commit_outcome.is_ok() {
                     self.system_tx_phase_cursor = self
@@ -2629,6 +2882,28 @@ where
             // Body-parity validation above (decode / phase / calldata / signature / signer)
             // also remains fatal: those are validator-side checks that the proposer never
             // produces for itself.
+            let ce_gas_limit = visible_gas_limit
+                .checked_sub(intrinsic_gas)
+                .ok_or_else(|| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!(
+                            "system tx signed gas below intrinsic at body_index={body_index}: \
+                         signed={visible_gas_limit}, intrinsic={intrinsic_gas}"
+                        )
+                        .into(),
+                    ))
+                })?;
+            let gas_window = self
+                .compressed_entities_scope
+                .begin_explicit_gas_window(ce_gas_limit)
+                .map_err(|error| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!(
+                            "open CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
+                        )
+                        .into(),
+                    ))
+                })?;
             let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
                 self.inner.evm.transact_system_call(
                     outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -2659,6 +2934,15 @@ where
                     ));
                 }
             };
+            let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                    format!(
+                        "read CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
+                    )
+                    .into(),
+                ))
+            })?;
+            drop(gas_window);
             if !result.result.is_success() {
                 tracing::error!(
                     target: "outbe::executor",
@@ -2697,18 +2981,31 @@ where
                     result.result
                 );
                 let tx_type = tx.tx_type();
-                self.push_system_failure_receipt(
+                let receipt_ce_gas = if matches!(
+                    result.result,
+                    ExecutionResult::Halt {
+                        reason: HaltReason::OutOfGas(_),
+                        ..
+                    }
+                ) {
+                    ce_gas_limit
+                } else {
+                    compressed_entities_gas
+                };
+                let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
                     tx_type,
-                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                    log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                     code,
                     reason,
-                    visible_gas_used,
-                    result.result.tx_gas_used(),
-                );
+                    intrinsic_gas,
+                    compressed_entities_gas: receipt_ce_gas,
+                    signed_gas_limit: visible_gas_limit,
+                    internal_gas_used: result.result.tx_gas_used(),
+                })?;
                 self.system_tx_phase_cursor = self
                     .system_tx_phase_cursor
                     .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
-                return Ok(Some(GasOutput::new(visible_gas_used)));
+                return Ok(Some(gas_output));
             }
 
             let output = EthTxResult {
@@ -2722,7 +3019,12 @@ where
                 return Ok(None);
             }
             let commit_outcome = self
-                .commit_system_transaction(output, visible_gas_used)
+                .commit_system_transaction(
+                    output,
+                    intrinsic_gas,
+                    compressed_entities_gas,
+                    visible_gas_limit,
+                )
                 .map(Some);
             if commit_outcome.is_ok() {
                 self.system_tx_phase_cursor = self
@@ -3062,7 +3364,8 @@ where
         self.apply_post_execution_changes()
     }
 
-    fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+    fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+        self.finalize_compressed_entities()?;
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
@@ -3114,7 +3417,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
@@ -3125,7 +3428,7 @@ mod tests {
     use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
-    use outbe_compressed_entities::{CommitmentState, EntityId36};
+    use outbe_compressed_entities::{CommitmentState, EntityId36, ExecutionScope};
     use outbe_nod::{
         precompile::INod, NodBucketState, NodContract, NodItemState, NodRepositoryReader,
         NodRepositoryWriter,
@@ -3163,11 +3466,17 @@ mod tests {
         state::{AccountInfo, Bytecode},
     };
 
-    use super::{AccountedParentArtifact, AccountedParentArtifactProvider, OutbeBlockExecutor};
+    use super::{
+        AccountedParentArtifact, AccountedParentArtifactProvider, OutbeBlockExecutor,
+        SystemFailureReceiptInput,
+    };
     use crate::{
         config::{OutbeBlockExecutionCtx, OutbeEvmConfig},
         signer::OutbeEvmSigner,
-        system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind},
+        system_tx::{
+            build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
+            system_tx_intrinsic_gas, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        },
     };
 
     const CHAIN_ID: u64 = 1;
@@ -3528,6 +3837,7 @@ mod tests {
             .build_begin_system_txs(
                 block_number,
                 MAINNET.chain().id(),
+                30_000_000,
                 parent_hash,
                 extra_data,
                 parent_consensus_metadata,
@@ -3985,16 +4295,16 @@ mod tests {
             begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
         let mut visible_system_gas_used = 0u64;
         for tx in system_txs.clone() {
-            let visible_gas = tx.tx().gas_limit();
+            let signed_gas_limit = tx.tx().gas_limit();
+            let intrinsic_gas = system_tx_intrinsic_gas(tx.tx().input()).unwrap();
             let gas_used = executor
                 .execute_transaction(tx)
                 .expect("begin-zone system tx should execute in tx loop");
-            assert_eq!(
-                gas_used.tx_gas_used(),
-                visible_gas,
-                "system tx must return Ethereum-visible envelope gas"
+            assert!(
+                (intrinsic_gas..=signed_gas_limit).contains(&gas_used.tx_gas_used()),
+                "receipt gas must stay between intrinsic gas and the signed envelope limit"
             );
-            visible_system_gas_used += visible_gas;
+            visible_system_gas_used += gas_used.tx_gas_used();
             assert_eq!(
                 executor
                     .receipts()
@@ -4025,11 +4335,12 @@ mod tests {
             .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
         assert_eq!(
             executor.receipts()[0].cumulative_gas_used,
-            system_txs[0].tx().gas_limit()
+            system_tx_intrinsic_gas(system_txs[0].tx().input()).unwrap()
         );
         assert_eq!(
             executor.receipts()[1].cumulative_gas_used,
-            system_txs[0].tx().gas_limit() + system_txs[1].tx().gas_limit()
+            system_tx_intrinsic_gas(system_txs[0].tx().input()).unwrap()
+                + system_tx_intrinsic_gas(system_txs[1].tx().input()).unwrap()
         );
         assert_eq!(
             executor.receipts()[2].cumulative_gas_used,
@@ -4116,10 +4427,13 @@ mod tests {
             .expect("block 1 pre-execution changes should apply");
         let mut visible_system_gas = 0u64;
         for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
-            visible_system_gas += tx.tx().gas_limit();
-            executor
+            let signed_gas_limit = tx.tx().gas_limit();
+            let gas_used = executor
                 .execute_transaction(tx)
-                .expect("begin-zone system tx should execute");
+                .expect("begin-zone system tx should execute")
+                .tx_gas_used();
+            assert!(gas_used <= signed_gas_limit);
+            visible_system_gas += gas_used;
         }
 
         let system_receipt_cumulative = executor
@@ -4330,7 +4644,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("CycleTick system tx should be first");
-        let cycle_visible_gas = cycle_tx.tx().gas_limit();
+        let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
             .expect("dense CycleTick should execute")
@@ -4345,13 +4659,12 @@ mod tests {
             "GAS-05: dense CycleTick must succeed"
         );
         assert_eq!(
-            cycle_receipt.cumulative_gas_used, cycle_visible_gas,
-            "GAS-05: dense CycleTick receipt must expose only visible envelope gas"
+            cycle_receipt.cumulative_gas_used, cycle_gas,
+            "GAS-05: dense CycleTick receipt must expose actual visible gas"
         );
-        assert_eq!(cycle_gas, cycle_visible_gas);
         assert!(
-            cycle_visible_gas < 30_000_000,
-            "GAS-05: dense CycleTick visible gas exceeded block gas limit: {cycle_visible_gas}"
+            cycle_gas <= cycle_signed_gas_limit,
+            "GAS-05: CycleTick receipt gas exceeded signed gas limit"
         );
 
         drop(executor);
@@ -4590,7 +4903,7 @@ mod tests {
         let oracle_tx = system_txs
             .next()
             .expect("OracleSlashWindow system tx should be present");
-        let cycle_visible_gas = cycle_tx.tx().gas_limit();
+        let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
         let oracle_visible_gas = oracle_tx.tx().gas_limit();
 
         // CycleTick is consensus-critical (a revert/OOG there fails the
@@ -4602,7 +4915,7 @@ mod tests {
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
-        assert_eq!(cycle_gas, cycle_visible_gas);
+        assert!(cycle_gas <= cycle_signed_gas_limit);
 
         let failure_gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
             executor.execute_transaction(oracle_tx)
@@ -4621,7 +4934,7 @@ mod tests {
         assert!(!failure_receipt.success);
         assert_eq!(
             failure_receipt.cumulative_gas_used,
-            cycle_visible_gas + oracle_visible_gas
+            cycle_gas + oracle_visible_gas
         );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
@@ -4642,7 +4955,7 @@ mod tests {
             .execute_transaction(user_tx)
             .expect("user tx must execute after OOG soft failure")
             .tx_gas_used();
-        let expected_system_visible_gas = cycle_visible_gas + oracle_visible_gas;
+        let expected_system_visible_gas = cycle_gas + oracle_visible_gas;
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
             expected_system_visible_gas + user_gas,
@@ -4664,7 +4977,7 @@ mod tests {
             "GAS-09: block/header gas must include only visible system envelope gas plus user gas"
         );
         assert_eq!(result.receipts.len(), 3);
-        assert_eq!(result.receipts[0].cumulative_gas_used, cycle_visible_gas);
+        assert_eq!(result.receipts[0].cumulative_gas_used, cycle_gas);
         assert_eq!(
             result.receipts[1].cumulative_gas_used,
             expected_system_visible_gas
@@ -4756,15 +5069,15 @@ mod tests {
         let oracle_tx = system_txs
             .next()
             .expect("OracleSlashWindow system tx should be present");
-        let cycle_visible_gas = cycle_tx.tx().gas_limit();
         let oracle_visible_gas = oracle_tx.tx().gas_limit();
 
         // CycleTick is consensus-critical (a revert there fails the block),
         // so the soft-receipt path is exercised against OracleSlashWindow, a
         // non-critical begin-zone phase. CycleTick executes successfully first.
-        executor
+        let cycle_gas = executor
             .execute_transaction(cycle_tx)
-            .expect("CycleTick should execute successfully");
+            .expect("CycleTick should execute successfully")
+            .tx_gas_used();
 
         let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
             executor.execute_transaction(oracle_tx)
@@ -4782,7 +5095,7 @@ mod tests {
         assert!(!failure_receipt.success);
         assert_eq!(
             failure_receipt.cumulative_gas_used,
-            cycle_visible_gas + oracle_visible_gas
+            cycle_gas + oracle_visible_gas
         );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
@@ -4805,7 +5118,7 @@ mod tests {
             .tx_gas_used();
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
-            cycle_visible_gas + oracle_visible_gas + user_gas,
+            cycle_gas + oracle_visible_gas + user_gas,
             "GAS-11: soft-failed system tx must charge only visible envelope gas"
         );
     }
@@ -4956,10 +5269,13 @@ mod tests {
             .expect("pre-execution changes should apply");
         let mut expected_rpc_gas_deltas = Vec::new();
         for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
-            expected_rpc_gas_deltas.push(tx.tx().gas_limit());
-            executor
+            let signed_gas_limit = tx.tx().gas_limit();
+            let gas_used = executor
                 .execute_transaction(tx)
-                .expect("system tx should execute");
+                .expect("system tx should execute")
+                .tx_gas_used();
+            assert!(gas_used <= signed_gas_limit);
+            expected_rpc_gas_deltas.push(gas_used);
         }
         let user_gas = executor
             .execute_transaction(user_tx)
@@ -4979,6 +5295,62 @@ mod tests {
             .collect();
 
         assert_eq!(rpc_gas_deltas, expected_rpc_gas_deltas);
+    }
+
+    #[test]
+    fn system_ce_visible_gas_is_published_and_block_limited_before_receipt_commit() {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+
+        let envelope_gas = 21_000;
+        let compressed_entities_gas = 70_000;
+        let output = executor
+            .push_system_failure_receipt(SystemFailureReceiptInput {
+                tx_type: alloy_consensus::TxType::Legacy,
+                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                code: 299,
+                reason: "deterministic test failure".into(),
+                intrinsic_gas: envelope_gas,
+                compressed_entities_gas,
+                signed_gas_limit: envelope_gas + compressed_entities_gas,
+                internal_gas_used: 123,
+            })
+            .expect("visible envelope plus CE gas should fit");
+        let expected_visible = envelope_gas + compressed_entities_gas;
+        assert_eq!(output.tx_gas_used(), expected_visible);
+        assert_eq!(
+            executor.receipts().last().unwrap().cumulative_gas_used,
+            expected_visible
+        );
+        assert_eq!(executor.inner.cumulative_tx_gas_used, expected_visible);
+        assert_eq!(executor.inner.block_regular_gas_used, expected_visible);
+        assert_eq!(executor.inner.block_state_gas_used, expected_visible);
+        assert_eq!(executor.system_tx_execution_gas, 123);
+
+        let receipts_before = executor.receipts().len();
+        let cumulative_before = executor.inner.cumulative_tx_gas_used;
+        let block_limit = executor.inner.evm.block.gas_limit;
+        let remaining = block_limit - cumulative_before;
+        let error = executor
+            .push_system_failure_receipt(SystemFailureReceiptInput {
+                tx_type: alloy_consensus::TxType::Legacy,
+                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                code: 299,
+                reason: "must not commit".into(),
+                intrinsic_gas: remaining,
+                compressed_entities_gas: 1,
+                signed_gas_limit: remaining + 1,
+                internal_gas_used: 456,
+            })
+            .expect_err("CE delta must not push cumulative gas past the block limit");
+        assert!(error.to_string().contains("exceeds block gas limit"));
+        assert_eq!(executor.receipts().len(), receipts_before);
+        assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+        assert_eq!(executor.system_tx_execution_gas, 123);
     }
 
     #[test]
@@ -5018,12 +5390,14 @@ mod tests {
         let mut visible_system_gas = 0u64;
         let mut expected_system_deltas = Vec::with_capacity(system_txs.len());
         for tx in system_txs {
-            let visible_gas = tx.tx().gas_limit();
+            let signed_gas_limit = tx.tx().gas_limit();
+            let visible_gas = executor
+                .execute_transaction(tx)
+                .expect("system tx should execute")
+                .tx_gas_used();
+            assert!(visible_gas <= signed_gas_limit);
             expected_system_deltas.push(visible_gas);
             visible_system_gas += visible_gas;
-            executor
-                .execute_transaction(tx)
-                .expect("system tx should execute");
         }
         assert!(visible_system_gas > 0);
 
@@ -5099,10 +5473,13 @@ mod tests {
             .expect("pre-execution changes should apply");
         let mut visible_system_gas = 0u64;
         for tx in begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer) {
-            visible_system_gas += tx.tx().gas_limit();
-            executor
+            let signed_gas_limit = tx.tx().gas_limit();
+            let gas_used = executor
                 .execute_transaction(tx)
-                .expect("system tx should execute");
+                .expect("system tx should execute")
+                .tx_gas_used();
+            assert!(gas_used <= signed_gas_limit);
+            visible_system_gas += gas_used;
         }
         let user_gas = executor
             .execute_transaction(user_tx)
@@ -5747,12 +6124,12 @@ mod tests {
         );
         let mut visible_system_gas_used = 0u64;
         for tx in system_txs {
-            let visible_gas = tx.tx().gas_limit();
+            let signed_gas_limit = tx.tx().gas_limit();
             let gas_output = executor
                 .execute_transaction(tx)
                 .expect("Phase 1+2+3+OracleSlashWindow begin-zone system tx should execute");
-            assert_eq!(gas_output.tx_gas_used(), visible_gas);
-            visible_system_gas_used += visible_gas;
+            assert!(gas_output.tx_gas_used() <= signed_gas_limit);
+            visible_system_gas_used += gas_output.tx_gas_used();
             assert_eq!(
                 executor
                     .receipts()
@@ -5922,147 +6299,6 @@ mod tests {
     }
 
     #[test]
-    fn hook_events_receipt_carries_ordered_nod_qualification_projection() {
-        let proposer = test_evm_signer().address();
-        let worldwide_day = WorldwideDay::new(20241220);
-        let floor_price_minor = U256::from(500_000_000_000_000_000u128);
-        let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
-        let bucket_body = NodBucketState {
-            bucket_key,
-            worldwide_day,
-            floor_price_minor,
-            is_qualified: false,
-            total_nods: 1,
-            entry_price_minor: U256::from(450_000_000_000_000_000u128),
-        };
-        let bucket_id = outbe_nod::canonical_bucket_id(&bucket_body);
-        let adapter = Arc::new(MemoryStorage::new());
-        let body_reader: StorageReaderHandle = adapter.clone();
-        let body_writer: StorageWriterHandle = adapter;
-        let nod_reader = NodRepositoryReader::new(body_reader.clone());
-        let runtime_readers = RuntimeBodyReaders::new(body_reader.clone());
-        NodRepositoryWriter::new(body_reader, body_writer)
-            .put_bucket(&bucket_body)
-            .expect("seed finalized-parent Nod bucket");
-        let seed_state = || {
-            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-                outbe_nod::api::add_nod(
-                    &storage,
-                    &nod_reader,
-                    &NodItemState {
-                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
-                        owner: proposer,
-                        gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
-                        worldwide_day,
-                        league_id: 1,
-                        floor_price_minor,
-                        bucket_key,
-                        cost_amount_minor: U256::ZERO,
-                        issuance_currency: 840,
-                        reference_currency: 840,
-                        issued_at: 1,
-                    },
-                    U256::from(450_000_000_000_000_000u128),
-                )
-                .expect("seed unqualified Nod through NodFactory");
-            })
-        };
-        let mut proposer_state = seed_state();
-
-        let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
-        let (_, hook_events) =
-            super::run_atomic_storage_hooks(&mut proposer_state, ctx.clone(), |hook_ctx| {
-                outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)
-            })
-            .expect("Nod qualification hook should succeed");
-        let (whitelisted_logs, tracing_only) = partition_hook_events(&hook_events);
-        assert!(tracing_only.is_empty());
-        assert_eq!(whitelisted_logs.len(), 2);
-        assert!(whitelisted_logs
-            .iter()
-            .all(|log| log.address == NOD_ADDRESS));
-        assert_eq!(
-            whitelisted_logs[0].data.topics()[0],
-            INod::NodBucketBodyStored::SIGNATURE_HASH
-        );
-        assert_eq!(
-            whitelisted_logs[1].data.topics()[0],
-            INod::NodBucketQualified::SIGNATURE_HASH
-        );
-
-        let mut validator_state = seed_state();
-        let (_, validator_events) =
-            super::run_atomic_storage_hooks(&mut validator_state, ctx.clone(), |hook_ctx| {
-                outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)
-            })
-            .expect("validator replay should qualify the same bucket");
-        let (validator_logs, _) = partition_hook_events(&validator_events);
-        assert_eq!(validator_logs, whitelisted_logs);
-
-        let mut failed_state = seed_state();
-        let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
-            outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)?;
-            Err(outbe_primitives::error::PrecompileError::Fatal(
-                "later hook failed".into(),
-            ))
-        })
-        .expect_err("late hook failure must revert Nod qualification and its event");
-        assert!(error.to_string().contains("later hook failed"));
-        let (_, rollback_events) =
-            super::run_atomic_storage_hooks(&mut failed_state, ctx, |hook_ctx| {
-                let bucket = outbe_nod::api::get_bucket(&hook_ctx.storage, &nod_reader, bucket_id)?
-                    .expect("seeded bucket remains present");
-                assert!(!bucket.is_qualified);
-                Ok(())
-            })
-            .expect("rollback state should remain readable");
-        assert!(rollback_events.is_empty());
-
-        let config =
-            OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), runtime_readers)
-                .with_evm_signer(test_evm_signer());
-        let system_txs =
-            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
-        let execute_block = |expected_begin_system_txs| {
-            let mut state = seed_state();
-            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-            let mut execution = execution_ctx(Some(0), Bytes::new());
-            execution.proposer_evm_address = Some(proposer);
-            execution.expected_begin_system_txs = expected_begin_system_txs;
-            let mut executor = config.create_executor(evm, execution);
-            executor
-                .apply_pre_execution_changes()
-                .expect("pre-execution lifecycle should qualify the Nod bucket");
-            for tx in system_txs.clone() {
-                executor
-                    .execute_transaction(tx)
-                    .expect("begin-zone system transaction should execute");
-            }
-            executor.receipts().to_vec()
-        };
-        let proposer_receipts = execute_block(Vec::new());
-        let validator_receipts = execute_block(system_txs.clone());
-        assert_eq!(proposer_receipts, validator_receipts);
-        let proposer_receipt = proposer_receipts
-            .last()
-            .expect("mandatory HookEvents receipt");
-        assert!(proposer_receipt.success);
-        assert_eq!(proposer_receipt.logs.len(), 2);
-        assert!(proposer_receipt
-            .logs
-            .iter()
-            .all(|log| log.address == NOD_ADDRESS));
-        assert_eq!(
-            proposer_receipt.logs[0].data.topics()[0],
-            INod::NodBucketBodyStored::SIGNATURE_HASH
-        );
-        assert_eq!(
-            proposer_receipt.logs[1].data.topics()[0],
-            INod::NodBucketQualified::SIGNATURE_HASH
-        );
-    }
-
-    #[test]
     fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
@@ -6091,9 +6327,13 @@ mod tests {
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
         let seed_state = || {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let scope = ExecutionScope::new();
+                outbe_compressed_entities::begin_block(storage.clone(), &scope)
+                    .expect("open compressed-entity seed scope");
                 let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
                 outbe_nod::api::add_nod(
                     &storage,
+                    &scope,
                     &empty_reader,
                     &NodItemState {
                         nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
@@ -6111,6 +6351,8 @@ mod tests {
                     U256::from(450_000_000_000_000_000u128),
                 )
                 .expect("seed compact Nod scheduling state");
+                outbe_compressed_entities::end_block(storage, &scope)
+                    .expect("close compressed-entity seed scope");
             })
         };
         let independent_readers = || {
@@ -6140,11 +6382,15 @@ mod tests {
         };
 
         let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
+            use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
+
             let signer = test_evm_signer();
             let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
                 .with_evm_signer(signer);
             let system_txs =
                 begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+            let visible_envelopes: Vec<u64> =
+                system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
             let mut state = seed_state();
             let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
             let mut execution = execution_ctx(Some(0), Bytes::new());
@@ -6153,6 +6399,33 @@ mod tests {
                 execution.expected_begin_system_txs = system_txs.clone();
             }
             let mut executor = config.create_executor(evm, execution);
+            let cleanup_hook_observation = Arc::new(Mutex::new(None));
+            let cleanup_hook_capture = cleanup_hook_observation.clone();
+            executor.set_state_hook(Some(Box::new(
+                move |source, changes: &revm::state::EvmState| {
+                    let StateChangeSource::PostBlock(StateChangePostBlockSource::Other(name)) =
+                        source
+                    else {
+                        return;
+                    };
+                    if name != "compressed_entities_end_block" {
+                        return;
+                    }
+                    let compressed_entities = changes
+                        .get(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
+                        .expect("end-block hook must carry compressed-entity account changes");
+                    let cleared_slots = compressed_entities
+                        .storage
+                        .values()
+                        .filter(|slot| {
+                            slot.is_changed()
+                                && !slot.original_value.is_zero()
+                                && slot.present_value.is_zero()
+                        })
+                        .count();
+                    *cleanup_hook_capture.lock().unwrap() = Some(cleared_slots);
+                },
+            )));
             executor
                 .apply_pre_execution_changes()
                 .expect("reader-backed pre-execution hook must succeed");
@@ -6162,12 +6435,57 @@ mod tests {
                     .expect("begin-zone transaction must execute");
             }
             let receipts = executor.receipts().to_vec();
-            drop(executor);
+            let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+                execution_summary: Some(executor.current_execution_summary()),
+                consensus_header_artifact: None,
+                timestamp_millis_part: 0,
+                late_finalize_credits: None,
+            })
+            .expect("final extra_data should encode");
+            executor.set_final_extra_data(final_extra_data);
+
+            // Match the production payload-builder ordering: finalize CE while
+            // the parallel-root hook is attached, prove the zeroing diff was
+            // observed, then detach the hook and freeze/finalize the root.
+            executor
+                .finalize_compressed_entities()
+                .expect("pre-root compressed-entity cleanup must succeed");
+            let cleanup_hook_cleared_slots = cleanup_hook_observation
+                .lock()
+                .unwrap()
+                .expect("parallel-root hook must observe CE cleanup before root detach");
+            assert!(
+                cleanup_hook_cleared_slots > 0,
+                "pre-root hook must expose at least one temporary CE slot changing to zero"
+            );
+            executor.set_state_hook(None);
+            let (evm, block_result) = executor.finish().expect("block finish must succeed");
+            drop(evm);
             let bundle = state.bundle_state.clone();
             let root = post_state_root(&bundle);
             let proposer_balance = signer_balance(&mut state, proposer);
             let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
-            (root, bundle, receipts, proposer_balance, rewards_balance)
+
+            // A new lifecycle can only open when every pending body/index record and
+            // touched list from the finished block has been removed. This checks the
+            // same committed bundle used for the state root above, not a mock store.
+            let clean_scope = ExecutionScope::new();
+            let clean_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer]);
+            super::run_atomic_storage_hooks(&mut state, clean_ctx, |hook_ctx| {
+                outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
+                outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &clean_scope)
+            })
+            .expect("finished block must leave a clean compressed-entity overlay");
+            (
+                root,
+                bundle,
+                receipts,
+                proposer_balance,
+                rewards_balance,
+                block_result.gas_used,
+                visible_envelopes,
+                cleanup_hook_cleared_slots,
+            )
         };
 
         let proposer_result = run(false, independent_readers());
@@ -6179,6 +6497,38 @@ mod tests {
                     && log.data.topics().first() == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
             })
         }));
+        let body_receipt_index = proposer_result
+            .2
+            .iter()
+            .position(|receipt| {
+                receipt.logs.iter().any(|log| {
+                    log.address == NOD_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                })
+            })
+            .expect("CycleTick body mutation receipt");
+        let previous_cumulative = body_receipt_index
+            .checked_sub(1)
+            .map_or(0, |index| proposer_result.2[index].cumulative_gas_used);
+        let body_receipt_gas = proposer_result.2[body_receipt_index]
+            .cumulative_gas_used
+            .saturating_sub(previous_cumulative);
+        let cycle_intrinsic_gas =
+            system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref()).unwrap();
+        assert!(
+            body_receipt_gas > cycle_intrinsic_gas,
+            "receipt-visible CycleTick gas must add explicit CE work to intrinsic gas"
+        );
+        assert!(
+            body_receipt_gas <= proposer_result.6[body_receipt_index],
+            "receipt-visible CycleTick gas must not exceed its signed gas limit"
+        );
+        assert_eq!(
+            proposer_result.5,
+            proposer_result.2.last().unwrap().cumulative_gas_used,
+            "header gas_used must equal the final receipt cumulative gas including CE work"
+        );
     }
 
     #[test]
@@ -6219,10 +6569,12 @@ mod tests {
             let bodies = Arc::new(MemoryStorage::new());
             let tribute_reader = TributeRepositoryReader::new(bodies.clone());
             let nod_reader = NodRepositoryReader::new(bodies);
+            let scope = ExecutionScope::new();
             let mut state =
                 state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
             let (changes, events) =
                 super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
+                    outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
                     let tribute = TributeData {
                         tribute_id,
                         owner: tribute_owner,
@@ -6236,9 +6588,10 @@ mod tests {
                     };
                     let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                     tribute_contract.unseal_day(day)?;
-                    tribute_contract.issue(&tribute_reader, &tribute)?;
+                    tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
                     outbe_nod::api::add_nod(
                         &hook_ctx.storage,
+                        &scope,
                         &nod_reader,
                         &NodItemState {
                             nod_id,
@@ -6254,7 +6607,8 @@ mod tests {
                             issued_at: 15,
                         },
                         U256::from(16),
-                    )
+                    )?;
+                    outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope)
                 })
                 .expect("body mint execution must succeed");
             let commitments = {
@@ -6306,9 +6660,11 @@ mod tests {
         let bodies = Arc::new(MemoryStorage::new());
         let tribute_reader = TributeRepositoryReader::new(bodies.clone());
         let nod_reader = NodRepositoryReader::new(bodies);
+        let scope = ExecutionScope::new();
         let mut failed_state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
+            outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
             let tribute = TributeData {
                 tribute_id,
                 owner: tribute_owner,
@@ -6322,9 +6678,10 @@ mod tests {
             };
             let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
             tribute_contract.unseal_day(day)?;
-            tribute_contract.issue(&tribute_reader, &tribute)?;
+            tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
             outbe_nod::api::add_nod(
                 &hook_ctx.storage,
+                &scope,
                 &nod_reader,
                 &NodItemState {
                     nod_id,
@@ -6437,12 +6794,12 @@ mod tests {
             begin_system_txs_for_test(&config, 1, B256::ZERO, &extra_data, None, proposer);
         let mut visible_system_gas_used = 0u64;
         for tx in system_txs {
-            let visible_gas = tx.tx().gas_limit();
+            let signed_gas_limit = tx.tx().gas_limit();
             let gas_output = executor
                 .execute_transaction(tx)
                 .expect("Oracle slash must not invalidate same-block BoundaryOutcome activation");
-            assert_eq!(gas_output.tx_gas_used(), visible_gas);
-            visible_system_gas_used += visible_gas;
+            assert!(gas_output.tx_gas_used() <= signed_gas_limit);
+            visible_system_gas_used += gas_output.tx_gas_used();
             assert_eq!(
                 executor
                     .receipts()
@@ -6707,28 +7064,40 @@ mod tests {
         let config = OutbeEvmConfig::new(test_chain_spec());
         let evm = config.evm_with_env(&mut state, evm_env);
 
-        let unsigned = build_unsigned_system_tx(
+        let cycle_input = SystemTxInputV2::CycleTick.encode().unwrap();
+        let oracle_input = SystemTxInputV2::OracleSlashWindow.encode().unwrap();
+        let hook_events_input = SystemTxInputV2::HookEvents.encode().unwrap();
+        let gas_inputs = [
+            (SystemTxKind::CycleTick, cycle_input.clone()),
+            (SystemTxKind::OracleSlashWindow, oracle_input.clone()),
+            (SystemTxKind::HookEvents, hook_events_input.clone()),
+        ];
+        let gas_plan = SystemTxVisibleGasPlan::new(30_000_000, &gas_inputs).unwrap();
+        let unsigned = build_unsigned_system_tx_with_gas_limit(
             SystemTxKind::CycleTick,
             0,
             1,
             MAINNET.chain().id(),
-            SystemTxInputV2::CycleTick.encode().unwrap(),
+            cycle_input,
+            gas_plan.gas_limit(0).unwrap(),
         )
         .unwrap();
-        let oracle_unsigned = build_unsigned_system_tx(
+        let oracle_unsigned = build_unsigned_system_tx_with_gas_limit(
             SystemTxKind::OracleSlashWindow,
             1,
             1,
             MAINNET.chain().id(),
-            SystemTxInputV2::OracleSlashWindow.encode().unwrap(),
+            oracle_input,
+            gas_plan.gas_limit(1).unwrap(),
         )
         .unwrap();
-        let hook_events_unsigned = build_unsigned_system_tx(
+        let hook_events_unsigned = build_unsigned_system_tx_with_gas_limit(
             SystemTxKind::HookEvents,
             2,
             1,
             MAINNET.chain().id(),
-            SystemTxInputV2::HookEvents.encode().unwrap(),
+            hook_events_input,
+            gas_plan.gas_limit(2).unwrap(),
         )
         .unwrap();
         let wrong_signed = wrong_signer.sign_unsigned(unsigned).unwrap();

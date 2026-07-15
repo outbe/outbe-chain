@@ -1,27 +1,28 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use base64::Engine;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
+use crate::api;
 use crate::errors::NodError;
 use crate::schema::{NodBucketState, NodContract, NodItemState};
-use crate::{api, NodRepositoryReader};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/INod.sol"
 );
 
-/// Dispatches Nod calls with the least-authority off-chain body reader.
-pub fn dispatch_with_reader(
+/// Dispatches Nod calls through the block-scoped compressed-body lifecycle.
+pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     data: &[u8],
     _caller: Address,
     value: U256,
-    reader: &NodRepositoryReader,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
     preflight_entity_id(data)?;
@@ -39,42 +40,44 @@ pub fn dispatch_with_reader(
                 metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from))
             }
             balanceOf(c) => view(c, |c| {
-                let count = api::list_by_owner(&storage, reader, c.owner)?.len();
+                let count = api::list_by_owner(&storage, scope, parent, c.owner)?.len();
                 Ok(U256::from(count))
             }),
             ownerOf(c) => view(c, |c| {
                 let nod_id = parse_entity_id(&c.nodId)?;
-                Ok(api::get_item(&storage, reader, nod_id)?
+                Ok(api::get_item(&storage, scope, parent, nod_id)?
                     .ok_or(NodError::NodNotFound)?
                     .owner)
             }),
             tokenURI(c) => view(c, |c| {
                 let nod_id = parse_entity_id(&c.nodId)?;
-                let item = api::get_item(&storage, reader, nod_id)?.ok_or(NodError::NodNotFound)?;
+                let item =
+                    api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
                 let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
-                let bucket = api::get_bucket(&storage, reader, bucket_id)?
+                let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 token_uri(&item, &bucket)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_all(&storage, reader)?
+                api::list_all(&storage, scope, parent)?
                     .get(idx)
                     .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             tokenOfOwnerByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_by_owner(&storage, reader, c.owner)?
+                api::list_by_owner(&storage, scope, parent, c.owner)?
                     .get(idx)
                     .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             nodData(c) => view(c, |c| {
                 let nod_id = parse_entity_id(&c.nodId)?;
-                let item = api::get_item(&storage, reader, nod_id)?.ok_or(NodError::NodNotFound)?;
+                let item =
+                    api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
                 let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
-                let bucket = api::get_bucket(&storage, reader, bucket_id)?
+                let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 Ok(to_abi_data(&item, &bucket))
             }),

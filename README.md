@@ -139,8 +139,10 @@ contract, not ad-hoc per-module APIs:
   proposer, and validator-set state, then wraps it in a `BlockRuntimeContext`
   carrying the current scoped `StorageHandle` (`outbe_primitives::block`).
 - Each module's block-boundary entrypoints implement `BlockLifecycle` on a
-  zero-sized marker type (`XxxLifecycle`); the executor calls them as
-  `<XxxLifecycle as BlockLifecycle>::begin_block(&ctx)` / `end_block(&ctx)`.
+  zero-sized marker type (`XxxLifecycle`). Ordinary modules use
+  `BlockRuntimeContext` directly; modules needing an additional least-authority
+  capability define one typed lifecycle context that wraps it. The executor
+  always calls the marker through `BlockLifecycle::begin_block` / `end_block`.
 - Lifecycle ordering is explicit in the executor and hard-fork governed — there
   is no runtime plugin registration and no positional `(timestamp, block_number)`
   block-boundary API.

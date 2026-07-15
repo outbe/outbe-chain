@@ -41,12 +41,14 @@
 //!   - Reth payload building, state-root computation, and txpool admission
 //!     (we drive only the pre-execution hook phase, not the full executor).
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{address, keccak256, Address, Bytes, Log, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{
+    begin_block, derive_poseidon_entity_id, end_block, EntityId36, ExecutionScope,
+};
 use outbe_gratis::Gratis;
 use outbe_metadosis::{
     constants::{
@@ -57,9 +59,9 @@ use outbe_metadosis::{
     runtime::date_key_to_timestamp,
     schema::{day_type, status, MetadosisContract},
 };
-use outbe_nod::{api as nod_api, NodRepositoryReader};
+use outbe_nod::api as nod_api;
 use outbe_nodfactory::{
-    precompile::{dispatch_with_reader as nodfactory_dispatch, INodFactory},
+    precompile::{dispatch as nodfactory_dispatch, INodFactory},
     runtime as nodfactory_runtime,
 };
 use outbe_offchain_data::{
@@ -78,7 +80,7 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeData};
 
 // Mainnet-style id — effective_hours() returns DEFAULT_LOOKBACK / DEFAULT_OFFERING
 // and bootstrap init is skipped.
@@ -128,19 +130,11 @@ impl BodyProjectionHarness {
         }
     }
 
-    fn tribute(&self) -> TributeRepositoryReader {
-        TributeRepositoryReader::new(self.storage.clone())
-    }
-
-    fn nod(&self) -> NodRepositoryReader {
-        NodRepositoryReader::new(self.storage.clone())
-    }
-
     fn runtime_readers(&self) -> RuntimeBodyReaders {
         RuntimeBodyReaders::new(self.storage.clone())
     }
 
-    fn project_pending(&mut self, provider: &HashMapStorageProvider) {
+    fn project_completed_block(&mut self, provider: &HashMapStorageProvider) {
         let events = provider.get_ordered_events();
         if events.len() == self.projected_events {
             return;
@@ -212,6 +206,21 @@ fn with_storage<R>(
     StorageHandle::enter(provider, operation)
 }
 
+fn with_body_lifecycle<R>(
+    provider: &mut HashMapStorageProvider,
+    bodies: &BodyProjectionHarness,
+    operation: impl FnOnce(StorageHandle<'_>, &ExecutionScope, &RuntimeBodyReaders) -> R,
+) -> R {
+    let parent = bodies.runtime_readers();
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let result = operation(storage.clone(), &scope, &parent);
+        end_block(storage, &scope).unwrap();
+        result
+    })
+}
+
 /// One begin-block tick running the full Outbe pre-execution hook chain, in
 /// the same order as `OutbeBlockExecutor::apply_pre_execution_changes`
 /// (executor.rs), followed by an explicit `start_metadosis` call.
@@ -234,29 +243,20 @@ fn tick(
     timestamp: u64,
     emission: Option<U256>,
 ) {
-    let tribute = bodies.tribute();
-    let nod = bodies.nod();
-    StorageHandle::enter(provider, |storage| {
+    with_body_lifecycle(provider, bodies, |storage, scope, parent| {
         // Mirror the block timestamp into the HashMap provider so precompiles that
         // read `self.storage.timestamp()` see the simulated block time advance with each tick.
         storage.set_block_timestamp(U256::from(timestamp)).unwrap();
-        let ctx = build_ctx(storage, block_number, timestamp);
+        let ctx = build_ctx(storage.clone(), block_number, timestamp);
         if let Some(amount) = emission {
             emission_sink::apply(&ctx, amount).unwrap();
         }
-        outbe_metadosis::runtime::start_metadosis(&ctx, &tribute, &nod).unwrap();
-    });
-    // ADR-007 will provide same-block overlay visibility. Until that combined
-    // stage lands, materialize lifecycle events between the directly-driven
-    // sub-phases of this focused ADR-005 E2E.
-    bodies.project_pending(provider);
-    let readers = bodies.runtime_readers();
-    StorageHandle::enter(provider, |storage| {
-        let ctx = build_ctx(storage, block_number, timestamp);
-        outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers(&ctx, None, &readers)
+        outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers(&ctx, None, parent, scope)
             .unwrap();
+        outbe_nod::hooks::qualify_nods(&ctx, scope, parent).unwrap();
+        outbe_metadosis::runtime::start_metadosis(&ctx, scope, parent).unwrap();
     });
-    bodies.project_pending(provider);
+    bodies.project_completed_block(provider);
 }
 
 fn init_oracle(storage: StorageHandle) -> u32 {
@@ -360,43 +360,53 @@ fn mine_via_precompile(
     bodies: &mut BodyProjectionHarness,
     owner: Address,
 ) -> U256 {
-    let nod = bodies.nod();
-    let nods = with_storage(provider, |storage| {
-        nod_api::list_by_owner(&storage, &nod, owner).unwrap()
-    });
-    assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
-    let item = nods.into_iter().next().unwrap();
+    let mined = with_body_lifecycle(provider, bodies, |storage, scope, parent| {
+        let nods = nod_api::list_by_owner(&storage, scope, parent, owner).unwrap();
+        assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
+        let item = nods.into_iter().next().unwrap();
 
-    let nonce = find_valid_nonce(item.nod_id);
-    let balance_before = StorageHandle::enter(provider, |storage| {
-        Gratis::new(storage).balance_of(owner).unwrap()
-    });
+        let nonce = find_valid_nonce(item.nod_id);
+        let balance_before = Gratis::new(storage.clone()).balance_of(owner).unwrap();
 
-    let call = INodFactory::mineGratisCall {
-        nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
-        nonce,
-        asset: MINE_GRATIS_ASSET,
-    };
-    let output = StorageHandle::enter(provider, |storage| {
-        nodfactory_dispatch(storage, &call.abi_encode(), owner, U256::ZERO, &nod).unwrap()
-    });
-    let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
-    assert_eq!(mined, item.gratis_load_minor);
+        let call = INodFactory::mineGratisCall {
+            nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
+            nonce,
+            asset: MINE_GRATIS_ASSET,
+        };
+        let output = nodfactory_dispatch(
+            storage.clone(),
+            scope,
+            parent,
+            &call.abi_encode(),
+            owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
+        assert_eq!(mined, item.gratis_load_minor);
 
-    bodies.project_pending(provider);
-    assert!(with_storage(provider, |storage| {
-        nod_api::get_item(&storage, &nod, item.nod_id).unwrap()
-    })
-    .is_none());
-    let balance_after = StorageHandle::enter(provider, |storage| {
-        Gratis::new(storage).balance_of(owner).unwrap()
+        assert!(nod_api::get_item(&storage, scope, parent, item.nod_id)
+            .unwrap()
+            .is_none());
+        let balance_after = Gratis::new(storage).balance_of(owner).unwrap();
+        assert_eq!(balance_after, balance_before + mined);
+        mined
     });
-    assert_eq!(balance_after, balance_before + mined);
+    bodies.project_completed_block(provider);
     mined
 }
 
-#[test]
-fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
+#[derive(Debug, Eq, PartialEq)]
+struct ScenarioOutcome {
+    consensus_storage: HashMap<(Address, U256), U256>,
+    events: Vec<Log>,
+    native_balances: [U256; 3],
+    gratis_balances: [U256; 3],
+    projected_carol_nod: (EntityId36, U256, B256),
+    projected_carol_bucket: (bool, u64),
+}
+
+fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
     // The NOD-cost payment branch deposits into the vault provider via an EVM
@@ -480,11 +490,11 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     tick(&mut provider, &mut bodies, 5, green.offering_entry, None);
     let green_tribute_id = derive_poseidon_entity_id(alice, green_wwd).unwrap();
     let green_nominal = U256::in_units(1_000_000u64);
-    let tribute_reader = bodies.tribute();
-    with_storage(&mut provider, |storage| {
+    with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
         TributeContract::new(storage)
             .issue(
-                &tribute_reader,
+                scope,
+                parent,
                 &TributeData {
                     tribute_id: green_tribute_id,
                     owner: alice,
@@ -499,7 +509,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             )
             .unwrap();
     });
-    bodies.project_pending(&provider);
+    bodies.project_completed_block(&provider);
 
     // RED -> OFFERING; issue bob's small and carol's large tribute.
     tick(&mut provider, &mut bodies, 6, red.offering_entry, None);
@@ -507,12 +517,12 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     let red_large_tribute_id = derive_poseidon_entity_id(carol, red_wwd).unwrap();
     let red_small_nominal = U256::in_units(20u64);
     let red_large_nominal = U256::in_units(1_000u64);
-    let tribute_reader = bodies.tribute();
-    with_storage(&mut provider, |storage| {
+    with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
         let mut tribute = TributeContract::new(storage);
         tribute
             .issue(
-                &tribute_reader,
+                scope,
+                parent,
                 &TributeData {
                     tribute_id: red_small_tribute_id,
                     owner: bob,
@@ -528,7 +538,8 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             .unwrap();
         tribute
             .issue(
-                &tribute_reader,
+                scope,
+                parent,
                 &TributeData {
                     tribute_id: red_large_tribute_id,
                     owner: carol,
@@ -538,14 +549,14 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     nominal_amount_minor: red_large_nominal,
                     reference_currency: 840,
                     exclude_from_intex_issuance: false,
-                    // Keep the two RED tributes in distinct NOD buckets until ADR-007 supplies the
-                    // same-block overlay needed to update one bucket twice before projection.
+                    // Keep the two RED tributes in distinct NOD buckets so the
+                    // qualification assertions below exercise both outcomes.
                     tribute_price_minor: U256::from(10_000u64),
                 },
             )
             .unwrap();
     });
-    bodies.project_pending(&provider);
+    bodies.project_completed_block(&provider);
 
     // GREEN OFFERING -> WAITING; RED stays OFFERING.
     tick(&mut provider, &mut bodies, 7, green.offering_end, None);
@@ -559,16 +570,16 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     });
 
     // The canonical bodies are now available only through the projected repository.
-    let tribute_reader = bodies.tribute();
-    assert!(with_storage(&mut provider, |storage| {
-        TributeContract::new(storage)
-            .get_tribute_ids_by_owner(&tribute_reader, alice)
-            .unwrap()
-    })
-    .is_empty());
-    let nod_reader = bodies.nod();
-    let alice_nods = with_storage(&mut provider, |storage| {
-        nod_api::list_by_owner(&storage, &nod_reader, alice).unwrap()
+    assert!(
+        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            TributeContract::new(storage)
+                .get_tribute_ids_by_owner(scope, parent, alice)
+                .unwrap()
+        })
+        .is_empty()
+    );
+    let alice_nods = with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+        nod_api::list_by_owner(&storage, scope, parent, alice).unwrap()
     });
     assert_eq!(alice_nods.len(), 1);
     let alice_item = &alice_nods[0];
@@ -576,8 +587,8 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     let alice_floor_price = alice_item.floor_price_minor;
     let alice_bucket_id = EntityId36::new(alice_item.worldwide_day, alice_item.bucket_key.0);
     assert!(
-        !with_storage(&mut provider, |storage| {
-            nod_api::get_bucket(&storage, &nod_reader, alice_bucket_id).unwrap()
+        !with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
         })
         .map(|bucket| bucket.is_qualified)
         .unwrap_or(false),
@@ -596,8 +607,8 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         None,
     );
     assert!(
-        with_storage(&mut provider, |storage| {
-            nod_api::get_bucket(&storage, &bodies.nod(), alice_bucket_id).unwrap()
+        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
         })
         .map(|bucket| bucket.is_qualified)
         .unwrap_or(false),
@@ -627,28 +638,39 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
     });
 
-    let nod_reader = bodies.nod();
+    // Production Cycle ordering qualifies existing buckets before it runs
+    // Metadosis/Lysis. Red-day Nods were minted in block 10, so they become
+    // eligible for qualification only in the following block.
+    tick(
+        &mut provider,
+        &mut bodies,
+        11,
+        red.scheduled + 2 * SECONDS_PER_HOUR,
+        None,
+    );
+
     for (owner, expected_qualified) in [(bob, true), (carol, false)] {
-        let owner_nods = with_storage(&mut provider, |storage| {
-            nod_api::list_by_owner(&storage, &nod_reader, owner).unwrap()
+        let owner_nods = with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            nod_api::list_by_owner(&storage, scope, parent, owner).unwrap()
         });
         assert_eq!(owner_nods.len(), 1);
         let owner_bucket_id =
             EntityId36::new(owner_nods[0].worldwide_day, owner_nods[0].bucket_key.0);
         assert_eq!(
-            with_storage(&mut provider, |storage| {
-                nod_api::get_bucket(&storage, &nod_reader, owner_bucket_id).unwrap()
+            with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+                nod_api::get_bucket(&storage, scope, parent, owner_bucket_id).unwrap()
             })
             .map(|bucket| bucket.is_qualified),
             Some(expected_qualified)
         );
-        let tribute_reader = bodies.tribute();
-        assert!(with_storage(&mut provider, |storage| {
-            TributeContract::new(storage)
-                .get_tribute_ids_by_owner(&tribute_reader, owner)
-                .unwrap()
-        })
-        .is_empty());
+        assert!(
+            with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+                TributeContract::new(storage)
+                    .get_tribute_ids_by_owner(scope, parent, owner)
+                    .unwrap()
+            })
+            .is_empty()
+        );
     }
 
     let promis_after_red = with_storage(&mut provider, |storage| {
@@ -658,4 +680,65 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     });
     assert!(promis_after_red > promis_after_green);
     assert!(mine_via_precompile(&mut provider, &mut bodies, bob) > U256::ZERO);
+
+    // This read opens a fresh block scope immediately after the final mining
+    // block. It therefore also proves that end_block removed every temporary
+    // body/index overlay entry left by the dependent burn + Gratis mint.
+    let (projected_carol_nod, projected_carol_bucket) =
+        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            assert!(nod_api::list_by_owner(&storage, scope, parent, bob)
+                .unwrap()
+                .is_empty());
+            let carol_nods = nod_api::list_by_owner(&storage, scope, parent, carol).unwrap();
+            assert_eq!(carol_nods.len(), 1);
+            let carol_nod = &carol_nods[0];
+            let carol_bucket = nod_api::get_bucket(
+                &storage,
+                scope,
+                parent,
+                EntityId36::new(carol_nod.worldwide_day, carol_nod.bucket_key.0),
+            )
+            .unwrap()
+            .expect("Carol's unqualified bucket remains projected");
+            (
+                (
+                    carol_nod.nod_id,
+                    carol_nod.gratis_load_minor,
+                    carol_nod.bucket_key,
+                ),
+                (carol_bucket.is_qualified, carol_bucket.total_nods),
+            )
+        });
+
+    let gratis_balances = with_storage(&mut provider, |storage| {
+        let gratis = Gratis::new(storage);
+        [
+            gratis.balance_of(alice).unwrap(),
+            gratis.balance_of(bob).unwrap(),
+            gratis.balance_of(carol).unwrap(),
+        ]
+    });
+    ScenarioOutcome {
+        consensus_storage: provider.storage.clone(),
+        events: provider.get_ordered_events().to_vec(),
+        native_balances: [
+            provider.get_balance(alice),
+            provider.get_balance(bob),
+            provider.get_balance(carol),
+        ],
+        gratis_balances,
+        projected_carol_nod,
+        projected_carol_bucket,
+    }
+}
+
+#[test]
+fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
+    // The two executions use distinct consensus providers and distinct parent
+    // projection stores. Equal results prove that the dependent Tribute ->
+    // Lysis -> Nod qualification/mining -> Gratis flow is deterministic across
+    // proposer/validator-style replay, including logs and projected survivors.
+    let proposer = run_green_then_red_wwd_lysis_nod_mine_gratis();
+    let validator = run_green_then_red_wwd_lysis_nod_mine_gratis();
+    assert_eq!(proposer, validator);
 }

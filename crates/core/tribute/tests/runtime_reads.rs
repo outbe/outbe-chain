@@ -3,8 +3,8 @@ use std::sync::Arc;
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1, CommitmentState, EntityId36,
-    StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, EntityId36, ExecutionScope,
+    StoredBody,
 };
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
@@ -46,20 +46,6 @@ fn copy_tribute(body: &TributeData) -> TributeData {
     }
 }
 
-fn commit(storage: StorageHandle<'_>, body: &TributeData) {
-    let payload = encode_tribute_v1(&outbe_tribute::canonical_body(body)).unwrap();
-    let commitment = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-        body.tribute_id,
-        &payload,
-    )
-    .unwrap();
-    CommitmentState::new(storage)
-        .set_tribute(body.tribute_id, commitment)
-        .unwrap();
-}
-
 fn repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
@@ -70,8 +56,29 @@ fn repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
     )
 }
 
+fn activate(provider: &mut HashMapStorageProvider) -> ExecutionScope {
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(provider, |storage| begin_block(storage, &scope).unwrap());
+    scope
+}
+
+fn finish(provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
+    StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
+}
+
+fn seed_parent_commitments(provider: &mut HashMapStorageProvider, bodies: &[&TributeData]) {
+    let scope = activate(provider);
+    StorageHandle::enter(provider, |storage| {
+        for body in bodies {
+            let canonical = outbe_tribute::canonical_body(body);
+            mint(storage.clone(), &scope, BodyInput::Tribute(&canonical)).unwrap();
+        }
+    });
+    finish(provider, &scope);
+}
+
 #[test]
-fn body_and_index_reads_use_the_repository() {
+fn body_and_index_reads_use_the_finalized_parent_repository() {
     let (reader, writer) = repository();
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::from(20_241_220);
@@ -83,138 +90,157 @@ fn body_and_index_reads_use_the_repository() {
     writer.put(&third).unwrap();
 
     let mut provider = HashMapStorageProvider::new(1);
+    seed_parent_commitments(&mut provider, &[&first, &second, &third]);
+    let scope = activate(&mut provider);
     StorageHandle::enter(&mut provider, |storage| {
-        commit(storage.clone(), &first);
-        commit(storage.clone(), &second);
-        commit(storage.clone(), &third);
         let contract = TributeContract::new(storage);
-        assert_eq!(contract.owner_of(&reader, first.tribute_id).unwrap(), owner);
-        assert_eq!(contract.balance_of(&reader, owner).unwrap(), 2);
         assert_eq!(
-            contract.get_tribute_ids_by_owner(&reader, owner).unwrap(),
+            contract
+                .owner_of(&scope, &reader, first.tribute_id)
+                .unwrap(),
+            owner
+        );
+        assert_eq!(contract.balance_of(&scope, &reader, owner).unwrap(), 2);
+        assert_eq!(
+            contract
+                .get_tribute_ids_by_owner(&scope, &reader, owner)
+                .unwrap(),
             vec![first.tribute_id, second.tribute_id]
         );
         let mut expected_day = vec![first.tribute_id, third.tribute_id];
         expected_day.sort_unstable();
         assert_eq!(
-            contract.get_tribute_ids_by_day(&reader, day).unwrap(),
+            contract
+                .get_tribute_ids_by_day(&scope, &reader, day)
+                .unwrap(),
             expected_day
         );
         assert!(contract
-            .token_uri(&reader, first.tribute_id)
+            .token_uri(&scope, &reader, first.tribute_id)
             .unwrap()
             .contains("Outbe Tribute"));
     });
+    finish(&mut provider, &scope);
 }
 
 #[test]
-fn issue_checks_repository_for_duplicates_and_never_writes_a_body() {
-    let (reader, writer) = repository();
+fn issue_is_visible_and_rejects_duplicates_before_projection() {
+    let (reader, _) = repository();
     let body = tribute(Address::repeat_byte(0x22), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
+    let scope = activate(&mut provider);
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage);
         contract.unseal_day(body.worldwide_day).unwrap();
-        contract.issue(&reader, &body).unwrap();
+        contract.issue(&scope, &reader, &body).unwrap();
         assert_eq!(contract.total_supply().unwrap(), 1);
-        assert!(matches!(
-            contract.get_tribute(&reader, body.tribute_id),
-            Err(PrecompileError::BodyReadCorruption(message))
-                if message.contains("CommittedBodyMissing")
-        ));
-    });
-
-    writer.put(&body).unwrap();
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut contract = TributeContract::new(storage);
-        let error = contract.issue(&reader, &body).unwrap_err();
+        let visible = contract
+            .get_tribute(&scope, &reader, body.tribute_id)
+            .unwrap()
+            .expect("same-block mint must be readable");
+        assert_eq!(visible.tribute_id, body.tribute_id);
+        assert_eq!(visible.owner, body.owner);
+        assert_eq!(visible.nominal_amount_minor, body.nominal_amount_minor);
+        let error = contract.issue(&scope, &reader, &body).unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message == "tribute already exists")
         );
         assert_eq!(contract.total_supply().unwrap(), 1);
     });
+    assert!(reader.get(body.tribute_id).unwrap().is_none());
+    finish(&mut provider, &scope);
 }
 
 #[test]
-fn burn_reads_repository_and_leaves_projection_writes_to_the_projector() {
-    let (reader, writer) = repository();
+fn burn_observes_same_block_mint_and_leaves_projection_to_the_projector() {
+    let (reader, _) = repository();
     let body = tribute(Address::repeat_byte(0x33), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
+    let scope = activate(&mut provider);
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage);
         contract.unseal_day(body.worldwide_day).unwrap();
-        contract.issue(&reader, &body).unwrap();
-    });
-    writer.put(&body).unwrap();
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut contract = TributeContract::new(storage);
-        contract.burn(&reader, body.tribute_id).unwrap();
+        contract.issue(&scope, &reader, &body).unwrap();
+        contract.burn(&scope, &reader, body.tribute_id).unwrap();
         assert_eq!(contract.total_supply().unwrap(), 0);
+        assert!(contract
+            .get_tribute(&scope, &reader, body.tribute_id)
+            .unwrap()
+            .is_none());
         let totals = contract.get_day_totals(body.worldwide_day).unwrap();
         assert_eq!(totals.tribute_count, 0);
         assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
     });
-
-    assert_eq!(
-        reader.get(body.tribute_id).unwrap().unwrap().owner,
-        body.owner
-    );
+    assert!(reader.get(body.tribute_id).unwrap().is_none());
+    finish(&mut provider, &scope);
 }
 
 #[test]
 fn absence_corruption_and_unavailability_remain_distinct() {
     let (reader, _) = repository();
-    let tribute_id = EntityId36::new(
-        WorldwideDay::from(20_241_220),
-        U256::from(77).to_be_bytes::<32>(),
-    );
+    let body = tribute(Address::repeat_byte(0x44), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
+    let scope = activate(&mut provider);
     StorageHandle::enter(&mut provider, |storage| {
-        let contract = TributeContract::new(storage);
-        let error = contract.owner_of(&reader, tribute_id).unwrap_err();
+        let error = TributeContract::new(storage)
+            .owner_of(&scope, &reader, body.tribute_id)
+            .unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message == "tribute not found")
         );
     });
+    finish(&mut provider, &scope);
+
+    seed_parent_commitments(&mut provider, &[&body]);
 
     let corrupt = Arc::new(MemoryStorage::new());
     let corrupt_writer: StorageWriterHandle = corrupt.clone();
     corrupt_writer
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(tribute_id.as_bytes().to_vec()).unwrap(),
+            &Key::new(body.tribute_id.as_bytes().to_vec()).unwrap(),
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
     let corrupt_reader = TributeRepositoryReader::new(corrupt);
-    let error = match corrupt_reader.get(tribute_id) {
-        Ok(_) => panic!("corrupt body must fail"),
-        Err(error) => PrecompileError::from(error),
-    };
-    assert!(matches!(error, PrecompileError::BodyReadCorruption(_)));
+    let scope = activate(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(matches!(
+            TributeContract::new(storage).get_tribute(&scope, &corrupt_reader, body.tribute_id),
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+    });
+    finish(&mut provider, &scope);
 
     let unavailable_reader = TributeRepositoryReader::new(Arc::new(UnavailableReader));
-    let error = match unavailable_reader.get(tribute_id) {
-        Ok(_) => panic!("unavailable storage must fail"),
-        Err(error) => PrecompileError::from(error),
-    };
-    assert!(matches!(error, PrecompileError::BodyReadUnavailable(_)));
+    let scope = activate(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(matches!(
+            TributeContract::new(storage).get_tribute(&scope, &unavailable_reader, body.tribute_id),
+            Err(PrecompileError::BodyReadUnavailable(_))
+        ));
+    });
+    finish(&mut provider, &scope);
 
     let backend_reader = TributeRepositoryReader::new(Arc::new(BackendErrorReader));
-    let error = match backend_reader.get(tribute_id) {
-        Ok(_) => panic!("unclassified backend error must fail"),
-        Err(error) => PrecompileError::from(error),
-    };
-    assert!(matches!(error, PrecompileError::BodyReadCorruption(_)));
+    let scope = activate(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(matches!(
+            TributeContract::new(storage).get_tribute(&scope, &backend_reader, body.tribute_id),
+            Err(PrecompileError::BodyReadCorruption(_))
+        ));
+    });
+    finish(&mut provider, &scope);
 }
 
 #[test]
 fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     let original = tribute(Address::repeat_byte(0x61), 20_260_716);
-    let original_payload = encode_tribute_v1(&outbe_tribute::canonical_body(&original)).unwrap();
+    let original_payload =
+        outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&original))
+            .unwrap();
 
     let mut mutations = Vec::new();
     let mut changed = copy_tribute(&original);
@@ -246,7 +272,9 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     mutations.push(("exclude_from_intex_issuance", changed));
 
     for (field, changed) in mutations {
-        let payload = match encode_tribute_v1(&outbe_tribute::canonical_body(&changed)) {
+        let payload = match outbe_compressed_entities::encode_tribute_v1(
+            &outbe_tribute::canonical_body(&changed),
+        ) {
             Ok(payload) => payload,
             Err(_) => {
                 assert_eq!(field, "worldwide_day");
@@ -267,7 +295,7 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
             .encode(),
         "schema_version",
     );
-    let mut noncanonical_payload = original_payload.clone();
+    let mut noncanonical_payload = original_payload;
     noncanonical_payload.extend_from_slice(&[0x50, 0x01]);
     assert_raw_tribute_is_rejected(
         &original,
@@ -277,28 +305,20 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
 
     let storage = Arc::new(MemoryStorage::new());
     let writer = TributeRepositoryWriter::new(storage.clone(), storage.clone());
-    writer.put(&original).unwrap();
+    let mut updated = copy_tribute(&original);
+    updated.tribute_price_minor += U256::from(1);
+    writer.put(&updated).unwrap();
     let reader = TributeRepositoryReader::new(storage);
     let mut provider = HashMapStorageProvider::new(1);
+    seed_parent_commitments(&mut provider, &[&original]);
+    let scope = activate(&mut provider);
     StorageHandle::enter(&mut provider, |evm| {
-        let mut updated = copy_tribute(&original);
-        updated.tribute_price_minor += U256::from(1);
-        let updated_payload = encode_tribute_v1(&outbe_tribute::canonical_body(&updated)).unwrap();
-        let updated_commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            original.tribute_id,
-            &updated_payload,
-        )
-        .unwrap();
-        CommitmentState::new(evm.clone())
-            .set_tribute(original.tribute_id, updated_commitment)
-            .unwrap();
         assert!(matches!(
-            TributeContract::new(evm).get_tribute(&reader, original.tribute_id),
+            TributeContract::new(evm).get_tribute(&scope, &reader, original.tribute_id),
             Err(PrecompileError::BodyReadCorruption(_))
         ));
     });
+    finish(&mut provider, &scope);
 }
 
 fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field: &str) {
@@ -312,16 +332,18 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
         .unwrap();
     let reader = TributeRepositoryReader::new(storage);
     let mut provider = HashMapStorageProvider::new(1);
+    seed_parent_commitments(&mut provider, &[original]);
+    let scope = activate(&mut provider);
     StorageHandle::enter(&mut provider, |evm| {
-        commit(evm.clone(), original);
         assert!(
             matches!(
-                TributeContract::new(evm).get_tribute(&reader, original.tribute_id),
+                TributeContract::new(evm).get_tribute(&scope, &reader, original.tribute_id),
                 Err(PrecompileError::BodyReadCorruption(_))
             ),
             "mutation of {field} must fail before domain use"
         );
     });
+    finish(&mut provider, &scope);
 }
 
 struct UnavailableReader;

@@ -290,6 +290,7 @@ where
             .build_begin_system_txs(
                 block_number,
                 chain_spec.chain().id(),
+                block_gas_limit,
                 parent_header.hash(),
                 attributes.extra_data(),
                 attributes.parent_consensus_metadata().cloned(),
@@ -478,6 +479,13 @@ where
         }
 
         let outcome = if let Some(mut handle) = trie_handle {
+            // CE end-block cleanup is consensus state. Deliver its zeroing
+            // changes to the parallel trie task before detaching the hook and
+            // freezing the precomputed root.
+            builder
+                .executor_mut()
+                .finalize_compressed_entities()
+                .map_err(PayloadBuilderError::evm)?;
             builder.executor_mut().set_state_hook(None);
             match handle.state_root() {
                 Ok(outcome) => builder.finish(

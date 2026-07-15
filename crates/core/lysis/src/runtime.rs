@@ -2,7 +2,9 @@ use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{
+    list, EntityId36, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, MAX_ID_PAGE_LIMIT,
+};
 use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -31,8 +33,8 @@ pub struct LysisResult {
 /// 6. Emits deletion receipts for processed tributes; projection removes bodies and indexes
 pub fn lysis(
     storage: StorageHandle,
-    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
-    nod_bodies: &outbe_nod::NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     wwd: WorldwideDay,
     auction_timestamp: u64,
     gratis_allocation: U256,
@@ -40,7 +42,7 @@ pub fn lysis(
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
 
     // 1. Load all tributes for the day
-    let tributes = tribute_contract.get_all_day_tributes(tribute_bodies, wwd)?;
+    let tributes = load_day_tributes(storage.clone(), scope, parent, wwd)?;
     if tributes.is_empty() {
         return Ok(LysisResult {
             nod_ids: vec![],
@@ -53,14 +55,18 @@ pub fn lysis(
     let mut tribute_fis: Vec<u16> = Vec::with_capacity(tributes.len());
     let mut total_interest = U256::ZERO;
 
-    for tribute in &tributes {
+    for loaded in &tributes {
+        let tribute = loaded.body();
         let fi = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
         tribute_fis.push(fi);
         total_interest += tribute.nominal_amount_minor;
     }
 
     if total_interest.is_zero() {
-        let tribute_ids = tributes.iter().map(|t| t.tribute_id).collect();
+        let tribute_ids = tributes
+            .iter()
+            .map(|loaded| loaded.body().tribute_id)
+            .collect();
         return Ok(LysisResult {
             nod_ids: vec![],
             tribute_ids,
@@ -69,7 +75,10 @@ pub fn lysis(
     }
 
     // 3-7. Compute the FI → gratis-fraction map from the tribute amounts.
-    let nominal_amounts: Vec<U256> = tributes.iter().map(|t| t.nominal_amount_minor).collect();
+    let nominal_amounts: Vec<U256> = tributes
+        .iter()
+        .map(|loaded| loaded.body().nominal_amount_minor)
+        .collect();
     let fi_fraction_map = compute_fi_fraction_map(
         &nominal_amounts,
         &tribute_fis,
@@ -91,7 +100,8 @@ pub fn lysis(
     let mut contributors: std::collections::BTreeMap<Address, U256> =
         std::collections::BTreeMap::new();
 
-    for (i, tribute) in tributes.iter().enumerate() {
+    for (i, loaded) in tributes.iter().enumerate() {
+        let tribute = loaded.body();
         tribute_ids.push(tribute.tribute_id);
 
         let fi = tribute_fis[i];
@@ -125,9 +135,10 @@ pub fn lysis(
         // 10^18-scaled (oracle price × minor units); divide once to land in
         // minor units.
         let cost_amount_minor = entry_price_minor * gratis_load / SCALE_1E18;
-        let nod_id = outbe_nodfactory::api::issue_nod_with_reader(
+        let nod_id = outbe_nodfactory::api::issue_nod(
             &storage,
-            nod_bodies,
+            scope,
+            parent,
             &outbe_nod::NodIssueParams {
                 owner: tribute.owner,
                 worldwide_day: wwd,
@@ -163,8 +174,11 @@ pub fn lysis(
 
     // Only delete tributes that were successfully processed (NOD issued).
     // Skipped tributes are preserved for potential reprocessing.
-    for token_id in &processed_tribute_ids {
-        tribute_contract.burn(tribute_bodies, *token_id)?;
+    let processed: std::collections::BTreeSet<_> = processed_tribute_ids.into_iter().collect();
+    for loaded in tributes {
+        if processed.contains(&loaded.body().tribute_id) {
+            tribute_contract.burn_loaded(scope, loaded)?;
+        }
     }
 
     Ok(LysisResult {
@@ -172,6 +186,40 @@ pub fn lysis(
         tribute_ids,
         remaining_gratis: remaining,
     })
+}
+
+fn load_day_tributes(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    wwd: WorldwideDay,
+) -> Result<Vec<outbe_tribute::LoadedTribute>> {
+    let mut records = Vec::new();
+    let mut after = None;
+    loop {
+        let page = list(
+            storage.clone(),
+            scope,
+            parent,
+            QueryRef::TributeByDay(wwd),
+            IdPageRequest {
+                after,
+                limit: MAX_ID_PAGE_LIMIT,
+            },
+        )?;
+        let next_after = page.next_after();
+        let bodies = page.into_bodies();
+        records.extend(
+            bodies
+                .into_iter()
+                .map(outbe_tribute::LoadedTribute::from_verified)
+                .collect::<Result<Vec<_>>>()?,
+        );
+        let Some(next) = next_after else {
+            return Ok(records);
+        };
+        after = Some(next);
+    }
 }
 
 /// Computes the FI → gratis-fraction map (fixed-point, SCALE = 10^18) from each

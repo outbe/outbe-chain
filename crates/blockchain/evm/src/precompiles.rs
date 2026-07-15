@@ -14,6 +14,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
@@ -35,10 +36,11 @@ use revm::{
     primitives::hardfork::SpecId,
     Database,
 };
+use std::sync::Arc;
 
 use crate::{
     gas::SubcallGasMeter,
-    storage::{CtxStorageProvider, ReentrancyStack},
+    storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
 };
 
 type DispatchFn = fn(
@@ -355,10 +357,12 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 /// [`CtxStorageProvider`] borrowing that context, and dispatches the outbe
 /// precompile through a [`StorageHandle`]. Sub-call from precompile body
 /// reaches `sub_call::run` through the provider's `sub_call` method.
+/// Registers Outbe precompiles with an executor-owned compressed-entity scope.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
 ) where
     DB: Database + Debug,
     DB::Error: Debug,
@@ -377,7 +381,13 @@ pub fn extend_outbe_precompiles<DB>(
             // `Context<...>` the impl is specialised for (set at
             // `OutbeEvmFactory::create_evm<DB>` call site).
             let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
-            outbe_ctx_dispatch::<DB>(ctx, inputs, spec, runtime_body_readers.as_ref())
+            outbe_ctx_dispatch::<DB>(
+                ctx,
+                inputs,
+                spec,
+                runtime_body_readers.as_ref(),
+                &execution_scope,
+            )
         },
     );
 }
@@ -388,6 +398,7 @@ fn outbe_ctx_dispatch<DB>(
     inputs: &CallInputs,
     spec: SpecId,
     runtime_body_readers: Option<&RuntimeBodyReaders>,
+    execution_scope: &Arc<ExecutionScope>,
 ) -> Result<Option<InterpreterResult>, String>
 where
     DB: Database + Debug,
@@ -457,50 +468,57 @@ where
     let mut provider = CtxStorageProvider::new(
         ctx,
         gas_meter,
-        is_static,
-        address,
-        ReentrancyStack,
-        spec,
-        runtime_body_readers.cloned(),
+        CtxStorageProviderConfig {
+            is_static,
+            self_address: address,
+            reentrancy_stack: ReentrancyStack,
+            spec,
+            runtime_body_readers: runtime_body_readers.cloned(),
+            execution_scope: execution_scope.clone(),
+        },
     );
     let storage = StorageHandle::new(&mut provider);
     let result = match (address, runtime_body_readers) {
         (TRIBUTE_ADDRESS, Some(readers)) => outbe_tribute::precompile::dispatch(
             storage,
-            readers.tribute(),
+            execution_scope.as_ref(),
+            readers,
             data.as_ref(),
             caller,
             value,
         ),
         (TRIBUTE_FACTORY_ADDRESS, Some(readers)) => outbe_tributefactory::precompile::dispatch(
             storage,
-            readers.tribute(),
+            execution_scope.as_ref(),
+            readers,
             data.as_ref(),
             caller,
             value,
         ),
-        (NOD_ADDRESS, Some(readers)) => outbe_nod::precompile::dispatch_with_reader(
+        (NOD_ADDRESS, Some(readers)) => outbe_nod::precompile::dispatch(
             storage,
+            execution_scope.as_ref(),
+            readers,
             data.as_ref(),
             caller,
             value,
-            readers.nod(),
         ),
-        (NOD_FACTORY_ADDRESS, Some(readers)) => outbe_nodfactory::precompile::dispatch_with_reader(
+        (NOD_FACTORY_ADDRESS, Some(readers)) => outbe_nodfactory::precompile::dispatch(
             storage,
+            execution_scope.as_ref(),
+            readers,
             data.as_ref(),
             caller,
             value,
-            readers.nod(),
         ),
         (OUTBE_SYSTEM_TX_ADDRESS, Some(readers)) => {
             crate::begin_block_precompile::dispatch_with_readers(
                 storage,
+                execution_scope.as_ref(),
+                readers,
                 data.as_ref(),
                 caller,
                 value,
-                readers.tribute(),
-                readers.nod(),
             )
         }
         (TRIBUTE_ADDRESS | TRIBUTE_FACTORY_ADDRESS | NOD_ADDRESS | NOD_FACTORY_ADDRESS, None) => {
@@ -558,15 +576,21 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
     _db: PhantomData<fn() -> DB>,
 }
 
 impl<DB> OutbeSubCallPrecompiles<DB> {
-    pub(crate) fn new(spec: SpecId, runtime_body_readers: Option<RuntimeBodyReaders>) -> Self {
+    pub(crate) fn new(
+        spec: SpecId,
+        runtime_body_readers: Option<RuntimeBodyReaders>,
+        execution_scope: Arc<ExecutionScope>,
+    ) -> Self {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             runtime_body_readers,
+            execution_scope,
             _db: PhantomData,
         }
     }
@@ -600,6 +624,7 @@ where
             inputs,
             self.spec,
             self.runtime_body_readers.as_ref(),
+            &self.execution_scope,
         )? {
             return Ok(Some(result));
         }

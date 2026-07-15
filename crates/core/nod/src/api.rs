@@ -1,151 +1,143 @@
 //! Cross-module API for the Nod entity store.
-//!
-//! NodFactory (and other callers) use these free functions to mutate the
-//! Nod entity collections without reaching into [`crate::state`] directly.
-//! Each function constructs a short-lived [`NodContract`] facade from the
-//! handed-in `StorageHandle` and delegates to the same `state.rs` helpers
-//! the in-crate runtime uses.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{CommitmentState, EntityId36};
-use outbe_offchain_storage::MAX_SCAN_ENTRIES;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource, VerifiedBody};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{NodBucketState, NodContract, NodItemState};
-use crate::{errors::NodError, NodPageRequest, NodRepositoryReader};
 
-const MAX_RUNTIME_QUERY_RECORDS: usize = MAX_SCAN_ENTRIES * 4;
+/// A decoded Nod item paired with the exact generic capability that verified it.
+pub struct LoadedNodItem {
+    body: NodItemState,
+    current: VerifiedBody,
+}
 
-/// Insert `item` into every Nod slot collection and bump bucket + supply.
-///
-/// `cost_of_gratis_minor` is consumed only when the bucket is created on this
-/// call; it is not stored on `NodItemState` so the caller passes it
-/// explicitly. The caller (NodFactory) validates inputs and asserts non-
-/// existence of `item.nod_id` before invoking this function.
+impl LoadedNodItem {
+    #[must_use]
+    pub const fn body(&self) -> &NodItemState {
+        &self.body
+    }
+
+    #[must_use]
+    pub(crate) fn into_parts(self) -> (NodItemState, VerifiedBody) {
+        (self.body, self.current)
+    }
+}
+
+/// A decoded Nod bucket paired with the exact generic capability that verified it.
+pub struct LoadedNodBucket {
+    body: NodBucketState,
+    current: VerifiedBody,
+}
+
+impl LoadedNodBucket {
+    #[must_use]
+    pub const fn body(&self) -> &NodBucketState {
+        &self.body
+    }
+
+    #[must_use]
+    pub(crate) fn into_parts(self) -> (NodBucketState, VerifiedBody) {
+        (self.body, self.current)
+    }
+}
+
+/// Inserts a Nod item and creates or updates its bucket atomically.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     item: &NodItemState,
     entry_price_minor: U256,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    nod.record_nod_issued(reader, item, entry_price_minor)
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
 }
 
-/// Remove `item` from every Nod slot collection and decrement bucket + supply.
-///
-/// The caller has already loaded `item` (via [`get_item`]) and verified
-/// authorization and business preconditions (owner, qualification).
+/// Removes a previously loaded Nod item and updates or deletes its loaded bucket atomically.
 pub fn remove_nod(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
-    item: &NodItemState,
+    scope: &ExecutionScope,
+    item: LoadedNodItem,
+    bucket: LoadedNodBucket,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    nod.record_nod_removed(reader, item)
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_removed(scope, item, bucket))
 }
 
-/// Fetch a Nod item state by id.
+/// Loads a Nod item while retaining its verified generic mutation capability.
+pub fn load_item(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    nod_id: EntityId36,
+) -> Result<Option<LoadedNodItem>> {
+    let nod = NodContract::new(storage.clone());
+    nod.get_item_verified(scope, parent, nod_id)?
+        .map(|current| {
+            crate::state::nod_item_from_verified(&current)
+                .map(|body| LoadedNodItem { body, current })
+        })
+        .transpose()
+}
+
+/// Loads a Nod bucket while retaining its verified generic mutation capability.
+pub fn load_bucket(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    bucket_id: EntityId36,
+) -> Result<Option<LoadedNodBucket>> {
+    let nod = NodContract::new(storage.clone());
+    nod.get_bucket_verified(scope, parent, bucket_id)?
+        .map(|current| {
+            crate::state::nod_bucket_from_verified(&current)
+                .map(|body| LoadedNodBucket { body, current })
+        })
+        .transpose()
+}
+
+/// Fetches a Nod item state by ID.
 pub fn get_item(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     nod_id: EntityId36,
 ) -> Result<Option<NodItemState>> {
-    NodContract::new(storage.clone()).get_item_verified(reader, nod_id)
+    load_item(storage, scope, parent, nod_id)
+        .map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
 }
 
-/// Fetch a Nod bucket state by bucket key.
+/// Fetches a Nod bucket state by ID.
 pub fn get_bucket(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     bucket_id: EntityId36,
 ) -> Result<Option<NodBucketState>> {
-    NodContract::new(storage.clone()).get_bucket_verified(reader, bucket_id)
+    load_bucket(storage, scope, parent, bucket_id)
+        .map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
 }
 
-/// Loads the full canonical Nod collection in ascending Nod ID order.
+/// Loads the complete Nod collection with overlay-correct membership.
 pub fn list_all(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<Vec<NodItemState>> {
-    let records = collect_pages(|after| {
-        reader.list_all(NodPageRequest {
-            after,
-            limit: MAX_SCAN_ENTRIES,
-        })
-    })?;
-    verify_items(storage, records, "global")
+    NodContract::new(storage.clone()).read_all(scope, parent, None)
 }
 
-/// Loads one owner's canonical Nod collection in ascending Nod ID order.
+/// Loads one owner's Nod collection with overlay-correct membership.
 pub fn list_by_owner(
     storage: &StorageHandle<'_>,
-    reader: &NodRepositoryReader,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     owner: Address,
 ) -> Result<Vec<NodItemState>> {
-    let records = collect_pages(|after| {
-        reader.list_by_owner(
-            owner,
-            NodPageRequest {
-                after,
-                limit: MAX_SCAN_ENTRIES,
-            },
-        )
-    })?;
-    verify_items(storage, records, "owner")
-}
-
-fn collect_pages(
-    mut page: impl FnMut(
-        Option<EntityId36>,
-    ) -> std::result::Result<crate::NodPage, crate::NodRepositoryError>,
-) -> Result<Vec<NodItemState>> {
-    let mut after = None;
-    let mut records = Vec::new();
-    loop {
-        let next = page(after)?;
-        if records.len().saturating_add(next.records.len()) > MAX_RUNTIME_QUERY_RECORDS {
-            return Err(NodError::QueryLimitExceeded.into());
-        }
-        records.extend(next.records);
-        match next.next_after {
-            Some(_) if records.len() == MAX_RUNTIME_QUERY_RECORDS => {
-                return Err(NodError::QueryLimitExceeded.into());
-            }
-            Some(cursor) => after = Some(cursor),
-            None => return Ok(records),
-        }
-    }
-}
-
-fn verify_items(
-    storage: &StorageHandle<'_>,
-    records: Vec<NodItemState>,
-    index: &'static str,
-) -> Result<Vec<NodItemState>> {
-    let nod = NodContract::new(storage.clone());
-    let commitments = CommitmentState::new(storage.clone());
-    let mut verified = Vec::with_capacity(records.len());
-    for body in records {
-        let expected = commitments.nod_item(body.nod_id)?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "{index} index returned canonically absent Nod {}",
-                body.nod_id
-            ))
-        })?;
-        nod.verify_item(&body, expected)?;
-        if verified
-            .last()
-            .is_some_and(|last: &NodItemState| last.nod_id >= body.nod_id)
-        {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod {index} page contains duplicate or unordered identities"
-                )),
-            );
-        }
-        verified.push(body);
-    }
-    Ok(verified)
+    NodContract::new(storage.clone()).read_all(scope, parent, Some(owner))
 }

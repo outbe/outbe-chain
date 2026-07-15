@@ -57,6 +57,7 @@ fn sub_call_propagates_caller_as_msg_sender() {
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
         None,
+        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

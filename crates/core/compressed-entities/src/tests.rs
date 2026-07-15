@@ -14,6 +14,10 @@ use crate::{
     TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_ID, TAG_KEY, TAG_LEAF, TAG_SMT_BASE, TAG_SMT_NORMAL,
     TAG_SMT_ZERO,
 };
+use crate::{schema::Collection, state::State};
+
+#[path = "tests/adr007.rs"]
+mod adr007;
 
 fn commitment_vectors() -> serde_json::Value {
     serde_json::from_str(include_str!("../vectors/ces1-noble-poseidon.json")).unwrap()
@@ -290,24 +294,33 @@ fn direct_commitment_mappings_keep_typed_namespaces_and_zero_absence() {
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        let state = CommitmentState::new(storage);
-        assert_eq!(state.tribute(identity).unwrap(), None);
-        assert_eq!(state.nod_item(identity).unwrap(), None);
-        assert_eq!(state.nod_bucket(identity).unwrap(), None);
+        let facade = CommitmentState::new(storage.clone());
+        let state = State::new(storage);
+        assert_eq!(facade.tribute(identity).unwrap(), None);
+        assert_eq!(facade.nod_item(identity).unwrap(), None);
+        assert_eq!(facade.nod_bucket(identity).unwrap(), None);
 
-        state.set_tribute(identity, leaf).unwrap();
-        assert_eq!(state.tribute(identity).unwrap(), Some(leaf));
-        assert_eq!(state.nod_item(identity).unwrap(), None);
-        assert_eq!(state.nod_bucket(identity).unwrap(), None);
+        state
+            .write_commitment(Collection::Tribute, identity, leaf)
+            .unwrap();
+        assert_eq!(facade.tribute(identity).unwrap(), Some(leaf));
+        assert_eq!(facade.nod_item(identity).unwrap(), None);
+        assert_eq!(facade.nod_bucket(identity).unwrap(), None);
 
-        state.set_nod_item(identity, leaf).unwrap();
-        state.set_nod_bucket(identity, leaf).unwrap();
-        assert_eq!(state.nod_item(identity).unwrap(), Some(leaf));
-        assert_eq!(state.nod_bucket(identity).unwrap(), Some(leaf));
+        state
+            .write_commitment(Collection::NodItem, identity, leaf)
+            .unwrap();
+        state
+            .write_commitment(Collection::NodBucket, identity, leaf)
+            .unwrap();
+        assert_eq!(facade.nod_item(identity).unwrap(), Some(leaf));
+        assert_eq!(facade.nod_bucket(identity).unwrap(), Some(leaf));
 
-        state.clear_tribute(identity).unwrap();
-        assert_eq!(state.tribute(identity).unwrap(), None);
-        assert_eq!(state.nod_item(identity).unwrap(), Some(leaf));
+        state
+            .clear_commitment(Collection::Tribute, identity)
+            .unwrap();
+        assert_eq!(facade.tribute(identity).unwrap(), None);
+        assert_eq!(facade.nod_item(identity).unwrap(), Some(leaf));
     });
 }
 

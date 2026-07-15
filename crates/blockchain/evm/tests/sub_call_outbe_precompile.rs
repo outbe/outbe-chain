@@ -18,7 +18,8 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_item_v1, identity_field, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    begin_block, body_commitment, encode_nod_item_v1, identity_field, ExecutionScope,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_evm::sub_call;
 use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
@@ -28,7 +29,10 @@ use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::types::StorageKey;
-use outbe_primitives::storage::{SubCallInput, SubCallStatus};
+use outbe_primitives::{
+    block::BlockContext,
+    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
+};
 use revm::{
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
@@ -55,6 +59,7 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
         None,
+        Arc::new(ExecutionScope::new()),
         SubCallInput {
             target: ZKPROOF_POSEIDON_ADDRESS,
             value: U256::ZERO,
@@ -137,6 +142,13 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             commitment.to_u256(),
         )
         .unwrap();
+    let scope = Arc::new(ExecutionScope::new());
+    let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
+    let mut provider = DirectStorageProvider::new(&mut database, block);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage, scope.as_ref()).unwrap();
+    });
+    provider.flush().unwrap();
 
     let calldata = INod::ownerOfCall {
         nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
@@ -150,6 +162,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         false,
         SpecId::PRAGUE,
         Some(readers),
+        scope,
         SubCallInput {
             target: NOD_ADDRESS,
             value: U256::ZERO,

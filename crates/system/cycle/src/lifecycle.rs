@@ -10,49 +10,49 @@
 //! every block — the daily trigger only does work on the first block
 //! whose timestamp crosses the next UTC midnight.
 
-use outbe_nod::NodRepositoryReader;
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
 };
-use outbe_tribute::TributeRepositoryReader;
 
 /// Zero-sized marker registered in `outbe_evm::executor` begin-block ordering.
 pub struct CycleLifecycle;
 
-impl CycleLifecycle {
-    /// Runs the production Cycle tick with explicit least-authority body readers.
-    pub fn begin_block_with_readers(
-        ctx: &BlockRuntimeContext,
-        tribute_bodies: &TributeRepositoryReader,
-        nod_bodies: &NodRepositoryReader,
-    ) -> Result<()> {
-        if ctx.block.block_number == 1 {
-            outbe_metadosis::runtime::init_genesis_day(ctx)?;
+/// Explicit body authorities required by the Cycle block boundary.
+pub struct CycleLifecycleContext<'a, 'storage> {
+    pub runtime: BlockRuntimeContext<'storage>,
+    pub scope: &'a ExecutionScope,
+    parent: ParentBodySourceRef<'a>,
+}
+
+impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
+    #[must_use]
+    pub fn new(
+        runtime: BlockRuntimeContext<'storage>,
+        scope: &'a ExecutionScope,
+        parent: &'a dyn ParentBodySource,
+    ) -> Self {
+        Self {
+            runtime,
+            scope,
+            parent: ParentBodySourceRef::new(parent),
         }
-        crate::runtime::dispatch_triggers(ctx, tribute_bodies, nod_bodies)
     }
 }
 
 impl BlockLifecycle for CycleLifecycle {
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        #[cfg(test)]
-        {
-            use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-            use std::sync::Arc;
+    type Context<'a, 'storage> = CycleLifecycleContext<'a, 'storage>;
+    type EndBlockResult = ();
 
-            let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-            let tribute_bodies = TributeRepositoryReader::new(storage.clone());
-            let nod_bodies = NodRepositoryReader::new(storage);
-            Self::begin_block_with_readers(ctx, &tribute_bodies, &nod_bodies)
+    fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
+        if ctx.runtime.block.block_number == 1 {
+            outbe_metadosis::runtime::init_genesis_day(&ctx.runtime)?;
         }
+        crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
+    }
 
-        #[cfg(not(test))]
-        {
-            let _ = ctx;
-            Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Cycle execution body read authority was not supplied".into(),
-            ))
-        }
+    fn end_block(_ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {
+        Ok(())
     }
 }

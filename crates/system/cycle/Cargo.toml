@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-compressed-entities.workspace = true
 outbe-accounting.workspace = true
 outbe-emissionlimit.workspace = true
 outbe-rewards.workspace = true

@@ -1,12 +1,14 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{
+    derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
+};
 use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus};
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeData};
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -30,7 +32,8 @@ impl TributeFactoryContract<'_> {
     /// payload; the enclave reads them and they come back in the result.
     pub(crate) fn offer_tribute(
         &mut self,
-        tribute_bodies: &TributeRepositoryReader,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         input: OfferTributeInput<'_>,
     ) -> Result<EntityId36> {
         let OfferTributeInput {
@@ -102,7 +105,7 @@ impl TributeFactoryContract<'_> {
         }
 
         let tribute = TributeContract::new(self.storage.clone());
-        if tribute.get_tribute(tribute_bodies, tribute_id)?.is_some() {
+        if tribute.get_tribute(scope, parent, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
         }
 
@@ -113,7 +116,8 @@ impl TributeFactoryContract<'_> {
 
         let mut tribute = TributeContract::new(self.storage.clone());
         tribute.issue(
-            tribute_bodies,
+            scope,
+            parent,
             &TributeData {
                 tribute_id,
                 owner: caller,

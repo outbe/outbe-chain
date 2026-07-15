@@ -9,7 +9,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_primitives::{
     addresses::SYSTEM_ADDRESS,
-    block::{BlockContext, BlockRuntimeContext},
+    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{DkgBoundaryArtifact, LATE_FINALIZE_WINDOW_K},
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::{PrecompileError, Result},
@@ -92,19 +92,13 @@ pub fn dispatch(
 /// Dispatches begin-block work with explicit read-only body authority.
 pub fn dispatch_with_readers(
     storage: StorageHandle,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
     data: &[u8],
     caller: Address,
     value: U256,
-    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
-    nod_bodies: &outbe_nod::NodRepositoryReader,
 ) -> Result<Bytes> {
-    dispatch_inner(
-        storage,
-        data,
-        caller,
-        value,
-        Some((tribute_bodies, nod_bodies)),
-    )
+    dispatch_inner(storage, data, caller, value, Some((scope, parent)))
 }
 
 fn dispatch_inner(
@@ -113,8 +107,8 @@ fn dispatch_inner(
     caller: Address,
     value: U256,
     body_readers: Option<(
-        &outbe_tribute::TributeRepositoryReader,
-        &outbe_nod::NodRepositoryReader,
+        &outbe_compressed_entities::ExecutionScope,
+        &outbe_offchain_data::RuntimeBodyReaders,
     )>,
 ) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
@@ -143,8 +137,8 @@ fn dispatch_inner(
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             match body_readers {
-                Some((tribute_bodies, nod_bodies)) => {
-                    run_cycle_tick_with_readers(&ctx, tribute_bodies, nod_bodies)?;
+                Some((scope, parent)) => {
+                    run_cycle_tick_with_readers(&ctx, scope, parent)?;
                 }
                 None => run_cycle_tick(&ctx)?,
             }
@@ -544,10 +538,18 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
         use std::sync::Arc;
 
         let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        outbe_cycle::lifecycle::CycleLifecycle::begin_block_with_readers(
-            ctx,
-            &outbe_tribute::TributeRepositoryReader::new(storage.clone()),
-            &outbe_nod::NodRepositoryReader::new(storage),
+        let parent = outbe_offchain_data::RuntimeBodyReaders::new(storage);
+        let scope = outbe_compressed_entities::ExecutionScope::new();
+        let compressed =
+            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+            &compressed,
+        )?;
+        let lifecycle =
+            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent);
+        <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+            &compressed,
         )
     }
 
@@ -560,15 +562,18 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
 /// Production CycleTick path with explicit read-only body authority.
 pub(crate) fn run_cycle_tick_with_readers(
     ctx: &BlockRuntimeContext,
-    tribute_bodies: &outbe_tribute::TributeRepositoryReader,
-    nod_bodies: &outbe_nod::NodRepositoryReader,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
-    outbe_cycle::lifecycle::CycleLifecycle::begin_block_with_readers(
-        ctx,
-        tribute_bodies,
-        nod_bodies,
-    )
+    // This body mutation must consume system-transaction gas and appear in its
+    // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
+    // buckets are not qualified until the following block.
+    let nod_lifecycle = outbe_nod::hooks::NodLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(&nod_lifecycle)?;
+    let cycle_lifecycle =
+        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
