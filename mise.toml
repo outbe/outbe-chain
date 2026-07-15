@@ -155,6 +155,11 @@ run = "cargo bench --workspace"
 [tasks.localnet-bootstrap]
 description = "Clean OUT_DIR and bootstrap a local validator set"
 run = """
+# Stop any localnet still running from a previous bootstrap FIRST. Bootstrap
+# wipes OUT_DIR (including pids/), so skipping this orphans the old node +
+# enclave processes — they keep holding the RPC/metrics/consensus ports and the
+# next `start` dies with "Address already in use". No-op when nothing is running.
+./scripts/run-testnet.sh stop "$OUT_DIR" 2>/dev/null || true
 if [ -z "${SEED_FILE:-}" ]; then
   ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
 else
