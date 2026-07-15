@@ -5,7 +5,7 @@ mod mongo;
 mod types;
 
 pub use memory::MemoryStorage;
-pub use mongo::{MongoStorage, MongoStorageConfig};
+pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
 pub use types::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
     StorageError, StorageErrorKind, StorageMetadata, StoredValue, Value, MAX_ATOMIC_BATCH_BYTES,

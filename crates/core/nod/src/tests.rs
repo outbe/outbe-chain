@@ -705,6 +705,10 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
             nod.global_nod_index.base_slot(),
             alloy_primitives::U256::from(24u64)
         );
+        assert_eq!(
+            nod.unqualified_bin_scan_cursor.base_slot(),
+            alloy_primitives::U256::from(25u64)
+        );
     });
 }
 

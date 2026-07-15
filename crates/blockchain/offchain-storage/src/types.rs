@@ -445,6 +445,8 @@ pub enum StorageErrorKind {
     Backend,
     /// The caller's local execution budget expired before the read completed.
     RequestDeadline,
+    /// The caller no longer owns the storage writer lease.
+    WriterLeaseLost,
 }
 
 /// Backend-neutral storage failure.
@@ -473,6 +475,9 @@ pub enum StorageError {
     /// The caller's local execution budget expired. This is not a backend outage.
     #[error("execution read request deadline exceeded")]
     RequestDeadline,
+    /// Another writer acquired the sole-writer lease.
+    #[error("storage writer lease lost")]
+    WriterLeaseLost,
 }
 
 impl StorageError {
@@ -485,6 +490,7 @@ impl StorageError {
             Self::Corruption(_) => StorageErrorKind::Corruption,
             Self::Backend { .. } => StorageErrorKind::Backend,
             Self::RequestDeadline => StorageErrorKind::RequestDeadline,
+            Self::WriterLeaseLost => StorageErrorKind::WriterLeaseLost,
         }
     }
 

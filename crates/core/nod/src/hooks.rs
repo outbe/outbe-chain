@@ -30,7 +30,9 @@ use outbe_primitives::{
     math::{constants::MAX_BIN_ID, tree_math},
 };
 
-use crate::{schema::NodContract, NodRepositoryReader};
+use crate::{
+    constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract, NodRepositoryReader,
+};
 
 /// Oracle pair that gates bucket qualification: COEN against the stablecoin.
 const QUALIFIER_BASE: &str = "COEN";
@@ -113,19 +115,28 @@ pub fn qualify_buckets_with_rate(ctx: &BlockRuntimeContext, rate: U256) -> Resul
             nod.unqualified_bin_count.write(&next, 0)?;
             tree_math::remove(&nod, next)?;
         } else {
+            let survivor_count = u32::try_from(survivors.len()).map_err(|_| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "Nod survivor count exceeds u32".into(),
+                )
+            })?;
             // Compact survivors into [0..len), zero the tail. Bit stays set.
             for (i, k) in survivors.iter().enumerate() {
+                let index = u32::try_from(i).map_err(|_| {
+                    outbe_primitives::error::PrecompileError::Fatal(
+                        "Nod survivor index exceeds u32".into(),
+                    )
+                })?;
                 nod.unqualified_bin_buckets
-                    .write(&NodContract::bin_index_key(next, i as u32), *k)?;
+                    .write(&NodContract::bin_index_key(next, index), *k)?;
             }
-            for i in (survivors.len() as u32)..count {
+            for i in survivor_count..count {
                 nod.unqualified_bin_buckets.write(
                     &NodContract::bin_index_key(next, i),
                     alloy_primitives::B256::ZERO,
                 )?;
             }
-            nod.unqualified_bin_count
-                .write(&next, survivors.len() as u32)?;
+            nod.unqualified_bin_count.write(&next, survivor_count)?;
         }
 
         cursor = match next.checked_add(1) {
@@ -156,16 +167,30 @@ pub fn qualify_buckets_with_rate_and_reader(
     }
     let r_bin = NodContract::price_to_bin(rate)?;
     let mut nod = NodContract::new(ctx.storage.clone());
-    let mut cursor = 0_u32;
+    let mut bin_cursor = 0_u32;
+    let mut inspected = 0_u32;
     loop {
-        let next = match tree_math::find_first_left_inclusive(&nod, cursor)? {
+        if inspected == MAX_BUCKET_QUALIFICATIONS_PER_BLOCK {
+            break;
+        }
+        let next = match tree_math::find_first_left_inclusive(&nod, bin_cursor)? {
             Some(bin) if bin <= r_bin => bin,
             _ => break,
         };
         let strict = next < r_bin;
-        let count = nod.unqualified_bin_count.read(&next)?;
-        let mut survivors = Vec::new();
-        for index in 0..count {
+        let mut count = nod.unqualified_bin_count.read(&next)?;
+        if count == 0 {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bin tree references empty bin {next}"
+                )),
+            );
+        }
+        let mut index = nod.unqualified_bin_scan_cursor.read(&next)?;
+        if index >= count {
+            index = 0;
+        }
+        while index < count && inspected < MAX_BUCKET_QUALIFICATIONS_PER_BLOCK {
             let key = NodContract::bin_index_key(next, index);
             let bucket_key = nod.unqualified_bin_buckets.read(&key)?;
             if bucket_key.is_zero() {
@@ -188,37 +213,50 @@ pub fn qualify_buckets_with_rate_and_reader(
                 );
             }
             if !strict && bucket.floor_price_minor >= rate {
-                survivors.push(bucket_key);
+                index += 1;
+                inspected += 1;
                 continue;
             }
-            nod.qualify_bucket_with_reader(reader, bucket_key)?;
+            nod.qualify_bucket_body(bucket)?;
+            let last = count.checked_sub(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bin {next} count underflow"
+                ))
+            })?;
+            if index != last {
+                let replacement = nod
+                    .unqualified_bin_buckets
+                    .read(&NodContract::bin_index_key(next, last))?;
+                if replacement.is_zero() {
+                    return Err(
+                        outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                            "Nod unqualified-bin entry {next}:{last} has an empty bucket key"
+                        )),
+                    );
+                }
+                nod.unqualified_bin_buckets.write(&key, replacement)?;
+            }
+            nod.unqualified_bin_buckets.write(
+                &NodContract::bin_index_key(next, last),
+                alloy_primitives::B256::ZERO,
+            )?;
+            count = last;
+            inspected += 1;
         }
 
-        if survivors.is_empty() {
-            for index in 0..count {
-                nod.unqualified_bin_buckets.write(
-                    &NodContract::bin_index_key(next, index),
-                    alloy_primitives::B256::ZERO,
-                )?;
-            }
+        nod.unqualified_bin_count.write(&next, count)?;
+        if count == 0 {
+            nod.unqualified_bin_scan_cursor.write(&next, 0)?;
             nod.unqualified_bin_count.write(&next, 0)?;
             tree_math::remove(&nod, next)?;
+        } else if index >= count {
+            nod.unqualified_bin_scan_cursor.write(&next, 0)?;
         } else {
-            for (index, bucket_key) in survivors.iter().enumerate() {
-                nod.unqualified_bin_buckets
-                    .write(&NodContract::bin_index_key(next, index as u32), *bucket_key)?;
-            }
-            for index in (survivors.len() as u32)..count {
-                nod.unqualified_bin_buckets.write(
-                    &NodContract::bin_index_key(next, index),
-                    alloy_primitives::B256::ZERO,
-                )?;
-            }
-            nod.unqualified_bin_count
-                .write(&next, survivors.len() as u32)?;
+            nod.unqualified_bin_scan_cursor.write(&next, index)?;
+            break;
         }
 
-        cursor = match next.checked_add(1) {
+        bin_cursor = match next.checked_add(1) {
             Some(next) if next <= MAX_BIN_ID => next,
             _ => break,
         };

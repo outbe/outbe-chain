@@ -1,7 +1,15 @@
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, Document},
+    bson::{doc, oid::ObjectId, spec::BinarySubtype, Binary, Bson, DateTime, Document},
     error::{Error as MongoError, ErrorKind as MongoErrorKind, WriteFailure},
     options::{
         Acknowledgment, ClientOptions, Collation, DatabaseOptions, ReadConcern, ReadPreference,
@@ -12,14 +20,34 @@ use mongodb::{
 
 use crate::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
-    StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue, Value,
-    MAX_SCAN_PAGE_VALUE_BYTES,
+    StorageError, StorageErrorKind, StorageMetadata, StorageReader, StorageWriter, StoredValue,
+    Value, MAX_SCAN_PAGE_VALUE_BYTES,
 };
 
 const EXECUTION_READ_TIMEOUT: Duration = Duration::from_secs(1);
+const WRITER_LEASE_DURATION: Duration = Duration::from_secs(5);
+const WRITER_LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(2);
+const WRITER_LEASE_COLLECTION: &str = "projection_writer_lease";
+const WRITER_LEASE_ID: &str = "active_projection_writer";
 
 const WRITE_CONCERN_FAILED_CODE: i32 = 64;
 const READ_CONCERN_MAJORITY_NOT_AVAILABLE_CODE: i32 = 134;
+const MAX_TIME_MS_EXPIRED_CODE: i32 = 50;
+const RETRYABLE_READ_CODES: &[i32] = &[
+    6,
+    7,
+    89,
+    91,
+    189,
+    262,
+    9001,
+    10_107,
+    11_600,
+    11_602,
+    13_435,
+    13_436,
+    READ_CONCERN_MAJORITY_NOT_AVAILABLE_CODE,
+];
 
 /// Connection settings for the persistent adapter.
 #[derive(Clone, Eq, PartialEq)]
@@ -47,6 +75,22 @@ impl fmt::Debug for MongoStorageConfig {
 pub struct MongoStorage {
     client: Client,
     database: Database,
+    writer_lease: parking_lot::Mutex<Option<WriterLeaseBinding>>,
+}
+
+#[derive(Clone)]
+struct WriterLeaseBinding {
+    owner: String,
+    lost: Arc<AtomicBool>,
+}
+
+/// Process-lifetime ownership of the sole projection writer for one database.
+pub struct MongoWriterLease {
+    storage: Arc<MongoStorage>,
+    owner: String,
+    lost: Arc<AtomicBool>,
+    stop: Option<mpsc::Sender<()>>,
+    renewer: Option<JoinHandle<()>>,
 }
 
 impl fmt::Debug for MongoStorage {
@@ -91,7 +135,11 @@ impl MongoStorage {
             ));
         }
         let database = client.database_with_options(&config.database, execution_database_options());
-        Ok(Self { client, database })
+        Ok(Self {
+            client,
+            database,
+            writer_lease: parking_lot::Mutex::new(None),
+        })
     }
 
     fn collection(&self, namespace: &Namespace) -> Collection<Document> {
@@ -148,6 +196,192 @@ impl MongoStorage {
                 Ok(())
             })
             .map_err(map_operation_error)
+    }
+
+    /// Atomically acquires the database's single active projection-writer lease.
+    pub fn acquire_writer_lease(self: &Arc<Self>) -> Result<MongoWriterLease, StorageError> {
+        let mut binding = self.writer_lease.lock();
+        if binding.is_some() {
+            return Err(StorageError::invalid_argument(
+                "this MongoDB adapter already owns a projection writer lease",
+            ));
+        }
+
+        let owner = ObjectId::new().to_hex();
+        acquire_writer_lease(&self.database, &owner)?;
+        let lost = Arc::new(AtomicBool::new(false));
+        *binding = Some(WriterLeaseBinding {
+            owner: owner.clone(),
+            lost: lost.clone(),
+        });
+        drop(binding);
+
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let database = self.database.clone();
+        let renew_owner = owner.clone();
+        let renew_lost = lost.clone();
+        let renewer = match std::thread::Builder::new()
+            .name("offchain-writer-lease".to_owned())
+            .spawn(move || loop {
+                match stop_rx.recv_timeout(WRITER_LEASE_RENEW_INTERVAL) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                match renew_writer_lease(&database, &renew_owner) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        renew_lost.store(true, Ordering::Release);
+                        break;
+                    }
+                    Err(error) if error.kind() == StorageErrorKind::Unavailable => {}
+                    Err(_) => {
+                        renew_lost.store(true, Ordering::Release);
+                        break;
+                    }
+                }
+            }) {
+            Ok(renewer) => renewer,
+            Err(error) => {
+                self.writer_lease.lock().take();
+                release_writer_lease_detached(self.database.clone(), owner);
+                return Err(StorageError::unavailable(error));
+            }
+        };
+
+        Ok(MongoWriterLease {
+            storage: self.clone(),
+            owner,
+            lost,
+            stop: Some(stop_tx),
+            renewer: Some(renewer),
+        })
+    }
+}
+
+impl Drop for MongoWriterLease {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        // Detach both Mongo operations: a stalled network syscall in the
+        // driver must not delay whole-node shutdown. Owner-qualified cleanup
+        // is safe to race with an already in-flight, non-upserting renewal.
+        drop(self.renewer.take());
+        let mut binding = self.storage.writer_lease.lock();
+        if binding
+            .as_ref()
+            .is_some_and(|lease| lease.owner == self.owner)
+        {
+            binding.take();
+        }
+        drop(binding);
+        release_writer_lease_detached(self.storage.database.clone(), self.owner.clone());
+    }
+}
+
+impl MongoWriterLease {
+    /// Returns false after another writer has replaced this expired lease.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        !self.lost.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("MongoDB projection writer lease was lost")]
+struct WriterLeaseLost;
+
+#[derive(Debug, thiserror::Error)]
+#[error("MongoDB projection database already has an active writer")]
+struct WriterLeaseBusy;
+
+fn writer_lease_duration_millis() -> i64 {
+    i64::try_from(WRITER_LEASE_DURATION.as_millis()).unwrap_or(i64::MAX)
+}
+
+fn writer_lease_update(owner: &str) -> Vec<Document> {
+    vec![doc! {
+        "$set": {
+            "owner": owner,
+            "lease_until": {
+                "$dateAdd": {
+                    "startDate": "$$NOW",
+                    "unit": "millisecond",
+                    "amount": writer_lease_duration_millis(),
+                }
+            }
+        }
+    }]
+}
+
+fn writer_lease_collection(database: &Database) -> Collection<Document> {
+    database.collection(WRITER_LEASE_COLLECTION)
+}
+
+fn acquire_writer_lease(database: &Database, owner: &str) -> Result<(), StorageError> {
+    let collection = writer_lease_collection(database);
+    match collection
+        .insert_one(doc! {
+            "_id": WRITER_LEASE_ID,
+            "owner": "",
+            "lease_until": DateTime::from_millis(0),
+        })
+        .run()
+    {
+        Ok(_) => {}
+        Err(error) if is_duplicate_key_error(&error) => {}
+        Err(error) => return Err(map_operation_error(error)),
+    }
+    let result = collection
+        .update_one(
+            doc! {
+                "_id": WRITER_LEASE_ID,
+                "$or": [
+                    { "owner": owner },
+                    { "$expr": { "$lte": ["$lease_until", "$$NOW"] } },
+                ],
+            },
+            writer_lease_update(owner),
+        )
+        .run();
+    match result {
+        Ok(result) if result.matched_count == 1 || result.upserted_id.is_some() => Ok(()),
+        Ok(_) => Err(StorageError::unavailable(WriterLeaseBusy)),
+        Err(error) if is_duplicate_key_error(&error) => {
+            Err(StorageError::unavailable(WriterLeaseBusy))
+        }
+        Err(error) => Err(map_operation_error(error)),
+    }
+}
+
+fn renew_writer_lease(database: &Database, owner: &str) -> Result<bool, StorageError> {
+    writer_lease_collection(database)
+        .update_one(
+            doc! { "_id": WRITER_LEASE_ID, "owner": owner },
+            writer_lease_update(owner),
+        )
+        .run()
+        .map(|result| result.matched_count == 1)
+        .map_err(map_operation_error)
+}
+
+fn release_writer_lease(database: &Database, owner: &str) {
+    let _ = writer_lease_collection(database)
+        .delete_one(doc! { "_id": WRITER_LEASE_ID, "owner": owner })
+        .run();
+}
+
+fn release_writer_lease_detached(database: Database, owner: String) {
+    let _ = std::thread::Builder::new()
+        .name("offchain-writer-release".to_owned())
+        .spawn(move || release_writer_lease(&database, &owner));
+}
+
+fn is_duplicate_key_error(error: &MongoError) -> bool {
+    match error.kind.as_ref() {
+        MongoErrorKind::Command(command) => command.code == 11_000,
+        MongoErrorKind::Write(WriteFailure::WriteError(write)) => write.code == 11_000,
+        _ => false,
     }
 }
 
@@ -313,6 +547,13 @@ impl StorageWriter for MongoStorage {
         if batch.is_empty() {
             return Ok(());
         }
+        let writer_lease = self.writer_lease.lock().clone();
+        if writer_lease
+            .as_ref()
+            .is_some_and(|lease| lease.lost.load(Ordering::Acquire))
+        {
+            return Err(StorageError::WriterLeaseLost);
+        }
         let operations = batch
             .operations()
             .iter()
@@ -330,6 +571,19 @@ impl StorageWriter for MongoStorage {
             .write_concern(majority_write_concern())
             .max_commit_time(EXECUTION_READ_TIMEOUT)
             .and_run(|session| {
+                if let Some(lease) = &writer_lease {
+                    let result = writer_lease_collection(&self.database)
+                        .update_one(
+                            doc! { "_id": WRITER_LEASE_ID, "owner": &lease.owner },
+                            writer_lease_update(&lease.owner),
+                        )
+                        .session(&mut *session)
+                        .run()?;
+                    if result.matched_count != 1 {
+                        lease.lost.store(true, Ordering::Release);
+                        return Err(MongoError::custom(WriterLeaseLost));
+                    }
+                }
                 for operation in &operations {
                     match operation {
                         PreparedMongoOperation::Put {
@@ -577,6 +831,9 @@ fn map_configuration_error(error: MongoError) -> StorageError {
 }
 
 fn map_operation_error(error: MongoError) -> StorageError {
+    if error.get_custom::<WriterLeaseLost>().is_some() {
+        return StorageError::WriterLeaseLost;
+    }
     match error.kind.as_ref() {
         MongoErrorKind::DnsResolve { .. }
         | MongoErrorKind::Io(_)
@@ -588,8 +845,8 @@ fn map_operation_error(error: MongoError) -> StorageError {
         MongoErrorKind::Command(command)
             if matches!(
                 command.code,
-                WRITE_CONCERN_FAILED_CODE | READ_CONCERN_MAJORITY_NOT_AVAILABLE_CODE
-            ) =>
+                WRITE_CONCERN_FAILED_CODE | MAX_TIME_MS_EXPIRED_CODE
+            ) || RETRYABLE_READ_CODES.contains(&command.code) =>
         {
             StorageError::unavailable(error)
         }
@@ -671,6 +928,41 @@ mod tests {
             map_operation_error(write_concern_error).kind(),
             StorageErrorKind::Unavailable
         );
+    }
+
+    #[test]
+    fn transient_command_failures_are_unavailable() {
+        for (code, code_name) in [
+            (50, "MaxTimeMSExpired"),
+            (91, "ShutdownInProgress"),
+            (10_107, "NotWritablePrimary"),
+            (11_602, "InterruptedDueToReplStateChange"),
+        ] {
+            let command: CommandError = from_document(doc! {
+                "code": code,
+                "codeName": code_name,
+                "errmsg": "temporary topology or operation failure",
+            })
+            .unwrap();
+            let error: MongoError = ErrorKind::Command(command).into();
+            assert_eq!(
+                map_operation_error(error).kind(),
+                StorageErrorKind::Unavailable,
+                "MongoDB command code {code} must enter recovery",
+            );
+        }
+    }
+
+    #[test]
+    fn deterministic_command_failure_remains_backend_failure() {
+        let command: CommandError = from_document(doc! {
+            "code": 13,
+            "codeName": "Unauthorized",
+            "errmsg": "not authorized",
+        })
+        .unwrap();
+        let error: MongoError = ErrorKind::Command(command).into();
+        assert_eq!(map_operation_error(error).kind(), StorageErrorKind::Backend,);
     }
 
     #[test]

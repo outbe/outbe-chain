@@ -6,14 +6,11 @@ use outbe_primitives::error::{PrecompileError, Result};
 use crate::{
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
     precompile::INod,
-    schema::NodContract,
+    schema::{NodBucketState, NodContract},
     NodRepositoryReader,
 };
 #[cfg(any(test, feature = "test-utils"))]
-use crate::{
-    errors::NodError,
-    schema::{NodBucketState, NodItemState},
-};
+use crate::{errors::NodError, schema::NodItemState};
 
 impl NodContract<'_> {
     #[cfg(any(test, feature = "test-utils"))]
@@ -70,9 +67,13 @@ impl NodContract<'_> {
         reader: &NodRepositoryReader,
         bucket_key: alloy_primitives::B256,
     ) -> Result<()> {
-        let mut bucket = reader
+        let bucket = reader
             .get_bucket(bucket_key)?
             .ok_or_else(|| PrecompileError::Revert("qualify_bucket: bucket missing".into()))?;
+        self.qualify_bucket_body(bucket)
+    }
+
+    pub(crate) fn qualify_bucket_body(&mut self, mut bucket: NodBucketState) -> Result<()> {
         if bucket.is_qualified {
             return Ok(());
         }

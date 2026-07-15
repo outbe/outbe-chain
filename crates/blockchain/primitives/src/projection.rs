@@ -61,6 +61,7 @@ pub enum ProjectionFailureClass {
     ProjectorExited,
     ReadinessChannelClosed,
     MongoReconnectDeadline,
+    WriterLeaseLost,
     Other,
 }
 

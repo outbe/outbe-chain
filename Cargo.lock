@@ -7424,6 +7424,8 @@ dependencies = [
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -7823,6 +7825,7 @@ name = "outbe-node"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips 2.0.4",
  "alloy-genesis",
  "alloy-primitives",
  "alloy-provider",

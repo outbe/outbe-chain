@@ -160,6 +160,12 @@ pub struct NodContract {
     // slot 24: reverse lookup nod_id → its current index in global_nod_ids.
     #[attribute(order = 16)]
     pub global_nod_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    // slot 25: next bucket position to inspect in a partially processed bin.
+    // This keeps begin-block qualification bounded without starving later
+    // buckets when the tail bin contains more work than one block can inspect.
+    #[attribute(order = 17)]
+    pub unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl NodContract<'_> {

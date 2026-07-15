@@ -184,3 +184,80 @@ fn dangling_unqualified_bucket_index_is_body_corruption() {
         assert!(matches!(error, PrecompileError::BodyReadCorruption(_)));
     });
 }
+
+#[test]
+fn reader_backed_qualification_is_bounded_and_resumes_next_block() {
+    let adapter = Arc::new(MemoryStorage::new());
+    let reader = NodRepositoryReader::new(adapter.clone());
+    let writer = NodRepositoryWriter::new(adapter.clone(), adapter);
+    let mut evm = HashMapStorageProvider::new(1);
+    let limit = outbe_nod::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
+    let owner = Address::repeat_byte(0x33);
+    let day = WorldwideDay::new(20_260_715);
+
+    StorageHandle::enter(&mut evm, |storage| {
+        for offset in 0..=limit {
+            let floor = U256::from(offset + 1);
+            let bucket_key = outbe_nod::NodContract::bucket_key(day, floor);
+            let item = NodItemState {
+                nod_id: U256::from(offset + 1),
+                owner,
+                gratis_load_minor: U256::from(1),
+                worldwide_day: day,
+                league_id: 1,
+                floor_price_minor: floor,
+                bucket_key,
+                cost_amount_minor: U256::ZERO,
+                issuance_currency: 840,
+                reference_currency: 978,
+                issued_at: 1_700_000_000,
+            };
+            outbe_nod::api::add_nod(&storage, &reader, &item, U256::from(1)).unwrap();
+            writer.put_nod(&item).unwrap();
+            writer
+                .put_bucket(&NodBucketState {
+                    bucket_key,
+                    worldwide_day: day,
+                    floor_price_minor: floor,
+                    is_qualified: false,
+                    total_nods: 1,
+                    entry_price_minor: U256::from(1),
+                })
+                .unwrap();
+        }
+    });
+    evm.clear_events(outbe_primitives::addresses::NOD_ADDRESS);
+
+    StorageHandle::enter(&mut evm, |storage| {
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(2, 1_700_000_000, 1), storage);
+        outbe_nod::hooks::qualify_buckets_with_rate_and_reader(
+            &ctx,
+            &reader,
+            U256::from(limit + 2),
+        )
+        .unwrap();
+    });
+    assert_eq!(
+        evm.get_events(outbe_primitives::addresses::NOD_ADDRESS)
+            .len(),
+        usize::try_from(limit).unwrap() * 2,
+    );
+
+    evm.clear_events(outbe_primitives::addresses::NOD_ADDRESS);
+    StorageHandle::enter(&mut evm, |storage| {
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(3, 1_700_000_001, 1), storage);
+        outbe_nod::hooks::qualify_buckets_with_rate_and_reader(
+            &ctx,
+            &reader,
+            U256::from(limit + 2),
+        )
+        .unwrap();
+    });
+    assert_eq!(
+        evm.get_events(outbe_primitives::addresses::NOD_ADDRESS)
+            .len(),
+        2,
+    );
+}

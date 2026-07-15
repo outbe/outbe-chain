@@ -3123,7 +3123,12 @@ mod tests {
     use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
-    use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
+    use outbe_nod::{
+        precompile::INod, NodBucketState, NodContract, NodItemState, NodRepositoryReader,
+        NodRepositoryWriter,
+    };
+    use outbe_offchain_data::RuntimeBodyReaders;
+    use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
     use outbe_primitives::addresses::{
         CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
         SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
@@ -5919,19 +5924,22 @@ mod tests {
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
         let seed_state = || {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-                outbe_nodfactory::api::issue_nod(
+                outbe_nod::api::fixture_add_nod(
                     &storage,
-                    &NodIssueParams {
+                    &NodItemState {
+                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day),
                         owner: proposer,
                         gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
                         worldwide_day,
                         league_id: 1,
                         floor_price_minor,
-                        entry_price_minor: U256::from(450_000_000_000_000_000u128),
+                        bucket_key,
                         cost_amount_minor: U256::ZERO,
                         issuance_currency: 840,
                         reference_currency: 840,
+                        issued_at: 1,
                     },
+                    U256::from(450_000_000_000_000_000u128),
                 )
                 .expect("seed unqualified Nod through NodFactory");
             })
@@ -6028,6 +6036,116 @@ mod tests {
             proposer_receipt.logs[1].data.topics()[0],
             INod::NodBucketQualified::SIGNATURE_HASH
         );
+    }
+
+    #[test]
+    fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        let proposer = test_evm_signer().address();
+        let worldwide_day = WorldwideDay::new(20_241_220);
+        let floor_price_minor = U256::from(500_000_000_000_000_000u128);
+        let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
+        let seed_state = || {
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+                outbe_nod::api::add_nod(
+                    &storage,
+                    &empty_reader,
+                    &NodItemState {
+                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day),
+                        owner: proposer,
+                        gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+                        worldwide_day,
+                        league_id: 1,
+                        floor_price_minor,
+                        bucket_key,
+                        cost_amount_minor: U256::ZERO,
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                        issued_at: 1,
+                    },
+                    U256::from(450_000_000_000_000_000u128),
+                )
+                .expect("seed compact Nod scheduling state");
+            })
+        };
+        let independent_readers = || {
+            let adapter = Arc::new(MemoryStorage::new());
+            let reader: StorageReaderHandle = adapter.clone();
+            let writer: StorageWriterHandle = adapter;
+            NodRepositoryWriter::new(reader.clone(), writer)
+                .put_bucket(&NodBucketState {
+                    bucket_key,
+                    worldwide_day,
+                    floor_price_minor,
+                    is_qualified: false,
+                    total_nods: 1,
+                    entry_price_minor: U256::from(450_000_000_000_000_000u128),
+                })
+                .expect("seed independent off-chain Nod bucket");
+            RuntimeBodyReaders::new(reader)
+        };
+
+        let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
+            let signer = test_evm_signer();
+            let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
+                .with_evm_signer(signer);
+            let system_txs =
+                begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+            let mut state = seed_state();
+            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut execution = execution_ctx(Some(0), Bytes::new());
+            execution.proposer_evm_address = Some(proposer);
+            if expected_validator_body {
+                execution.expected_begin_system_txs = system_txs.clone();
+            }
+            let mut executor = config.create_executor(evm, execution);
+            executor
+                .apply_pre_execution_changes()
+                .expect("reader-backed pre-execution hook must succeed");
+            for tx in system_txs {
+                executor
+                    .execute_transaction(tx)
+                    .expect("begin-zone transaction must execute");
+            }
+            let receipts = executor.receipts().to_vec();
+            drop(executor);
+            let bundle = state.bundle_state.clone();
+            let root = post_state_root(&bundle);
+            let proposer_balance = signer_balance(&mut state, proposer);
+            let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
+            (root, bundle, receipts, proposer_balance, rewards_balance)
+        };
+
+        let proposer_result = run(false, independent_readers());
+        let validator_result = run(true, independent_readers());
+        assert_eq!(proposer_result, validator_result);
+        assert!(proposer_result.2.iter().any(|receipt| {
+            receipt.logs.iter().any(|log| {
+                log.address == NOD_ADDRESS
+                    && log.data.topics().first() == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+            })
+        }));
     }
 
     #[test]
