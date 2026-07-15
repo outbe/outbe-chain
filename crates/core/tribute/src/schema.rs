@@ -60,7 +60,7 @@ pub struct TributeContract {
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 1)]
-    pub tributes: outbe_primitives::storage::dsl::Map<U256, TributeData>,
+    pub(crate) tributes: outbe_primitives::storage::dsl::Map<U256, TributeData>,
 
     #[attribute(order = 2)]
     pub day_totals: outbe_primitives::storage::dsl::Map<WorldwideDay, DayTotals>,

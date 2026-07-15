@@ -2,6 +2,33 @@
 pragma solidity ^0.8.30;
 
 interface INod {
+    event NodBodyStored(
+        uint256 indexed nodId,
+        address owner,
+        uint256 gratisLoadMinor,
+        uint32 worldwideDay,
+        uint16 leagueId,
+        uint256 floorPriceMinor,
+        bytes32 bucketKey,
+        uint256 costAmountMinor,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 issuedAt
+    );
+
+    event NodBodyDeleted(uint256 indexed nodId);
+
+    event NodBucketBodyStored(
+        bytes32 indexed bucketKey,
+        uint32 worldwideDay,
+        uint256 floorPriceMinor,
+        bool isQualified,
+        uint64 totalNods,
+        uint256 entryPriceMinor
+    );
+
+    event NodBucketBodyDeleted(bytes32 indexed bucketKey);
+
     event NodBucketQualified(
         bytes32 indexed bucketKey, uint256 worldwideDay, uint256 floorPriceMinor, bool isQualified
     );

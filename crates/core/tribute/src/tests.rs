@@ -1,5 +1,7 @@
 use alloy_primitives::{address, U256};
+use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -290,15 +292,133 @@ fn test_burn_all_by_wwd() {
 #[test]
 fn test_events_emitted_for_issue_and_burn() {
     with_provider(|provider| {
+        let tribute = sample_tribute();
         StorageHandle::enter(provider, |storage| {
             let mut tc = TributeContract::new(storage.clone());
-            let tribute = sample_tribute();
             tc.unseal_day(tribute.worldwide_day).unwrap();
             tc.issue(&tribute).unwrap();
-            tc.burn(tribute.token_id).unwrap();
         });
 
+        let events = provider.get_events(TRIBUTE_ADDRESS).to_vec();
+        assert_eq!(
+            events.len(),
+            3,
+            "unseal + issue projection/product events expected"
+        );
+        let stored = crate::precompile::ITribute::TributeBodyStored::decode_log_data(&events[1])
+            .expect("issue must emit a decodable full-body event first");
+        let persisted = StorageHandle::enter(provider, |storage| {
+            TributeContract::new(storage)
+                .get_tribute(tribute.token_id)
+                .unwrap()
+                .unwrap()
+        });
+        assert_eq!(stored.tokenId, persisted.token_id);
+        assert_eq!(stored.owner, persisted.owner);
+        assert_eq!(stored.worldwideDay, u32::from(persisted.worldwide_day));
+        assert_eq!(stored.issuanceAmountMinor, persisted.issuance_amount_minor);
+        assert_eq!(stored.issuanceCurrency, persisted.issuance_currency);
+        assert_eq!(stored.nominalAmountMinor, persisted.nominal_amount_minor);
+        assert_eq!(stored.referenceCurrency, persisted.reference_currency);
+        assert_eq!(stored.tributePriceMinor, persisted.tribute_price_minor);
+        assert_eq!(
+            stored.excludeFromIntexIssuance,
+            persisted.exclude_from_intex_issuance
+        );
+        assert_eq!(
+            events[2].topics()[0],
+            crate::precompile::ITribute::TributeIssued::SIGNATURE_HASH
+        );
+
+        StorageHandle::enter(provider, |storage| {
+            TributeContract::new(storage)
+                .burn(tribute.token_id)
+                .unwrap();
+        });
         let events = provider.get_events(TRIBUTE_ADDRESS);
-        assert_eq!(events.len(), 3, "unseal + issue + burn events expected");
+        assert_eq!(events.len(), 5, "burn projection/product events expected");
+        let deleted = crate::precompile::ITribute::TributeBodyDeleted::decode_log_data(&events[3])
+            .expect("burn must emit identity-only deletion first");
+        assert_eq!(deleted.tokenId, tribute.token_id);
+        assert_eq!(
+            events[4].topics()[0],
+            crate::precompile::ITribute::TributeBurned::SIGNATURE_HASH
+        );
     });
+}
+
+#[test]
+fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let tribute = sample_tribute();
+    StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage.clone())
+            .unseal_day(tribute.worldwide_day)
+            .unwrap();
+    });
+    provider.clear_events(TRIBUTE_ADDRESS);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let reverted: PrecompileResult<()> = storage.with_checkpoint(|| {
+            TributeContract::new(storage.clone()).issue(&tribute)?;
+            Err(PrecompileError::Revert("nested caller reverted".into()))
+        });
+        assert!(reverted.is_err());
+        assert!(TributeContract::new(storage)
+            .get_tribute(tribute.token_id)
+            .unwrap()
+            .is_none());
+    });
+    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+
+    let mut oog_tribute = sample_tribute();
+    oog_tribute.token_id = U256::from(2u64);
+    StorageHandle::enter(&mut provider, |storage| {
+        let out_of_gas: PrecompileResult<()> = storage.with_checkpoint(|| {
+            TributeContract::new(storage.clone()).issue(&oog_tribute)?;
+            Err(PrecompileError::OutOfGas)
+        });
+        assert!(matches!(out_of_gas, Err(PrecompileError::OutOfGas)));
+        assert!(TributeContract::new(storage)
+            .get_tribute(oog_tribute.token_id)
+            .unwrap()
+            .is_none());
+    });
+    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage).issue(&tribute).unwrap();
+    });
+    provider.clear_events(TRIBUTE_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(TributeContract::new(storage).issue(&tribute).is_err());
+    });
+    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .burn(tribute.token_id)
+            .unwrap();
+    });
+    provider.clear_events(TRIBUTE_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(TributeContract::new(storage)
+            .burn(tribute.token_id)
+            .is_err());
+    });
+    assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .seal_day(tribute.worldwide_day)
+            .unwrap();
+    });
+    let body_topics = [
+        crate::precompile::ITribute::TributeBodyStored::SIGNATURE_HASH,
+        crate::precompile::ITribute::TributeBodyDeleted::SIGNATURE_HASH,
+    ];
+    assert!(provider
+        .get_events(TRIBUTE_ADDRESS)
+        .iter()
+        .all(|event| !body_topics.contains(&event.topics()[0])));
 }

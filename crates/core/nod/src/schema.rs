@@ -106,11 +106,11 @@ pub struct NodContract {
 
     // slots 1-10: item state record keyed by nod_id
     #[attribute(order = 1)]
-    pub nod_items: outbe_primitives::storage::dsl::Map<U256, NodItemState>,
+    pub(crate) nod_items: outbe_primitives::storage::dsl::Map<U256, NodItemState>,
 
     // slots 11-15: bucket state record keyed by bucket_key
     #[attribute(order = 2)]
-    pub nod_buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
+    pub(crate) nod_buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
 
     // --- Enumeration indexes ---
     // slot 16: owner → count of nods ever issued

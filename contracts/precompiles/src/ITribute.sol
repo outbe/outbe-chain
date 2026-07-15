@@ -2,6 +2,20 @@
 pragma solidity ^0.8.30;
 
 interface ITribute {
+    event TributeBodyStored(
+        uint256 indexed tokenId,
+        address owner,
+        uint32 worldwideDay,
+        uint256 issuanceAmountMinor,
+        uint16 issuanceCurrency,
+        uint256 nominalAmountMinor,
+        uint16 referenceCurrency,
+        uint256 tributePriceMinor,
+        bool excludeFromIntexIssuance
+    );
+
+    event TributeBodyDeleted(uint256 indexed tokenId);
+
     event TributeIssued(
         address indexed owner,
         uint256 tokenId,

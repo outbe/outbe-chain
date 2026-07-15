@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
 use revm::state::{AccountInfo, Bytecode};
 use std::collections::{BTreeMap, HashMap};
@@ -19,6 +19,7 @@ pub struct HashMapStorageProvider {
     transient: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     pub events: HashMap<Address, Vec<LogData>>,
+    ordered_events: Vec<Log>,
     /// canonical-history fixture used by `canonical_block_hash`.
     /// Tests seed this directly via `set_canonical_block_hash`; an unset
     /// entry yields `Ok(None)` (block outside retention / unknown).
@@ -43,6 +44,7 @@ struct Snapshot {
     storage: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
+    ordered_events: Vec<Log>,
 }
 
 impl HashMapStorageProvider {
@@ -53,6 +55,7 @@ impl HashMapStorageProvider {
             transient: HashMap::new(),
             accounts: HashMap::new(),
             events: HashMap::new(),
+            ordered_events: Vec::new(),
             canonical_block_hashes: BTreeMap::new(),
             chain_id,
             timestamp: U256::ZERO,
@@ -98,6 +101,11 @@ impl HashMapStorageProvider {
         self.events.get(&address).unwrap_or(&EMPTY)
     }
 
+    /// Returns emitted logs in their canonical cross-address order.
+    pub fn get_ordered_events(&self) -> &[Log] {
+        &self.ordered_events
+    }
+
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
         self.accounts.entry(address).or_default().nonce = nonce;
     }
@@ -137,6 +145,7 @@ impl HashMapStorageProvider {
 
     pub fn clear_events(&mut self, address: Address) {
         self.events.remove(&address);
+        self.ordered_events.retain(|event| event.address != address);
     }
 
     pub fn set_static(&mut self, is_static: bool) {
@@ -211,6 +220,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        self.ordered_events.push(Log {
+            address,
+            data: event.clone(),
+        });
         self.events.entry(address).or_default().push(event);
         Ok(())
     }
@@ -239,6 +252,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             storage: self.storage.clone(),
             accounts: self.accounts.clone(),
             events: self.events.clone(),
+            ordered_events: self.ordered_events.clone(),
         });
         JournalCheckpoint {
             log_i: 0,
@@ -256,6 +270,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             self.storage = snapshot.storage;
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
+            self.ordered_events = snapshot.ordered_events;
         }
     }
 

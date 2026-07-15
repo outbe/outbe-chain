@@ -10,6 +10,7 @@ use outbe_primitives::math::{
 use crate::{
     constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE},
     errors::NodError,
+    precompile::INod,
     schema::{NodBucketState, NodContract, NodItemState},
 };
 
@@ -140,9 +141,8 @@ impl NodContract<'_> {
         Ok(())
     }
 
-    /// Flip `is_qualified` on a bucket state, without emitting an event.
-    /// Reserved for tests and migration paths; the production qualifier path is
-    /// `NodContract::qualify_bucket` called from `NodLifecycle::begin_block`.
+    /// Test-only direct bucket setup without projection emission.
+    #[cfg(test)]
     pub fn set_qualified(&mut self, bucket_key: B256, is_qualified: bool) -> Result<()> {
         if let Some(mut state) = self.nod_buckets.get(bucket_key)? {
             state.is_qualified = is_qualified;
@@ -170,26 +170,29 @@ impl NodContract<'_> {
     pub(crate) fn add_nod(&mut self, item: &NodItemState, entry_price_minor: U256) -> Result<()> {
         self.nod_items.create(item)?;
 
-        match self.nod_buckets.get(item.bucket_key)? {
+        let final_bucket = match self.nod_buckets.get(item.bucket_key)? {
             Some(mut bucket) => {
                 bucket.total_nods = bucket.total_nods.saturating_add(1);
                 self.nod_buckets.update(&bucket)?;
+                bucket
             }
             None => {
-                self.nod_buckets.create(&NodBucketState {
+                let bucket = NodBucketState {
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
                     is_qualified: false,
                     total_nods: 1,
                     entry_price_minor,
-                })?;
+                };
+                self.nod_buckets.create(&bucket)?;
                 // Park the new bucket in the LB-style bin-tree, indexed by
                 // its floor_price_minor. The qualifier hook drains bins
                 // ascending until it crosses the oracle rate.
                 self.insert_unqualified(item.bucket_key, item.floor_price_minor)?;
+                bucket
             }
-        }
+        };
 
         let oc = self.owner_nod_counts.read(&item.owner)?;
         self.owner_nod_ids
@@ -202,6 +205,9 @@ impl NodContract<'_> {
 
         let supply = self.total_supply.read()?;
         self.total_supply.write(supply + 1)?;
+
+        self.emit_nod_body_stored(item)?;
+        self.emit_bucket_body_stored(&final_bucket)?;
 
         Ok(())
     }
@@ -234,24 +240,62 @@ impl NodContract<'_> {
 
         self.compact_owner_index(item.owner, item.nod_id)?;
 
-        match self.nod_buckets.get(item.bucket_key)? {
+        let final_bucket = match self.nod_buckets.get(item.bucket_key)? {
             Some(mut bucket) => {
                 bucket.total_nods = bucket.total_nods.saturating_sub(1);
                 if bucket.total_nods == 0 {
                     self.nod_buckets.delete(item.bucket_key)?;
+                    None
                 } else {
                     self.nod_buckets.update(&bucket)?;
+                    Some(bucket)
                 }
             }
             None => return Err(NodError::BucketNotFound.into()),
-        }
+        };
 
         let supply = self.total_supply.read()?;
         if supply > 0 {
             self.total_supply.write(supply - 1)?;
         }
 
+        self.emit(INod::NodBodyDeleted { nodId: item.nod_id })?;
+        if let Some(bucket) = final_bucket {
+            self.emit_bucket_body_stored(&bucket)?;
+        } else {
+            self.emit(INod::NodBucketBodyDeleted {
+                bucketKey: item.bucket_key,
+            })?;
+        }
+
         Ok(())
+    }
+
+    fn emit_nod_body_stored(&mut self, item: &NodItemState) -> Result<()> {
+        self.emit(INod::NodBodyStored {
+            nodId: item.nod_id,
+            owner: item.owner,
+            gratisLoadMinor: item.gratis_load_minor,
+            worldwideDay: item.worldwide_day.into(),
+            leagueId: item.league_id,
+            floorPriceMinor: item.floor_price_minor,
+            bucketKey: item.bucket_key,
+            costAmountMinor: item.cost_amount_minor,
+            issuanceCurrency: item.issuance_currency,
+            referenceCurrency: item.reference_currency,
+            issuedAt: item.issued_at,
+        })
+    }
+
+    fn emit_bucket_body_stored(&mut self, bucket: &NodBucketState) -> Result<()> {
+        self.emit(INod::NodBucketBodyStored {
+            bucketKey: bucket.bucket_key,
+            worldwideDay: bucket.worldwide_day.into(),
+            floorPriceMinor: bucket.floor_price_minor,
+            isQualified: bucket.is_qualified,
+            totalNods: bucket.total_nods,
+            entryPriceMinor: bucket.entry_price_minor,
+        })
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------

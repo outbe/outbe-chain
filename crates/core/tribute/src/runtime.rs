@@ -39,6 +39,17 @@ impl TributeContract<'_> {
         let supply = self.total_supply.read()?;
         self.total_supply.write(supply + 1)?;
 
+        self.emit(ITribute::TributeBodyStored {
+            tokenId: tribute.token_id,
+            owner: tribute.owner,
+            worldwideDay: tribute.worldwide_day.into(),
+            issuanceAmountMinor: tribute.issuance_amount_minor,
+            issuanceCurrency: tribute.issuance_currency,
+            nominalAmountMinor: tribute.nominal_amount_minor,
+            referenceCurrency: tribute.reference_currency,
+            tributePriceMinor: tribute.tribute_price_minor,
+            excludeFromIntexIssuance: tribute.exclude_from_intex_issuance,
+        })?;
         self.emit(ITribute::TributeIssued {
             owner: tribute.owner,
             tokenId: tribute.token_id,
@@ -64,6 +75,7 @@ impl TributeContract<'_> {
             self.total_supply.write(supply - 1)?;
         }
 
+        self.emit(ITribute::TributeBodyDeleted { tokenId: token_id })?;
         self.emit(ITribute::TributeBurned {
             tokenId: token_id,
             owner: tribute.owner,

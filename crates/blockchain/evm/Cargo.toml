@@ -75,6 +75,7 @@ tracing.workspace = true
 [dev-dependencies]
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true
+outbe-common.workspace = true
 outbe-primitives = { workspace = true, features = [] }
 outbe-validatorset.workspace = true
 reth-trie = { workspace = true, features = ["test-utils"] }

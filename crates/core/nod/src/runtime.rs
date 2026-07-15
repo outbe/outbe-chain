@@ -34,8 +34,19 @@ impl NodContract<'_> {
             .nod_buckets
             .get(bucket_key)?
             .ok_or_else(|| PrecompileError::Revert("qualify_bucket: bucket missing".into()))?;
+        if bucket.is_qualified {
+            return Ok(());
+        }
         bucket.is_qualified = true;
         self.nod_buckets.update(&bucket)?;
+        self.emit(INod::NodBucketBodyStored {
+            bucketKey: bucket.bucket_key,
+            worldwideDay: bucket.worldwide_day.into(),
+            floorPriceMinor: bucket.floor_price_minor,
+            isQualified: bucket.is_qualified,
+            totalNods: bucket.total_nods,
+            entryPriceMinor: bucket.entry_price_minor,
+        })?;
         self.emit(INod::NodBucketQualified {
             bucketKey: bucket_key,
             worldwideDay: U256::from(u32::from(worldwide_day)),

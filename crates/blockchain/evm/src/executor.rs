@@ -3070,12 +3070,14 @@ mod tests {
         RecoveredTx as _,
     };
     use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_common::WorldwideDay;
+    use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
     use outbe_primitives::addresses::{
-        CYCLE_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
+        CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
         SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
     };
-    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
     use outbe_primitives::consensus::{
         ConsensusExecutionBridge, GenesisValidator, GenesisValidators,
     };
@@ -3302,6 +3304,7 @@ mod tests {
             outbe_primitives::addresses::REWARDS_ADDRESS,
             outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            NOD_ADDRESS,
             // marker allowlist: the accounting-progress marker account
             // is preserved across EIP-161 by `0xef` bytecode in production, so its
             // seeded slot survives as live state here too (otherwise an empty
@@ -5857,6 +5860,125 @@ mod tests {
     }
 
     #[test]
+    fn hook_events_receipt_carries_ordered_nod_qualification_projection() {
+        let proposer = test_evm_signer().address();
+        let worldwide_day = WorldwideDay::new(20241220);
+        let floor_price_minor = U256::from(500_000_000_000_000_000u128);
+        let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
+        let seed_state = || {
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                outbe_nodfactory::api::issue_nod(
+                    &storage,
+                    &NodIssueParams {
+                        owner: proposer,
+                        gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+                        worldwide_day,
+                        league_id: 1,
+                        floor_price_minor,
+                        entry_price_minor: U256::from(450_000_000_000_000_000u128),
+                        cost_amount_minor: U256::ZERO,
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                    },
+                )
+                .expect("seed unqualified Nod through NodFactory");
+            })
+        };
+        let mut proposer_state = seed_state();
+
+        let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+        let (_, hook_events) =
+            super::run_atomic_storage_hooks(&mut proposer_state, ctx.clone(), |hook_ctx| {
+                <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)
+            })
+            .expect("Nod qualification hook should succeed");
+        let (whitelisted_logs, tracing_only) = partition_hook_events(&hook_events);
+        assert!(tracing_only.is_empty());
+        assert_eq!(whitelisted_logs.len(), 2);
+        assert!(whitelisted_logs
+            .iter()
+            .all(|log| log.address == NOD_ADDRESS));
+        assert_eq!(
+            whitelisted_logs[0].data.topics()[0],
+            INod::NodBucketBodyStored::SIGNATURE_HASH
+        );
+        assert_eq!(
+            whitelisted_logs[1].data.topics()[0],
+            INod::NodBucketQualified::SIGNATURE_HASH
+        );
+
+        let mut validator_state = seed_state();
+        let (_, validator_events) =
+            super::run_atomic_storage_hooks(&mut validator_state, ctx.clone(), |hook_ctx| {
+                <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)
+            })
+            .expect("validator replay should qualify the same bucket");
+        let (validator_logs, _) = partition_hook_events(&validator_events);
+        assert_eq!(validator_logs, whitelisted_logs);
+
+        let mut failed_state = seed_state();
+        let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
+            <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+            Err(outbe_primitives::error::PrecompileError::Fatal(
+                "later hook failed".into(),
+            ))
+        })
+        .expect_err("late hook failure must revert Nod qualification and its event");
+        assert!(error.to_string().contains("later hook failed"));
+        let (_, rollback_events) =
+            super::run_atomic_storage_hooks(&mut failed_state, ctx, |hook_ctx| {
+                let bucket = NodContract::new(hook_ctx.storage.clone())
+                    .get_bucket(bucket_key)?
+                    .expect("seeded bucket remains present");
+                assert!(!bucket.is_qualified);
+                Ok(())
+            })
+            .expect("rollback state should remain readable");
+        assert!(rollback_events.is_empty());
+
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(test_evm_signer());
+        let system_txs =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let execute_block = |expected_begin_system_txs| {
+            let mut state = seed_state();
+            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut execution = execution_ctx(Some(0), Bytes::new());
+            execution.proposer_evm_address = Some(proposer);
+            execution.expected_begin_system_txs = expected_begin_system_txs;
+            let mut executor = config.create_executor(evm, execution);
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution lifecycle should qualify the Nod bucket");
+            for tx in system_txs.clone() {
+                executor
+                    .execute_transaction(tx)
+                    .expect("begin-zone system transaction should execute");
+            }
+            executor.receipts().to_vec()
+        };
+        let proposer_receipts = execute_block(Vec::new());
+        let validator_receipts = execute_block(system_txs.clone());
+        assert_eq!(proposer_receipts, validator_receipts);
+        let proposer_receipt = proposer_receipts
+            .last()
+            .expect("mandatory HookEvents receipt");
+        assert!(proposer_receipt.success);
+        assert_eq!(proposer_receipt.logs.len(), 2);
+        assert!(proposer_receipt
+            .logs
+            .iter()
+            .all(|log| log.address == NOD_ADDRESS));
+        assert_eq!(
+            proposer_receipt.logs[0].data.topics()[0],
+            INod::NodBucketBodyStored::SIGNATURE_HASH
+        );
+        assert_eq!(
+            proposer_receipt.logs[1].data.topics()[0],
+            INod::NodBucketQualified::SIGNATURE_HASH
+        );
+    }
+
+    #[test]
     fn oracle_slash_window_runs_after_boundary_activation() {
         let signer = test_evm_signer();
         let proposer = signer.address();
@@ -7850,7 +7972,6 @@ mod tests {
     //      to the normal fee path.
     // -----------------------------------------------------------------
 
-    use alloy_sol_types::SolEvent as _;
     use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
     use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 

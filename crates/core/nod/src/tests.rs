@@ -1,6 +1,7 @@
 use alloy_primitives::{address, Address, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
+use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::erc::{ERC721_ENUMERABLE_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID};
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::dsl::StorageRecord;
@@ -68,6 +69,169 @@ fn seed_nod(nod: &mut NodContract, params: &NodIssueParams, now: u64) -> U256 {
 fn qualify_params(nod: &mut NodContract, params: &NodIssueParams) {
     let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
     nod.set_qualified(bk, true).unwrap();
+}
+
+#[test]
+fn test_add_nod_emits_complete_item_then_bucket_projection() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let params = sample_params();
+    let nod_id = StorageHandle::enter(&mut provider, |storage| {
+        let mut nod = NodContract::new(storage);
+        seed_nod(&mut nod, &params, T_NOW)
+    });
+
+    let events = provider.get_events(NOD_ADDRESS);
+    assert_eq!(events.len(), 2);
+    let item = INod::NodBodyStored::decode_log_data(&events[0]).unwrap();
+    assert_eq!(item.nodId, nod_id);
+    assert_eq!(item.owner, params.owner);
+    assert_eq!(
+        item.bucketKey,
+        NodContract::bucket_key(params.worldwide_day, params.floor_price_minor)
+    );
+    assert_eq!(item.issuanceCurrency, params.issuance_currency);
+    assert_eq!(item.referenceCurrency, params.reference_currency);
+    assert_eq!(item.issuedAt, T_NOW);
+    let bucket = INod::NodBucketBodyStored::decode_log_data(&events[1]).unwrap();
+    assert_eq!(bucket.bucketKey, item.bucketKey);
+    assert_eq!(bucket.totalNods, 1);
+    assert!(!bucket.isQualified);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage);
+        let persisted_item = nod.get_item(nod_id).unwrap().unwrap();
+        assert_eq!(item.nodId, persisted_item.nod_id);
+        assert_eq!(item.owner, persisted_item.owner);
+        assert_eq!(item.gratisLoadMinor, persisted_item.gratis_load_minor);
+        assert_eq!(item.worldwideDay, u32::from(persisted_item.worldwide_day));
+        assert_eq!(item.leagueId, persisted_item.league_id);
+        assert_eq!(item.floorPriceMinor, persisted_item.floor_price_minor);
+        assert_eq!(item.bucketKey, persisted_item.bucket_key);
+        assert_eq!(item.costAmountMinor, persisted_item.cost_amount_minor);
+        assert_eq!(item.issuanceCurrency, persisted_item.issuance_currency);
+        assert_eq!(item.referenceCurrency, persisted_item.reference_currency);
+        assert_eq!(item.issuedAt, persisted_item.issued_at);
+
+        let persisted_bucket = nod.get_bucket(item.bucketKey).unwrap().unwrap();
+        assert_eq!(bucket.bucketKey, persisted_bucket.bucket_key);
+        assert_eq!(
+            bucket.worldwideDay,
+            u32::from(persisted_bucket.worldwide_day)
+        );
+        assert_eq!(bucket.floorPriceMinor, persisted_bucket.floor_price_minor);
+        assert_eq!(bucket.isQualified, persisted_bucket.is_qualified);
+        assert_eq!(bucket.totalNods, persisted_bucket.total_nods);
+        assert_eq!(bucket.entryPriceMinor, persisted_bucket.entry_price_minor);
+    });
+}
+
+#[test]
+fn test_remove_nod_emits_item_then_final_bucket_projection() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let params = sample_params();
+    let (first, second) = StorageHandle::enter(&mut provider, |storage| {
+        let mut nod = NodContract::new(storage);
+        let first_id = seed_nod(&mut nod, &params, T_NOW);
+        let first = nod.get_item(first_id).unwrap().unwrap();
+        let second = NodItemState {
+            nod_id: U256::from(2),
+            issued_at: T_NOW + 1,
+            ..first
+        };
+        nod.add_nod(&second, params.entry_price_minor).unwrap();
+        (first, second)
+    });
+
+    let issue_events = provider.get_events(NOD_ADDRESS);
+    assert_eq!(issue_events.len(), 4);
+    assert_eq!(
+        INod::NodBucketBodyStored::decode_log_data(&issue_events[3])
+            .unwrap()
+            .totalNods,
+        2
+    );
+
+    provider.clear_events(NOD_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        NodContract::new(storage).remove_nod(&first).unwrap();
+    });
+    let events = provider.get_events(NOD_ADDRESS);
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        INod::NodBodyDeleted::decode_log_data(&events[0])
+            .unwrap()
+            .nodId,
+        first.nod_id
+    );
+    assert_eq!(
+        INod::NodBucketBodyStored::decode_log_data(&events[1])
+            .unwrap()
+            .totalNods,
+        1
+    );
+
+    provider.clear_events(NOD_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        NodContract::new(storage).remove_nod(&second).unwrap();
+    });
+    let events = provider.get_events(NOD_ADDRESS);
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        INod::NodBodyDeleted::decode_log_data(&events[0])
+            .unwrap()
+            .nodId,
+        second.nod_id
+    );
+    assert_eq!(
+        INod::NodBucketBodyDeleted::decode_log_data(&events[1])
+            .unwrap()
+            .bucketKey,
+        second.bucket_key
+    );
+}
+
+#[test]
+fn test_qualification_emits_complete_bucket_before_product_event_and_noop_is_silent() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let params = sample_params();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut nod = NodContract::new(storage);
+        seed_nod(&mut nod, &params, T_NOW);
+    });
+    provider.clear_events(NOD_ADDRESS);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1, 1),
+            storage,
+        );
+        crate::hooks::qualify_buckets_with_rate(&ctx, params.floor_price_minor).unwrap();
+    });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        NodContract::new(storage)
+            .qualify_bucket(params.worldwide_day, params.floor_price_minor)
+            .unwrap();
+    });
+    let events = provider.get_events(NOD_ADDRESS);
+    assert_eq!(events.len(), 2);
+    let stored = INod::NodBucketBodyStored::decode_log_data(&events[0]).unwrap();
+    assert!(stored.isQualified);
+    assert_eq!(stored.totalNods, 1);
+    assert_eq!(
+        events[1].topics()[0],
+        INod::NodBucketQualified::SIGNATURE_HASH
+    );
+
+    provider.clear_events(NOD_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        NodContract::new(storage)
+            .qualify_bucket(params.worldwide_day, params.floor_price_minor)
+            .unwrap();
+    });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
 }
 
 #[test]

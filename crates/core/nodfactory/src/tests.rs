@@ -1,8 +1,8 @@
-use alloy_primitives::{address, Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
-use outbe_nod::{NodContract, NodIssueParams};
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
+use outbe_primitives::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -37,9 +37,9 @@ fn sample_params() -> NodIssueParams {
 const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
 
 fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {
-    let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
-    let mut nod = NodContract::new(storage.clone());
-    nod.set_qualified(bk, true).unwrap();
+    NodContract::new(storage.clone())
+        .qualify_bucket(params.worldwide_day, params.floor_price_minor)
+        .unwrap();
 }
 
 fn find_valid_nonce(nod_id: U256) -> U256 {
@@ -56,6 +56,19 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, f)
+}
+
+fn assert_ordered_events(provider: &HashMapStorageProvider, expected: &[(Address, B256)]) {
+    let events: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| event.address == NOD_ADDRESS || event.address == NOD_FACTORY_ADDRESS)
+        .collect();
+    assert_eq!(events.len(), expected.len());
+    for (event, (address, signature)) in events.iter().zip(expected) {
+        assert_eq!(event.address, *address);
+        assert_eq!(event.data.topics()[0], *signature);
+    }
 }
 
 #[test]
@@ -80,12 +93,98 @@ fn test_issue_nod() {
 }
 
 #[test]
+fn projection_events_use_nod_emitter_and_precede_factory_product_events() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let first = sample_params();
+    let first_id = StorageHandle::enter(&mut provider, |storage| {
+        factory_api::issue_nod(&storage, &first).unwrap()
+    });
+    assert_ordered_events(
+        &provider,
+        &[
+            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
+        ],
+    );
+
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+    let mut second = sample_params();
+    second.owner = address!("0x2222222222222222222222222222222222222222");
+    let second_id = StorageHandle::enter(&mut provider, |storage| {
+        factory_api::issue_nod(&storage, &second).unwrap()
+    });
+    assert_ordered_events(
+        &provider,
+        &[
+            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
+        ],
+    );
+
+    StorageHandle::enter(&mut provider, |storage| qualify_params(&storage, &first));
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        factory_api::mine_gratis(
+            &storage,
+            first.owner,
+            first_id,
+            find_valid_nonce(first_id),
+            Address::ZERO,
+        )
+        .unwrap();
+    });
+    assert_ordered_events(
+        &provider,
+        &[
+            (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
+        ],
+    );
+
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        factory_api::mine_gratis(
+            &storage,
+            second.owner,
+            second_id,
+            find_valid_nonce(second_id),
+            Address::ZERO,
+        )
+        .unwrap();
+    });
+    assert_ordered_events(
+        &provider,
+        &[
+            (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBucketBodyDeleted::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
+        ],
+    );
+}
+
+#[test]
 fn test_issue_duplicate_fails() {
-    with_storage(|storage| {
-        let params = sample_params();
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let params = sample_params();
+    StorageHandle::enter(&mut provider, |storage| {
         factory_api::issue_nod(&storage, &params).unwrap();
+    });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+
+    StorageHandle::enter(&mut provider, |storage| {
         assert!(factory_api::issue_nod(&storage, &params).is_err());
     });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]
@@ -139,6 +238,8 @@ fn test_mine_gratis_requires_qualification() {
         let nonce = find_valid_nonce(nod_id);
         (nod_id, nonce, params)
     });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
 
     provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
@@ -146,6 +247,8 @@ fn test_mine_gratis_requires_qualification() {
             .unwrap_err();
         assert!(err.to_string().contains("qualified"));
     });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]
@@ -173,16 +276,24 @@ fn test_mine_gratis_with_valid_pow() {
 
 #[test]
 fn test_mine_gratis_wrong_owner_fails() {
-    with_storage(|storage| {
-        let params = sample_params();
-        let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let params = sample_params();
+    let nod_id = StorageHandle::enter(&mut provider, |storage| {
+        factory_api::issue_nod(&storage, &params).unwrap()
+    });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
 
+    StorageHandle::enter(&mut provider, |storage| {
         let wrong_owner = address!("0x9999999999999999999999999999999999999999");
         assert!(
             factory_api::mine_gratis(&storage, wrong_owner, nod_id, U256::ZERO, Address::ZERO)
                 .is_err()
         );
     });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]
@@ -201,6 +312,8 @@ fn test_mine_gratis_invalid_pow_fails() {
         factory_api::issue_nod(&storage, &params).unwrap();
         qualify_params(&storage, &params);
     });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
 
     provider.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut provider, |storage| {
@@ -209,6 +322,8 @@ fn test_mine_gratis_invalid_pow_fails() {
                 .is_err()
         );
     });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]
@@ -306,6 +421,68 @@ fn test_mine_gratis_failure_no_partial_loss() {
 }
 
 #[test]
+fn test_mine_gratis_mint_failure_rolls_back_projection_and_product_events() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let params = sample_params();
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
+    let nonce = find_valid_nonce(nod_id);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        factory_api::issue_nod(&storage, &params).unwrap();
+        qualify_params(&storage, &params);
+        outbe_gratis::Gratis::new(storage)
+            .total_supply
+            .write(U256::MAX)
+            .unwrap();
+    });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let result = storage.with_checkpoint(|| {
+            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
+        });
+        assert!(result.unwrap_err().to_string().contains("overflow"));
+        assert!(NodContract::new(storage)
+            .get_item(nod_id)
+            .unwrap()
+            .is_some());
+    });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
+}
+
+#[test]
+fn test_mine_gratis_payment_failure_emits_no_projection_event() {
+    let mut params = sample_params();
+    params.cost_amount_minor = U256::from(1u64);
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
+    let nonce = find_valid_nonce(nod_id);
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut provider, |storage| {
+        factory_api::issue_nod(&storage, &params).unwrap();
+        qualify_params(&storage, &params);
+    });
+    provider.clear_events(NOD_ADDRESS);
+    provider.clear_events(NOD_FACTORY_ADDRESS);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(
+            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, PAY_ASSET).is_err()
+        );
+        assert!(NodContract::new(storage)
+            .get_item(nod_id)
+            .unwrap()
+            .is_some());
+    });
+    assert!(provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
+}
+
+#[test]
 fn test_mine_gratis_supply_invariant() {
     // Distinct (owner, wwd) gives distinct ids.
     let p1 = sample_params();
@@ -392,7 +569,6 @@ fn test_set_clear_does_not_corrupt_root() {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
     let nonce = find_valid_nonce(nod_id);
     let bin_id = NodContract::price_to_bin(params.floor_price_minor).unwrap();
-    let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
 
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
@@ -401,9 +577,10 @@ fn test_set_clear_does_not_corrupt_root() {
         factory_api::issue_nod(&s, &params).unwrap();
         let nod = NodContract::new(s.clone());
         assert!(tree_math::contains(&nod, bin_id).unwrap());
-        // Manually qualify to remove from the bin (mimics the hook).
-        let mut nod_mut = NodContract::new(s);
-        nod_mut.set_qualified(bk, true).unwrap();
+        // Qualify through the canonical event-emitting path.
+        NodContract::new(s)
+            .qualify_bucket(params.worldwide_day, params.floor_price_minor)
+            .unwrap();
     });
 
     storage.set_timestamp(U256::from(T_NOW));
