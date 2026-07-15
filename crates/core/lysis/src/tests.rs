@@ -1,10 +1,10 @@
 use crate::algorithm::*;
 use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, LogData, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
-use outbe_nod::NodContract;
-use outbe_nod::{precompile::INod, NodRepositoryReader};
+use outbe_compressed_entities::{decode_nod_item_v1, derive_poseidon_entity_id, EntityId36};
+use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::addresses::NOD_ADDRESS;
@@ -47,13 +47,13 @@ fn gas_audit_address(n: u64) -> Address {
 }
 
 fn gas_audit_tribute(
-    token_id: u64,
+    _tribute_seed: u64,
     owner: Address,
     worldwide_day: WorldwideDay,
     nominal_amount_minor: U256,
 ) -> TributeData {
     TributeData {
-        token_id: U256::from(token_id),
+        tribute_id: entity_id(worldwide_day, owner),
         owner,
         worldwide_day,
         issuance_amount_minor: nominal_amount_minor / U256::from(2u64),
@@ -63,6 +63,18 @@ fn gas_audit_tribute(
         exclude_from_intex_issuance: false,
         tribute_price_minor: U256::ZERO,
     }
+}
+
+fn entity_id(worldwide_day: WorldwideDay, owner: Address) -> EntityId36 {
+    derive_poseidon_entity_id(owner, worldwide_day).unwrap()
+}
+
+fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
+    let decoded = INod::NodBodyStored::decode_log_data(event).unwrap();
+    let event_id = EntityId36::try_from(decoded.nodId.as_ref()).unwrap();
+    let item = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
+    assert_eq!(event_id, item.nod_id);
+    item
 }
 
 #[test]
@@ -163,20 +175,20 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         .get_events(NOD_ADDRESS)
         .iter()
         .filter(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .map(decode_nod_body_event)
         .collect::<Vec<_>>();
     assert_eq!(stored_items.len(), DENSE_TRIBUTE_COUNT as usize);
     let mut issued_gratis = U256::ZERO;
     for (idx, item) in stored_items.iter().enumerate() {
         assert_eq!(item.owner, gas_audit_address(idx as u64 + 1));
-        assert_eq!(item.worldwideDay, u32::from(wwd));
-        assert_eq!(item.leagueId, 1);
-        assert!(!item.gratisLoadMinor.is_zero());
+        assert_eq!(item.worldwide_day, wwd);
+        assert_eq!(item.league_id, 1);
+        assert!(!item.gratis_load_minor.is_zero());
         assert_eq!(
-            item.costAmountMinor,
-            cost_of_gratis * item.gratisLoadMinor / SCALE_1E18,
+            item.cost_amount_minor,
+            cost_of_gratis * item.gratis_load_minor / SCALE_1E18,
         );
-        issued_gratis += item.gratisLoadMinor;
+        issued_gratis += item.gratis_load_minor;
     }
     assert_eq!(issued_gratis + result.remaining_gratis, gratis_allocation);
 }
@@ -531,22 +543,23 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             .write(&0u32, cost_of_gratis)
             .unwrap();
 
-        // Seed only the off-chain repository. No Tribute EVM body or body index
-        // is written, so successful Lysis proves the production read cutover.
-        bodies
-            .tribute_writer
-            .put(&TributeData {
-                token_id: U256::from(1u64),
-                owner,
-                worldwide_day: wwd,
-                issuance_amount_minor: U256::in_units(50u64),
-                issuance_currency: 1,
-                nominal_amount_minor: nominal,
-                reference_currency: 840,
-                exclude_from_intex_issuance: false,
-                tribute_price_minor: U256::ZERO,
-            })
-            .unwrap();
+        // Seed compact lifecycle state plus the canonical direct-map commitment,
+        // then materialize only the off-chain body. No legacy full EVM body or
+        // body index is involved.
+        let tribute = TributeData {
+            tribute_id: entity_id(wwd, owner),
+            owner,
+            worldwide_day: wwd,
+            issuance_amount_minor: U256::in_units(50u64),
+            issuance_currency: 1,
+            nominal_amount_minor: nominal,
+            reference_currency: 840,
+            exclude_from_intex_issuance: false,
+            tribute_price_minor: U256::ZERO,
+        };
+        let mut tribute_contract = TributeContract::new(s.clone());
+        tribute_contract.unseal_day(wwd).unwrap();
+        bodies.issue(&mut tribute_contract, &tribute);
 
         // 3. Pick a gratis allocation that produces a positive gratis_load.
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
@@ -570,25 +583,25 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         .get_events(NOD_ADDRESS)
         .iter()
         .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .map(decode_nod_body_event)
         .expect("NOD body event");
-    assert_eq!(item.nodId, result.nod_ids[0]);
-    assert_eq!(item.referenceCurrency, 840);
+    assert_eq!(item.nod_id, result.nod_ids[0]);
+    assert_eq!(item.reference_currency, 840);
 
-    let expected = cost_of_gratis * item.gratisLoadMinor / SCALE_1E18;
+    let expected = cost_of_gratis * item.gratis_load_minor / SCALE_1E18;
     assert_eq!(
-        item.costAmountMinor,
+        item.cost_amount_minor,
         expected,
         "cost_amount_minor must equal cost_of_gratis * gratis_load / SCALE_1E18; \
          pre-fix value (missing /SCALE) would be {}",
-        cost_of_gratis * item.gratisLoadMinor
+        cost_of_gratis * item.gratis_load_minor
     );
 
     let upper_bound = U256::in_units(1_000u64);
     assert!(
-        item.costAmountMinor <= upper_bound,
+        item.cost_amount_minor <= upper_bound,
         "cost_amount_minor {} looks like a 10^36-scaled value; likely a scale-mismatch regression",
-        item.costAmountMinor
+        item.cost_amount_minor
     );
 }
 
@@ -826,7 +839,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         bodies.issue(
             &mut tribute,
             &TributeData {
-                token_id: U256::from(1u64),
+                tribute_id: entity_id(wwd, owner),
                 owner,
                 worldwide_day: wwd,
                 issuance_amount_minor: U256::in_units(50u64),
@@ -867,11 +880,11 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         .get_events(NOD_ADDRESS)
         .iter()
         .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(|event| INod::NodBodyStored::decode_log_data(event).unwrap())
+        .map(decode_nod_body_event)
         .expect("NOD body event");
-    assert_eq!(item.nodId, result.nod_ids[0]);
-    assert_eq!(item.gratisLoadMinor, gratis_allocation);
-    assert!(item.gratisLoadMinor < eight_percent_load);
+    assert_eq!(item.nod_id, result.nod_ids[0]);
+    assert_eq!(item.gratis_load_minor, gratis_allocation);
+    assert!(item.gratis_load_minor < eight_percent_load);
 }
 
 // ---------------------------------------------------------------------

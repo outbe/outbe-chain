@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-common.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultprovider.workspace = true
@@ -19,6 +20,7 @@ hex.workspace = true
 
 [dev-dependencies]
 outbe-nod = { workspace = true, features = ["test-utils"] }
+outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gratis.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }

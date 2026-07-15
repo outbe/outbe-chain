@@ -1,0 +1,25 @@
+[package]
+name = "outbe-compressed-entities"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-sol-types.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+hex.workspace = true
+outbe-common.workspace = true
+outbe-macros.workspace = true
+outbe-poseidon.workspace = true
+outbe-primitives.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

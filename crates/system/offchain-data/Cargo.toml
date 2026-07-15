@@ -9,6 +9,7 @@ publish.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 outbe-common.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-nod.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-primitives.workspace = true

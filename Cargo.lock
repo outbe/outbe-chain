@@ -7298,6 +7298,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-compressed-entities"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
+ "hex",
+ "outbe-common",
+ "outbe-macros",
+ "outbe-poseidon",
+ "outbe-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-consensus"
 version = "0.1.0"
 dependencies = [
@@ -7418,6 +7436,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-evm",
  "outbe-governance",
  "outbe-gratis",
@@ -7539,6 +7558,7 @@ dependencies = [
  "outbe-accounting",
  "outbe-agentreward",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
@@ -7761,6 +7781,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-fidelity",
  "outbe-intex",
  "outbe-nod",
@@ -7811,11 +7832,11 @@ dependencies = [
  "hex",
  "mongodb",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-macros",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "postcard",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -7884,9 +7905,11 @@ dependencies = [
  "alloy-sol-types",
  "hex",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-nod",
+ "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-vaultprovider",
  "ring",
@@ -7900,6 +7923,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-nod",
  "outbe-offchain-storage",
  "outbe-primitives",
@@ -8182,10 +8206,10 @@ dependencies = [
  "alloy-sol-types",
  "mongodb",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-macros",
  "outbe-offchain-storage",
  "outbe-primitives",
- "postcard",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -8200,6 +8224,7 @@ dependencies = [
  "hex",
  "outbe-agentreward",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-lysis",
  "outbe-macros",
  "outbe-metadosis",

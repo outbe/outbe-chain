@@ -2,6 +2,7 @@ use crate::algorithm::calc_fraction_distribution_fp;
 use crate::constants::calc_floor_price;
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::EntityId36;
 use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -11,8 +12,8 @@ use outbe_primitives::{
 
 /// Result of a lysis execution.
 pub struct LysisResult {
-    pub nod_ids: Vec<U256>,
-    pub tribute_ids: Vec<U256>,
+    pub nod_ids: Vec<EntityId36>,
+    pub tribute_ids: Vec<EntityId36>,
     pub remaining_gratis: U256,
 }
 
@@ -59,7 +60,7 @@ pub fn lysis(
     }
 
     if total_interest.is_zero() {
-        let tribute_ids = tributes.iter().map(|t| t.token_id).collect();
+        let tribute_ids = tributes.iter().map(|t| t.tribute_id).collect();
         return Ok(LysisResult {
             nod_ids: vec![],
             tribute_ids,
@@ -83,7 +84,7 @@ pub fn lysis(
     let mut nod_ids = Vec::with_capacity(tributes.len());
     let mut tribute_ids = Vec::with_capacity(tributes.len());
     // Track which tribute token_ids were successfully processed.
-    let mut processed_tribute_ids: Vec<U256> = Vec::with_capacity(tributes.len());
+    let mut processed_tribute_ids: Vec<EntityId36> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
     // Per-owner nominal accumulator for the day's creator-reward split. BTreeMap
     // keeps the contributor order deterministic (sorted by address) across nodes.
@@ -91,7 +92,7 @@ pub fn lysis(
         std::collections::BTreeMap::new();
 
     for (i, tribute) in tributes.iter().enumerate() {
-        tribute_ids.push(tribute.token_id);
+        tribute_ids.push(tribute.tribute_id);
 
         let fi = tribute_fis[i];
         let fraction_fp = fi_fraction_map.get(&fi).copied().unwrap_or(U256::ZERO);
@@ -140,7 +141,7 @@ pub fn lysis(
             },
         )?;
         nod_ids.push(nod_id);
-        processed_tribute_ids.push(tribute.token_id);
+        processed_tribute_ids.push(tribute.tribute_id);
         // Credit this owner's nominal toward the creator-reward split.
         *contributors.entry(tribute.owner).or_insert(U256::ZERO) += tribute.nominal_amount_minor;
     }

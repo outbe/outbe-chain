@@ -66,7 +66,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         GRATIS_POOL_ADDRESS,
@@ -117,6 +117,8 @@ pub mod marker_addresses {
         TEE_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
+        // System-only compressed-entity commitment state (no public dispatch).
+        COMPRESSED_ENTITIES_ADDRESS,
     ];
 }
 
@@ -3123,6 +3125,7 @@ mod tests {
     use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
+    use outbe_compressed_entities::{CommitmentState, EntityId36};
     use outbe_nod::{
         precompile::INod, NodBucketState, NodContract, NodItemState, NodRepositoryReader,
         NodRepositoryWriter,
@@ -3133,7 +3136,7 @@ mod tests {
         CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
         SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
     };
-    use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::{
         ConsensusExecutionBridge, GenesisValidator, GenesisValidators,
     };
@@ -3145,6 +3148,7 @@ mod tests {
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
+    use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
     use reth_ethereum::chainspec::ChainSpec;
     use reth_ethereum::chainspec::MAINNET;
     use reth_ethereum::evm::revm::db::State;
@@ -3361,6 +3365,7 @@ mod tests {
             outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
             outbe_primitives::addresses::METADOSIS_ADDRESS,
             NOD_ADDRESS,
+            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             // marker allowlist: the accounting-progress marker account
             // is preserved across EIP-161 by `0xef` bytecode in production, so its
             // seeded slot survives as live state here too (otherwise an empty
@@ -5922,12 +5927,30 @@ mod tests {
         let worldwide_day = WorldwideDay::new(20241220);
         let floor_price_minor = U256::from(500_000_000_000_000_000u128);
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
+        let bucket_body = NodBucketState {
+            bucket_key,
+            worldwide_day,
+            floor_price_minor,
+            is_qualified: false,
+            total_nods: 1,
+            entry_price_minor: U256::from(450_000_000_000_000_000u128),
+        };
+        let bucket_id = outbe_nod::canonical_bucket_id(&bucket_body);
+        let adapter = Arc::new(MemoryStorage::new());
+        let body_reader: StorageReaderHandle = adapter.clone();
+        let body_writer: StorageWriterHandle = adapter;
+        let nod_reader = NodRepositoryReader::new(body_reader.clone());
+        let runtime_readers = RuntimeBodyReaders::new(body_reader.clone());
+        NodRepositoryWriter::new(body_reader, body_writer)
+            .put_bucket(&bucket_body)
+            .expect("seed finalized-parent Nod bucket");
         let seed_state = || {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-                outbe_nod::api::fixture_add_nod(
+                outbe_nod::api::add_nod(
                     &storage,
+                    &nod_reader,
                     &NodItemState {
-                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day),
+                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
                         owner: proposer,
                         gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
                         worldwide_day,
@@ -5949,7 +5972,7 @@ mod tests {
         let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
         let (_, hook_events) =
             super::run_atomic_storage_hooks(&mut proposer_state, ctx.clone(), |hook_ctx| {
-                <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)
+                outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)
             })
             .expect("Nod qualification hook should succeed");
         let (whitelisted_logs, tracing_only) = partition_hook_events(&hook_events);
@@ -5970,7 +5993,7 @@ mod tests {
         let mut validator_state = seed_state();
         let (_, validator_events) =
             super::run_atomic_storage_hooks(&mut validator_state, ctx.clone(), |hook_ctx| {
-                <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)
+                outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)
             })
             .expect("validator replay should qualify the same bucket");
         let (validator_logs, _) = partition_hook_events(&validator_events);
@@ -5978,7 +6001,7 @@ mod tests {
 
         let mut failed_state = seed_state();
         let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
-            <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+            outbe_nod::hooks::qualify_nods_with_reader(hook_ctx, &nod_reader)?;
             Err(outbe_primitives::error::PrecompileError::Fatal(
                 "later hook failed".into(),
             ))
@@ -5987,8 +6010,7 @@ mod tests {
         assert!(error.to_string().contains("later hook failed"));
         let (_, rollback_events) =
             super::run_atomic_storage_hooks(&mut failed_state, ctx, |hook_ctx| {
-                let bucket = NodContract::new(hook_ctx.storage.clone())
-                    .get_bucket(bucket_key)?
+                let bucket = outbe_nod::api::get_bucket(&hook_ctx.storage, &nod_reader, bucket_id)?
                     .expect("seeded bucket remains present");
                 assert!(!bucket.is_qualified);
                 Ok(())
@@ -5996,7 +6018,9 @@ mod tests {
             .expect("rollback state should remain readable");
         assert!(rollback_events.is_empty());
 
-        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(test_evm_signer());
+        let config =
+            OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), runtime_readers)
+                .with_evm_signer(test_evm_signer());
         let system_txs =
             begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
         let execute_block = |expected_begin_system_txs| {
@@ -6072,7 +6096,7 @@ mod tests {
                     &storage,
                     &empty_reader,
                     &NodItemState {
-                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day),
+                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
                         owner: proposer,
                         gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
                         worldwide_day,
@@ -6103,7 +6127,16 @@ mod tests {
                     entry_price_minor: U256::from(450_000_000_000_000_000u128),
                 })
                 .expect("seed independent off-chain Nod bucket");
-            RuntimeBodyReaders::new(reader)
+            let readers = RuntimeBodyReaders::new(reader);
+            assert!(readers
+                .nod()
+                .get_bucket(outbe_compressed_entities::EntityId36::new(
+                    worldwide_day,
+                    bucket_key.0,
+                ))
+                .expect("independent bucket read")
+                .is_some());
+            readers
         };
 
         let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
@@ -6146,6 +6179,186 @@ mod tests {
                     && log.data.topics().first() == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
             })
         }));
+    }
+
+    #[test]
+    fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        let proposer = test_evm_signer().address();
+        let day = WorldwideDay::new(20_260_716);
+        let tribute_owner = Address::repeat_byte(0x31);
+        let tribute_id =
+            outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
+        let nod_owner = Address::repeat_byte(0x32);
+        let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
+        let bucket_key = NodContract::bucket_key(day, U256::from(13));
+        let bucket_id = EntityId36::new(day, bucket_key.0);
+        let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+
+        let run = || {
+            let bodies = Arc::new(MemoryStorage::new());
+            let tribute_reader = TributeRepositoryReader::new(bodies.clone());
+            let nod_reader = NodRepositoryReader::new(bodies);
+            let mut state =
+                state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
+            let (changes, events) =
+                super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
+                    let tribute = TributeData {
+                        tribute_id,
+                        owner: tribute_owner,
+                        worldwide_day: day,
+                        issuance_amount_minor: U256::from(10),
+                        issuance_currency: 840,
+                        nominal_amount_minor: U256::from(11),
+                        reference_currency: 978,
+                        tribute_price_minor: U256::from(12),
+                        exclude_from_intex_issuance: false,
+                    };
+                    let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
+                    tribute_contract.unseal_day(day)?;
+                    tribute_contract.issue(&tribute_reader, &tribute)?;
+                    outbe_nod::api::add_nod(
+                        &hook_ctx.storage,
+                        &nod_reader,
+                        &NodItemState {
+                            nod_id,
+                            owner: nod_owner,
+                            gratis_load_minor: U256::from(1),
+                            worldwide_day: day,
+                            league_id: 2,
+                            floor_price_minor: U256::from(13),
+                            bucket_key,
+                            cost_amount_minor: U256::from(14),
+                            issuance_currency: 840,
+                            reference_currency: 978,
+                            issued_at: 15,
+                        },
+                        U256::from(16),
+                    )
+                })
+                .expect("body mint execution must succeed");
+            let commitments = {
+                let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+                    &mut state,
+                    ctx.clone(),
+                );
+                StorageHandle::enter(&mut provider, |storage| {
+                    let state = CommitmentState::new(storage);
+                    Ok::<_, outbe_primitives::error::PrecompileError>((
+                        state.tribute(tribute_id)?.unwrap(),
+                        state.nod_item(nod_id)?.unwrap(),
+                        state.nod_bucket(bucket_id)?.unwrap(),
+                    ))
+                })
+                .unwrap()
+            };
+            let root = post_state_root(&state.bundle_state);
+            let proposer_balance = signer_balance(&mut state, proposer);
+            let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
+            (
+                changes,
+                events,
+                commitments,
+                root,
+                state.bundle_state,
+                proposer_balance,
+                rewards_balance,
+            )
+        };
+
+        let proposer_result = run();
+        let validator_result = run();
+        assert_eq!(proposer_result, validator_result);
+        assert!(proposer_result.1.iter().any(|event| {
+            event.address == outbe_primitives::addresses::TRIBUTE_ADDRESS
+                && event.data.topics()[0]
+                    == outbe_tribute::precompile::ITribute::TributeBodyStored::SIGNATURE_HASH
+        }));
+        assert!(proposer_result.1.iter().any(|event| {
+            event.address == NOD_ADDRESS
+                && event.data.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH
+        }));
+        assert!(proposer_result.1.iter().any(|event| {
+            event.address == NOD_ADDRESS
+                && event.data.topics()[0] == INod::NodBucketBodyStored::SIGNATURE_HASH
+        }));
+
+        let bodies = Arc::new(MemoryStorage::new());
+        let tribute_reader = TributeRepositoryReader::new(bodies.clone());
+        let nod_reader = NodRepositoryReader::new(bodies);
+        let mut failed_state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
+        let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
+            let tribute = TributeData {
+                tribute_id,
+                owner: tribute_owner,
+                worldwide_day: day,
+                issuance_amount_minor: U256::from(10),
+                issuance_currency: 840,
+                nominal_amount_minor: U256::from(11),
+                reference_currency: 978,
+                tribute_price_minor: U256::from(12),
+                exclude_from_intex_issuance: false,
+            };
+            let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
+            tribute_contract.unseal_day(day)?;
+            tribute_contract.issue(&tribute_reader, &tribute)?;
+            outbe_nod::api::add_nod(
+                &hook_ctx.storage,
+                &nod_reader,
+                &NodItemState {
+                    nod_id,
+                    owner: nod_owner,
+                    gratis_load_minor: U256::from(1),
+                    worldwide_day: day,
+                    league_id: 2,
+                    floor_price_minor: U256::from(13),
+                    bucket_key,
+                    cost_amount_minor: U256::from(14),
+                    issuance_currency: 840,
+                    reference_currency: 978,
+                    issued_at: 15,
+                },
+                U256::from(16),
+            )?;
+            Err(outbe_primitives::error::PrecompileError::Fatal(
+                "later transaction stage failed".into(),
+            ))
+        })
+        .expect_err("failed transaction must roll back every body namespace");
+        assert!(error.to_string().contains("later transaction stage failed"));
+        let mut read_provider =
+            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut failed_state, ctx);
+        StorageHandle::enter(&mut read_provider, |storage| {
+            let commitments = CommitmentState::new(storage.clone());
+            assert!(commitments.tribute(tribute_id)?.is_none());
+            assert!(commitments.nod_item(nod_id)?.is_none());
+            assert!(commitments.nod_bucket(bucket_id)?.is_none());
+            assert_eq!(TributeContract::new(storage.clone()).total_supply()?, 0);
+            assert_eq!(NodContract::new(storage).total_supply()?, 0);
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })
+        .unwrap();
     }
 
     #[test]

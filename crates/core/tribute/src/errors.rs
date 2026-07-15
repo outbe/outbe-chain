@@ -51,8 +51,7 @@ impl From<TributeRepositoryError> for PrecompileError {
                 PrecompileError::BodyReadUnavailable(message)
             }
             TributeRepositoryError::Storage(_)
-            | TributeRepositoryError::Encode(_)
-            | TributeRepositoryError::Decode(_)
+            | TributeRepositoryError::CanonicalBody(_)
             | TributeRepositoryError::InvalidPageLimit { .. }
             | TributeRepositoryError::MalformedPrimaryKey
             | TributeRepositoryError::MalformedIndexKey { .. }
@@ -61,7 +60,8 @@ impl From<TributeRepositoryError> for PrecompileError {
             | TributeRepositoryError::DanglingIndex { .. }
             | TributeRepositoryError::PrimaryKeyBodyMismatch { .. }
             | TributeRepositoryError::IndexedOwnerMismatch { .. }
-            | TributeRepositoryError::IndexedDayMismatch { .. } => {
+            | TributeRepositoryError::IndexedDayMismatch { .. }
+            | TributeRepositoryError::UntrackedProjectionIdentity { .. } => {
                 PrecompileError::BodyReadCorruption(message)
             }
         }

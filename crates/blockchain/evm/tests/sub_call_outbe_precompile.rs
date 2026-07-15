@@ -17,11 +17,17 @@ use std::sync::Arc;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    body_commitment, encode_nod_item_v1, identity_field, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_evm::sub_call;
 use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
-use outbe_primitives::addresses::{NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
+use outbe_primitives::addresses::{
+    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+};
+use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::storage::{SubCallInput, SubCallStatus};
 use revm::{
     database::{CacheDB, EmptyDB},
@@ -89,37 +95,54 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let reader: StorageReaderHandle = adapter.clone();
     let writer: StorageWriterHandle = adapter;
     let readers = RuntimeBodyReaders::new(reader.clone());
-    let nod_id = U256::from(7);
     let owner = Address::repeat_byte(0x11);
+    let day = WorldwideDay::new(20_260_715);
+    let nod_id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();
     let bucket_key = B256::repeat_byte(0x42);
     let repository = NodRepositoryWriter::new(reader, writer);
     repository
         .put_bucket(&NodBucketState {
             bucket_key,
-            worldwide_day: WorldwideDay::new(20_260_715),
+            worldwide_day: day,
             floor_price_minor: U256::from(10),
             is_qualified: true,
             total_nods: 1,
             entry_price_minor: U256::from(9),
         })
         .unwrap();
-    repository
-        .put_nod(&NodItemState {
-            nod_id,
-            owner,
-            gratis_load_minor: U256::from(11),
-            worldwide_day: WorldwideDay::new(20_260_715),
-            league_id: 3,
-            floor_price_minor: U256::from(10),
-            bucket_key,
-            cost_amount_minor: U256::from(12),
-            issuance_currency: 840,
-            reference_currency: 978,
-            issued_at: 1_700_000_000,
-        })
+    let item = NodItemState {
+        nod_id,
+        owner,
+        gratis_load_minor: U256::from(11),
+        worldwide_day: day,
+        league_id: 3,
+        floor_price_minor: U256::from(10),
+        bucket_key,
+        cost_amount_minor: U256::from(12),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 1_700_000_000,
+    };
+    repository.put_nod(&item).unwrap();
+    let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();
+    let commitment =
+        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    let direct_key = U256::from_be_bytes(identity_field(nod_id).unwrap());
+    let direct_slot = direct_key.mapping_slot(U256::from(2));
+    let mut database = CacheDB::new(EmptyDB::default());
+    database
+        .insert_account_storage(
+            COMPRESSED_ENTITIES_ADDRESS,
+            direct_slot,
+            commitment.to_u256(),
+        )
         .unwrap();
-    let calldata = INod::ownerOfCall { nodId: nod_id }.abi_encode();
-    let mut ctx = Context::mainnet().with_db(CacheDB::new(EmptyDB::default()));
+
+    let calldata = INod::ownerOfCall {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+    }
+    .abi_encode();
+    let mut ctx = Context::mainnet().with_db(database);
 
     let result = sub_call::run(
         &mut ctx,

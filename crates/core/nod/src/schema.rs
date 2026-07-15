@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::StorageKey;
@@ -29,7 +30,7 @@ pub struct NodIssueParams {
 #[storage_record(exists_field = owner)]
 pub struct NodItemState {
     #[key]
-    pub nod_id: U256,
+    pub nod_id: EntityId36,
 
     #[attribute(order = 0)]
     pub owner: Address,
@@ -104,23 +105,6 @@ pub struct NodContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // slots 1-10: item state record keyed by nod_id
-    #[attribute(order = 1)]
-    pub(crate) nod_items: outbe_primitives::storage::dsl::Map<U256, NodItemState>,
-
-    // slots 11-15: bucket state record keyed by bucket_key
-    #[attribute(order = 2)]
-    pub(crate) nod_buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
-
-    // --- Enumeration indexes ---
-    // slot 16: owner → count of nods ever issued
-    #[attribute(order = 4)]
-    pub owner_nod_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
-
-    // slot 17: per-owner nod index — keccak(owner ++ index) → nod_id
-    #[attribute(order = 5)]
-    pub owner_nod_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
-
     // --- Unqualified-bucket bin index (PancakeSwap LB-style trie) ---
 
     // slot 18: top-level 256-bit bitmap. Bit `i` is set iff `bin_tree_mid[i]`
@@ -150,25 +134,22 @@ pub struct NodContract {
     #[attribute(order = 14)]
     pub unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    // --- Global enumeration (ERC-721 Enumerable) ---
-
-    // slot 23: dense global list — global_nod_ids[i] = nod_id for i in
-    // [0, total_supply). Kept gap-free via swap-on-delete in mine_gratis.
-    #[attribute(order = 15)]
-    pub global_nod_ids: outbe_primitives::storage::dsl::List<U256>,
-
-    // slot 24: reverse lookup nod_id → its current index in global_nod_ids.
-    #[attribute(order = 16)]
-    pub global_nod_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
     // slot 25: next bucket position to inspect in a partially processed bin.
     // This keeps begin-block qualification bounded without starving later
     // buckets when the tail bin contains more work than one block can inspect.
     #[attribute(order = 17)]
     pub unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // Compact reversible WWD prefix for bucket identities parked by bucket_key.
+    #[attribute(order = 18)]
+    pub bucket_worldwide_day: outbe_primitives::storage::dsl::Map<B256, WorldwideDay>,
 }
 
-impl NodContract<'_> {
+impl<'storage> NodContract<'storage> {
+    pub(crate) fn storage_handle(&self) -> outbe_primitives::storage::StorageHandle<'storage> {
+        self.storage.clone()
+    }
+
     /// Computes the bucket key from (worldwide_day, floor_price_minor).
     pub fn bucket_key(worldwide_day: WorldwideDay, floor_price_minor: U256) -> B256 {
         use alloy_primitives::keccak256;
@@ -178,16 +159,13 @@ impl NodContract<'_> {
         keccak256(buf)
     }
 
-    /// Domain-separated deterministic NOD id derived from (owner, worldwide_day).
-    /// The `b"nod"` prefix prevents collisions with other keccak-based ids in
-    /// the chain (e.g., bucket keys, tribute token ids).
-    pub fn generate_nod_id(owner: Address, worldwide_day: WorldwideDay) -> U256 {
-        use alloy_primitives::keccak256;
-        let mut buf = [0u8; 3 + 20 + 4];
-        buf[0..3].copy_from_slice(b"nod");
-        buf[3..23].copy_from_slice(owner.as_slice());
-        buf[23..27].copy_from_slice(worldwide_day.key_bytes().as_slice());
-        let hash = keccak256(buf);
-        U256::from_be_bytes(hash.0)
+    /// Deterministic full-width Poseidon NOD identity derived from
+    /// `(owner, worldwide_day)`. The typed Nod collection is its namespace.
+    pub fn generate_nod_id(
+        owner: Address,
+        worldwide_day: WorldwideDay,
+    ) -> outbe_primitives::error::Result<EntityId36> {
+        derive_poseidon_entity_id(owner, worldwide_day)
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }
 }

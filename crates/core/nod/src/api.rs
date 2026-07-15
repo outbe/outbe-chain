@@ -6,7 +6,8 @@
 //! handed-in `StorageHandle` and delegates to the same `state.rs` helpers
 //! the in-crate runtime uses.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
+use outbe_compressed_entities::{CommitmentState, EntityId36};
 use outbe_offchain_storage::MAX_SCAN_ENTRIES;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -46,31 +47,44 @@ pub fn remove_nod(
 }
 
 /// Fetch a Nod item state by id.
-pub fn get_item(reader: &NodRepositoryReader, nod_id: U256) -> Result<Option<NodItemState>> {
-    reader.get(nod_id).map_err(Into::into)
+pub fn get_item(
+    storage: &StorageHandle<'_>,
+    reader: &NodRepositoryReader,
+    nod_id: EntityId36,
+) -> Result<Option<NodItemState>> {
+    NodContract::new(storage.clone()).get_item_verified(reader, nod_id)
 }
 
 /// Fetch a Nod bucket state by bucket key.
 pub fn get_bucket(
+    storage: &StorageHandle<'_>,
     reader: &NodRepositoryReader,
-    bucket_key: B256,
+    bucket_id: EntityId36,
 ) -> Result<Option<NodBucketState>> {
-    reader.get_bucket(bucket_key).map_err(Into::into)
+    NodContract::new(storage.clone()).get_bucket_verified(reader, bucket_id)
 }
 
 /// Loads the full canonical Nod collection in ascending Nod ID order.
-pub fn list_all(reader: &NodRepositoryReader) -> Result<Vec<NodItemState>> {
-    collect_pages(|after| {
+pub fn list_all(
+    storage: &StorageHandle<'_>,
+    reader: &NodRepositoryReader,
+) -> Result<Vec<NodItemState>> {
+    let records = collect_pages(|after| {
         reader.list_all(NodPageRequest {
             after,
             limit: MAX_SCAN_ENTRIES,
         })
-    })
+    })?;
+    verify_items(storage, records, "global")
 }
 
 /// Loads one owner's canonical Nod collection in ascending Nod ID order.
-pub fn list_by_owner(reader: &NodRepositoryReader, owner: Address) -> Result<Vec<NodItemState>> {
-    collect_pages(|after| {
+pub fn list_by_owner(
+    storage: &StorageHandle<'_>,
+    reader: &NodRepositoryReader,
+    owner: Address,
+) -> Result<Vec<NodItemState>> {
+    let records = collect_pages(|after| {
         reader.list_by_owner(
             owner,
             NodPageRequest {
@@ -78,11 +92,14 @@ pub fn list_by_owner(reader: &NodRepositoryReader, owner: Address) -> Result<Vec
                 limit: MAX_SCAN_ENTRIES,
             },
         )
-    })
+    })?;
+    verify_items(storage, records, "owner")
 }
 
 fn collect_pages(
-    mut page: impl FnMut(Option<U256>) -> std::result::Result<crate::NodPage, crate::NodRepositoryError>,
+    mut page: impl FnMut(
+        Option<EntityId36>,
+    ) -> std::result::Result<crate::NodPage, crate::NodRepositoryError>,
 ) -> Result<Vec<NodItemState>> {
     let mut after = None;
     let mut records = Vec::new();
@@ -102,33 +119,33 @@ fn collect_pages(
     }
 }
 
-/// Legacy EVM body fixture for tests that predate the off-chain read boundary.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn fixture_add_nod(
+fn verify_items(
     storage: &StorageHandle<'_>,
-    item: &NodItemState,
-    entry_price_minor: U256,
-) -> Result<()> {
-    NodContract::new(storage.clone()).add_nod(item, entry_price_minor)
-}
-
-/// Legacy EVM body fixture for tests that predate the off-chain read boundary.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn fixture_remove_nod(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<()> {
-    NodContract::new(storage.clone()).remove_nod(item)
-}
-
-/// Legacy EVM body fixture for tests that predate the off-chain read boundary.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn fixture_get_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<Option<NodItemState>> {
-    NodContract::new(storage.clone()).get_item(nod_id)
-}
-
-/// Legacy EVM body fixture for tests that predate the off-chain read boundary.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn fixture_get_bucket(
-    storage: &StorageHandle<'_>,
-    bucket_key: B256,
-) -> Result<Option<NodBucketState>> {
-    NodContract::new(storage.clone()).get_bucket(bucket_key)
+    records: Vec<NodItemState>,
+    index: &'static str,
+) -> Result<Vec<NodItemState>> {
+    let nod = NodContract::new(storage.clone());
+    let commitments = CommitmentState::new(storage.clone());
+    let mut verified = Vec::with_capacity(records.len());
+    for body in records {
+        let expected = commitments.nod_item(body.nod_id)?.ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                "{index} index returned canonically absent Nod {}",
+                body.nod_id
+            ))
+        })?;
+        nod.verify_item(&body, expected)?;
+        if verified
+            .last()
+            .is_some_and(|last: &NodItemState| last.nod_id >= body.nod_id)
+        {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod {index} page contains duplicate or unordered identities"
+                )),
+            );
+        }
+        verified.push(body);
+    }
+    Ok(verified)
 }

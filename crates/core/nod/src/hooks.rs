@@ -23,6 +23,7 @@
 //!   qualifies a bucket above the rate nor one priced exactly at it.
 
 use alloy_primitives::U256;
+use outbe_compressed_entities::EntityId36;
 use outbe_oracle::api::get_exchange_rate;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
@@ -42,109 +43,18 @@ pub struct NodLifecycle;
 
 impl BlockLifecycle for NodLifecycle {
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        #[cfg(not(any(test, feature = "test-utils")))]
-        {
-            let _ = ctx;
-            Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Nod lifecycle read authority was not supplied".into(),
-            ))
+        let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
+        if rate.is_zero() {
+            return Ok(());
         }
-
-        #[cfg(any(test, feature = "test-utils"))]
-        // TODO refactor this. Oracle is called here for each block,
-        //  but we only need to receive the hook if the price is changed
-        qualify_nods(ctx)
-    }
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub fn qualify_nods(ctx: &BlockRuntimeContext) -> Result<()> {
-    let rate = get_exchange_rate(ctx.storage.clone(), QUALIFIER_BASE, QUALIFIER_QUOTE)?;
-    qualify_buckets_with_rate(ctx, rate)
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub fn qualify_buckets_with_rate(ctx: &BlockRuntimeContext, rate: U256) -> Result<()> {
-    if rate.is_zero() {
-        return Ok(());
-    }
-    let r_bin = NodContract::price_to_bin(rate)?;
-
-    let mut nod = NodContract::new(ctx.storage.clone());
-    let mut cursor: u32 = 0;
-    loop {
-        let next = match tree_math::find_first_left_inclusive(&nod, cursor)? {
-            Some(b) if b <= r_bin => b,
-            _ => break,
-        };
-        let strict = next < r_bin;
-        let count = nod.unqualified_bin_count.read(&next)?;
-
-        // Read the bin's bucket_keys and partition into (qualified, survivors).
-        let mut survivors: Vec<alloy_primitives::B256> = Vec::new();
-        for i in 0..count {
-            let key = NodContract::bin_index_key(next, i);
-            let bucket_key = nod.unqualified_bin_buckets.read(&key)?;
-            if bucket_key.is_zero() {
-                continue;
-            }
-            // Skip stale entries: the bucket may have been deleted (last
-            // NOD mined) or admin-flipped to qualified out-of-band.
-            let bucket = match nod.nod_buckets.get(bucket_key)? {
-                Some(b) if !b.is_qualified => b,
-                _ => continue,
-            };
-            // Tail bin: exact-check `floor_price < rate` (strict) so a coarse
-            // bin neither qualifies a bucket above the rate nor one priced
-            // exactly at it — equality stays unqualified.
-            if !strict && bucket.floor_price_minor >= rate {
-                survivors.push(bucket_key);
-                continue;
-            }
-            nod.qualify_bucket(bucket.worldwide_day, bucket.floor_price_minor)?;
+        let nod = NodContract::new(ctx.storage.clone());
+        if nod.bin_tree_root.read()?.is_zero() {
+            return Ok(());
         }
-
-        if survivors.is_empty() {
-            // Drain entire bin: zero index slots, reset count, clear bit.
-            for i in 0..count {
-                nod.unqualified_bin_buckets.write(
-                    &NodContract::bin_index_key(next, i),
-                    alloy_primitives::B256::ZERO,
-                )?;
-            }
-            nod.unqualified_bin_count.write(&next, 0)?;
-            tree_math::remove(&nod, next)?;
-        } else {
-            let survivor_count = u32::try_from(survivors.len()).map_err(|_| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "Nod survivor count exceeds u32".into(),
-                )
-            })?;
-            // Compact survivors into [0..len), zero the tail. Bit stays set.
-            for (i, k) in survivors.iter().enumerate() {
-                let index = u32::try_from(i).map_err(|_| {
-                    outbe_primitives::error::PrecompileError::Fatal(
-                        "Nod survivor index exceeds u32".into(),
-                    )
-                })?;
-                nod.unqualified_bin_buckets
-                    .write(&NodContract::bin_index_key(next, index), *k)?;
-            }
-            for i in survivor_count..count {
-                nod.unqualified_bin_buckets.write(
-                    &NodContract::bin_index_key(next, i),
-                    alloy_primitives::B256::ZERO,
-                )?;
-            }
-            nod.unqualified_bin_count.write(&next, survivor_count)?;
-        }
-
-        cursor = match next.checked_add(1) {
-            Some(c) if c <= MAX_BIN_ID => c,
-            _ => break,
-        };
+        Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Nod lifecycle read authority was not supplied".into(),
+        ))
     }
-    Ok(())
 }
 
 /// Qualifies Nod buckets using only compact EVM worklists and the off-chain body reader.
@@ -200,9 +110,11 @@ pub fn qualify_buckets_with_rate_and_reader(
                     )),
                 );
             }
-            let bucket = reader.get_bucket(bucket_key)?.ok_or_else(|| {
+            let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
+            let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
+            let bucket = nod.get_bucket_verified(reader, bucket_id)?.ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod unqualified-bin entry {next}:{index} references missing bucket {bucket_key}"
+                    "Nod unqualified-bin entry {next}:{index} references missing bucket {bucket_id}"
                 ))
             })?;
             if bucket.is_qualified || NodContract::price_to_bin(bucket.floor_price_minor)? != next {

@@ -10,9 +10,13 @@ use std::{
 use alloy_primitives::{Address, B256, U256};
 use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
+    encode_nod_item_v1, EntityId36, StoredBody,
+};
 use outbe_nod::{
-    NodBucketState, NodItemState, NodPageRequest, NodRepositoryError, NodRepositoryReader,
-    NodRepositoryWriter,
+    canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
+    NodItemState, NodPageRequest, NodRepositoryError, NodRepositoryReader, NodRepositoryWriter,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
@@ -20,12 +24,24 @@ use outbe_offchain_storage::{
     MAX_SCAN_ENTRIES,
 };
 
-fn nod(nod_id: U256, owner: Address) -> NodItemState {
+fn entity(seed: U256, worldwide_day: WorldwideDay) -> EntityId36 {
+    EntityId36::new(worldwide_day, seed.to_be_bytes::<32>())
+}
+
+fn nod_id(seed: u64) -> EntityId36 {
+    entity(U256::from(seed), WorldwideDay::new(u32::MAX))
+}
+
+fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> EntityId36 {
+    EntityId36::new(worldwide_day, key.0)
+}
+
+fn nod(nod_id: EntityId36, owner: Address) -> NodItemState {
     NodItemState {
         nod_id,
         owner,
         gratis_load_minor: U256::MAX,
-        worldwide_day: WorldwideDay::new(u32::MAX),
+        worldwide_day: nod_id.worldwide_day(),
         league_id: u16::MAX,
         floor_price_minor: U256::ZERO,
         bucket_key: B256::repeat_byte(0x33),
@@ -36,10 +52,10 @@ fn nod(nod_id: U256, owner: Address) -> NodItemState {
     }
 }
 
-fn bucket(key: B256) -> NodBucketState {
+fn bucket(bucket_id: EntityId36) -> NodBucketState {
     NodBucketState {
-        bucket_key: key,
-        worldwide_day: WorldwideDay::new(0),
+        bucket_key: B256::from(bucket_id.digest()),
+        worldwide_day: bucket_id.worldwide_day(),
         floor_price_minor: U256::MAX,
         is_qualified: false,
         total_nods: u64::MAX,
@@ -55,19 +71,188 @@ fn key(bytes: impl Into<Vec<u8>>) -> Key {
     Key::new(bytes).unwrap()
 }
 
-fn id_key(id: U256) -> Key {
-    key(id.to_be_bytes::<32>())
+fn id_key(id: EntityId36) -> Key {
+    key(id.as_bytes().to_vec())
 }
 
-fn owner_key(owner: Address, id: U256) -> Key {
-    key([owner.as_slice(), &id.to_be_bytes::<32>()].concat())
+fn owner_key(owner: Address, id: EntityId36) -> Key {
+    key([owner.as_slice(), id.as_bytes()].concat())
+}
+
+fn stored_nod(body: &NodItemState) -> Vec<u8> {
+    StoredBody::new_v1(encode_nod_item_v1(&canonical_item(body)).unwrap())
+        .unwrap()
+        .encode()
+}
+
+fn stored_bucket(body: &NodBucketState) -> Vec<u8> {
+    StoredBody::new_v1(encode_nod_bucket_v1(&canonical_bucket(body)).unwrap())
+        .unwrap()
+        .encode()
 }
 
 #[test]
-fn postcard_roundtrips_all_nod_field_boundaries() {
+fn projection_stores_derive_item_and_bucket_identity_from_canonical_bytes() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = storage.clone();
+    let writer: StorageWriterHandle = storage.clone();
+    let item = nod(nod_id(41), Address::repeat_byte(0x41));
+    let item_value = Value::new(stored_nod(&item)).unwrap();
+
+    let repository = NodRepositoryReader::new(reader);
+    let mut session = repository.projection_session(&[item.nod_id], &[]).unwrap();
+    let item_batch = session
+        .store_item(item.nod_id, item_value.clone(), None)
+        .unwrap();
+    writer.apply_atomic(&item_batch).unwrap();
+    assert_eq!(
+        repository
+            .list_by_owner(
+                item.owner,
+                NodPageRequest {
+                    after: None,
+                    limit: 1,
+                },
+            )
+            .unwrap()
+            .records[0]
+            .nod_id,
+        item.nod_id
+    );
+
+    let wrong_item_id = nod_id(42);
+    let mut wrong_item_session = repository
+        .projection_session(&[wrong_item_id], &[])
+        .unwrap();
+    assert!(matches!(
+        wrong_item_session.store_item(wrong_item_id, item_value, None),
+        Err(NodRepositoryError::PrimaryKeyBodyMismatch {
+            expected,
+            actual,
+        }) if expected == wrong_item_id && actual == item.nod_id
+    ));
+    let mut malformed_item_session = repository.projection_session(&[item.nod_id], &[]).unwrap();
+    assert!(matches!(
+        malformed_item_session.store_item(item.nod_id, Value::new(vec![0xff]).unwrap(), None,),
+        Err(NodRepositoryError::CanonicalBody(_))
+    ));
+
+    let body = bucket(bucket_id(
+        B256::repeat_byte(0x51),
+        WorldwideDay::new(20260716),
+    ));
+    let canonical_id = bucket_id(body.bucket_key, body.worldwide_day);
+    let wrong_bucket_id = bucket_id(B256::repeat_byte(0x52), body.worldwide_day);
+    let mut wrong_bucket_session = repository
+        .projection_session(&[], &[wrong_bucket_id])
+        .unwrap();
+    assert!(matches!(
+        wrong_bucket_session.store_bucket(
+            wrong_bucket_id,
+            Value::new(stored_bucket(&body)).unwrap(),
+            None,
+        ),
+        Err(NodRepositoryError::BucketIdBodyMismatch {
+            expected,
+            actual,
+        }) if expected == wrong_bucket_id && actual == canonical_id
+    ));
+    let mut malformed_bucket_session = repository.projection_session(&[], &[canonical_id]).unwrap();
+    assert!(matches!(
+        malformed_bucket_session.store_bucket(canonical_id, Value::new(vec![0xff]).unwrap(), None,),
+        Err(NodRepositoryError::CanonicalBody(_))
+    ));
+}
+
+#[test]
+fn projection_session_owns_item_prior_state_and_rejects_untracked_identity() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader_handle: StorageReaderHandle = storage.clone();
+    let writer_handle: StorageWriterHandle = storage;
+    let repository_reader = NodRepositoryReader::new(reader_handle.clone());
+    let repository_writer = NodRepositoryWriter::new(reader_handle, writer_handle.clone());
+    let old = nod(nod_id(43), Address::repeat_byte(0x43));
+    repository_writer.put_nod(&old).unwrap();
+
+    let replacement = nod(old.nod_id, Address::repeat_byte(0x44));
+    let mut session = repository_reader
+        .projection_session(&[old.nod_id], &[])
+        .unwrap();
+    let batch = session
+        .store_item(
+            old.nod_id,
+            Value::new(stored_nod(&replacement)).unwrap(),
+            None,
+        )
+        .unwrap();
+    writer_handle.apply_atomic(&batch).unwrap();
+
+    assert!(repository_reader
+        .list_by_owner(
+            old.owner,
+            NodPageRequest {
+                after: None,
+                limit: 1,
+            },
+        )
+        .unwrap()
+        .records
+        .is_empty());
+    assert_eq!(
+        repository_reader
+            .list_by_owner(
+                replacement.owner,
+                NodPageRequest {
+                    after: None,
+                    limit: 1,
+                },
+            )
+            .unwrap()
+            .records[0]
+            .nod_id,
+        old.nod_id
+    );
+
+    let mut delete_session = repository_reader
+        .projection_session(&[old.nod_id], &[])
+        .unwrap();
+    let batch = delete_session.delete_item(old.nod_id).unwrap();
+    writer_handle.apply_atomic(&batch).unwrap();
+    assert!(repository_reader
+        .list_by_owner(
+            replacement.owner,
+            NodPageRequest {
+                after: None,
+                limit: 1,
+            },
+        )
+        .unwrap()
+        .records
+        .is_empty());
+
+    let mut untracked = repository_reader.projection_session(&[], &[]).unwrap();
+    assert!(matches!(
+        untracked.delete_item(old.nod_id),
+        Err(NodRepositoryError::UntrackedProjectionIdentity {
+            entity: "Nod item",
+            identity,
+        }) if identity == old.nod_id
+    ));
+    let untracked_bucket_id = bucket_id(B256::repeat_byte(0x45), WorldwideDay::new(20260716));
+    assert!(matches!(
+        untracked.delete_bucket(untracked_bucket_id),
+        Err(NodRepositoryError::UntrackedProjectionIdentity {
+            entity: "Nod bucket",
+            identity,
+        }) if identity == untracked_bucket_id
+    ));
+}
+
+#[test]
+fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [
         NodItemState {
-            nod_id: U256::ZERO,
+            nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
             owner: Address::ZERO,
             gratis_load_minor: U256::ZERO,
             worldwide_day: WorldwideDay::new(0),
@@ -80,7 +265,7 @@ fn postcard_roundtrips_all_nod_field_boundaries() {
             issued_at: 0,
         },
         NodItemState {
-            nod_id: U256::MAX,
+            nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
             owner: Address::repeat_byte(u8::MAX),
             gratis_load_minor: U256::MAX,
             worldwide_day: WorldwideDay::new(u32::MAX),
@@ -93,8 +278,8 @@ fn postcard_roundtrips_all_nod_field_boundaries() {
             issued_at: u64::MAX,
         },
     ] {
-        let decoded: NodItemState =
-            postcard::from_bytes(&postcard::to_stdvec(&body).unwrap()).unwrap();
+        let stored = stored_nod(&body);
+        let decoded = from_canonical_item(decode_stored_nod_item_v1(&stored).unwrap());
         assert_eq!(decoded.nod_id, body.nod_id);
         assert_eq!(decoded.owner, body.owner);
         assert_eq!(decoded.gratis_load_minor, body.gratis_load_minor);
@@ -118,16 +303,18 @@ fn postcard_roundtrips_all_nod_field_boundaries() {
             entry_price_minor: U256::ZERO,
         },
         NodBucketState {
-            bucket_key: B256::repeat_byte(u8::MAX),
-            worldwide_day: WorldwideDay::new(u32::MAX),
             floor_price_minor: U256::MAX,
             is_qualified: true,
             total_nods: u64::MAX,
             entry_price_minor: U256::MAX,
+            ..bucket(bucket_id(
+                B256::repeat_byte(u8::MAX),
+                WorldwideDay::new(u32::MAX),
+            ))
         },
     ] {
-        let decoded: NodBucketState =
-            postcard::from_bytes(&postcard::to_stdvec(&body).unwrap()).unwrap();
+        let stored = stored_bucket(&body);
+        let decoded = from_canonical_bucket(decode_stored_nod_bucket_v1(&stored).unwrap());
         assert_eq!(decoded.bucket_key, body.bucket_key);
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
@@ -143,22 +330,23 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     let owner_a = Address::repeat_byte(0x22);
     let owner_b = Address::repeat_byte(0x44);
 
-    for id in [U256::from(3), U256::from(1), U256::from(2)] {
+    for id in [nod_id(3), nod_id(1), nod_id(2)] {
         repository_writer.put_nod(&nod(id, owner_a)).unwrap();
     }
-    repository_writer
-        .put_nod(&nod(U256::from(4), owner_b))
-        .unwrap();
+    repository_writer.put_nod(&nod(nod_id(4), owner_b)).unwrap();
     let bucket_key = B256::repeat_byte(0x55);
-    repository_writer.put_bucket(&bucket(bucket_key)).unwrap();
+    let selected_bucket_id = bucket_id(bucket_key, WorldwideDay::new(0));
+    repository_writer
+        .put_bucket(&bucket(selected_bucket_id))
+        .unwrap();
 
-    let stored = repository_reader.get(U256::from(1)).unwrap().unwrap();
-    assert_eq!(stored.nod_id, U256::from(1));
+    let stored = repository_reader.get(nod_id(1)).unwrap().unwrap();
+    assert_eq!(stored.nod_id, nod_id(1));
     assert_eq!(stored.gratis_load_minor, U256::MAX);
     assert_eq!(stored.issued_at, u64::MAX);
     assert_eq!(
         repository_reader
-            .get_bucket(bucket_key)
+            .get_bucket(selected_bucket_id)
             .unwrap()
             .unwrap()
             .bucket_key,
@@ -166,34 +354,28 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
     );
 
     let primary = reader
-        .get(namespace("nods"), &id_key(U256::from(1)))
+        .get(namespace("nods"), &id_key(nod_id(1)))
         .unwrap()
         .unwrap();
     assert_eq!(
-        postcard::from_bytes::<NodItemState>(primary.as_bytes())
+        decode_stored_nod_item_v1(primary.as_bytes())
             .unwrap()
             .nod_id,
-        U256::from(1)
+        nod_id(1)
     );
     assert!(reader
-        .get(
-            namespace("nods_by_owner"),
-            &owner_key(owner_a, U256::from(1)),
-        )
+        .get(namespace("nods_by_owner"), &owner_key(owner_a, nod_id(1)),)
         .unwrap()
         .unwrap()
         .as_bytes()
         .is_empty());
     assert_eq!(
         reader
-            .get(
-                namespace("nod_buckets"),
-                &key(bucket_key.as_slice().to_vec())
-            )
+            .get(namespace("nod_buckets"), &id_key(selected_bucket_id))
             .unwrap()
             .unwrap()
             .as_bytes(),
-        postcard::to_stdvec(&bucket(bucket_key)).unwrap()
+        stored_bucket(&bucket(selected_bucket_id))
     );
 
     let first = repository_reader
@@ -208,9 +390,9 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
             .iter()
             .map(|body| body.nod_id)
             .collect::<Vec<_>>(),
-        [U256::from(1), U256::from(2)]
+        [nod_id(1), nod_id(2)]
     );
-    assert_eq!(first.next_after, Some(U256::from(2)));
+    assert_eq!(first.next_after, Some(nod_id(2)));
     let second = repository_reader
         .list_all(NodPageRequest {
             after: first.next_after,
@@ -223,7 +405,7 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
             .iter()
             .map(|body| body.nod_id)
             .collect::<Vec<_>>(),
-        [U256::from(3), U256::from(4)]
+        [nod_id(3), nod_id(4)]
     );
     assert_eq!(second.next_after, None);
     assert_eq!(
@@ -238,26 +420,21 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
             .unwrap()
             .records[0]
             .nod_id,
-        U256::from(4)
+        nod_id(4)
     );
 
-    repository_writer
-        .put_nod(&nod(U256::from(1), owner_b))
-        .unwrap();
+    repository_writer.put_nod(&nod(nod_id(1), owner_b)).unwrap();
     assert!(reader
-        .get(
-            namespace("nods_by_owner"),
-            &owner_key(owner_a, U256::from(1)),
-        )
+        .get(namespace("nods_by_owner"), &owner_key(owner_a, nod_id(1)),)
         .unwrap()
         .is_none());
     assert_eq!(
-        repository_reader.get(U256::from(1)).unwrap().unwrap().owner,
+        repository_reader.get(nod_id(1)).unwrap().unwrap().owner,
         owner_b
     );
 
-    repository_writer.delete_nod(U256::from(2)).unwrap();
-    repository_writer.delete_nod(U256::from(2)).unwrap();
+    repository_writer.delete_nod(nod_id(2)).unwrap();
+    repository_writer.delete_nod(nod_id(2)).unwrap();
     let remaining = repository_reader
         .list_all(NodPageRequest {
             after: None,
@@ -270,11 +447,14 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
             .iter()
             .map(|body| body.nod_id)
             .collect::<Vec<_>>(),
-        [U256::from(1), U256::from(3), U256::from(4)]
+        [nod_id(1), nod_id(3), nod_id(4)]
     );
-    repository_writer.delete_bucket(bucket_key).unwrap();
-    repository_writer.delete_bucket(bucket_key).unwrap();
-    assert!(repository_reader.get_bucket(bucket_key).unwrap().is_none());
+    repository_writer.delete_bucket(selected_bucket_id).unwrap();
+    repository_writer.delete_bucket(selected_bucket_id).unwrap();
+    assert!(repository_reader
+        .get_bucket(selected_bucket_id)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -304,21 +484,21 @@ fn mongo_rejects_corrupt_items_buckets_indexes_and_limits() {
 fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: StorageWriterHandle) {
     let reader = NodRepositoryReader::new(reader_storage);
     let owner = Address::repeat_byte(0x61);
-    let id = U256::from(9);
+    let id = nod_id(9);
 
     storage
         .put(namespace("nods"), &id_key(id), &Value::new([0xff]).unwrap())
         .unwrap();
     assert!(matches!(
         reader.get(id),
-        Err(NodRepositoryError::ItemDecode(_))
+        Err(NodRepositoryError::CanonicalBody(_))
     ));
-    let wrong = nod(U256::from(10), owner);
+    let wrong = nod(nod_id(10), owner);
     storage
         .put(
             namespace("nods"),
             &id_key(id),
-            &Value::new(postcard::to_stdvec(&wrong).unwrap()).unwrap(),
+            &Value::new(stored_nod(&wrong)).unwrap(),
         )
         .unwrap();
     assert!(matches!(
@@ -326,7 +506,7 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         Err(NodRepositoryError::PrimaryKeyBodyMismatch { .. })
     ));
 
-    let mut trailing = postcard::to_stdvec(&nod(id, owner)).unwrap();
+    let mut trailing = stored_nod(&nod(id, owner));
     trailing.push(0);
     storage
         .put(
@@ -337,7 +517,7 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         .unwrap();
     assert!(matches!(
         reader.get(id),
-        Err(NodRepositoryError::ItemDecode(_))
+        Err(NodRepositoryError::CanonicalBody(_))
     ));
 
     storage.delete(namespace("nods"), &id_key(id)).unwrap();
@@ -413,42 +593,42 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         Err(NodRepositoryError::MalformedPrimaryKey)
     ));
 
-    let selected_bucket = B256::repeat_byte(0x71);
-    let wrong_bucket = bucket(B256::repeat_byte(0x72));
+    let selected_bucket = bucket_id(B256::repeat_byte(0x71), WorldwideDay::new(0));
+    let wrong_bucket = bucket(bucket_id(B256::repeat_byte(0x72), WorldwideDay::new(0)));
     storage
         .put(
             namespace("nod_buckets"),
-            &key(selected_bucket.as_slice().to_vec()),
-            &Value::new(postcard::to_stdvec(&wrong_bucket).unwrap()).unwrap(),
+            &id_key(selected_bucket),
+            &Value::new(stored_bucket(&wrong_bucket)).unwrap(),
         )
         .unwrap();
     assert!(matches!(
         reader.get_bucket(selected_bucket),
-        Err(NodRepositoryError::BucketKeyBodyMismatch { .. })
+        Err(NodRepositoryError::BucketIdBodyMismatch { .. })
     ));
     storage
         .put(
             namespace("nod_buckets"),
-            &key(selected_bucket.as_slice().to_vec()),
+            &id_key(selected_bucket),
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
     assert!(matches!(
         reader.get_bucket(selected_bucket),
-        Err(NodRepositoryError::BucketDecode(_))
+        Err(NodRepositoryError::CanonicalBody(_))
     ));
-    let mut trailing_bucket = postcard::to_stdvec(&bucket(selected_bucket)).unwrap();
+    let mut trailing_bucket = stored_bucket(&bucket(selected_bucket));
     trailing_bucket.push(0);
     storage
         .put(
             namespace("nod_buckets"),
-            &key(selected_bucket.as_slice().to_vec()),
+            &id_key(selected_bucket),
             &Value::new(trailing_bucket).unwrap(),
         )
         .unwrap();
     assert!(matches!(
         reader.get_bucket(selected_bucket),
-        Err(NodRepositoryError::BucketDecode(_))
+        Err(NodRepositoryError::CanonicalBody(_))
     ));
     assert!(matches!(
         reader.list_all(NodPageRequest {
@@ -476,7 +656,7 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         .put(
             namespace("nods"),
             &id_key(id),
-            &Value::new(postcard::to_stdvec(&mismatched).unwrap()).unwrap(),
+            &Value::new(stored_nod(&mismatched)).unwrap(),
         )
         .unwrap();
     storage
@@ -530,7 +710,7 @@ impl StorageWriter for FailAfterWriter {
 fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
     let owner = Address::repeat_byte(0x91);
     let new_owner = Address::repeat_byte(0x92);
-    let id = U256::from(88);
+    let id = nod_id(88);
 
     for fail_after in 1..=2 {
         let storage = Arc::new(MemoryStorage::new());
@@ -610,7 +790,7 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
             .is_some());
     }
 
-    let bucket_key = B256::repeat_byte(0xa1);
+    let selected_bucket_id = bucket_id(B256::repeat_byte(0xa1), WorldwideDay::new(0));
     let storage = Arc::new(MemoryStorage::new());
     let failing = Arc::new(FailAfterWriter {
         inner: storage.clone(),
@@ -619,19 +799,16 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
     });
     let repository = NodRepositoryWriter::new(storage.clone(), failing);
     assert!(matches!(
-        repository.put_bucket(&bucket(bucket_key)),
+        repository.put_bucket(&bucket(selected_bucket_id)),
         Err(NodRepositoryError::Storage(_))
     ));
     assert!(storage
-        .get(
-            namespace("nod_buckets"),
-            &key(bucket_key.as_slice().to_vec()),
-        )
+        .get(namespace("nod_buckets"), &id_key(selected_bucket_id),)
         .unwrap()
         .is_none());
 
     let seed = NodRepositoryWriter::new(storage.clone(), storage.clone());
-    seed.put_bucket(&bucket(bucket_key)).unwrap();
+    seed.put_bucket(&bucket(selected_bucket_id)).unwrap();
     let failing = Arc::new(FailAfterWriter {
         inner: storage.clone(),
         fail_after: 1,
@@ -639,14 +816,11 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
     });
     let repository = NodRepositoryWriter::new(storage.clone(), failing);
     assert!(matches!(
-        repository.delete_bucket(bucket_key),
+        repository.delete_bucket(selected_bucket_id),
         Err(NodRepositoryError::Storage(_))
     ));
     assert!(storage
-        .get(
-            namespace("nod_buckets"),
-            &key(bucket_key.as_slice().to_vec()),
-        )
+        .get(namespace("nod_buckets"), &id_key(selected_bucket_id),)
         .unwrap()
         .is_some());
 }

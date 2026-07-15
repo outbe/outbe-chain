@@ -1,38 +1,49 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
-use outbe_nod::{precompile::INod, NodBucketState, NodItemState};
+use outbe_compressed_entities::{
+    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, encode_nod_bucket_v1,
+    encode_nod_item_v1, EntityId36, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
+use outbe_nod::{
+    canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
+    from_canonical_item, precompile::INod, NodBucketState, NodItemState,
+};
+
+fn identity(day: WorldwideDay, seed: U256) -> EntityId36 {
+    EntityId36::new(day, seed.to_be_bytes::<32>())
+}
 
 fn assert_item_roundtrip(record: NodItemState) {
+    let payload = encode_nod_item_v1(&canonical_item(&record)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        record.nod_id,
+        &payload,
+    )
+    .unwrap();
     let event = INod::NodBodyStored {
-        nodId: record.nod_id,
-        owner: record.owner,
-        gratisLoadMinor: record.gratis_load_minor,
-        worldwideDay: record.worldwide_day.into(),
-        leagueId: record.league_id,
-        floorPriceMinor: record.floor_price_minor,
-        bucketKey: record.bucket_key,
-        costAmountMinor: record.cost_amount_minor,
-        issuanceCurrency: record.issuance_currency,
-        referenceCurrency: record.reference_currency,
-        issuedAt: record.issued_at,
+        nodId: Bytes::copy_from_slice(record.nod_id.as_bytes()),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: B256::from(*commitment.as_bytes()),
+        canonicalPayload: Bytes::from(payload.clone()),
     };
+
     let log = event.encode_log_data();
     let decoded = INod::NodBodyStored::decode_log_data(&log).unwrap();
-    let reconstructed = NodItemState {
-        nod_id: decoded.nodId,
-        owner: decoded.owner,
-        gratis_load_minor: decoded.gratisLoadMinor,
-        worldwide_day: WorldwideDay::new(decoded.worldwideDay),
-        league_id: decoded.leagueId,
-        floor_price_minor: decoded.floorPriceMinor,
-        bucket_key: decoded.bucketKey,
-        cost_amount_minor: decoded.costAmountMinor,
-        issuance_currency: decoded.issuanceCurrency,
-        reference_currency: decoded.referenceCurrency,
-        issued_at: decoded.issuedAt,
-    };
-    assert_eq!(log.topics()[1], B256::from(record.nod_id));
+    let decoded_id = EntityId36::try_from(decoded.nodId.as_ref()).unwrap();
+    let reconstructed = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
+
+    assert_eq!(log.topics(), &[INod::NodBodyStored::SIGNATURE_HASH]);
+    assert_eq!(decoded_id, record.nod_id);
+    assert_eq!(decoded.commitmentSchemeVersion, ACTIVE_COMMITMENT_SCHEME);
+    assert_eq!(decoded.schemaVersion, BODY_SCHEMA_V1);
+    assert_eq!(decoded.previousCommitment, B256::ZERO);
+    assert_eq!(decoded.newCommitment, B256::from(*commitment.as_bytes()));
+    assert_eq!(decoded.canonicalPayload.as_ref(), payload);
     assert_eq!(reconstructed.nod_id, record.nod_id);
     assert_eq!(reconstructed.owner, record.owner);
     assert_eq!(reconstructed.gratis_load_minor, record.gratis_load_minor);
@@ -47,25 +58,37 @@ fn assert_item_roundtrip(record: NodItemState) {
 }
 
 fn assert_bucket_roundtrip(record: NodBucketState) {
+    let bucket_id = canonical_bucket_id(&record);
+    let payload = encode_nod_bucket_v1(&canonical_bucket(&record)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        bucket_id,
+        &payload,
+    )
+    .unwrap();
     let event = INod::NodBucketBodyStored {
-        bucketKey: record.bucket_key,
-        worldwideDay: record.worldwide_day.into(),
-        floorPriceMinor: record.floor_price_minor,
-        isQualified: record.is_qualified,
-        totalNods: record.total_nods,
-        entryPriceMinor: record.entry_price_minor,
+        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: B256::from(*commitment.as_bytes()),
+        canonicalPayload: Bytes::from(payload.clone()),
     };
+
     let log = event.encode_log_data();
     let decoded = INod::NodBucketBodyStored::decode_log_data(&log).unwrap();
-    let reconstructed = NodBucketState {
-        bucket_key: decoded.bucketKey,
-        worldwide_day: WorldwideDay::new(decoded.worldwideDay),
-        floor_price_minor: decoded.floorPriceMinor,
-        is_qualified: decoded.isQualified,
-        total_nods: decoded.totalNods,
-        entry_price_minor: decoded.entryPriceMinor,
-    };
-    assert_eq!(log.topics()[1], record.bucket_key);
+    let decoded_id = EntityId36::try_from(decoded.bucketId.as_ref()).unwrap();
+    let reconstructed =
+        from_canonical_bucket(decode_nod_bucket_v1(&decoded.canonicalPayload).unwrap());
+
+    assert_eq!(log.topics(), &[INod::NodBucketBodyStored::SIGNATURE_HASH]);
+    assert_eq!(decoded_id, bucket_id);
+    assert_eq!(decoded.commitmentSchemeVersion, ACTIVE_COMMITMENT_SCHEME);
+    assert_eq!(decoded.schemaVersion, BODY_SCHEMA_V1);
+    assert_eq!(decoded.previousCommitment, B256::ZERO);
+    assert_eq!(decoded.newCommitment, B256::from(*commitment.as_bytes()));
+    assert_eq!(decoded.canonicalPayload.as_ref(), payload);
     assert_eq!(reconstructed.bucket_key, record.bucket_key);
     assert_eq!(reconstructed.worldwide_day, record.worldwide_day);
     assert_eq!(reconstructed.floor_price_minor, record.floor_price_minor);
@@ -75,12 +98,13 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
 }
 
 #[test]
-fn stored_events_reconstruct_all_nod_boundaries() {
+fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
+    let zero_day = WorldwideDay::new(0);
     assert_item_roundtrip(NodItemState {
-        nod_id: U256::ZERO,
+        nod_id: identity(zero_day, U256::ZERO),
         owner: Address::ZERO,
         gratis_load_minor: U256::ZERO,
-        worldwide_day: WorldwideDay::new(0),
+        worldwide_day: zero_day,
         league_id: 0,
         floor_price_minor: U256::ZERO,
         bucket_key: B256::ZERO,
@@ -89,11 +113,12 @@ fn stored_events_reconstruct_all_nod_boundaries() {
         reference_currency: 0,
         issued_at: 0,
     });
+    let max_day = WorldwideDay::new(u32::MAX);
     assert_item_roundtrip(NodItemState {
-        nod_id: U256::MAX,
+        nod_id: identity(max_day, U256::MAX),
         owner: Address::repeat_byte(u8::MAX),
         gratis_load_minor: U256::MAX,
-        worldwide_day: WorldwideDay::new(u32::MAX),
+        worldwide_day: max_day,
         league_id: u16::MAX,
         floor_price_minor: U256::MAX,
         bucket_key: B256::repeat_byte(u8::MAX),
@@ -121,46 +146,74 @@ fn stored_events_reconstruct_all_nod_boundaries() {
 }
 
 #[test]
-fn event_signatures_and_deleted_identities_are_pinned() {
+fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
     assert_eq!(
         INod::NodBodyStored::SIGNATURE_HASH,
-        keccak256(
-            "NodBodyStored(uint256,address,uint256,uint32,uint16,uint256,bytes32,uint256,uint16,uint16,uint64)"
-        )
+        keccak256("NodBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         INod::NodBucketBodyStored::SIGNATURE_HASH,
-        keccak256("NodBucketBodyStored(bytes32,uint32,uint256,bool,uint64,uint256)")
+        keccak256("NodBucketBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         INod::NodBodyDeleted::SIGNATURE_HASH,
-        keccak256("NodBodyDeleted(uint256)")
+        keccak256("NodBodyDeleted(bytes,bytes32)")
     );
     assert_eq!(
         INod::NodBucketBodyDeleted::SIGNATURE_HASH,
-        keccak256("NodBucketBodyDeleted(bytes32)")
+        keccak256("NodBucketBodyDeleted(bytes,bytes32)")
     );
 
-    let item_log = INod::NodBodyDeleted { nodId: U256::MAX }.encode_log_data();
-    assert_eq!(item_log.topics().len(), 2);
-    assert!(item_log.data.is_empty());
-    assert_eq!(
-        INod::NodBodyDeleted::decode_log_data(&item_log)
-            .unwrap()
-            .nodId,
-        U256::MAX
-    );
-    let bucket_key = B256::repeat_byte(0xab);
-    let bucket_log = INod::NodBucketBodyDeleted {
-        bucketKey: bucket_key,
+    let day = WorldwideDay::new(20_260_715);
+    let nod_id = identity(day, U256::MAX);
+    let previous_item = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        nod_id,
+        b"non-empty canonical Nod item fixture",
+    )
+    .unwrap();
+    let item_log = INod::NodBodyDeleted {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        previousCommitment: B256::from(*previous_item.as_bytes()),
     }
     .encode_log_data();
-    assert_eq!(bucket_log.topics().len(), 2);
-    assert!(bucket_log.data.is_empty());
+    let decoded_item = INod::NodBodyDeleted::decode_log_data(&item_log).unwrap();
+    assert_eq!(item_log.topics(), &[INod::NodBodyDeleted::SIGNATURE_HASH]);
     assert_eq!(
-        INod::NodBucketBodyDeleted::decode_log_data(&bucket_log)
-            .unwrap()
-            .bucketKey,
-        bucket_key
+        EntityId36::try_from(decoded_item.nodId.as_ref()).unwrap(),
+        nod_id
+    );
+    assert_eq!(
+        decoded_item.previousCommitment,
+        B256::from(*previous_item.as_bytes())
+    );
+
+    let bucket_key = B256::repeat_byte(0xab);
+    let bucket_id = EntityId36::new(day, bucket_key.0);
+    let previous_bucket = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        bucket_id,
+        b"non-empty canonical Nod bucket fixture",
+    )
+    .unwrap();
+    let bucket_log = INod::NodBucketBodyDeleted {
+        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        previousCommitment: B256::from(*previous_bucket.as_bytes()),
+    }
+    .encode_log_data();
+    let decoded_bucket = INod::NodBucketBodyDeleted::decode_log_data(&bucket_log).unwrap();
+    assert_eq!(
+        bucket_log.topics(),
+        &[INod::NodBucketBodyDeleted::SIGNATURE_HASH]
+    );
+    assert_eq!(
+        EntityId36::try_from(decoded_bucket.bucketId.as_ref()).unwrap(),
+        bucket_id
+    );
+    assert_eq!(
+        decoded_bucket.previousCommitment,
+        B256::from(*previous_bucket.as_bytes())
     );
 }

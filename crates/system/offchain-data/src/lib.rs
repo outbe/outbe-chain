@@ -18,16 +18,16 @@ use std::{
     str::FromStr,
 };
 
-use alloy_primitives::{Address, LogData, B256, U256};
+use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
+    derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
+    EntityId36, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_nod::{
-    precompile::INod,
-    projection::{
-        plan_nod_bucket_mutation, plan_nod_item_mutation, NodBucketMutation, NodItemMutation,
-        NOD_PROJECTION_NAMESPACES,
-    },
-    NodBucketState, NodItemState, NodRepositoryError, NodRepositoryReader,
+    precompile::INod, projection::NOD_PROJECTION_NAMESPACES, NodBucketState, NodItemState,
+    NodRepositoryError, NodRepositoryReader,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanRequest, StorageError,
@@ -35,9 +35,8 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_tribute::{
-    precompile::ITribute,
-    projection::{plan_tribute_mutation, TributeMutation, TRIBUTE_PROJECTION_NAMESPACES},
-    TributeData, TributeRepositoryError, TributeRepositoryReader,
+    precompile::ITribute, projection::TRIBUTE_PROJECTION_NAMESPACES, TributeData,
+    TributeRepositoryError, TributeRepositoryReader,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -351,7 +350,7 @@ impl OffchainDataProjection {
         let nod_reader = NodRepositoryReader::new(self.reader.clone());
         let mut tribute_ids = BTreeSet::new();
         let mut nod_ids = BTreeSet::new();
-        let mut bucket_keys = BTreeSet::new();
+        let mut bucket_ids = BTreeSet::new();
 
         for (_, events) in &decoded_receipts {
             for event in events {
@@ -363,7 +362,7 @@ impl OffchainDataProjection {
                         nod_ids.insert(id);
                     }
                     EntityIdentity::Bucket(key) => {
-                        bucket_keys.insert(key);
+                        bucket_ids.insert(key);
                     }
                 }
             }
@@ -371,101 +370,128 @@ impl OffchainDataProjection {
 
         let tribute_ids: Vec<_> = tribute_ids.into_iter().collect();
         let nod_ids: Vec<_> = nod_ids.into_iter().collect();
-        let bucket_keys: Vec<_> = bucket_keys.into_iter().collect();
-        let mut tributes = BTreeMap::<U256, Option<TributeData>>::new();
-        for (token_id, record) in tribute_ids
-            .iter()
-            .copied()
-            .zip(tribute_reader.get_many_with_metadata(&tribute_ids)?)
-        {
-            tributes.insert(token_id, validate_existing_record("Tribute", record)?);
+        let bucket_ids: Vec<_> = bucket_ids.into_iter().collect();
+        let mut tributes = tribute_reader.projection_session(&tribute_ids)?;
+        for tribute_id in &tribute_ids {
+            validate_existing_record("Tribute", tributes.current_with_metadata(*tribute_id)?)?;
         }
-        let mut nods = BTreeMap::<U256, Option<NodItemState>>::new();
-        for (nod_id, record) in nod_ids
-            .iter()
-            .copied()
-            .zip(nod_reader.get_many_with_metadata(&nod_ids)?)
-        {
-            nods.insert(nod_id, validate_existing_record("Nod", record)?);
+        let mut nods = nod_reader.projection_session(&nod_ids, &bucket_ids)?;
+        for nod_id in &nod_ids {
+            validate_existing_record("Nod", nods.current_item_with_metadata(*nod_id)?)?;
         }
-        let mut buckets = BTreeMap::<B256, Option<NodBucketState>>::new();
-        for (bucket_key, record) in bucket_keys
-            .iter()
-            .copied()
-            .zip(nod_reader.get_buckets_with_metadata(&bucket_keys)?)
-        {
-            buckets.insert(bucket_key, validate_existing_record("Nod bucket", record)?);
+        for bucket_id in &bucket_ids {
+            validate_existing_record("Nod bucket", nods.current_bucket_with_metadata(*bucket_id)?)?;
         }
 
         let mut prepared_receipts = Vec::new();
+        let mut seen_tributes = BTreeSet::new();
+        let mut seen_nods = BTreeSet::new();
+        let mut seen_buckets = BTreeSet::new();
         for (receipt, events) in decoded_receipts {
             let mut batch = AtomicWriteBatch::new();
             for event in events {
                 match event {
-                    ProjectionEvent::TributeStored { source, body } => {
-                        let id = body.token_id;
-                        let old = tributes.get(&id).and_then(Option::as_ref);
-                        let planned = plan_tribute_mutation(
+                    ProjectionEvent::TributeStored {
+                        source,
+                        tribute_id,
+                        stored_body,
+                        previous_commitment,
+                    } => {
+                        let old = tributes.current(tribute_id)?;
+                        validate_tribute_transition(
+                            tribute_id,
                             old,
-                            TributeMutation::Store {
-                                token_id: id,
-                                body: &body,
-                                metadata: Some(source.to_storage_metadata()?),
-                            },
+                            previous_commitment,
+                            seen_tributes.insert(tribute_id),
+                        )?;
+                        let planned = tributes.store(
+                            tribute_id,
+                            stored_body,
+                            Some(source.to_storage_metadata()?),
                         )?;
                         batch.extend(planned.operations().iter().cloned());
-                        tributes.insert(id, Some(body));
                     }
-                    ProjectionEvent::TributeDeleted { token_id } => {
-                        let old = tributes.get(&token_id).and_then(Option::as_ref);
-                        let planned =
-                            plan_tribute_mutation(old, TributeMutation::Delete { token_id })?;
-                        batch.extend(planned.operations().iter().cloned());
-                        tributes.insert(token_id, None);
-                    }
-                    ProjectionEvent::NodStored { source, body } => {
-                        let id = body.nod_id;
-                        let old = nods.get(&id).and_then(Option::as_ref);
-                        let planned = plan_nod_item_mutation(
+                    ProjectionEvent::TributeDeleted {
+                        tribute_id,
+                        previous_commitment,
+                    } => {
+                        let old = tributes.current(tribute_id)?;
+                        validate_tribute_transition(
+                            tribute_id,
                             old,
-                            NodItemMutation::Store {
-                                nod_id: id,
-                                body: &body,
-                                metadata: Some(source.to_storage_metadata()?),
-                            },
+                            previous_commitment,
+                            seen_tributes.insert(tribute_id),
+                        )?;
+                        let planned = tributes.delete(tribute_id)?;
+                        batch.extend(planned.operations().iter().cloned());
+                    }
+                    ProjectionEvent::NodStored {
+                        source,
+                        nod_id,
+                        stored_body,
+                        previous_commitment,
+                    } => {
+                        let old = nods.current_item(nod_id)?;
+                        validate_nod_transition(
+                            nod_id,
+                            old,
+                            previous_commitment,
+                            seen_nods.insert(nod_id),
+                        )?;
+                        let planned = nods.store_item(
+                            nod_id,
+                            stored_body,
+                            Some(source.to_storage_metadata()?),
                         )?;
                         batch.extend(planned.operations().iter().cloned());
-                        nods.insert(id, Some(body));
                     }
-                    ProjectionEvent::NodDeleted { nod_id } => {
-                        let old = nods.get(&nod_id).and_then(Option::as_ref);
-                        let planned =
-                            plan_nod_item_mutation(old, NodItemMutation::Delete { nod_id })?;
-                        batch.extend(planned.operations().iter().cloned());
-                        nods.insert(nod_id, None);
-                    }
-                    ProjectionEvent::BucketStored { source, body } => {
-                        let key = body.bucket_key;
-                        let old = buckets.get(&key).and_then(Option::as_ref);
-                        let planned = plan_nod_bucket_mutation(
+                    ProjectionEvent::NodDeleted {
+                        nod_id,
+                        previous_commitment,
+                    } => {
+                        let old = nods.current_item(nod_id)?;
+                        validate_nod_transition(
+                            nod_id,
                             old,
-                            NodBucketMutation::Store {
-                                bucket_key: key,
-                                body: &body,
-                                metadata: Some(source.to_storage_metadata()?),
-                            },
+                            previous_commitment,
+                            seen_nods.insert(nod_id),
+                        )?;
+                        let planned = nods.delete_item(nod_id)?;
+                        batch.extend(planned.operations().iter().cloned());
+                    }
+                    ProjectionEvent::BucketStored {
+                        source,
+                        bucket_id,
+                        stored_body,
+                        previous_commitment,
+                    } => {
+                        let old = nods.current_bucket(bucket_id)?;
+                        validate_bucket_transition(
+                            bucket_id,
+                            old,
+                            previous_commitment,
+                            seen_buckets.insert(bucket_id),
+                        )?;
+                        let planned = nods.store_bucket(
+                            bucket_id,
+                            stored_body,
+                            Some(source.to_storage_metadata()?),
                         )?;
                         batch.extend(planned.operations().iter().cloned());
-                        buckets.insert(key, Some(body));
                     }
-                    ProjectionEvent::BucketDeleted { bucket_key } => {
-                        let old = buckets.get(&bucket_key).and_then(Option::as_ref);
-                        let planned = plan_nod_bucket_mutation(
+                    ProjectionEvent::BucketDeleted {
+                        bucket_id,
+                        previous_commitment,
+                    } => {
+                        let old = nods.current_bucket(bucket_id)?;
+                        validate_bucket_transition(
+                            bucket_id,
                             old,
-                            NodBucketMutation::Delete { bucket_key },
+                            previous_commitment,
+                            seen_buckets.insert(bucket_id),
                         )?;
+                        let planned = nods.delete_bucket(bucket_id)?;
                         batch.extend(planned.operations().iter().cloned());
-                        buckets.insert(bucket_key, None);
                     }
                 }
             }
@@ -570,14 +596,100 @@ impl OffchainDataProjection {
 
 fn validate_existing_record<T>(
     entity: &'static str,
-    record: Option<(T, Option<StorageMetadata>)>,
-) -> Result<Option<T>, ProjectionError> {
-    let Some((body, metadata)) = record else {
-        return Ok(None);
+    record: Option<(&T, Option<&StorageMetadata>)>,
+) -> Result<(), ProjectionError> {
+    let Some((_body, metadata)) = record else {
+        return Ok(());
     };
     let metadata = metadata.ok_or(ProjectionError::MissingProjectionMetadata { entity })?;
-    ProjectionSource::from_storage_metadata(&metadata)?;
-    Ok(Some(body))
+    ProjectionSource::from_storage_metadata(metadata)?;
+    Ok(())
+}
+
+fn validate_tribute_transition(
+    identity: EntityId36,
+    old: Option<&TributeData>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload = encode_tribute_v1(&outbe_tribute::canonical_body(body))
+                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition("Tribute", identity, current, previous)
+}
+
+fn validate_nod_transition(
+    identity: EntityId36,
+    old: Option<&NodItemState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload = encode_nod_item_v1(&outbe_nod::canonical_item(body))
+                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition("Nod", identity, current, previous)
+}
+
+fn validate_bucket_transition(
+    identity: EntityId36,
+    old: Option<&NodBucketState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload = encode_nod_bucket_v1(&outbe_nod::canonical_bucket(body))
+                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition("Nod bucket", identity, current, previous)
+}
+
+fn validate_transition(
+    entity: &'static str,
+    identity: EntityId36,
+    current: B256,
+    previous: B256,
+) -> Result<(), ProjectionError> {
+    if current == previous {
+        return Ok(());
+    }
+    Err(ProjectionError::CommitmentTransitionMismatch {
+        entity,
+        identity,
+        expected_previous: previous,
+        actual: current,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -588,44 +700,54 @@ enum NextBlock {
 
 #[derive(Clone, Copy)]
 enum EntityIdentity {
-    Tribute(U256),
-    Nod(U256),
-    Bucket(B256),
+    Tribute(EntityId36),
+    Nod(EntityId36),
+    Bucket(EntityId36),
 }
 
 enum ProjectionEvent {
     TributeStored {
         source: ProjectionSource,
-        body: TributeData,
+        tribute_id: EntityId36,
+        stored_body: Value,
+        previous_commitment: B256,
     },
     TributeDeleted {
-        token_id: U256,
+        tribute_id: EntityId36,
+        previous_commitment: B256,
     },
     NodStored {
         source: ProjectionSource,
-        body: NodItemState,
+        nod_id: EntityId36,
+        stored_body: Value,
+        previous_commitment: B256,
     },
     NodDeleted {
-        nod_id: U256,
+        nod_id: EntityId36,
+        previous_commitment: B256,
     },
     BucketStored {
         source: ProjectionSource,
-        body: NodBucketState,
+        bucket_id: EntityId36,
+        stored_body: Value,
+        previous_commitment: B256,
     },
     BucketDeleted {
-        bucket_key: B256,
+        bucket_id: EntityId36,
+        previous_commitment: B256,
     },
 }
 
 impl ProjectionEvent {
     fn identity(&self) -> EntityIdentity {
         match self {
-            Self::TributeStored { body, .. } => EntityIdentity::Tribute(body.token_id),
-            Self::TributeDeleted { token_id, .. } => EntityIdentity::Tribute(*token_id),
-            Self::NodStored { body, .. } => EntityIdentity::Nod(body.nod_id),
+            Self::TributeStored { tribute_id, .. } => EntityIdentity::Tribute(*tribute_id),
+            Self::TributeDeleted { tribute_id, .. } => EntityIdentity::Tribute(*tribute_id),
+            Self::NodStored { nod_id, .. } => EntityIdentity::Nod(*nod_id),
             Self::NodDeleted { nod_id, .. } => EntityIdentity::Nod(*nod_id),
-            Self::BucketStored { body, .. } => EntityIdentity::Bucket(body.bucket_key),
-            Self::BucketDeleted { bucket_key, .. } => EntityIdentity::Bucket(*bucket_key),
+            Self::BucketStored { bucket_id, .. } | Self::BucketDeleted { bucket_id, .. } => {
+                EntityIdentity::Bucket(*bucket_id)
+            }
         }
     }
 }
@@ -650,85 +772,216 @@ fn decode_event(
     {
         let event = ITribute::TributeBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
+        let tribute_id = decode_entity_id(source, &event.tributeId)?;
+        let canonical = decode_tribute_v1(&event.canonicalPayload)
+            .map_err(|error| malformed_event(source, error))?;
+        if canonical.tribute_id != tribute_id {
+            return Err(malformed_event(
+                source,
+                "Tribute event identity/payload mismatch",
+            ));
+        }
+        validate_poseidon_identity(
+            source,
+            "Tribute",
+            tribute_id,
+            canonical.owner,
+            canonical.worldwide_day,
+        )?;
+        validate_stored_commitment(
+            source,
+            tribute_id,
+            &event.canonicalPayload,
+            event.previousCommitment,
+            event.newCommitment,
+        )?;
         Some(ProjectionEvent::TributeStored {
             source,
-            body: TributeData {
-                token_id: event.tokenId,
-                owner: event.owner,
-                worldwide_day: WorldwideDay::new(event.worldwideDay),
-                issuance_amount_minor: event.issuanceAmountMinor,
-                issuance_currency: event.issuanceCurrency,
-                nominal_amount_minor: event.nominalAmountMinor,
-                reference_currency: event.referenceCurrency,
-                tribute_price_minor: event.tributePriceMinor,
-                exclude_from_intex_issuance: event.excludeFromIntexIssuance,
-            },
+            tribute_id,
+            stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
+            previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == TRIBUTE_ADDRESS
         && source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
     {
         let event = ITribute::TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::TributeDeleted {
-            token_id: event.tokenId,
+            tribute_id: decode_entity_id(source, &event.tributeId)?,
+            previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == NOD_ADDRESS
         && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH
     {
         let event = INod::NodBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
+        let nod_id = decode_entity_id(source, &event.nodId)?;
+        let canonical = decode_nod_item_v1(&event.canonicalPayload)
+            .map_err(|error| malformed_event(source, error))?;
+        if canonical.nod_id != nod_id {
+            return Err(malformed_event(
+                source,
+                "Nod event identity/payload mismatch",
+            ));
+        }
+        validate_poseidon_identity(
+            source,
+            "Nod item",
+            nod_id,
+            canonical.owner,
+            canonical.worldwide_day,
+        )?;
+        validate_stored_commitment(
+            source,
+            nod_id,
+            &event.canonicalPayload,
+            event.previousCommitment,
+            event.newCommitment,
+        )?;
         Some(ProjectionEvent::NodStored {
             source,
-            body: NodItemState {
-                nod_id: event.nodId,
-                owner: event.owner,
-                gratis_load_minor: event.gratisLoadMinor,
-                worldwide_day: WorldwideDay::new(event.worldwideDay),
-                league_id: event.leagueId,
-                floor_price_minor: event.floorPriceMinor,
-                bucket_key: event.bucketKey,
-                cost_amount_minor: event.costAmountMinor,
-                issuance_currency: event.issuanceCurrency,
-                reference_currency: event.referenceCurrency,
-                issued_at: event.issuedAt,
-            },
+            nod_id,
+            stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
+            previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == NOD_ADDRESS
         && source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH
     {
         let event = INod::NodBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::NodDeleted {
-            nod_id: event.nodId,
+            nod_id: decode_entity_id(source, &event.nodId)?,
+            previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == NOD_ADDRESS
         && source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH
     {
         let event = INod::NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
+        let bucket_id = decode_entity_id(source, &event.bucketId)?;
+        let canonical = decode_nod_bucket_v1(&event.canonicalPayload)
+            .map_err(|error| malformed_event(source, error))?;
+        if canonical.entity_id() != bucket_id {
+            return Err(malformed_event(
+                source,
+                "Nod bucket event identity/payload mismatch",
+            ));
+        }
+        validate_stored_commitment(
+            source,
+            bucket_id,
+            &event.canonicalPayload,
+            event.previousCommitment,
+            event.newCommitment,
+        )?;
         Some(ProjectionEvent::BucketStored {
             source,
-            body: NodBucketState {
-                bucket_key: event.bucketKey,
-                worldwide_day: WorldwideDay::new(event.worldwideDay),
-                floor_price_minor: event.floorPriceMinor,
-                is_qualified: event.isQualified,
-                total_nods: event.totalNods,
-                entry_price_minor: event.entryPriceMinor,
-            },
+            bucket_id,
+            stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
+            previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == NOD_ADDRESS
         && source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH
     {
         let event = INod::NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
+        validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::BucketDeleted {
-            bucket_key: event.bucketKey,
+            bucket_id: decode_entity_id(source, &event.bucketId)?,
+            previous_commitment: event.previousCommitment,
         })
     } else {
         None
     };
     Ok(decoded)
+}
+
+fn decode_entity_id(source: ProjectionSource, bytes: &[u8]) -> Result<EntityId36, ProjectionError> {
+    EntityId36::try_from(bytes).map_err(|error| malformed_event(source, error))
+}
+
+fn validate_poseidon_identity(
+    source: ProjectionSource,
+    entity: &'static str,
+    actual: EntityId36,
+    owner: Address,
+    worldwide_day: outbe_common::WorldwideDay,
+) -> Result<(), ProjectionError> {
+    let expected = derive_poseidon_entity_id(owner, worldwide_day)
+        .map_err(|error| malformed_event(source, error))?;
+    if actual != expected {
+        return Err(malformed_event(
+            source,
+            format!("{entity} canonical identity mismatch: expected {expected}, found {actual}"),
+        ));
+    }
+    Ok(())
+}
+
+fn stored_event_body(
+    source: ProjectionSource,
+    schema_version: u32,
+    payload: &[u8],
+) -> Result<Value, ProjectionError> {
+    let stored = StoredBody::new(schema_version, payload.to_vec())
+        .map_err(|error| malformed_event(source, error))?;
+    Value::new(stored.encode()).map_err(ProjectionError::Storage)
+}
+
+fn validate_versions(
+    source: ProjectionSource,
+    commitment_scheme_version: u32,
+    schema_version: u32,
+) -> Result<(), ProjectionError> {
+    if commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME {
+        return Err(malformed_event(
+            source,
+            format!("unsupported commitment scheme {commitment_scheme_version}"),
+        ));
+    }
+    if schema_version != BODY_SCHEMA_V1 {
+        return Err(malformed_event(
+            source,
+            format!("unsupported body schema {schema_version}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_stored_commitment(
+    source: ProjectionSource,
+    identity: EntityId36,
+    payload: &[u8],
+    previous: B256,
+    new: B256,
+) -> Result<(), ProjectionError> {
+    if !previous.is_zero() {
+        outbe_compressed_entities::Commitment::try_from(previous.0)
+            .map_err(|error| malformed_event(source, error))?;
+    }
+    let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, payload)
+        .map_err(|error| malformed_event(source, error))?;
+    if new != B256::from(*expected.as_bytes()) {
+        return Err(malformed_event(
+            source,
+            "new commitment does not match payload",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_deleted_commitment(
+    source: ProjectionSource,
+    previous: B256,
+) -> Result<(), ProjectionError> {
+    outbe_compressed_entities::Commitment::try_from(previous.0)
+        .map(|_| ())
+        .map_err(|error| malformed_event(source, error))
 }
 
 fn malformed_event(source: ProjectionSource, error: impl std::fmt::Display) -> ProjectionError {
@@ -895,4 +1148,15 @@ pub enum ProjectionError {
     MalformedProjectionMetadata(String),
     #[error("managed {entity} primary record has no projection metadata")]
     MissingProjectionMetadata { entity: &'static str },
+    #[error("corrupt projected body: {0}")]
+    CorruptProjectedBody(String),
+    #[error(
+        "{entity} {identity} commitment transition expected previous {expected_previous}, found {actual}"
+    )]
+    CommitmentTransitionMismatch {
+        entity: &'static str,
+        identity: EntityId36,
+        expected_previous: B256,
+        actual: B256,
+    },
 }

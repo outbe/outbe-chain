@@ -74,6 +74,7 @@ eyre.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-compressed-entities.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true

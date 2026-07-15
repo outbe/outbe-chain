@@ -1,5 +1,6 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::EntityId36;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[storage_record(exists_field = owner)]
 pub struct TributeData {
     #[key]
-    pub token_id: U256,
+    pub tribute_id: EntityId36,
 
     #[attribute(order = 0)]
     pub owner: Address,
@@ -59,21 +60,12 @@ pub struct TributeContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    #[attribute(order = 1)]
-    pub(crate) tributes: outbe_primitives::storage::dsl::Map<U256, TributeData>,
-
     #[attribute(order = 2)]
     pub day_totals: outbe_primitives::storage::dsl::Map<WorldwideDay, DayTotals>,
+}
 
-    #[attribute(order = 3)]
-    pub day_index_counts: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    #[attribute(order = 4)]
-    pub day_token_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
-
-    #[attribute(order = 5)]
-    pub owner_index_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
-
-    #[attribute(order = 6)]
-    pub owner_tribute_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+impl<'storage> TributeContract<'storage> {
+    pub(crate) fn storage_handle(&self) -> outbe_primitives::storage::StorageHandle<'storage> {
+        self.storage.clone()
+    }
 }

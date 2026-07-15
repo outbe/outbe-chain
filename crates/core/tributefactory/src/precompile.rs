@@ -29,17 +29,19 @@ pub fn dispatch(
             match call {
                 offerTribute(c) => mutate(c, caller, |sender, c| {
                     let mut factory = TributeFactoryContract::new(storage);
-                    factory.offer_tribute(
-                        tribute_bodies,
-                        OfferTributeInput {
-                            caller: sender,
-                            cipher_text: &c.cipherText,
-                            nonce: &c.nonce,
-                            ephemeral_pubkey: c.ephemeralPubkey,
-                            reference_currency: c.referenceCurrency,
-                            exclude_from_intex_issuance: c.excludeFromIntexIssuance,
-                        },
-                    )
+                    factory
+                        .offer_tribute(
+                            tribute_bodies,
+                            OfferTributeInput {
+                                caller: sender,
+                                cipher_text: &c.cipherText,
+                                nonce: &c.nonce,
+                                ephemeral_pubkey: c.ephemeralPubkey,
+                                reference_currency: c.referenceCurrency,
+                                exclude_from_intex_issuance: c.excludeFromIntexIssuance,
+                            },
+                        )
+                        .map(|id| Bytes::copy_from_slice(id.as_bytes()))
                 }),
             }
         },

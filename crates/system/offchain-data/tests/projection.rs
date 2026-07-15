@@ -10,7 +10,14 @@ use std::{
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
-use outbe_nod::{precompile::INod, NodPageRequest, NodRepositoryReader};
+use outbe_compressed_entities::{
+    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
+    encode_tribute_v1, EntityId36, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
+use outbe_nod::{
+    canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodItemState,
+    NodPageRequest, NodRepositoryReader,
+};
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
     ProjectionError, ProjectionOutcome, ProjectionSource, PROJECTION_STATE_NAMESPACE,
@@ -20,7 +27,9 @@ use outbe_offchain_storage::{
     StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue,
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
-use outbe_tribute::{precompile::ITribute, TributePageRequest, TributeRepositoryReader};
+use outbe_tribute::{
+    canonical_body, precompile::ITribute, TributeData, TributePageRequest, TributeRepositoryReader,
+};
 
 #[derive(Default)]
 struct RecordingStorage {
@@ -105,46 +114,131 @@ fn log(index: u64, emitter: Address, data: LogData) -> FinalizedLog {
     }
 }
 
-fn tribute_stored(token_id: U256, owner: Address, day: u32) -> LogData {
-    ITribute::TributeBodyStored {
-        tokenId: token_id,
+fn entity(seed: u64, day: u32) -> EntityId36 {
+    EntityId36::new(WorldwideDay::new(day), U256::from(seed).to_be_bytes::<32>())
+}
+
+fn poseidon_entity(owner: Address, day: u32) -> EntityId36 {
+    derive_poseidon_entity_id(owner, WorldwideDay::new(day)).unwrap()
+}
+
+fn tribute_body(tribute_id: EntityId36, owner: Address, day: u32) -> TributeData {
+    TributeData {
+        tribute_id,
         owner,
-        worldwideDay: day,
-        issuanceAmountMinor: U256::from(10),
-        issuanceCurrency: 840,
-        nominalAmountMinor: U256::from(11),
-        referenceCurrency: 978,
-        tributePriceMinor: U256::from(12),
-        excludeFromIntexIssuance: true,
+        worldwide_day: WorldwideDay::new(day),
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: true,
+    }
+}
+
+fn tribute_commitment(body: &TributeData) -> B256 {
+    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
+    B256::from(
+        *body_commitment(
+            ACTIVE_COMMITMENT_SCHEME,
+            BODY_SCHEMA_V1,
+            body.tribute_id,
+            &payload,
+        )
+        .unwrap()
+        .as_bytes(),
+    )
+}
+
+fn tribute_stored(tribute_id: EntityId36, owner: Address, day: u32) -> LogData {
+    tribute_stored_after(tribute_id, owner, day, B256::ZERO)
+}
+
+fn tribute_stored_after(
+    tribute_id: EntityId36,
+    owner: Address,
+    day: u32,
+    previous: B256,
+) -> LogData {
+    let body = tribute_body(tribute_id, owner, day);
+    tribute_stored_body_after(&body, previous)
+}
+
+fn tribute_stored_body_after(body: &TributeData, previous: B256) -> LogData {
+    let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
+    let new_commitment = tribute_commitment(&body);
+    ITribute::TributeBodyStored {
+        tributeId: Bytes::copy_from_slice(body.tribute_id.as_bytes()),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: previous,
+        newCommitment: new_commitment,
+        canonicalPayload: Bytes::from(payload),
     }
     .encode_log_data()
 }
 
-fn nod_stored(nod_id: U256, owner: Address, bucket_key: B256) -> LogData {
-    INod::NodBodyStored {
-        nodId: nod_id,
+fn nod_body(nod_id: EntityId36, owner: Address, bucket_key: B256) -> NodItemState {
+    NodItemState {
+        nod_id,
         owner,
-        gratisLoadMinor: U256::from(101),
-        worldwideDay: 20260715,
-        leagueId: 7,
-        floorPriceMinor: U256::from(102),
-        bucketKey: bucket_key,
-        costAmountMinor: U256::from(103),
-        issuanceCurrency: 840,
-        referenceCurrency: 978,
-        issuedAt: 123_456,
+        gratis_load_minor: U256::from(101),
+        worldwide_day: WorldwideDay::new(20260715),
+        league_id: 7,
+        floor_price_minor: U256::from(102),
+        bucket_key,
+        cost_amount_minor: U256::from(103),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 123_456,
+    }
+}
+
+fn nod_stored(nod_id: EntityId36, owner: Address, bucket_key: B256) -> LogData {
+    let body = nod_body(nod_id, owner, bucket_key);
+    let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+    let commitment =
+        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    INod::NodBodyStored {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: B256::from(*commitment.as_bytes()),
+        canonicalPayload: Bytes::from(payload),
     }
     .encode_log_data()
+}
+
+fn bucket_body(bucket_key: B256) -> NodBucketState {
+    NodBucketState {
+        bucket_key,
+        worldwide_day: WorldwideDay::new(20260715),
+        floor_price_minor: U256::from(102),
+        is_qualified: true,
+        total_nods: 3,
+        entry_price_minor: U256::from(104),
+    }
 }
 
 fn bucket_stored(bucket_key: B256) -> LogData {
+    let body = bucket_body(bucket_key);
+    let bucket_id = EntityId36::new(body.worldwide_day, bucket_key.0);
+    let payload = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        bucket_id,
+        &payload,
+    )
+    .unwrap();
     INod::NodBucketBodyStored {
-        bucketKey: bucket_key,
-        worldwideDay: 20260715,
-        floorPriceMinor: U256::from(102),
-        isQualified: true,
-        totalNods: 3,
-        entryPriceMinor: U256::from(104),
+        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: B256::from(*commitment.as_bytes()),
+        canonicalPayload: Bytes::from(payload),
     }
     .encode_log_data()
 }
@@ -153,8 +247,8 @@ fn bucket_stored(bucket_key: B256) -> LogData {
 fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     let storage = Arc::new(RecordingStorage::default());
     let mut projection = open(&storage, 10);
-    let token_id = U256::from(42);
     let owner = Address::repeat_byte(0xa1);
+    let token_id = poseidon_entity(owner, 20260715);
     let block = FinalizedBlock {
         number: 10,
         hash: B256::repeat_byte(0x10),
@@ -193,6 +287,19 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     let (body, metadata) = repository.get_with_metadata(token_id).unwrap().unwrap();
     assert_eq!(body.owner, owner);
     assert_eq!(body.worldwide_day, WorldwideDay::new(20260715));
+    let raw_primary = storage
+        .get_record(
+            Namespace::new("tributes").unwrap(),
+            &Key::new(token_id.as_bytes().to_vec()).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    let emitted_payload =
+        encode_tribute_v1(&canonical_body(&tribute_body(token_id, owner, 20260715))).unwrap();
+    assert_eq!(
+        raw_primary.value.as_bytes(),
+        StoredBody::new_v1(emitted_payload).unwrap().encode()
+    );
     let source = ProjectionSource::from_storage_metadata(&metadata.unwrap()).unwrap();
     assert_eq!(source.block_number, 10);
     assert_eq!(source.block_hash, block.hash);
@@ -228,12 +335,14 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
 }
 
 #[test]
-fn full_block_overlay_removes_stale_indexes_across_receipts() {
+fn full_block_overlay_applies_successive_canonical_updates_across_receipts() {
     let storage = Arc::new(RecordingStorage::default());
     let mut projection = open(&storage, 5);
-    let token_id = U256::from(7);
-    let first_owner = Address::repeat_byte(0x11);
-    let final_owner = Address::repeat_byte(0x22);
+    let owner = Address::repeat_byte(0x11);
+    let token_id = poseidon_entity(owner, 20260715);
+    let first_body = tribute_body(token_id, owner, 20260715);
+    let mut final_body = tribute_body(token_id, owner, 20260715);
+    final_body.tribute_price_minor = U256::from(99);
     let block = FinalizedBlock {
         number: 5,
         hash: B256::repeat_byte(5),
@@ -244,7 +353,7 @@ fn full_block_overlay_removes_stale_indexes_across_receipts() {
                 vec![log(
                     0,
                     TRIBUTE_ADDRESS,
-                    tribute_stored(token_id, first_owner, 20260714),
+                    tribute_stored_body_after(&first_body, B256::ZERO),
                 )],
             ),
             receipt(
@@ -253,7 +362,7 @@ fn full_block_overlay_removes_stale_indexes_across_receipts() {
                 vec![log(
                     1,
                     TRIBUTE_ADDRESS,
-                    tribute_stored(token_id, final_owner, 20260715),
+                    tribute_stored_body_after(&final_body, tribute_commitment(&first_body)),
                 )],
             ),
         ],
@@ -261,20 +370,9 @@ fn full_block_overlay_removes_stale_indexes_across_receipts() {
 
     projection.project_block(&block).unwrap();
     let repository = TributeRepositoryReader::new(storage.clone());
-    assert!(repository
-        .list_by_owner(
-            first_owner,
-            TributePageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap()
-        .records
-        .is_empty());
     let final_page = repository
         .list_by_owner(
-            final_owner,
+            owner,
             TributePageRequest {
                 after: None,
                 limit: 10,
@@ -282,6 +380,7 @@ fn full_block_overlay_removes_stale_indexes_across_receipts() {
         )
         .unwrap();
     assert_eq!(final_page.records.len(), 1);
+    assert_eq!(final_page.records[0].tribute_price_minor, U256::from(99));
     assert_eq!(
         final_page.records[0].worldwide_day,
         WorldwideDay::new(20260715)
@@ -299,7 +398,7 @@ fn full_block_overlay_removes_stale_indexes_across_receipts() {
 fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data() {
     let storage = Arc::new(RecordingStorage::default());
     let mut projection = open(&storage, 20);
-    let ignored_id = U256::from(1);
+    let ignored_id = entity(1, 20260715);
     let ignored = FinalizedBlock {
         number: 20,
         hash: B256::repeat_byte(20),
@@ -319,7 +418,8 @@ fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data(
         .unwrap()
         .is_none());
 
-    let valid_id = U256::from(2);
+    let valid_owner = Address::repeat_byte(2);
+    let valid_id = poseidon_entity(valid_owner, 20260715);
     let malformed = LogData::new(
         vec![ITribute::TributeBodyStored::SIGNATURE_HASH],
         Bytes::new(),
@@ -335,7 +435,7 @@ fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data(
                 vec![log(
                     0,
                     TRIBUTE_ADDRESS,
-                    tribute_stored(valid_id, Address::repeat_byte(2), 20260715),
+                    tribute_stored(valid_id, valid_owner, 20260715),
                 )],
             ),
             receipt(1, 5, vec![log(1, TRIBUTE_ADDRESS, malformed)]),
@@ -355,12 +455,121 @@ fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data(
 }
 
 #[test]
+fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain_write() {
+    let owner = Address::repeat_byte(0x81);
+    let tribute_id = poseidon_entity(owner, 20260715);
+    let body = tribute_body(tribute_id, owner, 20260715);
+    let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
+
+    let malformed_events = [
+        ITribute::TributeBodyStored {
+            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+            schemaVersion: BODY_SCHEMA_V1,
+            previousCommitment: B256::ZERO,
+            newCommitment: B256::repeat_byte(0x44),
+            canonicalPayload: Bytes::copy_from_slice(&payload),
+        }
+        .encode_log_data(),
+        ITribute::TributeBodyStored {
+            tributeId: Bytes::copy_from_slice(entity(82, 20260715).as_bytes()),
+            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+            schemaVersion: BODY_SCHEMA_V1,
+            previousCommitment: B256::ZERO,
+            newCommitment: tribute_commitment(&body),
+            canonicalPayload: Bytes::copy_from_slice(&payload),
+        }
+        .encode_log_data(),
+        ITribute::TributeBodyStored {
+            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
+            schemaVersion: BODY_SCHEMA_V1,
+            previousCommitment: B256::ZERO,
+            newCommitment: tribute_commitment(&body),
+            canonicalPayload: Bytes::copy_from_slice(&payload),
+        }
+        .encode_log_data(),
+    ];
+
+    for (case, event) in malformed_events.into_iter().enumerate() {
+        let storage = Arc::new(RecordingStorage::default());
+        let mut projection = open(&storage, 80);
+        let batches_before = storage.batches().len();
+        let block = FinalizedBlock {
+            number: 80,
+            hash: B256::repeat_byte(0x80 + case as u8),
+            receipts: vec![receipt(
+                0,
+                0x80 + case as u8,
+                vec![log(0, TRIBUTE_ADDRESS, event)],
+            )],
+        };
+        assert!(matches!(
+            projection.project_block(&block),
+            Err(ProjectionError::MalformedProjectionEvent { .. })
+        ));
+        assert_eq!(storage.batches().len(), batches_before);
+        assert_eq!(projection.state().checkpoint, None);
+        assert!(TributeRepositoryReader::new(storage)
+            .get(tribute_id)
+            .unwrap()
+            .is_none());
+    }
+
+    let storage = Arc::new(RecordingStorage::default());
+    let mut projection = open(&storage, 80);
+    let first_owner = owner;
+    let final_owner = owner;
+    let wrong_previous = tribute_commitment(&tribute_body(
+        tribute_id,
+        Address::repeat_byte(0x55),
+        20260715,
+    ));
+    let block = FinalizedBlock {
+        number: 80,
+        hash: B256::repeat_byte(0x8f),
+        receipts: vec![
+            receipt(
+                0,
+                0x8e,
+                vec![log(
+                    0,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored(tribute_id, first_owner, 20260715),
+                )],
+            ),
+            receipt(
+                1,
+                0x8f,
+                vec![log(
+                    1,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_after(tribute_id, final_owner, 20260715, wrong_previous),
+                )],
+            ),
+        ],
+    };
+    let batches_before = storage.batches().len();
+    assert!(matches!(
+        projection.project_block(&block),
+        Err(ProjectionError::CommitmentTransitionMismatch { .. })
+    ));
+    assert_eq!(storage.batches().len(), batches_before);
+    assert_eq!(projection.state().checkpoint, None);
+    assert!(TributeRepositoryReader::new(storage)
+        .get(tribute_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
     let storage = Arc::new(RecordingStorage::default());
     let mut projection = open(&storage, 30);
-    let nod_id = U256::from(99);
     let bucket_key = B256::repeat_byte(0xbc);
     let owner = Address::repeat_byte(0x77);
+    let nod_id = poseidon_entity(owner, 20260715);
+    let bucket_id = EntityId36::new(WorldwideDay::new(20260715), bucket_key.0);
     let store_block = FinalizedBlock {
         number: 30,
         hash: B256::repeat_byte(30),
@@ -376,7 +585,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
     projection.project_block(&store_block).unwrap();
     let repository = NodRepositoryReader::new(storage.clone());
     assert!(repository.get(nod_id).unwrap().is_some());
-    assert!(repository.get_bucket(bucket_key).unwrap().is_some());
+    assert!(repository.get_bucket(bucket_id).unwrap().is_some());
     assert_eq!(
         repository
             .list_by_owner(
@@ -405,13 +614,44 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                 log(
                     0,
                     NOD_ADDRESS,
-                    INod::NodBodyDeleted { nodId: nod_id }.encode_log_data(),
+                    INod::NodBodyDeleted {
+                        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                        previousCommitment: {
+                            let body = nod_body(nod_id, owner, bucket_key);
+                            let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+                            B256::from(
+                                *body_commitment(
+                                    ACTIVE_COMMITMENT_SCHEME,
+                                    BODY_SCHEMA_V1,
+                                    nod_id,
+                                    &payload,
+                                )
+                                .unwrap()
+                                .as_bytes(),
+                            )
+                        },
+                    }
+                    .encode_log_data(),
                 ),
                 log(
                     1,
                     NOD_ADDRESS,
                     INod::NodBucketBodyDeleted {
-                        bucketKey: bucket_key,
+                        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                        previousCommitment: {
+                            let body = bucket_body(bucket_key);
+                            let payload = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+                            B256::from(
+                                *body_commitment(
+                                    ACTIVE_COMMITMENT_SCHEME,
+                                    BODY_SCHEMA_V1,
+                                    bucket_id,
+                                    &payload,
+                                )
+                                .unwrap()
+                                .as_bytes(),
+                            )
+                        },
                     }
                     .encode_log_data(),
                 ),
@@ -419,7 +659,12 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                     2,
                     TRIBUTE_ADDRESS,
                     ITribute::TributeBodyDeleted {
-                        tokenId: U256::from(1234),
+                        tributeId: Bytes::copy_from_slice(entity(1234, 20260715).as_bytes()),
+                        previousCommitment: tribute_commitment(&tribute_body(
+                            entity(1234, 20260715),
+                            Address::repeat_byte(1),
+                            20260715,
+                        )),
                     }
                     .encode_log_data(),
                 ),
@@ -428,7 +673,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
     };
     projection.project_block(&delete_block).unwrap();
     assert!(repository.get(nod_id).unwrap().is_none());
-    assert!(repository.get_bucket(bucket_key).unwrap().is_none());
+    assert!(repository.get_bucket(bucket_id).unwrap().is_none());
 }
 
 #[test]
@@ -545,9 +790,13 @@ impl StorageWriter for FailOnceStorage {
 
 #[test]
 fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
-    let token_id = U256::from(500);
-    let first_owner = Address::repeat_byte(0x51);
-    let final_owner = Address::repeat_byte(0x52);
+    let owner = Address::repeat_byte(0x51);
+    let token_id = poseidon_entity(owner, 20260715);
+    let mut bodies: [TributeData; 4] =
+        std::array::from_fn(|_| tribute_body(token_id, owner, 20260715));
+    for (index, body) in bodies.iter_mut().enumerate() {
+        body.tribute_price_minor = U256::from(index + 1);
+    }
     let block = FinalizedBlock {
         number: 60,
         hash: B256::repeat_byte(0x60),
@@ -558,7 +807,7 @@ fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
                 vec![log(
                     0,
                     TRIBUTE_ADDRESS,
-                    tribute_stored(token_id, first_owner, 20260714),
+                    tribute_stored_body_after(&bodies[0], B256::ZERO),
                 )],
             ),
             receipt(
@@ -567,13 +816,31 @@ fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
                 vec![log(
                     1,
                     TRIBUTE_ADDRESS,
-                    tribute_stored(token_id, final_owner, 20260715),
+                    tribute_stored_body_after(&bodies[1], tribute_commitment(&bodies[0])),
+                )],
+            ),
+            receipt(
+                2,
+                0x63,
+                vec![log(
+                    2,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_body_after(&bodies[2], tribute_commitment(&bodies[1])),
+                )],
+            ),
+            receipt(
+                3,
+                0x64,
+                vec![log(
+                    3,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_body_after(&bodies[3], tribute_commitment(&bodies[2])),
                 )],
             ),
         ],
     };
 
-    for fail_on in 1..=3 {
+    for fail_on in 1..=5 {
         let storage = Arc::new(FailOnceStorage::default());
         let mut projection =
             OffchainDataProjection::open(config(60), storage.clone(), storage.clone()).unwrap();
@@ -586,18 +853,22 @@ fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
         restarted.project_block(&block).unwrap();
         let repository = TributeRepositoryReader::new(storage.clone());
         let final_body = repository.get(token_id).unwrap().unwrap();
-        assert_eq!(final_body.owner, final_owner);
-        assert!(repository
-            .list_by_owner(
-                first_owner,
-                TributePageRequest {
-                    after: None,
-                    limit: 10,
-                },
-            )
-            .unwrap()
-            .records
-            .is_empty());
+        assert_eq!(final_body.owner, owner);
+        assert_eq!(final_body.tribute_price_minor, U256::from(4));
+        assert_eq!(
+            repository
+                .list_by_owner(
+                    owner,
+                    TributePageRequest {
+                        after: None,
+                        limit: 10,
+                    },
+                )
+                .unwrap()
+                .records
+                .len(),
+            1
+        );
         assert_eq!(restarted.state().checkpoint.unwrap().block_hash, block.hash);
     }
 }
@@ -612,7 +883,11 @@ fn failed_recognized_receipt_and_noncanonical_metadata_stall_without_checkpoint(
         vec![log(
             0,
             TRIBUTE_ADDRESS,
-            tribute_stored(U256::from(70), Address::repeat_byte(0x70), 20260715),
+            tribute_stored(
+                poseidon_entity(Address::repeat_byte(0x70), 20260715),
+                Address::repeat_byte(0x70),
+                20260715,
+            ),
         )],
     );
     failed_receipt.success = false;

@@ -1,6 +1,8 @@
 use alloy_primitives::U256;
-#[cfg(any(test, feature = "test-utils"))]
-use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    body_commitment, encode_nod_bucket_v1, CommitmentState, EntityId36, ACTIVE_COMMITMENT_SCHEME,
+    BODY_SCHEMA_V1,
+};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
@@ -9,66 +11,18 @@ use crate::{
     schema::{NodBucketState, NodContract},
     NodRepositoryReader,
 };
-#[cfg(any(test, feature = "test-utils"))]
-use crate::{errors::NodError, schema::NodItemState};
 
 impl NodContract<'_> {
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn get_nod_data(&self, nod_id: U256) -> Result<(NodItemState, NodBucketState)> {
-        let item = self.get_item(nod_id)?.ok_or(NodError::NodNotFound)?;
-        let bucket_key = Self::bucket_key(item.worldwide_day, item.floor_price_minor);
-        let bucket = self
-            .nod_buckets
-            .get(bucket_key)?
-            .ok_or(NodError::NodNotFound)?;
-        Ok((item, bucket))
-    }
-
-    /// Set `is_qualified = true` on the bucket and emit `NodBucketQualified`.
-    /// Called from `NodLifecycle::begin_block` once the COEN/0xUSD oracle rate
-    /// reaches `bucket.floor_price_minor`. Does NOT remove the bucket from
-    /// `unqualified_heap` — the hook pops the root as part of its scan.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn qualify_bucket(
-        &mut self,
-        worldwide_day: WorldwideDay,
-        floor_price_minor: U256,
-    ) -> Result<()> {
-        let bucket_key = Self::bucket_key(worldwide_day, floor_price_minor);
-        let mut bucket = self
-            .nod_buckets
-            .get(bucket_key)?
-            .ok_or_else(|| PrecompileError::Revert("qualify_bucket: bucket missing".into()))?;
-        if bucket.is_qualified {
-            return Ok(());
-        }
-        bucket.is_qualified = true;
-        self.nod_buckets.update(&bucket)?;
-        self.emit(INod::NodBucketBodyStored {
-            bucketKey: bucket.bucket_key,
-            worldwideDay: bucket.worldwide_day.into(),
-            floorPriceMinor: bucket.floor_price_minor,
-            isQualified: bucket.is_qualified,
-            totalNods: bucket.total_nods,
-            entryPriceMinor: bucket.entry_price_minor,
-        })?;
-        self.emit(INod::NodBucketQualified {
-            bucketKey: bucket_key,
-            worldwideDay: U256::from(u32::from(worldwide_day)),
-            floorPriceMinor: floor_price_minor,
-            isQualified: true,
-        })?;
-        Ok(())
-    }
-
     /// Emits the qualified bucket body while keeping the full body off-chain.
     pub fn qualify_bucket_with_reader(
         &mut self,
         reader: &NodRepositoryReader,
         bucket_key: alloy_primitives::B256,
     ) -> Result<()> {
-        let bucket = reader
-            .get_bucket(bucket_key)?
+        let worldwide_day = self.bucket_worldwide_day.read(&bucket_key)?;
+        let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
+        let bucket = self
+            .get_bucket_verified(reader, bucket_id)?
             .ok_or_else(|| PrecompileError::Revert("qualify_bucket: bucket missing".into()))?;
         self.qualify_bucket_body(bucket)
     }
@@ -77,15 +31,25 @@ impl NodContract<'_> {
         if bucket.is_qualified {
             return Ok(());
         }
-        bucket.is_qualified = true;
-        self.emit(INod::NodBucketBodyStored {
-            bucketKey: bucket.bucket_key,
-            worldwideDay: bucket.worldwide_day.into(),
-            floorPriceMinor: bucket.floor_price_minor,
-            isQualified: true,
-            totalNods: bucket.total_nods,
-            entryPriceMinor: bucket.entry_price_minor,
+        let bucket_id = EntityId36::new(bucket.worldwide_day, bucket.bucket_key.0);
+        let commitments = CommitmentState::new(self.storage_handle());
+        let previous = commitments.nod_bucket(bucket_id)?.ok_or_else(|| {
+            PrecompileError::BodyReadCorruption(format!(
+                "Nod bucket {bucket_id} became canonically absent during qualification"
+            ))
         })?;
+        bucket.is_qualified = true;
+        let payload = encode_nod_bucket_v1(&crate::repository::canonical_bucket(&bucket))
+            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+        let new_commitment = body_commitment(
+            ACTIVE_COMMITMENT_SCHEME,
+            BODY_SCHEMA_V1,
+            bucket_id,
+            &payload,
+        )
+        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+        commitments.set_nod_bucket(bucket_id, new_commitment)?;
+        self.emit_bucket_body_stored(bucket_id, Some(previous), new_commitment, payload)?;
         self.emit(INod::NodBucketQualified {
             bucketKey: bucket.bucket_key,
             worldwideDay: U256::from(u32::from(bucket.worldwide_day)),

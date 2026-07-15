@@ -1,11 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::{sol, SolCall, SolInterface};
 use base64::Engine;
-use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::{
-    ERC165_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
-    ERC721_METADATA_INTERFACE_ID,
-};
+use outbe_compressed_entities::EntityId36;
+use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
+use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
 use crate::errors::NodError;
@@ -17,29 +15,6 @@ sol!(
     "../../../contracts/precompiles/src/INod.sol"
 );
 
-/// Dispatches an ABI-encoded call to the Nod precompile.
-///
-/// Nod owns ERC-721 reads, `nodData`, and `tokens`. Issuance (cross-module
-/// from Lysis) and `mineGratis` (user-triggered) live on the NodFactory
-/// precompile at `NOD_FACTORY_ADDRESS`.
-pub fn dispatch(
-    storage: outbe_primitives::storage::StorageHandle,
-    data: &[u8],
-    _caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    #[cfg(not(any(test, feature = "test-utils")))]
-    {
-        let _ = (storage, data, value);
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Nod execution read authority was not supplied".into(),
-        ))
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    legacy_dispatch(storage, data, value)
-}
-
 /// Dispatches Nod calls with the least-authority off-chain body reader.
 pub fn dispatch_with_reader(
     storage: outbe_primitives::storage::StorageHandle,
@@ -49,16 +24,14 @@ pub fn dispatch_with_reader(
     reader: &NodRepositoryReader,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    preflight_entity_id(data)?;
     dispatch_call(data, INod::INodCalls::abi_decode, |call| {
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
         match call {
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID
-                    || id == ERC721_INTERFACE_ID
-                    || id == ERC721_METADATA_INTERFACE_ID
-                    || id == ERC721_ENUMERABLE_INTERFACE_ID)
+                Ok(id == ERC165_INTERFACE_ID)
             }),
             name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
             symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
@@ -66,93 +39,58 @@ pub fn dispatch_with_reader(
                 metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from))
             }
             balanceOf(c) => view(c, |c| {
-                let count = api::list_by_owner(reader, c.owner)?.len();
+                let count = api::list_by_owner(&storage, reader, c.owner)?.len();
                 Ok(U256::from(count))
             }),
             ownerOf(c) => view(c, |c| {
-                Ok(api::get_item(reader, c.nodId)?
+                let nod_id = parse_entity_id(&c.nodId)?;
+                Ok(api::get_item(&storage, reader, nod_id)?
                     .ok_or(NodError::NodNotFound)?
                     .owner)
             }),
             tokenURI(c) => view(c, |c| {
-                let item = api::get_item(reader, c.nodId)?.ok_or(NodError::NodNotFound)?;
-                let bucket =
-                    api::get_bucket(reader, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
+                let nod_id = parse_entity_id(&c.nodId)?;
+                let item = api::get_item(&storage, reader, nod_id)?.ok_or(NodError::NodNotFound)?;
+                let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+                let bucket = api::get_bucket(&storage, reader, bucket_id)?
+                    .ok_or(NodError::BucketNotFound)?;
                 token_uri(&item, &bucket)
-            }),
-            tokens(c) => view(c, |c| {
-                Ok(api::list_by_owner(reader, c.owner)?
-                    .into_iter()
-                    .map(|item| item.nod_id)
-                    .collect())
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_all(reader)?
+                api::list_all(&storage, reader)?
                     .get(idx)
-                    .map(|item| item.nod_id)
+                    .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             tokenOfOwnerByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_by_owner(reader, c.owner)?
+                api::list_by_owner(&storage, reader, c.owner)?
                     .get(idx)
-                    .map(|item| item.nod_id)
+                    .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             nodData(c) => view(c, |c| {
-                let item = api::get_item(reader, c.nodId)?.ok_or(NodError::NodNotFound)?;
-                let bucket =
-                    api::get_bucket(reader, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
+                let nod_id = parse_entity_id(&c.nodId)?;
+                let item = api::get_item(&storage, reader, nod_id)?.ok_or(NodError::NodNotFound)?;
+                let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+                let bucket = api::get_bucket(&storage, reader, bucket_id)?
+                    .ok_or(NodError::BucketNotFound)?;
                 Ok(to_abi_data(&item, &bucket))
             }),
         }
     })
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-fn legacy_dispatch(
-    storage: outbe_primitives::storage::StorageHandle,
-    data: &[u8],
-    value: U256,
-) -> Result<Bytes> {
-    outbe_primitives::dispatch::reject_value(&value)?;
-    dispatch_call(data, INod::INodCalls::abi_decode, |call| {
-        let nod = NodContract::new(storage.clone());
-        use INod::INodCalls::*;
-        match call {
-            supportsInterface(c) => view(c, |c| {
-                let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID
-                    || id == ERC721_INTERFACE_ID
-                    || id == ERC721_METADATA_INTERFACE_ID
-                    || id == ERC721_ENUMERABLE_INTERFACE_ID)
-            }),
-            name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
-            symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
-            totalSupply(_) => {
-                metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from))
-            }
-            balanceOf(c) => view(c, |c| nod.get_nods_count_by_owner(c.owner).map(U256::from)),
-            ownerOf(c) => view(c, |c| nod.owner_of(c.nodId)),
-            tokenURI(c) => view(c, |c| nod.token_uri(c.nodId)),
-            tokens(c) => view(c, |c| nod.get_nods_by_owner(c.owner)),
-            tokenByIndex(c) => view(c, |c| {
-                let idx = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                nod.global_nod_ids
-                    .get(idx)?
-                    .ok_or_else(|| NodError::IndexOutOfBounds.into())
-            }),
-            tokenOfOwnerByIndex(c) => view(c, |c| {
-                let idx = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                nod.get_nod_by_owner_idx(c.owner, idx)
-            }),
-            nodData(c) => view(c, |c| {
-                let (item, bucket) = nod.get_nod_data(c.nodId)?;
-                Ok(to_abi_data(&item, &bucket))
-            }),
-        }
-    })
+fn preflight_entity_id(data: &[u8]) -> Result<()> {
+    for selector in [
+        INod::ownerOfCall::SELECTOR,
+        INod::tokenURICall::SELECTOR,
+        INod::nodDataCall::SELECTOR,
+    ] {
+        preflight_dynamic_bytes_len(data, selector, 0, 1, EntityId36::LEN)?;
+    }
+    Ok(())
 }
 
 fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
@@ -181,7 +119,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
 
 fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
     INod::NodData {
-        nodId: item.nod_id,
+        nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
@@ -194,4 +132,9 @@ fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
     }
+}
+
+fn parse_entity_id(bytes: &Bytes) -> Result<EntityId36> {
+    EntityId36::try_from(bytes.as_ref())
+        .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
 }

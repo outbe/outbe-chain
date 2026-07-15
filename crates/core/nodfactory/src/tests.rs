@@ -1,61 +1,181 @@
+use std::sync::Arc;
+
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
-use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
+use outbe_compressed_entities::{CommitmentState, EntityId36};
+use outbe_nod::{
+    api as nod_api, precompile::INod, NodBucketState, NodContract, NodIssueParams, NodItemState,
+    NodRepositoryReader, NodRepositoryWriter,
+};
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::tree_math;
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
 use crate::api as factory_api;
-use crate::precompile::{dispatch, INodFactory};
+use crate::precompile::{dispatch_with_reader, INodFactory};
 use crate::runtime;
 
-/// Reference timestamp used as the baseline "issue time" in test fixtures.
 const T_NOW: u64 = 1_700_000_000;
+const PAY_ASSET: Address = address!("000000000000000000000000000000000000A11C");
 
 fn sample_params() -> NodIssueParams {
     NodIssueParams {
-        owner: address!("0x1111111111111111111111111111111111111111"),
-        gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
-        worldwide_day: WorldwideDay::new(20241220),
+        owner: address!("1111111111111111111111111111111111111111"),
+        gratis_load_minor: U256::from(1_000_000_000_000_000_000_u128),
+        worldwide_day: WorldwideDay::new(20_241_220),
         league_id: 1,
-        floor_price_minor: U256::from(540_000_000_000_000_000u128),
-        entry_price_minor: U256::from(500_000_000_000_000_000u128),
-        // Tests that don't exercise the payment branch set cost to zero so
-        // they can pass `Address::ZERO` for asset into
-        // `mine_gratis` without hitting the `InvalidAsset` rejection. The
-        // dedicated payment tests below override this with non-zero costs
-        // after enabling `sub_call_stub` on the provider.
+        floor_price_minor: U256::from(540_000_000_000_000_000_u128),
+        entry_price_minor: U256::from(500_000_000_000_000_000_u128),
         cost_amount_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
     }
 }
 
-/// Dummy asset address for payment-path tests.
-const PAY_ASSET: Address = address!("0x000000000000000000000000000000000000A11C");
-
-fn qualify_params(storage: &StorageHandle<'_>, params: &NodIssueParams) {
-    NodContract::new(storage.clone())
-        .qualify_bucket(params.worldwide_day, params.floor_price_minor)
-        .unwrap();
-}
-
-fn find_valid_nonce(nod_id: U256) -> U256 {
-    for n in 0u64..100_000 {
-        let nonce = U256::from(n);
+fn find_valid_nonce(nod_id: EntityId36) -> U256 {
+    for value in 0_u64..100_000 {
+        let nonce = U256::from(value);
         if runtime::validate_pow(nod_id, nonce).is_ok() {
             return nonce;
         }
     }
-    panic!("couldn't find valid nonce in 100k attempts");
+    panic!("could not find a valid nonce in 100k attempts");
 }
 
-fn with_storage<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, f)
+struct IssuedNod {
+    item: NodItemState,
+    bucket: NodBucketState,
+}
+
+struct World {
+    provider: HashMapStorageProvider,
+    reader: NodRepositoryReader,
+    writer: NodRepositoryWriter,
+}
+
+impl World {
+    fn new() -> Self {
+        let storage = Arc::new(MemoryStorage::new());
+        let reader_handle: StorageReaderHandle = storage.clone();
+        let writer_handle: StorageWriterHandle = storage;
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(T_NOW));
+        Self {
+            provider,
+            reader: NodRepositoryReader::new(reader_handle.clone()),
+            writer: NodRepositoryWriter::new(reader_handle, writer_handle),
+        }
+    }
+
+    fn enter<R>(&mut self, call: impl FnOnce(StorageHandle<'_>, &NodRepositoryReader) -> R) -> R {
+        let reader = self.reader.clone();
+        StorageHandle::enter(&mut self.provider, |storage| call(storage, &reader))
+    }
+
+    fn issue_unprojected(&mut self, params: &NodIssueParams) -> IssuedNod {
+        let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day).unwrap();
+        let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
+        let bucket_id = EntityId36::new(params.worldwide_day, bucket_key.0);
+        let previous_bucket = self.reader.get_bucket(bucket_id).unwrap();
+        let issued = self.enter(|storage, reader| {
+            factory_api::issue_nod_with_reader(&storage, reader, params).unwrap()
+        });
+        assert_eq!(issued, nod_id);
+
+        let item = NodItemState {
+            nod_id,
+            owner: params.owner,
+            gratis_load_minor: params.gratis_load_minor,
+            worldwide_day: params.worldwide_day,
+            league_id: params.league_id,
+            floor_price_minor: params.floor_price_minor,
+            bucket_key,
+            cost_amount_minor: params.cost_amount_minor,
+            issuance_currency: params.issuance_currency,
+            reference_currency: params.reference_currency,
+            issued_at: T_NOW,
+        };
+        let bucket = match previous_bucket {
+            Some(mut bucket) => {
+                bucket.total_nods += 1;
+                bucket
+            }
+            None => NodBucketState {
+                bucket_key,
+                worldwide_day: params.worldwide_day,
+                floor_price_minor: params.floor_price_minor,
+                is_qualified: false,
+                total_nods: 1,
+                entry_price_minor: params.entry_price_minor,
+            },
+        };
+        IssuedNod { item, bucket }
+    }
+
+    fn project_issue(&self, issued: &IssuedNod) {
+        self.writer.put_nod(&issued.item).unwrap();
+        self.writer.put_bucket(&issued.bucket).unwrap();
+    }
+
+    fn issue(&mut self, params: &NodIssueParams) -> EntityId36 {
+        let issued = self.issue_unprojected(params);
+        let nod_id = issued.item.nod_id;
+        self.project_issue(&issued);
+        nod_id
+    }
+
+    fn qualify(&mut self, params: &NodIssueParams) {
+        let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
+        let bucket_id = EntityId36::new(params.worldwide_day, bucket_key.0);
+        let mut bucket = self.reader.get_bucket(bucket_id).unwrap().unwrap();
+        self.enter(|storage, reader| {
+            NodContract::new(storage)
+                .qualify_bucket_with_reader(reader, bucket_key)
+                .unwrap();
+        });
+        bucket.is_qualified = true;
+        self.writer.put_bucket(&bucket).unwrap();
+    }
+
+    fn mine(
+        &mut self,
+        caller: Address,
+        nod_id: EntityId36,
+        nonce: U256,
+        asset: Address,
+    ) -> Result<U256> {
+        let item = self.reader.get(nod_id).unwrap().unwrap();
+        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let mut bucket = self.reader.get_bucket(bucket_id).unwrap().unwrap();
+        let result = self.enter(|storage, reader| {
+            factory_api::mine_gratis_with_reader(&storage, reader, caller, nod_id, nonce, asset)
+        });
+        if result.is_ok() {
+            self.writer.delete_nod(nod_id).unwrap();
+            bucket.total_nods -= 1;
+            if bucket.total_nods == 0 {
+                self.writer.delete_bucket(bucket_id).unwrap();
+            } else {
+                self.writer.put_bucket(&bucket).unwrap();
+            }
+        }
+        result
+    }
+
+    fn item_commitment(
+        &mut self,
+        nod_id: EntityId36,
+    ) -> Option<outbe_compressed_entities::Commitment> {
+        self.enter(|storage, _| CommitmentState::new(storage).nod_item(nod_id).unwrap())
+    }
+
+    fn clear_product_events(&mut self) {
+        self.provider.clear_events(NOD_ADDRESS);
+        self.provider.clear_events(NOD_FACTORY_ADDRESS);
+    }
 }
 
 fn assert_ordered_events(provider: &HashMapStorageProvider, expected: &[(Address, B256)]) {
@@ -72,95 +192,149 @@ fn assert_ordered_events(provider: &HashMapStorageProvider, expected: &[(Address
 }
 
 #[test]
-fn test_issue_nod() {
-    with_storage(|storage| {
-        let params = sample_params();
-        let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
-        let expected_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-        assert_eq!(nod_id, expected_id);
+fn issuance_commits_then_repository_projection_enables_verified_reads() {
+    let mut world = World::new();
+    let params = sample_params();
+    let issued = world.issue_unprojected(&params);
 
-        let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.total_supply().unwrap(), 1);
-        assert_eq!(nod.owner_of(nod_id).unwrap(), params.owner);
+    assert!(world.item_commitment(issued.item.nod_id).is_some());
+    let error = match world
+        .enter(|storage, reader| nod_api::get_item(&storage, reader, issued.item.nod_id))
+    {
+        Ok(_) => panic!("committed body must not read successfully before projection"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, PrecompileError::BodyReadCorruption(message) if message.contains("CommittedBodyMissing"))
+    );
 
-        let stored = nod.get_item(nod_id).unwrap().unwrap();
-        assert_eq!(stored.owner, params.owner);
-        assert_eq!(stored.worldwide_day, params.worldwide_day);
-        assert_eq!(stored.league_id, params.league_id);
-        assert_eq!(stored.floor_price_minor, params.floor_price_minor);
-        assert_eq!(stored.gratis_load_minor, params.gratis_load_minor);
-    });
+    world.project_issue(&issued);
+    let stored = world
+        .enter(|storage, reader| nod_api::get_item(&storage, reader, issued.item.nod_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.owner, params.owner);
+    assert_eq!(stored.worldwide_day, params.worldwide_day);
+    assert_eq!(stored.league_id, params.league_id);
+    assert_eq!(stored.floor_price_minor, params.floor_price_minor);
+    assert_eq!(stored.gratis_load_minor, params.gratis_load_minor);
+    assert_eq!(
+        world.enter(|storage, _| NodContract::new(storage).total_supply().unwrap()),
+        1
+    );
+    assert_ordered_events(
+        &world.provider,
+        &[
+            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
+        ],
+    );
 }
 
 #[test]
-fn projection_events_use_nod_emitter_and_precede_factory_product_events() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    let first = sample_params();
-    let first_id = StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &first).unwrap()
-    });
-    assert_ordered_events(
-        &provider,
-        &[
-            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
-        ],
-    );
+fn duplicate_and_invalid_owner_issuance_fail_without_events() {
+    let mut world = World::new();
+    let params = sample_params();
+    world.issue(&params);
+    world.clear_product_events();
 
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-    let mut second = sample_params();
-    second.owner = address!("0x2222222222222222222222222222222222222222");
-    let second_id = StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &second).unwrap()
-    });
-    assert_ordered_events(
-        &provider,
-        &[
-            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
-        ],
+    let duplicate = world
+        .enter(|storage, reader| factory_api::issue_nod_with_reader(&storage, reader, &params));
+    assert!(
+        matches!(duplicate, Err(PrecompileError::Revert(message)) if message == "nod already exists")
     );
+    assert!(world.provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(world.provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 
-    StorageHandle::enter(&mut provider, |storage| qualify_params(&storage, &first));
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::mine_gratis(
-            &storage,
-            first.owner,
-            first_id,
-            find_valid_nonce(first_id),
+    let mut invalid = params;
+    invalid.owner = Address::ZERO;
+    let error = world
+        .enter(|storage, reader| factory_api::issue_nod_with_reader(&storage, reader, &invalid))
+        .unwrap_err();
+    assert!(matches!(error, PrecompileError::Revert(message) if message == "invalid owner"));
+}
+
+#[test]
+fn bucket_projection_preserves_explicit_entry_price() {
+    let mut world = World::new();
+    let mut params = sample_params();
+    params.entry_price_minor = U256::from(101);
+    params.floor_price_minor = U256::from(109);
+    world.issue(&params);
+
+    let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
+    let bucket_id = EntityId36::new(params.worldwide_day, bucket_key.0);
+    let bucket = world.reader.get_bucket(bucket_id).unwrap().unwrap();
+    assert_eq!(bucket.total_nods, 1);
+    assert_eq!(bucket.floor_price_minor, params.floor_price_minor);
+    assert!(!bucket.is_qualified);
+    assert_eq!(bucket.entry_price_minor, U256::from(101));
+}
+
+#[test]
+fn mining_requires_owner_pow_and_qualification_without_partial_mutation() {
+    let mut world = World::new();
+    let params = sample_params();
+    let nod_id = world.issue(&params);
+    let nonce = find_valid_nonce(nod_id);
+    world.clear_product_events();
+
+    let wrong_owner = address!("9999999999999999999999999999999999999999");
+    assert!(world
+        .mine(wrong_owner, nod_id, nonce, Address::ZERO)
+        .is_err());
+    assert!(world.reader.get(nod_id).unwrap().is_some());
+
+    let bad_nonce = (0_u64..100_000)
+        .map(U256::from)
+        .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_err())
+        .unwrap();
+    assert!(world
+        .mine(params.owner, nod_id, bad_nonce, Address::ZERO)
+        .is_err());
+    assert!(world.reader.get(nod_id).unwrap().is_some());
+
+    let error = world
+        .mine(params.owner, nod_id, nonce, Address::ZERO)
+        .unwrap_err();
+    assert!(matches!(error, PrecompileError::Revert(message) if message == "nod is not qualified"));
+    assert!(world.item_commitment(nod_id).is_some());
+    assert!(world.provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(world.provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
+}
+
+#[test]
+fn mining_clears_commitment_projects_deletion_and_mints_gratis() {
+    let mut world = World::new();
+    let params = sample_params();
+    let nod_id = world.issue(&params);
+    world.qualify(&params);
+    world.clear_product_events();
+
+    let minted = world
+        .mine(
+            params.owner,
+            nod_id,
+            find_valid_nonce(nod_id),
             Address::ZERO,
         )
         .unwrap();
-    });
-    assert_ordered_events(
-        &provider,
-        &[
-            (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
-        ],
+    assert_eq!(minted, params.gratis_load_minor);
+    assert!(world.item_commitment(nod_id).is_none());
+    assert!(world.reader.get(nod_id).unwrap().is_none());
+    assert_eq!(
+        world.enter(|storage, _| NodContract::new(storage.clone()).total_supply().unwrap()),
+        0
     );
-
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::mine_gratis(
-            &storage,
-            second.owner,
-            second_id,
-            find_valid_nonce(second_id),
-            Address::ZERO,
-        )
-        .unwrap();
-    });
+    assert_eq!(
+        world.enter(|storage, _| outbe_gratis::Gratis::new(storage)
+            .balance_of(params.owner)
+            .unwrap()),
+        minted
+    );
     assert_ordered_events(
-        &provider,
+        &world.provider,
         &[
             (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodBucketBodyDeleted::SIGNATURE_HASH),
@@ -170,512 +344,186 @@ fn projection_events_use_nod_emitter_and_precede_factory_product_events() {
 }
 
 #[test]
-fn test_issue_duplicate_fails() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
+fn owner_repository_index_remains_dense_after_mining_one_of_two_nods() {
+    let mut world = World::new();
+    let first = sample_params();
+    let mut second = sample_params();
+    second.worldwide_day = WorldwideDay::new(first.worldwide_day.value() + 1);
+    let first_id = world.issue(&first);
+    let second_id = world.issue(&second);
+    world.qualify(&first);
+    world
+        .mine(
+            first.owner,
+            first_id,
+            find_valid_nonce(first_id),
+            Address::ZERO,
+        )
+        .unwrap();
+
+    let remaining = world
+        .enter(|storage, reader| nod_api::list_by_owner(&storage, reader, first.owner))
+        .unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].nod_id, second_id);
+}
+
+#[test]
+fn failed_gratis_mint_rolls_back_commitment_and_events() {
+    let mut world = World::new();
     let params = sample_params();
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &params).unwrap();
-    });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        assert!(factory_api::issue_nod(&storage, &params).is_err());
-    });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
-}
-
-#[test]
-fn test_issue_preserves_explicit_cost_of_gratis_without_reinferring_from_floor() {
-    with_storage(|storage| {
-        let mut params = sample_params();
-        params.entry_price_minor = U256::from(101u64);
-        params.floor_price_minor =
-            params.entry_price_minor * U256::from(108u64) / U256::from(100u64);
-        factory_api::issue_nod(&storage, &params).unwrap();
-
-        let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
-        let nod = NodContract::new(storage);
-        let bucket = nod.get_bucket(bk).unwrap().unwrap();
-        assert_eq!(bucket.entry_price_minor, U256::from(101u64));
-    });
-}
-
-#[test]
-fn test_bucket_creation_stores_cost_of_gratis() {
-    with_storage(|storage| {
-        let params = sample_params();
-        factory_api::issue_nod(&storage, &params).unwrap();
-
-        let bk = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
-        let nod = NodContract::new(storage);
-        let bucket = nod.get_bucket(bk).unwrap().unwrap();
-        assert_eq!(bucket.total_nods, 1);
-        assert_eq!(bucket.floor_price_minor, params.floor_price_minor);
-        assert!(!bucket.is_qualified);
-        assert_eq!(bucket.entry_price_minor, params.entry_price_minor);
-    });
-}
-
-#[test]
-fn test_issue_invalid_owner_fails() {
-    with_storage(|storage| {
-        let mut params = sample_params();
-        params.owner = Address::ZERO;
-        assert!(factory_api::issue_nod(&storage, &params).is_err());
-    });
-}
-
-#[test]
-fn test_mine_gratis_requires_qualification() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    let (nod_id, nonce, params) = StorageHandle::enter(&mut provider, |storage| {
-        let params = sample_params();
-        let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
-        let nonce = find_valid_nonce(nod_id);
-        (nod_id, nonce, params)
-    });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |storage| {
-        let err = factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
-            .unwrap_err();
-        assert!(err.to_string().contains("qualified"));
-    });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
-}
-
-#[test]
-fn test_mine_gratis_with_valid_pow() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    let (nod_id, nonce, params) = StorageHandle::enter(&mut provider, |storage| {
-        let params = sample_params();
-        let nod_id = factory_api::issue_nod(&storage, &params).unwrap();
-        qualify_params(&storage, &params);
-        let nonce = find_valid_nonce(nod_id);
-        (nod_id, nonce, params)
-    });
-
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |storage| {
-        let gratis =
-            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO).unwrap();
-        assert_eq!(gratis, params.gratis_load_minor);
-        let nod = NodContract::new(storage);
-        assert_eq!(nod.total_supply().unwrap(), 0);
-        assert!(nod.get_item(nod_id).unwrap().is_none());
-    });
-}
-
-#[test]
-fn test_mine_gratis_wrong_owner_fails() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    let params = sample_params();
-    let nod_id = StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &params).unwrap()
-    });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        assert!(
-            factory_api::mine_gratis(&storage, wrong_owner, nod_id, U256::ZERO, Address::ZERO)
-                .is_err()
-        );
-    });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
-}
-
-#[test]
-fn test_mine_gratis_invalid_pow_fails() {
-    let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let bad_nonce = U256::from(12345678u64);
-    let hash = runtime::compute_pow_hash(nod_id, bad_nonce).unwrap();
-    if hash[0] == 0 {
-        return; // skip silently if the random "bad" nonce happens to satisfy PoW
-    }
-
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &params).unwrap();
-        qualify_params(&storage, &params);
-    });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |storage| {
-        assert!(
-            factory_api::mine_gratis(&storage, params.owner, nod_id, bad_nonce, Address::ZERO)
-                .is_err()
-        );
-    });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
-}
-
-#[test]
-fn test_compute_pow_hash_matches_sha256_string_id_plus_u64_nonce() {
-    let p = sample_params();
-    let nod_id = NodContract::generate_nod_id(p.owner, p.worldwide_day);
-    let nonce = U256::from(42u64);
-    let got = runtime::compute_pow_hash(nod_id, nonce).unwrap();
-
-    let mut data = NodContract::format_nod_id(nod_id).into_bytes();
-    data.extend_from_slice(&42u64.to_be_bytes());
-    let expected = ring::digest::digest(&ring::digest::SHA256, &data);
-    assert_eq!(got.as_slice(), expected.as_ref());
-}
-
-#[test]
-fn test_nods_by_owner_sparse_after_mine() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-
-    let mut p1 = sample_params();
-    p1.owner = alice;
-    let mut p2 = sample_params();
-    p2.owner = alice;
-    p2.worldwide_day = WorldwideDay::new(u32::from(p1.worldwide_day) + 1);
-
-    let id1 = NodContract::generate_nod_id(p1.owner, p1.worldwide_day);
-    let id2 = NodContract::generate_nod_id(p2.owner, p2.worldwide_day);
-    let nonce = find_valid_nonce(id1);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &p1).unwrap();
-        factory_api::issue_nod(&s, &p2).unwrap();
-        qualify_params(&s, &p1);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::mine_gratis(&s, alice, id1, nonce, Address::ZERO).unwrap();
-
-        let nod = NodContract::new(s);
-        let nods = nod.get_nods_by_owner(alice).unwrap();
-        assert_eq!(nods.len(), 1);
-        assert_eq!(nods[0], id2);
-    });
-}
-
-#[test]
-fn test_mine_gratis_atomic_burn_and_gratis_mint() {
-    let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let gratis_load =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
-        assert!(!gratis_load.is_zero());
-
-        let nod = NodContract::new(s.clone());
-        let gratis = outbe_gratis::Gratis::new(s);
-
-        assert_eq!(nod.total_supply().unwrap(), 0);
-        assert!(nod.get_item(nod_id).unwrap().is_none());
-        assert_eq!(gratis.balance_of(params.owner).unwrap(), gratis_load);
-        assert_eq!(gratis.total_supply().unwrap(), gratis_load);
-    });
-}
-
-#[test]
-fn test_mine_gratis_failure_no_partial_loss() {
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let params = sample_params();
-        let nod_id = factory_api::issue_nod(&s, &params).unwrap();
-
-        let supply_before = NodContract::new(s.clone()).total_supply().unwrap();
-        let wrong_owner = address!("0x9999999999999999999999999999999999999999");
-        let result = factory_api::mine_gratis(&s, wrong_owner, nod_id, U256::ZERO, Address::ZERO);
-        assert!(result.is_err());
-
-        let nod = NodContract::new(s);
-        assert_eq!(nod.total_supply().unwrap(), supply_before);
-        assert!(nod.get_item(nod_id).unwrap().is_some());
-    });
-}
-
-#[test]
-fn test_mine_gratis_mint_failure_rolls_back_projection_and_product_events() {
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &params).unwrap();
-        qualify_params(&storage, &params);
+    let nod_id = world.issue(&params);
+    world.qualify(&params);
+    world.enter(|storage, _| {
         outbe_gratis::Gratis::new(storage)
             .total_supply
             .write(U256::MAX)
             .unwrap();
     });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
+    world.clear_product_events();
 
-    StorageHandle::enter(&mut provider, |storage| {
-        let result = storage.with_checkpoint(|| {
-            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, Address::ZERO)
-        });
-        assert!(result.unwrap_err().to_string().contains("overflow"));
-        assert!(NodContract::new(storage)
-            .get_item(nod_id)
-            .unwrap()
-            .is_some());
+    let nonce = find_valid_nonce(nod_id);
+    let result = world.enter(|storage, reader| {
+        storage.with_checkpoint(|| {
+            factory_api::mine_gratis_with_reader(
+                &storage,
+                reader,
+                params.owner,
+                nod_id,
+                nonce,
+                Address::ZERO,
+            )
+        })
     });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
+    assert!(result.unwrap_err().to_string().contains("overflow"));
+    assert!(world.item_commitment(nod_id).is_some());
+    assert!(world.reader.get(nod_id).unwrap().is_some());
+    assert!(world.provider.get_events(NOD_ADDRESS).is_empty());
+    assert!(world.provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]
-fn test_mine_gratis_payment_failure_emits_no_projection_event() {
+fn nonzero_cost_requires_asset_and_executes_payment_subcalls() {
+    let mut world = World::new();
+    world.provider.enable_sub_call_stub();
+    world
+        .provider
+        .stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0_u8; 32]));
     let mut params = sample_params();
-    params.cost_amount_minor = U256::from(1u64);
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-
-    StorageHandle::enter(&mut provider, |storage| {
-        factory_api::issue_nod(&storage, &params).unwrap();
-        qualify_params(&storage, &params);
-    });
-    provider.clear_events(NOD_ADDRESS);
-    provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        assert!(
-            factory_api::mine_gratis(&storage, params.owner, nod_id, nonce, PAY_ASSET).is_err()
-        );
-        assert!(NodContract::new(storage)
-            .get_item(nod_id)
-            .unwrap()
-            .is_some());
-    });
-    assert!(provider.get_events(NOD_ADDRESS).is_empty());
-    assert!(provider.get_events(NOD_FACTORY_ADDRESS).is_empty());
-}
-
-#[test]
-fn test_mine_gratis_supply_invariant() {
-    // Distinct (owner, wwd) gives distinct ids.
-    let p1 = sample_params();
-    let mut p2 = sample_params();
-    p2.worldwide_day = WorldwideDay::new(u32::from(p1.worldwide_day) + 1);
-    p2.gratis_load_minor = U256::from(2_000_000_000_000_000_000u128);
-    let id1 = NodContract::generate_nod_id(p1.owner, p1.worldwide_day);
-    let nonce = find_valid_nonce(id1);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &p1).unwrap();
-        factory_api::issue_nod(&s, &p2).unwrap();
-        qualify_params(&s, &p1);
-        let nod = NodContract::new(s);
-        assert_eq!(nod.total_supply().unwrap(), 2);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let load1 = factory_api::mine_gratis(&s, p1.owner, id1, nonce, Address::ZERO).unwrap();
-        let nod = NodContract::new(s.clone());
-        let gratis = outbe_gratis::Gratis::new(s);
-        assert_eq!(nod.total_supply().unwrap(), 1);
-        assert_eq!(gratis.total_supply().unwrap(), load1);
-        assert_eq!(gratis.balance_of(p1.owner).unwrap(), load1);
-    });
-}
-
-#[test]
-fn test_precompile_mine_gratis_burns_and_mints() {
-    let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
+    params.cost_amount_minor = U256::from(500_000_000_000_000_000_u128);
+    let nod_id = world.issue(&params);
+    world.qualify(&params);
     let nonce = find_valid_nonce(nod_id);
 
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
+    let error = world
+        .mine(params.owner, nod_id, nonce, Address::ZERO)
+        .unwrap_err();
+    assert!(matches!(error, PrecompileError::Revert(message) if message == "invalid asset"));
+    assert!(world.reader.get(nod_id).unwrap().is_some());
 
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let call = INodFactory::mineGratisCall {
-            nodId: nod_id,
-            nonce,
-            asset: Address::ZERO,
-        };
-        let calldata = call.abi_encode();
-        let output = dispatch(s.clone(), &calldata, params.owner, U256::ZERO).unwrap();
-        let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
-        assert_eq!(mined, params.gratis_load_minor);
-
-        let nod = NodContract::new(s.clone());
-        assert!(nod.get_item(nod_id).unwrap().is_none());
-        let gratis = outbe_gratis::Gratis::new(s);
-        assert_eq!(gratis.balance_of(params.owner).unwrap(), mined);
-    });
+    let minted = world.mine(params.owner, nod_id, nonce, PAY_ASSET).unwrap();
+    assert_eq!(minted, params.gratis_load_minor);
+    assert!(world.reader.get(nod_id).unwrap().is_none());
 }
 
 #[test]
-fn test_precompile_rejects_msg_value() {
+fn zero_cost_skips_payment_subcalls() {
+    let mut world = World::new();
     let params = sample_params();
-    with_storage(|storage| {
-        factory_api::issue_nod(&storage, &params).unwrap();
-
-        let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-        let call = INodFactory::mineGratisCall {
-            nodId: nod_id,
-            nonce: U256::ZERO,
-            asset: Address::ZERO,
-        };
-        let calldata = call.abi_encode();
-        let result = dispatch(storage, &calldata, params.owner, U256::from(1u64));
-        assert!(result.is_err());
-    });
+    let nod_id = world.issue(&params);
+    world.qualify(&params);
+    let minted = world
+        .mine(
+            params.owner,
+            nod_id,
+            find_valid_nonce(nod_id),
+            Address::ZERO,
+        )
+        .unwrap();
+    assert_eq!(minted, params.gratis_load_minor);
 }
 
 #[test]
-fn test_set_clear_does_not_corrupt_root() {
+fn precompile_uses_bytes36_and_reader_backed_mining() {
+    let mut world = World::new();
     let params = sample_params();
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
+    let nod_id = world.issue(&params);
+    world.qualify(&params);
+    let call = INodFactory::mineGratisCall {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        nonce: find_valid_nonce(nod_id),
+        asset: Address::ZERO,
+    };
+    let calldata = call.abi_encode();
+    let output = world
+        .enter(|storage, reader| {
+            dispatch_with_reader(storage, &calldata, params.owner, U256::ZERO, reader)
+        })
+        .unwrap();
+    let minted = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
+    assert_eq!(minted, params.gratis_load_minor);
+    assert!(world.item_commitment(nod_id).is_none());
+
+    let malformed = INodFactory::mineGratisCall {
+        nodId: Bytes::from(vec![0_u8; 35]),
+        nonce: U256::ZERO,
+        asset: Address::ZERO,
+    }
+    .abi_encode();
+    assert!(world
+        .enter(|storage, reader| {
+            dispatch_with_reader(storage, &malformed, params.owner, U256::ZERO, reader)
+        })
+        .is_err());
+}
+
+#[test]
+fn precompile_rejects_msg_value_before_mining() {
+    let mut world = World::new();
+    let params = sample_params();
+    let nod_id = world.issue(&params);
+    let calldata = INodFactory::mineGratisCall {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        nonce: U256::ZERO,
+        asset: Address::ZERO,
+    }
+    .abi_encode();
+    let error = world
+        .enter(|storage, reader| {
+            dispatch_with_reader(storage, &calldata, params.owner, U256::from(1), reader)
+        })
+        .unwrap_err();
+    assert!(matches!(error, PrecompileError::Revert(_)));
+    assert!(world.item_commitment(nod_id).is_some());
+}
+
+#[test]
+fn bin_tree_root_survives_qualification_and_mining() {
+    let mut world = World::new();
+    let params = sample_params();
+    let nod_id = world.issue(&params);
     let bin_id = NodContract::price_to_bin(params.floor_price_minor).unwrap();
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        // Issue a bucket → bin tree gets one bit set.
-        factory_api::issue_nod(&s, &params).unwrap();
-        let nod = NodContract::new(s.clone());
-        assert!(tree_math::contains(&nod, bin_id).unwrap());
-        // Qualify through the canonical event-emitting path.
-        NodContract::new(s)
-            .qualify_bucket(params.worldwide_day, params.floor_price_minor)
-            .unwrap();
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        // Mining the only NOD in the bucket deletes the bucket; the bin
-        // stays marked because we don't touch the bin-tree on mine.
-        // That's the documented invariant — the qualifier loop's
-        // stale-bucket branch handles dangling bin entries.
-        factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
-    });
+    assert!(world
+        .enter(|storage, _| { tree_math::contains(&NodContract::new(storage), bin_id).unwrap() }));
+    world.qualify(&params);
+    world
+        .mine(
+            params.owner,
+            nod_id,
+            find_valid_nonce(nod_id),
+            Address::ZERO,
+        )
+        .unwrap();
 }
 
-/// Issue a Nod whose `cost_amount_minor` is non-zero, then mine it with the
-/// sub-call stub enabled and dummy asset/vault addresses. Asserts that the
-/// new payment branch runs to completion (transferFrom → approve →
-/// depositLiquidity stubbed as `default_success()`) and the burn + gratis
-/// mint still happen atomically.
 #[test]
-fn test_mine_gratis_pays_cost_amount() {
-    let mut params = sample_params();
-    params.cost_amount_minor = U256::from(500_000_000_000_000_000u128);
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    // The vault-provider deposit is an EVM sub-call to VAULT_PROVIDER_ADDRESS.
-    // enable_sub_call_stub covers the ERC-20 legs; the provider is stubbed to
-    // return a decodable uint256 (shares) so api::deposit_liquidity decodes.
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let gratis = factory_api::mine_gratis(&s, params.owner, nod_id, nonce, PAY_ASSET).unwrap();
-        assert_eq!(gratis, params.gratis_load_minor);
-        let nod = NodContract::new(s);
-        assert!(nod.get_item(nod_id).unwrap().is_none());
-    });
-}
-
-/// With a non-zero `cost_amount_minor`, mining MUST reject a zero `asset`.
-#[test]
-fn test_mine_gratis_rejects_zero_asset_when_cost_nonzero() {
-    let mut params = sample_params();
-    params.cost_amount_minor = U256::from(500_000_000_000_000_000u128);
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    storage.enable_sub_call_stub();
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let err =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("asset"),
-            "expected asset error: {err}"
-        );
-    });
-}
-
-/// With `cost_amount_minor == 0`, mining MUST skip the three sub-calls
-/// entirely — including the asset zero-address check. Proves the
-/// skip branch by running without `enable_sub_call_stub()`: any real
-/// sub-call would fail with `SubCallError::NotAvailable`.
-#[test]
-fn test_mine_gratis_skips_payment_when_cost_zero() {
-    let params = sample_params(); // cost_amount_minor = 0
-    assert!(params.cost_amount_minor.is_zero());
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    let nonce = find_valid_nonce(nod_id);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    // NOTE: deliberately not enabling sub-call stub.
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        factory_api::issue_nod(&s, &params).unwrap();
-        qualify_params(&s, &params);
-    });
-
-    storage.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut storage, |s| {
-        let gratis =
-            factory_api::mine_gratis(&s, params.owner, nod_id, nonce, Address::ZERO).unwrap();
-        assert_eq!(gratis, params.gratis_load_minor);
-    });
+fn pow_hash_uses_the_complete_entity_id_and_u64_nonce() {
+    let params = sample_params();
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day).unwrap();
+    let nonce = U256::from(42);
+    let actual = runtime::compute_pow_hash(nod_id, nonce).unwrap();
+    let mut input = NodContract::format_nod_id(nod_id).into_bytes();
+    input.extend_from_slice(&42_u64.to_be_bytes());
+    let expected = ring::digest::digest(&ring::digest::SHA256, &input);
+    assert_eq!(actual.as_slice(), expected.as_ref());
 }

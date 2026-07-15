@@ -7,8 +7,8 @@ pub mod schema;
 pub mod state;
 
 pub use repository::{
-    TributePage, TributePageRequest, TributeRepositoryError, TributeRepositoryReader,
-    TributeRepositoryWriter,
+    canonical_body, from_canonical_body, TributePage, TributePageRequest, TributeRepositoryError,
+    TributeRepositoryReader, TributeRepositoryWriter,
 };
 pub use schema::{DayTotals, TributeContract, TributeData};
 

@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 interface INodFactory {
     event NodIssued(
         address indexed owner,
-        uint256 nodId,
+        bytes nodId,
         uint256 worldwideDay,
         uint256 leagueId,
         uint256 floorPriceMinor,
@@ -13,7 +13,7 @@ interface INodFactory {
         uint256 costAmountMinor
     );
 
-    event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+    event NodBurned(address indexed owner, bytes nodId, uint256 gratisLoadMinor);
 
-    function mineGratis(uint256 nodId, uint256 nonce, address asset) external returns (uint256);
+    function mineGratis(bytes calldata nodId, uint256 nonce, address asset) external returns (uint256);
 }

@@ -16,7 +16,7 @@
 //! Oracle slash-window penalties run after begin-zone system phases and before user txs.
 //!
 //! User-triggered `mineGratis` goes through the NodFactory precompile
-//! (`outbe_nodfactory::precompile::dispatch`) so the atomic burn-of-Nod +
+//! (`outbe_nodfactory::precompile::dispatch_with_reader`) so the atomic burn-of-Nod +
 //! `Gratis::mine` wiring inside the dispatcher is exercised, not duplicated.
 //! The Nod precompile (0x1006) is read-only after the Nod/NodFactory split.
 //!
@@ -46,6 +46,7 @@ use std::sync::Arc;
 use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_gratis::Gratis;
 use outbe_metadosis::{
     constants::{
@@ -56,7 +57,7 @@ use outbe_metadosis::{
     runtime::date_key_to_timestamp,
     schema::{day_type, status, MetadosisContract},
 };
-use outbe_nod::{NodPageRequest, NodRepositoryReader};
+use outbe_nod::{api as nod_api, NodRepositoryReader};
 use outbe_nodfactory::{
     precompile::{dispatch_with_reader as nodfactory_dispatch, INodFactory},
     runtime as nodfactory_runtime,
@@ -77,7 +78,7 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData, TributePageRequest, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 
 // Mainnet-style id — effective_hours() returns DEFAULT_LOOKBACK / DEFAULT_OFFERING
 // and bootstrap init is skipped.
@@ -337,7 +338,7 @@ fn pre_create_wwd(storage: StorageHandle, wwd: WorldwideDay) {
     tribute.seal_day(wwd).unwrap();
 }
 
-fn find_valid_nonce(nod_id: U256) -> U256 {
+fn find_valid_nonce(nod_id: EntityId36) -> U256 {
     for n in 0u64..100_000 {
         let nonce = U256::from(n);
         if nodfactory_runtime::validate_pow(nod_id, nonce).is_ok() {
@@ -360,16 +361,9 @@ fn mine_via_precompile(
     owner: Address,
 ) -> U256 {
     let nod = bodies.nod();
-    let nods = nod
-        .list_by_owner(
-            owner,
-            NodPageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap()
-        .records;
+    let nods = with_storage(provider, |storage| {
+        nod_api::list_by_owner(&storage, &nod, owner).unwrap()
+    });
     assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
     let item = nods.into_iter().next().unwrap();
 
@@ -379,7 +373,7 @@ fn mine_via_precompile(
     });
 
     let call = INodFactory::mineGratisCall {
-        nodId: item.nod_id,
+        nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
         nonce,
         asset: MINE_GRATIS_ASSET,
     };
@@ -390,7 +384,10 @@ fn mine_via_precompile(
     assert_eq!(mined, item.gratis_load_minor);
 
     bodies.project_pending(provider);
-    assert!(nod.get(item.nod_id).unwrap().is_none());
+    assert!(with_storage(provider, |storage| {
+        nod_api::get_item(&storage, &nod, item.nod_id).unwrap()
+    })
+    .is_none());
     let balance_after = StorageHandle::enter(provider, |storage| {
         Gratis::new(storage).balance_of(owner).unwrap()
     });
@@ -481,7 +478,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
 
     // GREEN -> OFFERING: tribute unsealed by status machine; issue alice's tribute.
     tick(&mut provider, &mut bodies, 5, green.offering_entry, None);
-    let green_token_id = U256::from_be_bytes(B256::left_padding_from(&[0xAA, 0x01]).0);
+    let green_tribute_id = derive_poseidon_entity_id(alice, green_wwd).unwrap();
     let green_nominal = U256::in_units(1_000_000u64);
     let tribute_reader = bodies.tribute();
     with_storage(&mut provider, |storage| {
@@ -489,7 +486,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             .issue(
                 &tribute_reader,
                 &TributeData {
-                    token_id: green_token_id,
+                    tribute_id: green_tribute_id,
                     owner: alice,
                     worldwide_day: green_wwd,
                     issuance_amount_minor: green_nominal,
@@ -506,8 +503,8 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
 
     // RED -> OFFERING; issue bob's small and carol's large tribute.
     tick(&mut provider, &mut bodies, 6, red.offering_entry, None);
-    let red_small_token = U256::from_be_bytes(B256::left_padding_from(&[0xBB, 0x01]).0);
-    let red_large_token = U256::from_be_bytes(B256::left_padding_from(&[0xBB, 0x02]).0);
+    let red_small_tribute_id = derive_poseidon_entity_id(bob, red_wwd).unwrap();
+    let red_large_tribute_id = derive_poseidon_entity_id(carol, red_wwd).unwrap();
     let red_small_nominal = U256::in_units(20u64);
     let red_large_nominal = U256::in_units(1_000u64);
     let tribute_reader = bodies.tribute();
@@ -517,7 +514,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             .issue(
                 &tribute_reader,
                 &TributeData {
-                    token_id: red_small_token,
+                    tribute_id: red_small_tribute_id,
                     owner: bob,
                     worldwide_day: red_wwd,
                     issuance_amount_minor: red_small_nominal,
@@ -533,7 +530,7 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
             .issue(
                 &tribute_reader,
                 &TributeData {
-                    token_id: red_large_token,
+                    tribute_id: red_large_tribute_id,
                     owner: carol,
                     worldwide_day: red_wwd,
                     issuance_amount_minor: red_large_nominal,
@@ -541,7 +538,9 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     nominal_amount_minor: red_large_nominal,
                     reference_currency: 840,
                     exclude_from_intex_issuance: false,
-                    tribute_price_minor: U256::ZERO,
+                    // Keep the two RED tributes in distinct NOD buckets until ADR-007 supplies the
+                    // same-block overlay needed to update one bucket twice before projection.
+                    tribute_price_minor: U256::from(10_000u64),
                 },
             )
             .unwrap();
@@ -561,39 +560,27 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
 
     // The canonical bodies are now available only through the projected repository.
     let tribute_reader = bodies.tribute();
-    assert!(tribute_reader
-        .list_by_owner(
-            alice,
-            TributePageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap()
-        .records
-        .is_empty());
+    assert!(with_storage(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .get_tribute_ids_by_owner(&tribute_reader, alice)
+            .unwrap()
+    })
+    .is_empty());
     let nod_reader = bodies.nod();
-    let alice_nods = nod_reader
-        .list_by_owner(
-            alice,
-            NodPageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap()
-        .records;
+    let alice_nods = with_storage(&mut provider, |storage| {
+        nod_api::list_by_owner(&storage, &nod_reader, alice).unwrap()
+    });
     assert_eq!(alice_nods.len(), 1);
     let alice_item = &alice_nods[0];
     assert_eq!(alice_item.worldwide_day, green_wwd);
     let alice_floor_price = alice_item.floor_price_minor;
-    let alice_bucket = alice_item.bucket_key;
+    let alice_bucket_id = EntityId36::new(alice_item.worldwide_day, alice_item.bucket_key.0);
     assert!(
-        !nod_reader
-            .get_bucket(alice_bucket)
-            .unwrap()
-            .map(|bucket| bucket.is_qualified)
-            .unwrap_or(false),
+        !with_storage(&mut provider, |storage| {
+            nod_api::get_bucket(&storage, &nod_reader, alice_bucket_id).unwrap()
+        })
+        .map(|bucket| bucket.is_qualified)
+        .unwrap_or(false),
         "lysis must not qualify the bucket before the oracle rate rises"
     );
 
@@ -609,12 +596,11 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
         None,
     );
     assert!(
-        bodies
-            .nod()
-            .get_bucket(alice_bucket)
-            .unwrap()
-            .map(|bucket| bucket.is_qualified)
-            .unwrap_or(false),
+        with_storage(&mut provider, |storage| {
+            nod_api::get_bucket(&storage, &bodies.nod(), alice_bucket_id).unwrap()
+        })
+        .map(|bucket| bucket.is_qualified)
+        .unwrap_or(false),
         "NodLifecycle must qualify the projected bucket once rate exceeds its floor"
     );
     assert!(alice_floor_price < U256::from(500u64));
@@ -642,33 +628,27 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
     });
 
     let nod_reader = bodies.nod();
-    for owner in [bob, carol] {
+    for (owner, expected_qualified) in [(bob, true), (carol, false)] {
+        let owner_nods = with_storage(&mut provider, |storage| {
+            nod_api::list_by_owner(&storage, &nod_reader, owner).unwrap()
+        });
+        assert_eq!(owner_nods.len(), 1);
+        let owner_bucket_id =
+            EntityId36::new(owner_nods[0].worldwide_day, owner_nods[0].bucket_key.0);
         assert_eq!(
-            nod_reader
-                .list_by_owner(
-                    owner,
-                    NodPageRequest {
-                        after: None,
-                        limit: 10,
-                    },
-                )
-                .unwrap()
-                .records
-                .len(),
-            1
+            with_storage(&mut provider, |storage| {
+                nod_api::get_bucket(&storage, &nod_reader, owner_bucket_id).unwrap()
+            })
+            .map(|bucket| bucket.is_qualified),
+            Some(expected_qualified)
         );
-        assert!(bodies
-            .tribute()
-            .list_by_owner(
-                owner,
-                TributePageRequest {
-                    after: None,
-                    limit: 10,
-                },
-            )
-            .unwrap()
-            .records
-            .is_empty());
+        let tribute_reader = bodies.tribute();
+        assert!(with_storage(&mut provider, |storage| {
+            TributeContract::new(storage)
+                .get_tribute_ids_by_owner(&tribute_reader, owner)
+                .unwrap()
+        })
+        .is_empty());
     }
 
     let promis_after_red = with_storage(&mut provider, |storage| {

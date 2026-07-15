@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -23,14 +24,15 @@ impl TributeFactoryContract<'_> {
     /// Single live offer path: an encrypted offer arrives; the host reads the
     /// current USDC/COEN oracle rate at this block, hands the offer + rate to the
     /// enclave (`ProcessTributeOfferBatch`), and issues the Tribute from the returned
-    /// `TributeOfferResult` without recomputing economics or `token_id`.
+    /// `TributeOfferResult` without recomputing economics. The public canonical
+    /// identity is independently recomputed and checked before issuance.
     /// `worldwide_day`/`currency` are NOT ABI args — they live in the encrypted
     /// payload; the enclave reads them and they come back in the result.
     pub(crate) fn offer_tribute(
         &mut self,
         tribute_bodies: &TributeRepositoryReader,
         input: OfferTributeInput<'_>,
-    ) -> Result<U256> {
+    ) -> Result<EntityId36> {
         let OfferTributeInput {
             caller,
             cipher_text,
@@ -60,7 +62,8 @@ impl TributeFactoryContract<'_> {
 
         // Hand the encrypted offer + rate to the enclave. It decrypts, applies the
         // rate, computes economics (U256) + Poseidon token_id, and returns the
-        // public result. The host does NOT recompute economics or token_id.
+        // public result. The host does not recompute private economics, but it
+        // can and must verify the public owner/day identity recipe.
         let offer = EncryptedTributeOffer {
             owner: caller,
             cipher_text: cipher_text.to_vec(),
@@ -92,7 +95,11 @@ impl TributeFactoryContract<'_> {
             .into());
         }
 
-        let tribute_id = U256::from_be_bytes(result.token_id.0);
+        let tribute_id = derive_poseidon_entity_id(caller, result_day)
+            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+        if result.owner != caller || result.token_id.0 != tribute_id.digest() {
+            return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
+        }
 
         let tribute = TributeContract::new(self.storage.clone());
         if tribute.get_tribute(tribute_bodies, tribute_id)?.is_some() {
@@ -108,7 +115,7 @@ impl TributeFactoryContract<'_> {
         tribute.issue(
             tribute_bodies,
             &TributeData {
-                token_id: tribute_id,
+                tribute_id,
                 owner: caller,
                 worldwide_day: result_day,
                 issuance_amount_minor: result.issuance_amount_minor,

@@ -665,7 +665,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
             + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
             + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let owner = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let token_id = U256::from_be_bytes(alloy_primitives::keccak256([0x01, 0x02, 0x03]).0);
+        let tribute_id = outbe_nod::NodContract::generate_nod_id(owner, wwd).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -689,7 +689,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         let tribute_body = TributeData {
-            token_id,
+            tribute_id,
             owner,
             worldwide_day: wwd,
             issuance_amount_minor: nominal,
@@ -710,7 +710,7 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
         // out of the begin-zone system transaction instead of silently retiring
         // the day. The test asserts the error surfaces and the day is left
         // unsettled (still READY, limit not routed to PROMIS).
-        let nod_id = outbe_nod::NodContract::generate_nod_id(owner, wwd);
+        let nod_id = outbe_nod::NodContract::generate_nod_id(owner, wwd).unwrap();
         let floor_price_minor = U256::from(1u64);
         nod_writer
             .put_nod(&outbe_nod::NodItemState {

@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::EntityId36;
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{
@@ -10,9 +11,16 @@ use outbe_offchain_storage::{
 };
 use outbe_tribute::{TributeData, TributeRepositoryWriter};
 
-fn tribute(token_id: U256) -> TributeData {
+fn entity(seed: u64) -> EntityId36 {
+    EntityId36::new(
+        WorldwideDay::new(20_260_715),
+        U256::from(seed).to_be_bytes::<32>(),
+    )
+}
+
+fn tribute(tribute_id: EntityId36) -> TributeData {
     TributeData {
-        token_id,
+        tribute_id,
         owner: Address::repeat_byte(0x11),
         worldwide_day: WorldwideDay::new(20_260_715),
         issuance_amount_minor: U256::from(100),
@@ -63,7 +71,7 @@ fn supervised_bundle_reports_read_failures_to_its_lifecycle_owner() {
     ));
 }
 
-fn nod(nod_id: U256, bucket_key: B256) -> NodItemState {
+fn nod(nod_id: EntityId36, bucket_key: B256) -> NodItemState {
     NodItemState {
         nod_id,
         owner: Address::repeat_byte(0x22),
@@ -97,9 +105,10 @@ fn typed_readers_share_one_memory_adapter() {
     let writer: StorageWriterHandle = storage;
     let readers = RuntimeBodyReaders::new(reader.clone());
 
-    let tribute_id = U256::from(1);
-    let nod_id = U256::from(2);
+    let tribute_id = entity(1);
+    let nod_id = entity(2);
     let bucket_key = B256::repeat_byte(0x33);
+    let bucket_id = EntityId36::new(WorldwideDay::new(20_260_715), bucket_key.0);
 
     TributeRepositoryWriter::new(reader.clone(), writer.clone())
         .put(&tribute(tribute_id))
@@ -114,7 +123,7 @@ fn typed_readers_share_one_memory_adapter() {
     let stored_nod = readers.nod().get(nod_id).unwrap().unwrap();
     assert_eq!(stored_nod.bucket_key, bucket_key);
 
-    let stored_bucket = readers.nod().get_bucket(bucket_key).unwrap().unwrap();
+    let stored_bucket = readers.nod().get_bucket(bucket_id).unwrap().unwrap();
     assert!(stored_bucket.is_qualified);
 }
 
@@ -125,7 +134,7 @@ fn cloned_bundle_observes_later_writes_through_typed_readers() {
     let writer: StorageWriterHandle = storage;
     let readers = RuntimeBodyReaders::new(reader.clone());
     let cloned = readers.clone();
-    let tribute_id = U256::from(9);
+    let tribute_id = entity(9);
 
     assert!(cloned.tribute().get(tribute_id).unwrap().is_none());
 
@@ -134,7 +143,12 @@ fn cloned_bundle_observes_later_writes_through_typed_readers() {
         .unwrap();
 
     assert_eq!(
-        cloned.tribute().get(tribute_id).unwrap().unwrap().token_id,
+        cloned
+            .tribute()
+            .get(tribute_id)
+            .unwrap()
+            .unwrap()
+            .tribute_id,
         tribute_id
     );
 }
@@ -180,7 +194,7 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
     });
 
     let started = std::time::Instant::now();
-    let error = match readers.tribute().get(U256::from(1)) {
+    let error = match readers.tribute().get(entity(1)) {
         Ok(_) => panic!("delayed read must exceed the request budget"),
         Err(error) => error,
     };
@@ -208,7 +222,7 @@ fn operation_timeout_is_mongo_unavailability_and_not_a_request_deadline() {
     let request_budget = outbe_primitives::projection::ExecutionReadBudget::new();
     let _budget = readers.enter_execution_budget(request_budget);
 
-    let error = match readers.tribute().get(U256::from(1)) {
+    let error = match readers.tribute().get(entity(1)) {
         Ok(_) => panic!("read exceeding the MongoDB operation limit must fail"),
         Err(error) => error,
     };

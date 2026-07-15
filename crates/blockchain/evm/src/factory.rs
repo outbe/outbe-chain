@@ -427,15 +427,18 @@ mod tests {
         let readers = RuntimeBodyReaders::new(reader.clone());
         let factory = OutbeEvmFactory::with_runtime_body_readers(readers.clone());
         let _evm = factory.create_evm(EmptyDB::default(), test_env());
-        let tribute_id = U256::from(1);
+        let worldwide_day = WorldwideDay::new(20_260_715);
+        let tribute_id =
+            outbe_nod::NodContract::generate_nod_id(Address::repeat_byte(0x11), worldwide_day)
+                .unwrap();
 
         assert!(readers.tribute().get(tribute_id).unwrap().is_none());
 
         TributeRepositoryWriter::new(reader, writer)
             .put(&TributeData {
-                token_id: tribute_id,
+                tribute_id,
                 owner: Address::repeat_byte(0x11),
-                worldwide_day: WorldwideDay::new(20_260_715),
+                worldwide_day,
                 issuance_amount_minor: U256::from(100),
                 issuance_currency: 840,
                 nominal_amount_minor: U256::from(90),
@@ -452,7 +455,7 @@ mod tests {
             .get(tribute_id)
             .unwrap()
             .expect("factory clone observes the shared adapter");
-        assert_eq!(stored.token_id, tribute_id);
+        assert_eq!(stored.tribute_id, tribute_id);
         assert_eq!(stored.owner, Address::repeat_byte(0x11));
     }
 

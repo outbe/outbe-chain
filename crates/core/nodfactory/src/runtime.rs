@@ -5,13 +5,14 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
+use outbe_compressed_entities::EntityId36;
 use outbe_nod::api as nod_api;
 use outbe_nod::schema::{NodBucketState, NodContract, NodIssueParams, NodItemState};
 use outbe_nod::NodRepositoryReader;
@@ -20,37 +21,18 @@ use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
 use crate::sol_ext::IERC20;
 
-/// Issue a new Nod at the originating owner's (worldwide_day) bucket.
-///
-/// Privileged: the only production caller is Lysis via the cross-module
-/// [`crate::api::issue_nod`]. Not exposed on the NodFactory ABI.
-pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result<U256> {
-    #[cfg(not(test))]
-    {
-        let _ = (storage, params);
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "NodFactory issuance read authority was not supplied".into(),
-        ))
-    }
-
-    #[cfg(test)]
-    {
-        issue_nod_fixture(storage, params)
-    }
-}
-
 /// Issues a Nod using the explicit off-chain body read authority.
 pub fn issue_nod_with_reader(
     storage: &StorageHandle<'_>,
     reader: &NodRepositoryReader,
     params: &NodIssueParams,
-) -> Result<U256> {
+) -> Result<EntityId36> {
     if params.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
 
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    if nod_api::get_item(reader, nod_id)?.is_some() {
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
+    if nod_api::get_item(storage, reader, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
     }
 
@@ -59,26 +41,12 @@ pub fn issue_nod_with_reader(
     })
 }
 
-#[cfg(test)]
-fn issue_nod_fixture(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result<U256> {
-    if params.owner.is_zero() {
-        return Err(NodFactoryError::InvalidOwner.into());
-    }
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    if nod_api::fixture_get_item(storage, nod_id)?.is_some() {
-        return Err(NodFactoryError::NodAlreadyExists.into());
-    }
-    issue_nod_inner(storage, params, |item| {
-        nod_api::fixture_add_nod(storage, item, params.entry_price_minor)
-    })
-}
-
 fn issue_nod_inner(
     storage: &StorageHandle<'_>,
     params: &NodIssueParams,
     add: impl FnOnce(&NodItemState) -> Result<()>,
-) -> Result<U256> {
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
+) -> Result<EntityId36> {
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
     let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
 
@@ -103,7 +71,7 @@ fn issue_nod_inner(
         storage,
         INodFactory::NodIssued {
             owner: params.owner,
-            nodId: nod_id,
+            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
             worldwideDay: U256::from(u32::from(params.worldwide_day)),
             leagueId: U256::from(params.league_id),
             floorPriceMinor: params.floor_price_minor,
@@ -134,54 +102,19 @@ fn issue_nod_inner(
 /// When `cost_amount_minor == 0` the payment sequence is skipped entirely
 /// and `asset` is not validated, so callers mining zero-cost Nods can pass
 /// `Address::ZERO`.
-pub fn mine_gratis(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    nod_id: U256,
-    nonce: U256,
-    asset: Address,
-) -> Result<U256> {
-    #[cfg(not(test))]
-    {
-        let _ = (storage, caller, nod_id, nonce, asset);
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "NodFactory mining read authority was not supplied".into(),
-        ))
-    }
-
-    #[cfg(test)]
-    {
-        let item =
-            nod_api::fixture_get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-        let bucket = nod_api::fixture_get_bucket(storage, item.bucket_key)?
-            .ok_or(NodFactoryError::NodNotQualified)?;
-        mine_gratis_inner(
-            storage,
-            MineGratisInput {
-                caller,
-                nod_id,
-                nonce,
-                asset,
-                item,
-                bucket,
-            },
-            |item| nod_api::fixture_remove_nod(storage, item),
-        )
-    }
-}
-
 /// Mines a Nod using the explicit off-chain body read authority.
 pub fn mine_gratis_with_reader(
     storage: &StorageHandle<'_>,
     reader: &NodRepositoryReader,
     caller: Address,
-    nod_id: U256,
+    nod_id: EntityId36,
     nonce: U256,
     asset: Address,
 ) -> Result<U256> {
-    let item = nod_api::get_item(reader, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    let item = nod_api::get_item(storage, reader, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
     let bucket =
-        nod_api::get_bucket(reader, item.bucket_key)?.ok_or(NodFactoryError::NodNotQualified)?;
+        nod_api::get_bucket(storage, reader, bucket_id)?.ok_or(NodFactoryError::NodNotQualified)?;
     mine_gratis_inner(
         storage,
         MineGratisInput {
@@ -198,7 +131,7 @@ pub fn mine_gratis_with_reader(
 
 struct MineGratisInput {
     caller: Address,
-    nod_id: U256,
+    nod_id: EntityId36,
     nonce: U256,
     asset: Address,
     item: NodItemState,
@@ -264,7 +197,7 @@ fn mine_gratis_inner(
         storage,
         INodFactory::NodBurned {
             owner: caller,
-            nodId: nod_id,
+            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
             gratisLoadMinor: item.gratis_load_minor,
         },
     )?;
@@ -276,13 +209,14 @@ fn mine_gratis_inner(
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
 /// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: U256, nonce: U256) -> Result<()> {
-    pow::validate_pow(nod_id, nonce).map_err(|e| NodFactoryError::from(e).into())
+pub fn validate_pow(nod_id: EntityId36, nonce: U256) -> Result<()> {
+    pow::validate_pow_bytes(nod_id.as_bytes(), nonce).map_err(|e| NodFactoryError::from(e).into())
 }
 
 /// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes::<8>()`.
-pub fn compute_pow_hash(nod_id: U256, nonce: U256) -> Result<[u8; 32]> {
-    pow::compute_pow_hash(nod_id, nonce).map_err(|e| NodFactoryError::from(e).into())
+pub fn compute_pow_hash(nod_id: EntityId36, nonce: U256) -> Result<[u8; 32]> {
+    pow::compute_pow_hash_bytes(nod_id.as_bytes(), nonce)
+        .map_err(|e| NodFactoryError::from(e).into())
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
