@@ -185,6 +185,20 @@ mise run localnet-bootstrap
 mise run localnet-start
 """
 
+[tasks.localnet-tee]
+description = "Build + bootstrap + start localnet with a per-validator mock TEE enclave (bare, no SGX/Docker)"
+run = """
+# Local TEE run: mock enclave (no SGX) as a bare host process (no Gramine/Docker).
+# Bare is required on Apple Silicon — the amd64 Gramine image dies under QEMU.
+export OUTBE_TEE_ENCLAVE=1
+export OUTBE_TEE_ENCLAVE_MOCK=1
+export OUTBE_TEE_ENCLAVE_BARE=1
+mise run build-release
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
+mise run localnet-bootstrap
+mise run localnet-start
+"""
+
 [tasks.localnet-restart]
 description = "Stop and start the bootstrapped localnet"
 run = """
