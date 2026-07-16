@@ -7,8 +7,7 @@ use outbe_primitives::{
 };
 
 use crate::{
-    api::ExecutionScope,
-    identity_field,
+    api::{EntityRef, ExecutionScope},
     schema::{
         body_identity_record, body_locator, decode_body_identity_record, Collection,
         CompressedEntitiesSchema, DeltaStatus, IndexRecord, PendingWord, STORAGE_SCHEMA_VERSION,
@@ -37,34 +36,6 @@ pub(crate) const FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 =
 pub(crate) const BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
 pub(crate) const INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
 
-/// Read-only compatibility facade for ADR-006 callers. Raw commitment
-/// mutations are intentionally not public; ADR-007 mutations go through the
-/// typed API so commitment, overlay, indexes and events cannot diverge.
-pub struct CommitmentState<'storage> {
-    state: State<'storage>,
-}
-
-impl<'storage> CommitmentState<'storage> {
-    #[must_use]
-    pub fn new(storage: StorageHandle<'storage>) -> Self {
-        Self {
-            state: State::new(storage),
-        }
-    }
-
-    pub fn tribute(&self, identity: EntityId36) -> Result<Option<Commitment>> {
-        self.state.commitment(Collection::Tribute, identity)
-    }
-
-    pub fn nod_item(&self, identity: EntityId36) -> Result<Option<Commitment>> {
-        self.state.commitment(Collection::NodItem, identity)
-    }
-
-    pub fn nod_bucket(&self, identity: EntityId36) -> Result<Option<Commitment>> {
-        self.state.commitment(Collection::NodBucket, identity)
-    }
-}
-
 pub(crate) struct State<'storage> {
     storage: StorageHandle<'storage>,
 }
@@ -82,7 +53,17 @@ impl<'storage> State<'storage> {
         let schema = self.schema();
         let actual = schema.storage_schema_version.read()?;
         match actual {
-            0 => schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION),
+            0 => {
+                if !schema.last_smt_root.read()?.is_zero()
+                    || !schema.reserved_2.read()?.is_zero()
+                    || !schema.reserved_3.read()?.is_zero()
+                {
+                    return Err(fatal(
+                        "compressed-entity schema initialization found non-empty root/reserved slots",
+                    ));
+                }
+                schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION)
+            }
             STORAGE_SCHEMA_VERSION => Ok(()),
             _ => Err(fatal(format!(
                 "unsupported compressed-entity storage schema {actual}"
@@ -101,56 +82,26 @@ impl<'storage> State<'storage> {
         }
     }
 
-    pub(crate) fn commitment(
-        &self,
-        collection: Collection,
-        identity: EntityId36,
-    ) -> Result<Option<Commitment>> {
+    pub(crate) fn root(&self) -> Result<B256> {
         self.validate_schema_for_read()?;
-        let key = commitment_key(identity)?;
         let schema = self.schema();
-        let word = match collection {
-            Collection::Tribute => schema.tribute_commitments.read(&key)?,
-            Collection::NodItem => schema.nod_commitments.read(&key)?,
-            Collection::NodBucket => schema.bucket_commitments.read(&key)?,
-        };
-        if word.is_zero() {
-            return Ok(None);
+        if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
+            return Err(fatal(
+                "compressed-entity reserved schema slots are non-zero",
+            ));
         }
-        Commitment::try_from(word.to_be_bytes::<32>())
-            .map(Some)
-            .map_err(|error| fatal(error.to_string()))
+        Ok(B256::from(schema.last_smt_root.read()?.to_be_bytes::<32>()))
     }
 
-    pub(crate) fn write_commitment(
-        &self,
-        collection: Collection,
-        identity: EntityId36,
-        commitment: Commitment,
-    ) -> Result<()> {
+    pub(crate) fn write_root(&self, root: B256) -> Result<()> {
         self.ensure_schema()?;
-        let key = commitment_key(identity)?;
         let schema = self.schema();
-        match collection {
-            Collection::Tribute => schema.tribute_commitments.write(&key, commitment.to_u256()),
-            Collection::NodItem => schema.nod_commitments.write(&key, commitment.to_u256()),
-            Collection::NodBucket => schema.bucket_commitments.write(&key, commitment.to_u256()),
+        if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
+            return Err(fatal(
+                "compressed-entity reserved schema slots are non-zero",
+            ));
         }
-    }
-
-    pub(crate) fn clear_commitment(
-        &self,
-        collection: Collection,
-        identity: EntityId36,
-    ) -> Result<()> {
-        self.ensure_schema()?;
-        let key = commitment_key(identity)?;
-        let schema = self.schema();
-        match collection {
-            Collection::Tribute => schema.tribute_commitments.write(&key, U256::ZERO),
-            Collection::NodItem => schema.nod_commitments.write(&key, U256::ZERO),
-            Collection::NodBucket => schema.bucket_commitments.write(&key, U256::ZERO),
-        }
+        schema.last_smt_root.write(U256::from_be_bytes(root.0))
     }
 
     pub(crate) fn pending(
@@ -218,7 +169,18 @@ impl<'storage> State<'storage> {
         entity_id: EntityId36,
     ) -> Result<B256> {
         let (locator, pending, _) = self.pending(collection, entity_id)?;
+        let entity = match collection {
+            Collection::Tribute => EntityRef::Tribute(entity_id),
+            Collection::NodItem => EntityRef::NodItem(entity_id),
+            Collection::NodBucket => EntityRef::NodBucket(entity_id),
+        };
+        // The transaction footprint includes keys already touched by an
+        // earlier transaction in this block, even though they need no second
+        // block-level sealing reservation.
+        scope.reserve_unique_key_work(entity)?;
         if pending == PendingWord::Untouched {
+            // Reserve deterministic deferred sealing/persistence work before
+            // the first overlay write or event for this key.
             // Reserve cleanup before any corresponding state or event write.
             let schema = self.schema();
             let cleanup_gas = FIRST_BODY_TOUCH_CLEANUP_GAS
@@ -365,12 +327,50 @@ impl<'storage> State<'storage> {
     pub(crate) fn assert_clean_begin(&self) -> Result<()> {
         self.ensure_schema()?;
         let schema = self.schema();
+        if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
+            return Err(fatal(
+                "compressed-entity reserved schema slots are non-zero",
+            ));
+        }
         if !schema.touched.is_empty()? || !schema.touched_index_deltas.is_empty()? {
             return Err(fatal(
                 "compressed-entity block overlay is dirty at begin_block",
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn final_body_mutations(
+        &self,
+    ) -> Result<Vec<(Collection, EntityId36, Option<Commitment>)>> {
+        self.validate_schema_for_read()?;
+        let schema = self.schema();
+        let locators = schema.touched.read_all()?;
+        let mut unique_locators = BTreeSet::new();
+        let mut unique_identities = BTreeSet::new();
+        let mut mutations = Vec::with_capacity(locators.len());
+        for locator in locators {
+            if !unique_locators.insert(locator) {
+                return Err(fatal("duplicate compressed-entity touched body locator"));
+            }
+            let identity_bytes = schema.body_identity_record.get_bytes(&locator).read()?;
+            let (collection, entity_id) = decode_body_identity_record(&identity_bytes)?;
+            if body_locator(collection, entity_id)? != locator {
+                return Err(fatal("compressed-entity touched body locator mismatch"));
+            }
+            if !unique_identities.insert((collection.id(), entity_id)) {
+                return Err(fatal("duplicate compressed-entity touched identity"));
+            }
+            let final_leaf = match PendingWord::decode(schema.pending_word.read(&locator)?)? {
+                PendingWord::Set(commitment) => Some(commitment),
+                PendingWord::Deleted => None,
+                PendingWord::Untouched => {
+                    return Err(fatal("touched compressed-entity body is Untouched"));
+                }
+            };
+            mutations.push((collection, entity_id, final_leaf));
+        }
+        Ok(mutations)
     }
 
     pub(crate) fn cleanup(&self) -> Result<()> {
@@ -459,12 +459,6 @@ impl<'storage> State<'storage> {
         }
         Ok(())
     }
-}
-
-fn commitment_key(identity: EntityId36) -> Result<U256> {
-    identity_field(identity)
-        .map(U256::from_be_bytes)
-        .map_err(|error| fatal(error.to_string()))
 }
 
 fn fatal(message: impl Into<String>) -> PrecompileError {

@@ -62,10 +62,12 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
 use crate::args::ConsensusArgs;
+use crate::ce_recovery::CeStartupRecovery;
 use crate::validators;
 use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
@@ -80,7 +82,7 @@ use outbe_consensus::{
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::ExecutorActor,
+    executor::actor::{ExecutorActor, FinalizedCeCommitter},
     finalization::{
         actor::{FinalizationActor, FinalizationActorDeps},
         block_cache::BlockCache,
@@ -1628,6 +1630,7 @@ fn validate_validator_evm_signer(
 /// against the trusted network identity (committee-chaining — see the `follow`
 /// module), and drive the EL via the existing executor, WITHOUT running the
 /// consensus engine. Selected by `--upstream`.
+#[allow(clippy::too_many_arguments)]
 async fn run_follow_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
@@ -1635,6 +1638,8 @@ async fn run_follow_stack<E>(
     bridge: ConsensusExecutionBridge,
     upstream: String,
     projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1716,6 +1721,8 @@ where
         upstream,
         epoch_length,
         projection_readiness,
+        finalized_ce_committer,
+        ce_startup_recovery,
     )
     .await
 }
@@ -1724,6 +1731,7 @@ where
 /// consensus P2P). Builds the same marshal + executor as the validator path,
 /// feeds the marshal finalized blocks fetched from the upstream, and verifies
 /// each against the per-epoch committee derived from the trusted anchor.
+#[allow(clippy::too_many_arguments)]
 async fn run_certified_follow_stack<E>(
     ctx: &E,
     anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -1732,6 +1740,8 @@ async fn run_certified_follow_stack<E>(
     upstream: String,
     epoch_length_blocks: u32,
     projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1914,9 +1924,14 @@ where
         )
         .await;
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    let recovered_ce_marker = ce_startup_recovery
+        .recover_before_participation(last_consensus_finalized.get())
+        .wrap_err("compressed-tree startup recovery failed before follower participation")?;
     info!(
         last_consensus_finalized = last_consensus_finalized.get(),
-        last_execution_height, "follower marshal initialized"
+        ce_marker_height = recovered_ce_marker.height,
+        last_execution_height,
+        "follower marshal initialized"
     );
 
     // ── 3. Transports ────────────────────────────────────────────────────
@@ -1939,7 +1954,9 @@ where
         projection_readiness,
         Some(execution_finalized_height_tx),
     );
-    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let _executor_handle = executor_actor
+        .with_finalized_ce_committer(finalized_ce_committer)
+        .start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
     //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
@@ -1980,6 +1997,8 @@ pub async fn run_consensus_stack<E>(
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
     projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1998,7 +2017,17 @@ where
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before any validator material is loaded.
     if let Some(upstream) = args.upstream.clone() {
-        return run_follow_stack(ctx, args, node, bridge, upstream, projection_readiness).await;
+        return run_follow_stack(
+            ctx,
+            args,
+            node,
+            bridge,
+            upstream,
+            projection_readiness,
+            finalized_ce_committer,
+            ce_startup_recovery,
+        )
+        .await;
     }
 
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
@@ -2404,8 +2433,13 @@ where
     // genesis-formation proof, crash-recovery detection, and executor start.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
 
+    let recovered_ce_marker = ce_startup_recovery
+        .recover_before_participation(last_consensus_finalized.get())
+        .wrap_err("compressed-tree startup recovery failed before validator participation")?;
+
     info!(
         last_consensus_finalized = last_consensus_finalized.get(),
+        ce_marker_height = recovered_ce_marker.height,
         "marshal actor initialized"
     );
 
@@ -3390,6 +3424,7 @@ where
 
     let mut executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
+        .with_finalized_ce_committer(finalized_ce_committer)
         .start(marshal_mailbox.clone(), last_consensus_finalized);
     let mut handler_handle = ctx
         .child("application")

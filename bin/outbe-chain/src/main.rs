@@ -8,10 +8,24 @@
 use clap::Parser;
 use commonware_runtime::Runner as _;
 use eyre::WrapErr as _;
+use outbe_compressed_entities::{
+    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+};
+use outbe_consensus::executor::actor::FinalizedCeCommitter;
 use outbe_engine::args::ConsensusArgs;
 use outbe_engine::bridge::ConsensusExecutionBridge;
+use outbe_engine::ce_finalizer::{
+    DurableCeState, FinalizedCeTree, RethCeFinalizer, RethDurableCeState,
+};
+use outbe_engine::ce_recovery::{
+    CanonicalCeReplaySource, CeStartupRecovery, CeStartupRecoveryCoordinator, StartupCeTree,
+};
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
+    compressed_storage::{
+        validate_compressed_storage_runtime_config, CompressedStorageRuntimeConfig,
+    },
     projection::{
         prepare_offchain_data_projection, validate_offchain_data_checkpoint,
         OffchainDataProjectionConfig,
@@ -273,8 +287,13 @@ fn run_node() -> eyre::Result<()> {
 
     // Channels for validator-mode consensus thread.
     // For full-node mode, no thread is spawned and these are unused.
-    let (node_tx, node_rx) =
-        oneshot::channel::<(OutbeFullNode, ConsensusArgs, ProjectionReadinessHandle)>();
+    let (node_tx, node_rx) = oneshot::channel::<(
+        OutbeFullNode,
+        ConsensusArgs,
+        ProjectionReadinessHandle,
+        Arc<dyn FinalizedCeCommitter>,
+        Arc<dyn CeStartupRecovery>,
+    )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
@@ -283,10 +302,11 @@ fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (node, mut args, projection_readiness) = match node_rx.blocking_recv() {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
-        };
+        let (node, mut args, projection_readiness, finalized_ce_committer, ce_startup_recovery) =
+            match node_rx.blocking_recv() {
+                Ok(v) => v,
+                Err(_) => return Ok(()),
+            };
 
         args.validate()?;
 
@@ -367,6 +387,8 @@ fn run_node() -> eyre::Result<()> {
                     node,
                     bridge_for_consensus,
                     projection_readiness,
+                    finalized_ce_committer,
+                    ce_startup_recovery,
                 ) => {
                     if let Err(e) = &result {
                         tracing::error!(%e, "consensus stack failed");
@@ -398,6 +420,17 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+
+        validate_compressed_storage_runtime_config(CompressedStorageRuntimeConfig {
+            persistence_threshold: builder.config().engine.persistence_threshold,
+            memory_block_buffer_target: builder.config().engine.memory_block_buffer_target,
+            max_pending_acks: outbe_consensus::config::MAX_PENDING_ACKS,
+            pruning_enabled: builder
+                .config()
+                .pruning
+                .prune_config(builder.config().chain.as_ref())
+                .is_some(),
+        })?;
 
         // If a TEE enclave sidecar is configured, connect + attest it and install
         // the global offer-decryption client. Offers route through the enclave on
@@ -461,13 +494,56 @@ fn run_node() -> eyre::Result<()> {
                 .wrap_err("offchain-data startup validation worker failed")??;
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let projection_readiness = prepared_projection.readiness();
+        let ce_data_dir = builder
+            .config()
+            .datadir
+            .clone()
+            .resolve_datadir(reth_ethereum::chainspec::EthChainSpec::chain(
+                builder.config().chain.as_ref(),
+            ))
+            .data_dir()
+            .to_path_buf();
+        let genesis_hash = builder.config().chain.genesis_hash();
+        let ce_identity = EnvironmentIdentity {
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+            chain_id: builder.config().chain.chain().id(),
+            genesis_hash,
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+        };
+        let genesis_marker = FinalizedMarker {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            height: 0,
+            block_hash: genesis_hash,
+            parent_block_hash: Default::default(),
+            parent_root: Default::default(),
+            new_root: Default::default(),
+        };
+        let ce_db = CeMdbx::open(&ce_data_dir, ce_identity, genesis_marker)
+            .wrap_err("failed to open and validate compressed-entity MDBX")?;
+        // Explicit prebenchmark/unbounded mode. ADR-008 is a reference stage
+        // and is not activated before ADR-009/010 fix benchmark-derived bounds.
+        let compressed_tree_service = Arc::new(CompressedTreeService::new(
+            ce_db,
+            CandidateCacheLimits {
+                max_candidates: usize::MAX,
+                max_encoded_bytes: usize::MAX,
+            },
+        )?);
+        compressed_tree_service.discard_speculative_candidates()?;
         let outbe_node = match evm_signer {
             Some(signer) => OutbeNode::with_bridge_and_evm_signer(
                 bridge.clone(),
                 signer,
                 runtime_body_readers,
+                compressed_tree_service.clone(),
             ),
-            None => OutbeNode::with_bridge(bridge.clone(), runtime_body_readers),
+            None => OutbeNode::with_bridge(
+                bridge.clone(),
+                runtime_body_readers,
+                compressed_tree_service.clone(),
+            ),
         };
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
@@ -542,6 +618,18 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        let durable_ce_adapter = Arc::new(RethDurableCeState::new(node.provider.clone()));
+        let durable_ce_state: Arc<dyn DurableCeState> = durable_ce_adapter.clone();
+        let canonical_ce_replay: Arc<dyn CanonicalCeReplaySource> = durable_ce_adapter;
+        let finalized_ce_tree: Arc<dyn FinalizedCeTree> = compressed_tree_service.clone();
+        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> = Arc::new(
+            RethCeFinalizer::new(durable_ce_state, finalized_ce_tree),
+        );
+        let startup_ce_tree: Arc<dyn StartupCeTree> = compressed_tree_service.clone();
+        let ce_startup_recovery: Arc<dyn CeStartupRecovery> = Arc::new(
+            CeStartupRecoveryCoordinator::new(canonical_ce_replay, startup_ce_tree),
+        );
+
         outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::handlers::update::registry())?;
 
         if args.is_validator || args.upstream.is_some() {
@@ -557,7 +645,13 @@ fn run_node() -> eyre::Result<()> {
             let consensus_handle = thread::spawn(consensus_thread_fn);
 
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
-            let _ = node_tx.send((node, args, projection_readiness));
+            let _ = node_tx.send((
+                node,
+                args,
+                projection_readiness,
+                finalized_ce_committer,
+                ce_startup_recovery,
+            ));
 
             tokio::select! {
                 _ = node_exit_future => {

@@ -11,6 +11,10 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
+use outbe_compressed_entities::{
+    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+};
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::OutbeNode;
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -200,6 +204,34 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32])?);
     let proposer = signer.address();
     let chain_spec = chain_spec_with_genesis(seed_single_validator_genesis(&signer)?);
+    let ce_directory = tempfile::tempdir()?;
+    let genesis_hash = chain_spec.genesis_hash();
+    let ce_db = CeMdbx::open(
+        ce_directory.path(),
+        EnvironmentIdentity {
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+            chain_id: DEVNET_CHAIN_ID,
+            genesis_hash,
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+        },
+        FinalizedMarker {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            height: 0,
+            block_hash: genesis_hash,
+            parent_block_hash: B256::ZERO,
+            parent_root: B256::ZERO,
+            new_root: B256::ZERO,
+        },
+    )?;
+    let compressed_tree_service = Arc::new(CompressedTreeService::new(
+        ce_db,
+        CandidateCacheLimits {
+            max_candidates: usize::MAX,
+            max_encoded_bytes: usize::MAX,
+        },
+    )?);
     let runtime = Runtime::test();
 
     let network_config = NetworkArgs {
@@ -224,6 +256,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         bridge: None,
         evm_signer: Some(signer),
         runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+        compressed_tree_service,
     };
     let NodeHandle {
         node,

@@ -551,6 +551,7 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
         <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
             &compressed,
         )
+        .map(|_| ())
     }
 
     #[cfg(not(test))]

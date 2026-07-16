@@ -61,7 +61,8 @@ fn with_execution_scope(
     let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
     <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
     let result = f(&scope, &parent);
-    let cleanup = <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle);
+    let cleanup =
+        <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle).map(|_| ());
     result.and(cleanup)
 }
 

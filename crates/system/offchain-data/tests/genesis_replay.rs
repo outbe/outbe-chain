@@ -6,8 +6,10 @@ use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
-    end_block, read, update, BodyInput, CommitmentState, EntityId36, EntityRef, ExecutionScope,
-    ParentBodySource,
+    end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
+    CompressedTreeService, EntityId36, EntityRef, EnvironmentIdentity, ExactParentIdentity,
+    ExecutionScope, FinalizedMarker, ParentBodySource, SealOutput, ACTIVE_COMMITMENT_SCHEME,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodContract, NodItemState,
@@ -215,28 +217,89 @@ fn as_b256(commitment: Option<outbe_compressed_entities::Commitment>) -> Option<
     commitment.map(|value| B256::from(*value.as_bytes()))
 }
 
-fn assert_execution_map(
-    execution: &mut HashMapStorageProvider,
+fn assert_execution_tree(
+    tree: &CompressedTreeService,
+    identity: ExactParentIdentity,
     observer: &ObserverCommitments,
     tribute_id: EntityId36,
     nod_id: EntityId36,
     bucket_id: EntityId36,
 ) {
-    StorageHandle::enter(execution, |storage| {
-        let state = CommitmentState::new(storage);
+    let parent = tree.open_parent(identity).unwrap();
+    for (entity, expected) in [
+        (
+            EntityRef::Tribute(tribute_id),
+            observer.tributes.get(&tribute_id).copied(),
+        ),
+        (
+            EntityRef::NodItem(nod_id),
+            observer.nod_items.get(&nod_id).copied(),
+        ),
+        (
+            EntityRef::NodBucket(bucket_id),
+            observer.nod_buckets.get(&bucket_id).copied(),
+        ),
+    ] {
         assert_eq!(
-            as_b256(state.tribute(tribute_id).unwrap()),
-            observer.tributes.get(&tribute_id).copied()
+            as_b256(parent.read_leaf_verified(entity, identity.root).unwrap()),
+            expected
         );
-        assert_eq!(
-            as_b256(state.nod_item(nod_id).unwrap()),
-            observer.nod_items.get(&nod_id).copied()
-        );
-        assert_eq!(
-            as_b256(state.nod_bucket(bucket_id).unwrap()),
-            observer.nod_buckets.get(&bucket_id).copied()
-        );
-    });
+    }
+}
+
+fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTreeService {
+    let db = CeMdbx::open(
+        directory,
+        EnvironmentIdentity {
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+            chain_id: 91,
+            genesis_hash,
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+        },
+        FinalizedMarker {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            height: 0,
+            block_hash: genesis_hash,
+            parent_block_hash: B256::ZERO,
+            parent_root: B256::ZERO,
+            new_root: B256::ZERO,
+        },
+    )
+    .unwrap();
+    CompressedTreeService::new(
+        db,
+        CandidateCacheLimits {
+            max_candidates: 4,
+            max_encoded_bytes: 1_000_000,
+        },
+    )
+    .unwrap()
+}
+
+fn finalize_tree_block(
+    tree: &CompressedTreeService,
+    block: &FinalizedBlock,
+    seal: SealOutput,
+) -> ExactParentIdentity {
+    tree.publish_candidate(block.hash, seal.staged_tree_batch)
+        .unwrap();
+    tree.apply_finalized(block.number, block.hash, seal.new_root)
+        .unwrap();
+    ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: block.number,
+        block_hash: block.hash,
+        root: seal.new_root,
+    }
+}
+
+fn execution_scope(tree: &CompressedTreeService, parent: ExactParentIdentity) -> ExecutionScope {
+    ExecutionScope::with_parent_tree(
+        tree.open_parent(parent).unwrap(),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    )
 }
 
 #[test]
@@ -289,39 +352,52 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let bucket_id = EntityId36::new(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
     let mut observer = ObserverCommitments::default();
+    let tree_directory = tempfile::tempdir().unwrap();
+    let genesis_hash = B256::repeat_byte(0x91);
+    let tree = tree_service(tree_directory.path(), genesis_hash);
+    let mut tree_parent = ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 0,
+        block_hash: genesis_hash,
+        root: B256::ZERO,
+    };
 
     // Block 1: normal domain mint paths emit all three Stored namespaces.
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(&mut execution, |storage| {
+    execution.set_block_number(1);
+    let scope = execution_scope(&tree, tree_parent);
+    let seal1 = StorageHandle::enter(&mut execution, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         let mut contract = TributeContract::new(storage.clone());
         contract.unseal_day(day).unwrap();
         contract.issue(&scope, &parent, &tribute).unwrap();
         outbe_nod::api::add_nod(&storage, &scope, &parent, &nod, U256::from(16)).unwrap();
-        end_block(storage, &scope).unwrap();
+        end_block(storage, &scope).unwrap()
     });
     let block1 = finalized_block(&mut execution, 1);
+    tree_parent = finalize_tree_block(&tree, &block1, seal1);
     observer.replay_block(&block1);
     projection.project_block(&block1).unwrap();
-    assert_execution_map(&mut execution, &observer, tribute_id, nod_id, bucket_id);
+    assert_execution_tree(&tree, tree_parent, &observer, tribute_id, nod_id, bucket_id);
 
     // Block 2: update each namespace through the generic capability boundary.
     tribute.tribute_price_minor += U256::from(1);
     nod.cost_amount_minor += U256::from(1);
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(&mut execution, |storage| {
+    execution.set_block_number(2);
+    let scope = execution_scope(&tree, tree_parent);
+    let seal2 = StorageHandle::enter(&mut execution, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         update_tribute(&storage, &scope, &parent, &tribute);
         update_nod_item(&storage, &scope, &parent, &nod);
         NodContract::new(storage.clone())
             .qualify_bucket(&scope, &parent, bucket_key)
             .unwrap();
-        end_block(storage, &scope).unwrap();
+        end_block(storage, &scope).unwrap()
     });
     let block2 = finalized_block(&mut execution, 2);
+    tree_parent = finalize_tree_block(&tree, &block2, seal2);
     observer.replay_block(&block2);
     projection.project_block(&block2).unwrap();
-    assert_execution_map(&mut execution, &observer, tribute_id, nod_id, bucket_id);
+    assert_execution_tree(&tree, tree_parent, &observer, tribute_id, nod_id, bucket_id);
 
     let projected_tribute = tribute_reader.get(tribute_id).unwrap().unwrap();
     let projected_nod = nod_reader.get(nod_id).unwrap().unwrap();
@@ -347,10 +423,11 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         encode_nod_bucket_v1(&canonical_bucket(&expected_bucket)).unwrap()
     );
 
-    // Block 3: normal domain delete paths clear all three mappings and emit all
+    // Block 3: normal domain delete paths clear all three tree leaves and emit all
     // three Deleted namespaces from the updated projected bodies.
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(&mut execution, |storage| {
+    execution.set_block_number(3);
+    let scope = execution_scope(&tree, tree_parent);
+    let seal3 = StorageHandle::enter(&mut execution, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         TributeContract::new(storage.clone())
             .burn(&scope, &parent, tribute_id)
@@ -362,12 +439,13 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
             .unwrap()
             .unwrap();
         outbe_nod::api::remove_nod(&storage, &scope, item, bucket).unwrap();
-        end_block(storage, &scope).unwrap();
+        end_block(storage, &scope).unwrap()
     });
     let block3 = finalized_block(&mut execution, 3);
+    tree_parent = finalize_tree_block(&tree, &block3, seal3);
     observer.replay_block(&block3);
     projection.project_block(&block3).unwrap();
-    assert_execution_map(&mut execution, &observer, tribute_id, nod_id, bucket_id);
+    assert_execution_tree(&tree, tree_parent, &observer, tribute_id, nod_id, bucket_id);
 
     assert!(observer.tributes.is_empty());
     assert!(observer.nod_items.is_empty());

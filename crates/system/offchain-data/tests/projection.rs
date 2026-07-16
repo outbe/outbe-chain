@@ -165,8 +165,8 @@ fn tribute_stored_after(
 }
 
 fn tribute_stored_body_after(body: &TributeData, previous: B256) -> LogData {
-    let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
-    let new_commitment = tribute_commitment(&body);
+    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
+    let new_commitment = tribute_commitment(body);
     ITribute::TributeBodyStored {
         tributeId: Bytes::copy_from_slice(body.tribute_id.as_bytes()),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,

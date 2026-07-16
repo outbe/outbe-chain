@@ -229,13 +229,15 @@ Net no-op examples include parent `A -> B -> A`, delete→mint of identical `A`,
 
 A block with no effective tree changes still produces an immutable identity batch carrying its block/parent hashes and equal parent/new roots with empty branch/leaf changes. Finalized persistence advances `last_applied` for that block atomically even though no tree node changes; exact block-parent chaining and Marshal ACK therefore never skip zero-change blocks.
 
-After successful executor finish and block sealing, the executor assigns the block hash and publishes an immutable staged batch keyed by that hash. Multiple competing candidates may coexist while awaiting finality; losing candidates are discarded without touching persistent MDBX.
+After successful proposer executor finish and block sealing, block assembly assigns the block hash and publishes an immutable staged batch keyed by that hash. Multiple competing proposer candidates may coexist while awaiting finality; losing candidates are discarded without touching persistent MDBX.
+
+Validator/import execution finishes before pinned Reth runs its external receipt-root and state-root post-execution checks, and Reth v2.2.0 exposes no safe custom callback between those checks and canonical persistence. It therefore does **not** publish a speculative CE candidate from executor `finish`: doing so would retain state for a block that Reth later rejects. Once a validator block is finalized and durably canonical, the CE finalizer reconstructs the identical batch from durable canonical receipt events after the DB-only hash/root barrier and applies it only if its recomputed root equals slot 1. Receipt/state-root-invalid imports leave no candidate. This is the validator counterpart to proposer publication, not an alternate root authority.
 
 ### Exact finalized-parent view and speculative candidate batches
 
 ADR-005's testnet execution profile permits block execution only over an exact finalized parent whose Mongo projection is ready. ADR-008 adds the matching tree prerequisite: that same parent must already be committed in CE MDBX with equal height/hash/root. A non-finalized staged batch is never an execution parent in this stage.
 
-Every successfully executed but non-finalized candidate is represented by:
+Every successfully assembled but non-finalized proposer candidate is represented by:
 
 ```text
 StagedTreeBatch {
@@ -254,9 +256,9 @@ A block-scoped `AuthenticatedTreeView` owns one consistent CE MDBX read snapshot
 
 Sealing wraps that snapshot in a local `StagingCkbStore` implementing `StoreReadOps + StoreWriteOps`. Reads resolve its own candidate writes before the immutable finalized base; CKB changes accumulate only in deterministic ordered branch/leaf maps. It never mutates another candidate or opens an MDBX write transaction, and a complete tree is never copied.
 
-`CompressedEntitiesLifecycle::end_block` returns provisional `SealOutput`. Only after successful executor finish and block sealing supplies the block hash may the executor freeze/publish the candidate batch. Failed execution/sealing drops it. Re-publication for the same block hash is idempotent only when typed metadata and both ordered maps are structurally equal; a conflicting batch is local corruption. No consensus meaning depends on incidental memory/MDBX serialization.
+`CompressedEntitiesLifecycle::end_block` returns provisional `SealOutput`. Only after successful proposer executor finish and block sealing supplies the block hash may block assembly freeze/publish the candidate batch. Failed execution/sealing drops it. Validator/import execution drops the provisional value after execution and relies on the durable-finality reconstruction rule above because post-execution validity is not yet known at this seam. Re-publication for the same block hash is idempotent only when typed metadata and both ordered maps are structurally equal; a conflicting batch is local corruption. No consensus meaning depends on incidental memory/MDBX serialization.
 
-Process restart discards every non-finalized candidate batch and retains only the root-verified finalized MDBX marker. A candidate returns only through verified Reth/Marshal redelivery and deterministic reexecution against that finalized parent. Until then this node forfeits/abstains; it never reconstructs from unspecified local candidate retention.
+Process restart discards every non-finalized candidate batch and retains only the root-verified finalized MDBX marker. A proposer candidate returns only through verified deterministic reexecution against that finalized parent. A finalized validator/import batch may instead be reconstructed from durable canonical receipt events under the DB-only root barrier above; it is never reconstructed from unspecified local candidate retention. Until one of those verified paths completes, this node forfeits/abstains.
 
 After the winning finalized batch commits atomically to CE MDBX, its cache entry and all losing competitors are removed. Already-open candidate views retain their original MDBX snapshot and immutable local maps until dropped.
 
@@ -330,7 +332,7 @@ The persistent in-place tree advances only after all of the following hold for b
 1. Commonware Marshal durably synced the block and finalization certificate;
 2. Reth accepted execution and finalized forkchoice;
 3. Reth durably persisted the canonical block, receipts, and EVM state through `B`;
-4. a DB-only provider verifies exact height/hash and the EVM SMT root equals the staged batch metadata;
+4. a DB-only provider verifies exact height/hash and the EVM SMT root equals either the proposer staged-batch metadata or the validator batch deterministically reconstructed from durable canonical receipts;
 5. the CE MDBX atomically commits changed nodes and `last_applied`;
 6. only then is `B` acknowledged to Marshal.
 

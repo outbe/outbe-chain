@@ -15,15 +15,23 @@ outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-poseidon.workspace = true
 outbe-primitives.workspace = true
+outbe-sparse-merkle-tree-v061 = { path = "vendor/sparse-merkle-tree" }
+reth-db.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+ckb-smt-pristine = { package = "outbe-sparse-merkle-tree-v061-pristine", path = "vendor/sparse-merkle-tree-pristine" }
 criterion.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [[bench]]
 name = "adr007"
+harness = false
+
+[[bench]]
+name = "adr008"
 harness = false
 
 [lints]

@@ -9,6 +9,7 @@
 
 use std::{
     collections::BTreeMap,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -18,6 +19,7 @@ use commonware_consensus::types::Height;
 use commonware_runtime::{Clock, Handle, Metrics, Spawner};
 use commonware_utils::acknowledgement::Acknowledgement;
 use commonware_utils::channel::oneshot;
+use futures::future::BoxFuture;
 use futures::StreamExt;
 use outbe_primitives::{
     projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
@@ -32,6 +34,23 @@ use super::ingress::{Mailbox, Message};
 
 /// Type alias for the engine handle (standard Ethereum engine types).
 type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
+
+/// Exact finalized block identity handed to compressed-storage persistence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinalizedCeBlock {
+    pub height: u64,
+    pub block_hash: B256,
+    pub parent_block_hash: B256,
+}
+
+/// Finalization barrier installed by the node integration.
+///
+/// The returned future completes only after Reth's durable notification,
+/// DB-only canonical/root verification, and the atomic CE MDBX commit. The
+/// executor deliberately awaits it before acknowledging Marshal.
+pub trait FinalizedCeCommitter: Send + Sync {
+    fn commit_finalized(&self, block: FinalizedCeBlock) -> BoxFuture<'static, eyre::Result<()>>;
+}
 
 /// Forkchoice tracking state (immutable value type, like Tempo).
 ///
@@ -257,6 +276,7 @@ pub struct ExecutorActor<E> {
     // tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Option<Arc<dyn FinalizedCeCommitter>>,
     ancestry_readiness: Option<AncestryReadiness>,
     fcu_heartbeat_interval: Duration,
     next_fcu_heartbeat_deadline: SystemTime,
@@ -293,6 +313,7 @@ where
             mailbox_rx: rx,
             execution_finalized_height_tx,
             projection_readiness,
+            finalized_ce_committer: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval,
             next_fcu_heartbeat_deadline,
@@ -303,6 +324,13 @@ where
 
     pub fn with_ancestry_readiness(mut self, readiness: AncestryReadiness) -> Self {
         self.ancestry_readiness = Some(readiness);
+        self
+    }
+
+    /// Installs the mandatory compressed-storage barrier for live node wiring.
+    #[must_use]
+    pub fn with_finalized_ce_committer(mut self, committer: Arc<dyn FinalizedCeCommitter>) -> Self {
+        self.finalized_ce_committer = Some(committer);
         self
     }
 
@@ -775,7 +803,18 @@ where
         )
         .await;
         match response_rx.await {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(())) => {
+                if let Some(committer) = &self.finalized_ce_committer {
+                    committer
+                        .commit_finalized(FinalizedCeBlock {
+                            height: height.get(),
+                            block_hash: block.block_hash(),
+                            parent_block_hash: block.parent_hash(),
+                        })
+                        .await?;
+                }
+                Ok(())
+            }
             Ok(Err(error)) => Err(eyre::eyre!(
                 "failed to canonicalize finalized block at \
                  height {height} digest {digest}: {error}"
@@ -821,6 +860,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy_primitives::{Bytes, B256};
     use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
     use commonware_consensus::marshal::Update;
@@ -838,7 +879,7 @@ mod tests {
     use reth_ethereum::{primitives::SealedBlock, Block};
     use reth_node_builder::ConsensusEngineHandle;
 
-    use super::LastCanonicalized;
+    use super::{FinalizedCeBlock, FinalizedCeCommitter, LastCanonicalized};
     use crate::ancestry_readiness::AncestryReadiness;
     use crate::block::ConsensusBlock;
     use crate::digest::Digest;
@@ -875,6 +916,38 @@ mod tests {
                 block_hash: block.parent_hash(),
             },
         )
+    }
+
+    struct GatedCeCommitter {
+        called: Mutex<Option<tokio::sync::oneshot::Sender<FinalizedCeBlock>>>,
+        release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl FinalizedCeCommitter for GatedCeCommitter {
+        fn commit_finalized(
+            &self,
+            block: FinalizedCeBlock,
+        ) -> futures::future::BoxFuture<'static, eyre::Result<()>> {
+            self.called
+                .lock()
+                .expect("called lock")
+                .take()
+                .expect("single finalized commit")
+                .send(block)
+                .expect("test must observe commit barrier");
+            let release = self
+                .release
+                .lock()
+                .expect("release lock")
+                .take()
+                .expect("single finalized commit");
+            Box::pin(async move {
+                release
+                    .await
+                    .map_err(|_| eyre::eyre!("test release dropped"))?;
+                Ok(())
+            })
+        }
     }
 
     #[test]
@@ -1253,6 +1326,79 @@ mod tests {
         });
     }
 
+    #[test]
+    fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            use futures::FutureExt as _;
+
+            let genesis = B256::repeat_byte(0x01);
+            let block = executor_test_block(7, 0x78);
+            let expected = FinalizedCeBlock {
+                height: block.number(),
+                block_hash: block.block_hash(),
+                parent_block_hash: block.parent_hash(),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection_for_block(genesis, &block);
+            let (called_tx, called_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let committer = Arc::new(GatedCeCommitter {
+                called: Mutex::new(Some(called_tx)),
+                release: Mutex::new(Some(release_rx)),
+            });
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
+            let mut actor = actor.with_finalized_ce_committer(committer);
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                match engine_rx.recv().await.expect("new payload message") {
+                    BeaconEngineMessage::NewPayload { tx, .. } => tx
+                        .send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid)))
+                        .expect("new payload receiver"),
+                    other => panic!("unexpected first engine message: {other:?}"),
+                }
+                match engine_rx.recv().await.expect("finalized FCU message") {
+                    BeaconEngineMessage::ForkchoiceUpdated { tx, .. } => tx
+                        .send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))))
+                        .expect("FCU receiver"),
+                    other => panic!("unexpected second engine message: {other:?}"),
+                }
+            });
+
+            let (ack, waiter) = Exact::handle();
+            let mut waiter = Box::pin(waiter);
+            let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
+                actor.handle_marshal_update(Update::Block(block, ack)).await
+            });
+
+            assert_eq!(called_rx.await.expect("commit barrier call"), expected);
+            assert!(
+                waiter.as_mut().now_or_never().is_none(),
+                "Marshal must remain unacknowledged while CE persistence is blocked"
+            );
+            release_tx.send(()).expect("release commit barrier");
+            actor_task
+                .await
+                .expect("actor task must complete")
+                .expect("finalized delivery must succeed after CE commit");
+            waiter
+                .await
+                .expect("Marshal must be acknowledged after CE commit");
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
     // bp-2 regression: a *finalized* block the execution layer rejects must fail
     // fast — `handle_marshal_update` returns a structured `Err` (the supervisor
     // shuts the node down) and the marshal `Exact` ack is left UNACKNOWLEDGED
@@ -1336,6 +1482,7 @@ mod tests {
                 mailbox_rx,
                 execution_finalized_height_tx: None,
                 projection_readiness,
+                finalized_ce_committer: None,
                 ancestry_readiness: None,
                 // Heartbeat far in the future so the biased mailbox arm wins.
                 fcu_heartbeat_interval: std::time::Duration::from_secs(3600),
@@ -1398,6 +1545,7 @@ mod tests {
                 mailbox_rx,
                 execution_finalized_height_tx: None,
                 projection_readiness,
+                finalized_ce_committer: None,
                 ancestry_readiness: None,
                 fcu_heartbeat_interval: std::time::Duration::ZERO,
                 next_fcu_heartbeat_deadline: context.current(),

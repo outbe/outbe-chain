@@ -332,6 +332,8 @@ do_start() {
             --validator
             --chain "$OUTPUT_DIR/genesis.json"
             --datadir "$validator_dir/data"
+            --engine.persistence-threshold 0
+            --engine.memory-block-buffer-target 0
             --http --http.addr 0.0.0.0 --http.port $((base_rpc + i))
             --http.api eth,net,web3,outbe
             --port $((base_p2p + i))

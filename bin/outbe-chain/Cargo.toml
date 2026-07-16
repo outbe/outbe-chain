@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 outbe-evm.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
 outbe-consensus.workspace = true

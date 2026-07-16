@@ -29,6 +29,19 @@ pub enum PrecompileError {
     #[error("body read corruption: {0}")]
     BodyReadCorruption(String),
 
+    /// Exact finalized compressed-entity tree materialization is unavailable
+    /// to this node. This is local readiness, not evidence of block invalidity.
+    #[error("compressed-entity tree unavailable: {0}")]
+    TreeUnavailable(String),
+
+    /// One transaction can never fit inside the configured CE work budget.
+    #[error("transaction exceeds the compressed-entity work limit")]
+    TransactionCeWorkLimitExceeded,
+
+    /// This payload has exhausted its deterministic CE work budget.
+    #[error("block compressed-entity work capacity exhausted")]
+    BlockCeWorkCapacityExhausted,
+
     /// Write attempted during static call.
     #[error("write protection: cannot modify state during static call")]
     WriteProtection,

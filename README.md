@@ -364,6 +364,8 @@ mainnet before ADR-006/ADR-007 are complete. Start the node with both MongoDB se
 
 ```bash
 outbe-chain node \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
   --projection.mongodb-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
   --projection.mongodb-database outbe_projection \
   --projection.start-block 1
@@ -397,6 +399,27 @@ caller's existing proposal/verification budget and does not start the Mongo outa
 point, lag, readiness, outage duration, and structured failure class. Prometheus also exports
 `outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
 local operational signals, not consensus acknowledgements.
+
+### Required compressed-entity persistence barrier
+
+Compressed-entity execution uses the exact finalized parent root in EVM slot 1 and a separate CE
+MDBX materialization under `<datadir>/compressed_entities/smt`. Node startup requires
+`--engine.persistence-threshold 0`, `--engine.memory-block-buffer-target 0`, sequential Marshal
+delivery (`MAX_PENDING_ACKS=1`), and receipt/historical-state pruning disabled. These settings make
+every finalized block cross a real Reth persistence notification before the DB-only block/root
+check and atomic CE marker commit. Marshal is acknowledged only after that sequence succeeds;
+startup fails instead of weakening the barrier when the settings are incompatible.
+
+The CE environment is bound to chain ID, genesis hash, commitment scheme, CKB tree format, vendored
+revision, and local schema. Speculative candidates remain in memory and never mutate MDBX. The EVM
+root is the consensus authority; the local marker and tree nodes are authenticated materialization
+and mismatches fail closed.
+
+Before validator or follower participation, startup compares the CE marker with the exact durable
+finalized checkpoint. An equal marker resumes, a behind marker replays every contiguous canonical
+receipt block, and ahead/conflict/gap states stop startup. At live finality, proposer candidates are
+accepted only after block assembly; validator imports without a candidate are reconstructed from
+durable canonical receipts after the same DB-only hash/root barrier.
 
 ## Documentation
 

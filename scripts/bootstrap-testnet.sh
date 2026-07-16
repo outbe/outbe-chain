@@ -281,6 +281,8 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     echo "  --validator \\"
     echo "  --chain $OUTPUT_DIR/genesis.json \\"
     echo "  --datadir $VALIDATOR_DIR/data \\"
+    echo "  --engine.persistence-threshold 0 \\"
+    echo "  --engine.memory-block-buffer-target 0 \\"
     echo "  --http --http.addr 0.0.0.0 --http.port $RPC_PORT \\"
     echo "  --http.api eth,net,web3,outbe \\"
     echo "  --port $RETH_P2P_PORT \\"

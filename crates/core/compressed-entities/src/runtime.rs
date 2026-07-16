@@ -68,24 +68,14 @@ pub(crate) fn read(
     let (_, pending, pending_body) = state.pending(collection, entity_id)?;
     match pending {
         PendingWord::Set(commitment) => {
-            if state.commitment(collection, entity_id)? != Some(commitment) {
-                return Err(fatal(
-                    "pending Set does not match direct commitment mapping",
-                ));
-            }
             charge_body_read(&storage, scope, pending_body.len())?;
             let stored = StoredBody::decode(&pending_body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(entity, stored, commitment, BodyOrigin::Overlay).map(Some)
         }
-        PendingWord::Deleted => {
-            if state.commitment(collection, entity_id)?.is_some() {
-                return Err(fatal("pending Deleted retains direct commitment"));
-            }
-            Ok(None)
-        }
+        PendingWord::Deleted => Ok(None),
         PendingWord::Untouched => {
-            let Some(commitment) = state.commitment(collection, entity_id)? else {
+            let Some(commitment) = scope.read_parent_leaf_verified(entity, state.root()?)? else {
                 return Ok(None);
             };
             let stored = parent
@@ -109,12 +99,11 @@ pub(crate) fn mint(
 ) -> Result<()> {
     let prepared = prepare_input(new_body)?;
     let state = State::new(storage.clone());
-    if current_commitment(&state, prepared.collection, prepared.entity_id)?.is_some() {
+    if current_commitment(scope, &state, prepared.collection, prepared.entity_id)?.is_some() {
         return Err(revert("compressed entity already exists"));
     }
 
     let locator = state.prepare_body_touch(scope, prepared.collection, prepared.entity_id)?;
-    state.write_commitment(prepared.collection, prepared.entity_id, prepared.commitment)?;
     state.set_pending_prepared(locator, prepared.commitment, &prepared.stored_body.encode())?;
     for membership in &prepared.memberships {
         state.apply_index_add(scope, membership)?;
@@ -135,14 +124,13 @@ pub(crate) fn update(
         ));
     }
     let state = State::new(storage.clone());
-    require_capability_current(&state, &current)?;
+    require_capability_current(scope, &state, &current)?;
 
     let old_memberships = memberships_for_verified(&current)?;
     let old_set: BTreeSet<_> = old_memberships.into_iter().collect();
     let new_set: BTreeSet<_> = prepared.memberships.iter().cloned().collect();
 
     let locator = state.prepare_body_touch(scope, prepared.collection, prepared.entity_id)?;
-    state.write_commitment(prepared.collection, prepared.entity_id, prepared.commitment)?;
     state.set_pending_prepared(locator, prepared.commitment, &prepared.stored_body.encode())?;
     for membership in old_set.difference(&new_set) {
         state.apply_index_remove(scope, membership)?;
@@ -159,12 +147,11 @@ pub(crate) fn delete(
     current: VerifiedBody,
 ) -> Result<()> {
     let state = State::new(storage.clone());
-    require_capability_current(&state, &current)?;
+    require_capability_current(scope, &state, &current)?;
     let (collection, entity_id) = entity_parts(current.entity);
     let memberships = memberships_for_verified(&current)?;
 
     let locator = state.prepare_body_touch(scope, collection, entity_id)?;
-    state.clear_commitment(collection, entity_id)?;
     state.set_deleted_prepared(locator)?;
     for membership in &memberships {
         state.apply_index_remove(scope, membership)?;
@@ -426,18 +413,17 @@ fn calculate_commitment(entity_id: EntityId36, payload: &[u8]) -> Result<Commitm
 }
 
 fn current_commitment(
+    scope: &ExecutionScope,
     state: &State<'_>,
     collection: Collection,
     entity_id: EntityId36,
 ) -> Result<Option<Commitment>> {
     let (_, pending, body) = state.pending(collection, entity_id)?;
-    let direct = state.commitment(collection, entity_id)?;
     match pending {
-        PendingWord::Untouched => Ok(direct),
+        PendingWord::Untouched => {
+            scope.read_parent_leaf_verified(entity_from_parts(collection, entity_id), state.root()?)
+        }
         PendingWord::Set(value) => {
-            if direct != Some(value) {
-                return Err(fatal("pending Set/direct commitment mismatch"));
-            }
             let stored = StoredBody::decode(&body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(
@@ -448,18 +434,17 @@ fn current_commitment(
             )?;
             Ok(Some(value))
         }
-        PendingWord::Deleted => {
-            if direct.is_some() {
-                return Err(fatal("pending Deleted/direct commitment mismatch"));
-            }
-            Ok(None)
-        }
+        PendingWord::Deleted => Ok(None),
     }
 }
 
-fn require_capability_current(state: &State<'_>, current: &VerifiedBody) -> Result<()> {
+fn require_capability_current(
+    scope: &ExecutionScope,
+    state: &State<'_>,
+    current: &VerifiedBody,
+) -> Result<()> {
     let (collection, entity_id) = entity_parts(current.entity);
-    match current_commitment(state, collection, entity_id)? {
+    match current_commitment(scope, state, collection, entity_id)? {
         None => Err(revert("compressed entity is absent")),
         Some(actual) if actual != current.commitment => Err(revert(
             "verified body capability no longer matches current value",

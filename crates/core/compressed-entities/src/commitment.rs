@@ -72,7 +72,7 @@ pub fn derive_poseidon_entity_id(
     Ok(EntityId36::new(worldwide_day, field_to_be32(digest)))
 }
 
-/// Derives the direct-map key input from the exact 36-byte identity.
+/// Derives the canonical field input from the exact 36-byte identity.
 pub fn identity_field(identity: EntityId36) -> Result<[u8; 32], CommitmentError> {
     pbytes(TAG_ID, identity.as_bytes())
 }

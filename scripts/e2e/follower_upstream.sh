@@ -33,6 +33,7 @@ launch_follower(){ # $1=dir $2=http $3=p2p $4=disc5 $5=auth $6=upstream_url
   RUST_MIN_STACK=16777216 RUST_LOG="info,outbe_consensus::follow=debug" \
   setsid nohup env "PATH=$PATH" "$BIN" node \
     --chain "$E2E_DIR/genesis.json" --datadir "$fd/data" \
+    --engine.persistence-threshold 0 --engine.memory-block-buffer-target 0 \
     --http --http.addr 0.0.0.0 --http.port "$2" --http.api eth,net,web3,outbe \
     --port "$3" --discovery.port "$3" --discovery.v5.addr 127.0.0.1 --discovery.v5.port "$4" \
     --p2p-secret-key-hex "$(openssl rand -hex 32)" --authrpc.port "$5" \
@@ -84,6 +85,7 @@ sudo env OUTBE_PROJECTION_MONGODB_URI="$OUTBE_PROJECTION_MONGODB_URI" \
   OUTBE_PROJECTION_MONGODB_DATABASE="$V3_PROJECTION_DATABASE" \
   RUST_MIN_STACK=16777216 bash -c "setsid nohup '$BIN' node --validator \
   --chain '$E2E_DIR/genesis.json' --datadir '$E2E_DIR/validator-3/data' \
+  --engine.persistence-threshold 0 --engine.memory-block-buffer-target 0 \
   --http --http.addr 0.0.0.0 --http.port 8548 --http.api eth,net,web3,outbe \
   --port 30306 --discovery.port 30306 --discovery.v5.addr 127.0.0.1 --discovery.v5.port 31306 \
   --bootnodes '$BOOTNODES' --p2p-secret-key-hex '$V3SECRET' \

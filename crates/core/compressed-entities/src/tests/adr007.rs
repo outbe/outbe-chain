@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
 };
 
 use alloy_primitives::{address, b256, keccak256, Address, Bytes, B256, U256};
@@ -14,10 +15,11 @@ use outbe_primitives::{
 
 use crate::{
     begin_block, body_commitment, delete, encode_nod_bucket_v1, encode_nod_item_v1,
-    encode_tribute_v1, end_block, list, mint, read, update, BodyInput, CommitmentState, EntityId36,
-    EntityRef, ExecutionScope, IdPage, IdPageRequest, NodBucketBodyV1, NodItemBodyV1,
-    ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1, VerifiedBody,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, MAX_ID_PAGE_LIMIT,
+    encode_tribute_v1, end_block, list, mint, read, update, AuthenticatedParentTree, BodyInput,
+    CeWorkConfig, EntityId36, EntityRef, ExecutionScope, FinalLeafMutation, IdPage, IdPageRequest,
+    NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, ProvisionalTreeBatch,
+    QueryRef, StoredBody, TributeBodyV1, VerifiedBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    MAX_ID_PAGE_LIMIT,
 };
 use crate::{
     runtime::{
@@ -38,6 +40,65 @@ const FIRST_TRIBUTE_CLEANUP_GAS: u64 = FIRST_BODY_TOUCH_CLEANUP_GAS
     + BODY_TOUCHED_LENGTH_CLEANUP_GAS
     + 2 * FIRST_INDEX_TOUCH_CLEANUP_GAS
     + INDEX_TOUCHED_LENGTH_CLEANUP_GAS;
+
+#[derive(Debug, Default)]
+struct TestAuthenticatedTree(Mutex<HashMap<EntityRef, crate::Commitment>>);
+
+impl TestAuthenticatedTree {
+    fn insert(&self, entity: EntityRef, commitment: crate::Commitment) {
+        self.0.lock().unwrap().insert(entity, commitment);
+    }
+}
+
+impl AuthenticatedParentTree for TestAuthenticatedTree {
+    fn parent_block_hash(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn parent_root(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn read_leaf_verified(
+        &self,
+        entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<crate::Commitment>> {
+        assert_eq!(expected_parent_root, B256::ZERO);
+        Ok(self.0.lock().unwrap().get(&entity).copied())
+    }
+
+    fn prepare_seal(
+        &self,
+        block_number: u64,
+        _mutations: &[FinalLeafMutation],
+    ) -> Result<ProvisionalTreeBatch> {
+        ProvisionalTreeBatch::new(
+            block_number,
+            B256::ZERO,
+            B256::ZERO,
+            B256::ZERO,
+            Default::default(),
+            Default::default(),
+        )
+        .map_err(|error| PrecompileError::Fatal(error.to_string()))
+    }
+}
+
+fn scope_with_tree(tree: Arc<TestAuthenticatedTree>) -> ExecutionScope {
+    ExecutionScope::with_parent_tree(tree, CeWorkConfig::new(0, 0, u64::MAX))
+}
+
+fn overlay_leaf(
+    storage: StorageHandle<'_>,
+    collection: Collection,
+    id: EntityId36,
+) -> Option<crate::Commitment> {
+    match State::new(storage).pending(collection, id).unwrap().1 {
+        PendingWord::Set(commitment) => Some(commitment),
+        PendingWord::Untouched | PendingWord::Deleted => None,
+    }
+}
 
 #[derive(Default)]
 struct MemoryParent {
@@ -235,29 +296,24 @@ fn nod_item_commitment(body: &NodItemBodyV1) -> crate::Commitment {
 }
 
 fn seed_parent_tribute(
-    storage: StorageHandle<'_>,
     parent: &mut MemoryParent,
+    tree: &TestAuthenticatedTree,
     body: &TributeBodyV1,
 ) {
     parent.insert_tribute(body);
-    State::new(storage)
-        .write_commitment(
-            Collection::Tribute,
-            body.tribute_id,
-            tribute_commitment(body),
-        )
-        .unwrap();
+    tree.insert(
+        EntityRef::Tribute(body.tribute_id),
+        tribute_commitment(body),
+    );
 }
 
 fn seed_parent_nod_item(
-    storage: StorageHandle<'_>,
     parent: &mut MemoryParent,
+    tree: &TestAuthenticatedTree,
     body: &NodItemBodyV1,
 ) {
     parent.insert_nod_item(body);
-    State::new(storage)
-        .write_commitment(Collection::NodItem, body.nod_id, nod_item_commitment(body))
-        .unwrap();
+    tree.insert(EntityRef::NodItem(body.nod_id), nod_item_commitment(body));
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -724,18 +780,16 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     let missing = tribute(entity(8, 26), owner, 200);
     let absent_id = entity(8, 27);
     let mut parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = scope_with_tree(tree.clone());
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_parent_tribute(storage.clone(), &mut parent, &present);
-        State::new(storage.clone())
-            .write_commitment(
-                Collection::Tribute,
-                missing.tribute_id,
-                tribute_commitment(&missing),
-            )
-            .unwrap();
+        seed_parent_tribute(&mut parent, tree.as_ref(), &present);
+        tree.insert(
+            EntityRef::Tribute(missing.tribute_id),
+            tribute_commitment(&missing),
+        );
         begin_block(storage.clone(), &scope).unwrap();
         let loaded = read(
             storage.clone(),
@@ -755,7 +809,11 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         )
         .unwrap()
         .is_none());
-        assert_eq!(parent.get_calls.get(), 1, "mapping zero must bypass parent");
+        assert_eq!(
+            parent.get_calls.get(),
+            1,
+            "authenticated absence must bypass Mongo"
+        );
         assert!(matches!(
             read(
                 storage,
@@ -837,10 +895,7 @@ fn outer_checkpoint_reverts_commitment_overlay_indexes_and_event_together() {
             Err(PrecompileError::Revert("outer transaction reverted".into()))
         });
         assert!(matches!(failed, Err(PrecompileError::Revert(_))));
-        assert!(CommitmentState::new(storage.clone())
-            .tribute(body.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, body.tribute_id).is_none());
         assert!(read(
             storage.clone(),
             &scope,
@@ -871,12 +926,13 @@ fn merged_list_applies_removals_additions_pagination_and_overlay_bodies() {
     let d = tribute(entity(12, 4), owner1, 40);
     let b_moved = tribute(b.tribute_id, owner2, 21);
     let mut parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = scope_with_tree(tree.clone());
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
         for body in [&a, &b, &c] {
-            seed_parent_tribute(storage.clone(), &mut parent, body);
+            seed_parent_tribute(&mut parent, tree.as_ref(), body);
         }
         begin_block(storage.clone(), &scope).unwrap();
         let a_cap = read(
@@ -959,12 +1015,13 @@ fn malformed_parent_order_is_rejected_as_corruption() {
         reverse_pages: true,
         ..MemoryParent::default()
     };
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = scope_with_tree(tree.clone());
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_parent_tribute(storage.clone(), &mut parent, &a);
-        seed_parent_tribute(storage.clone(), &mut parent, &b);
+        seed_parent_tribute(&mut parent, tree.as_ref(), &a);
+        seed_parent_tribute(&mut parent, tree.as_ref(), &b);
         begin_block(storage.clone(), &scope).unwrap();
         let result = list(
             storage,
@@ -986,7 +1043,8 @@ fn malformed_parent_order_is_rejected_as_corruption() {
 #[test]
 fn page_limit_outside_fork_bound_is_a_deterministic_revert() {
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = scope_with_tree(tree.clone());
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
@@ -1019,14 +1077,10 @@ fn cleanup_zeroes_overlay_and_phase_rejects_post_end_access() {
         begin_block(storage.clone(), &scope).unwrap();
         mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
         locator = body_locator(Collection::Tribute, body.tribute_id).unwrap();
-        end_block(storage.clone(), &scope).unwrap();
+        let seal = end_block(storage.clone(), &scope).unwrap();
 
-        assert_eq!(
-            CommitmentState::new(storage.clone())
-                .tribute(body.tribute_id)
-                .unwrap(),
-            Some(tribute_commitment(&body))
-        );
+        assert_eq!(State::new(storage.clone()).root().unwrap(), seal.new_root);
+        assert_ne!(seal.new_root, seal.parent_root);
         let schema = CompressedEntitiesSchema::new(storage.clone());
         assert_eq!(schema.touched.len().unwrap(), 0);
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
@@ -1084,7 +1138,7 @@ fn begin_block_rejects_a_dirty_prior_overlay_without_repairing_it() {
 }
 
 #[test]
-fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_direct_map_write() {
+fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
     let owner = address!("8200000000000000000000000000000000000008");
     let body = tribute(entity(14, 82), owner, 100);
     let parent = MemoryParent::default();
@@ -1130,10 +1184,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_direct_map_write() 
             mint(storage.clone(), &body_scope, BodyInput::Tribute(&body)),
             Err(PrecompileError::OutOfGas)
         ));
-        assert!(CommitmentState::new(storage.clone())
-            .tribute(body.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, body.tribute_id).is_none());
         let schema = CompressedEntitiesSchema::new(storage);
         assert_eq!(schema.touched.len().unwrap(), 0);
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
@@ -1159,10 +1210,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_direct_map_write() 
             mint(storage.clone(), &index_scope, BodyInput::Tribute(&body)),
             Err(PrecompileError::OutOfGas)
         ));
-        assert!(CommitmentState::new(storage.clone())
-            .tribute(body.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, body.tribute_id).is_none());
         let schema = CompressedEntitiesSchema::new(storage);
         assert_eq!(schema.touched.len().unwrap(), 0);
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
@@ -1199,14 +1247,161 @@ fn explicit_gas_window_stops_a_system_transaction_before_it_exceeds_its_envelope
             Err(PrecompileError::OutOfGas)
         ));
         assert_eq!(window.gas_used().unwrap(), FIRST_TRIBUTE_CLEANUP_GAS);
-        assert!(CommitmentState::new(storage.clone())
-            .tribute(first.tribute_id)
-            .unwrap()
-            .is_some());
-        assert!(CommitmentState::new(storage)
-            .tribute(second.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, first.tribute_id).is_some());
+        assert!(overlay_leaf(storage, Collection::Tribute, second.tribute_id).is_none());
+    });
+}
+
+#[test]
+fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() {
+    let owner = address!("8400000000000000000000000000000000000008");
+    let first = tribute(entity(14, 85), owner, 100);
+    let second = tribute(entity(14, 86), owner, 101);
+    let third = tribute(entity(14, 87), owner, 102);
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = ExecutionScope::with_parent_tree(tree, CeWorkConfig::new(3, 4, 11));
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        assert_eq!(scope.ce_work_used().unwrap(), 3);
+        mint(storage.clone(), &scope, BodyInput::Tribute(&first)).unwrap();
+        assert_eq!(scope.ce_work_used().unwrap(), 7);
+
+        let excluded = scope.ce_work_checkpoint().unwrap();
+        let excluded_result: Result<()> = storage.clone().with_checkpoint(|| {
+            mint(storage.clone(), &scope, BodyInput::Tribute(&second))?;
+            Err(PrecompileError::Revert(
+                "payload builder excluded transaction".into(),
+            ))
+        });
+        assert!(matches!(excluded_result, Err(PrecompileError::Revert(_))));
+        assert_eq!(scope.ce_work_used().unwrap(), 11);
+        scope.restore_ce_work_checkpoint(excluded).unwrap();
+        assert_eq!(scope.ce_work_used().unwrap(), 7);
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, second.tribute_id).is_none());
+
+        mint(storage.clone(), &scope, BodyInput::Tribute(&third)).unwrap();
+        assert_eq!(scope.ce_work_used().unwrap(), 11);
+        assert!(matches!(
+            mint(storage, &scope, BodyInput::Tribute(&second)),
+            Err(PrecompileError::BlockCeWorkCapacityExhausted)
+        ));
+    });
+
+    let too_small = ExecutionScope::with_parent_tree(
+        Arc::new(TestAuthenticatedTree::default()),
+        CeWorkConfig::new(3, 4, 6),
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &too_small).unwrap();
+        assert!(matches!(
+            mint(storage, &too_small, BodyInput::Tribute(&first)),
+            Err(PrecompileError::TransactionCeWorkLimitExceeded)
+        ));
+    });
+
+    let multi_key = ExecutionScope::with_parent_tree(
+        Arc::new(TestAuthenticatedTree::default()),
+        CeWorkConfig::new(3, 4, 11),
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &multi_key).unwrap();
+        multi_key.begin_ce_work_transaction().unwrap();
+        mint(storage.clone(), &multi_key, BodyInput::Tribute(&first)).unwrap();
+        mint(storage.clone(), &multi_key, BodyInput::Tribute(&second)).unwrap();
+        assert!(matches!(
+            mint(storage.clone(), &multi_key, BodyInput::Tribute(&third)),
+            Err(PrecompileError::TransactionCeWorkLimitExceeded)
+        ));
+        assert!(matches!(
+            multi_key.take_ce_work_failure(),
+            Some(PrecompileError::TransactionCeWorkLimitExceeded)
+        ));
+        multi_key.end_ce_work_transaction().unwrap();
+    });
+
+    let overlapping_transaction = ExecutionScope::with_parent_tree(
+        Arc::new(TestAuthenticatedTree::default()),
+        CeWorkConfig::new(3, 4, 11),
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &overlapping_transaction).unwrap();
+        overlapping_transaction.begin_ce_work_transaction().unwrap();
+        mint(
+            storage.clone(),
+            &overlapping_transaction,
+            BodyInput::Tribute(&first),
+        )
+        .unwrap();
+        let first_capability = read(
+            storage.clone(),
+            &overlapping_transaction,
+            &MemoryParent::default(),
+            EntityRef::Tribute(first.tribute_id),
+        )
+        .unwrap()
+        .unwrap();
+        overlapping_transaction.end_ce_work_transaction().unwrap();
+
+        overlapping_transaction.begin_ce_work_transaction().unwrap();
+        delete(storage.clone(), &overlapping_transaction, first_capability).unwrap();
+        mint(
+            storage.clone(),
+            &overlapping_transaction,
+            BodyInput::Tribute(&second),
+        )
+        .unwrap();
+        assert!(matches!(
+            mint(
+                storage,
+                &overlapping_transaction,
+                BodyInput::Tribute(&third)
+            ),
+            Err(PrecompileError::TransactionCeWorkLimitExceeded)
+        ));
+        assert!(matches!(
+            overlapping_transaction.take_ce_work_failure(),
+            Some(PrecompileError::TransactionCeWorkLimitExceeded)
+        ));
+        overlapping_transaction.end_ce_work_transaction().unwrap();
+    });
+
+    let remaining_capacity = ExecutionScope::with_parent_tree(
+        Arc::new(TestAuthenticatedTree::default()),
+        CeWorkConfig::new(3, 4, 11),
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &remaining_capacity).unwrap();
+        remaining_capacity.begin_ce_work_transaction().unwrap();
+        mint(
+            storage.clone(),
+            &remaining_capacity,
+            BodyInput::Tribute(&first),
+        )
+        .unwrap();
+        remaining_capacity.end_ce_work_transaction().unwrap();
+
+        remaining_capacity.begin_ce_work_transaction().unwrap();
+        mint(
+            storage.clone(),
+            &remaining_capacity,
+            BodyInput::Tribute(&second),
+        )
+        .unwrap();
+        assert!(matches!(
+            mint(storage, &remaining_capacity, BodyInput::Tribute(&third)),
+            Err(PrecompileError::BlockCeWorkCapacityExhausted)
+        ));
+        assert!(matches!(
+            remaining_capacity.take_ce_work_failure(),
+            Some(PrecompileError::BlockCeWorkCapacityExhausted)
+        ));
+        remaining_capacity.end_ce_work_transaction().unwrap();
     });
 }
 
@@ -1474,18 +1669,30 @@ fn storage_layout_uses_exact_slots_zero_through_ten() {
         locator = body_locator(Collection::Tribute, body.tribute_id).unwrap();
     });
 
-    let identity_f = U256::from_be_bytes(crate::identity_field(body.tribute_id).unwrap());
-    let commitment_slot = identity_f.mapping_slot(U256::from(1));
     let pending_slot = locator.mapping_slot(U256::from(4));
     let identity_record_slot = locator.mapping_slot(U256::from(10));
     assert_eq!(
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)],
-        U256::from(1)
+        U256::from(2)
     );
     assert_eq!(
-        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, commitment_slot)],
-        tribute_commitment(&body).to_u256()
+        provider
+            .storage
+            .get(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(1)))
+            .copied()
+            .unwrap_or_default(),
+        U256::ZERO
     );
+    for reserved in [U256::from(2), U256::from(3)] {
+        assert_eq!(
+            provider
+                .storage
+                .get(&(COMPRESSED_ENTITIES_ADDRESS, reserved))
+                .copied()
+                .unwrap_or_default(),
+            U256::ZERO
+        );
+    }
     assert_eq!(
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, pending_slot)],
         tribute_commitment(&body).to_u256()
@@ -1837,11 +2044,12 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
     let mut parent = MemoryParent::default();
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_gas_limit(u64::MAX);
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    let scope = scope_with_tree(tree.clone());
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_parent_tribute(storage.clone(), &mut parent, &parent_a);
-        seed_parent_tribute(storage.clone(), &mut parent, &parent_b);
+        seed_parent_tribute(&mut parent, tree.as_ref(), &parent_a);
+        seed_parent_tribute(&mut parent, tree.as_ref(), &parent_b);
         begin_block(storage.clone(), &scope).unwrap();
         let first_touch = scope.explicit_gas_checkpoint();
         mint(storage.clone(), &scope, BodyInput::Tribute(&overlay)).unwrap();
@@ -1929,10 +2137,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
             Err(PrecompileError::OutOfGas)
         ));
         assert_eq!(scope.explicit_gas_since(checkpoint).unwrap(), 0);
-        assert!(CommitmentState::new(storage.clone())
-            .tribute(overlay.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage.clone(), Collection::Tribute, overlay.tribute_id).is_none());
         assert!(CompressedEntitiesSchema::new(storage)
             .touched
             .is_empty()
@@ -1962,10 +2167,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
         let schema = CompressedEntitiesSchema::new(storage.clone());
         assert!(schema.touched.is_empty().unwrap());
         assert!(schema.touched_index_deltas.is_empty().unwrap());
-        assert!(CommitmentState::new(storage)
-            .tribute(overlay.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(overlay_leaf(storage, Collection::Tribute, overlay.tribute_id).is_none());
     });
 }
 
@@ -2024,11 +2226,12 @@ fn all_four_query_kinds_merge_non_empty_parent_pages_with_exact_pagination() {
     ];
     let tribute_added = tribute(entity(24, 2), owner, 102);
     let mut tribute_source = MemoryParent::default();
-    let tribute_scope = ExecutionScope::new();
+    let tribute_tree = Arc::new(TestAuthenticatedTree::default());
+    let tribute_scope = scope_with_tree(tribute_tree.clone());
     let mut tribute_provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut tribute_provider, |storage| {
         for body in &tribute_parent {
-            seed_parent_tribute(storage.clone(), &mut tribute_source, body);
+            seed_parent_tribute(&mut tribute_source, tribute_tree.as_ref(), body);
         }
         begin_block(storage.clone(), &tribute_scope).unwrap();
         let removed = read(
@@ -2107,11 +2310,12 @@ fn all_four_query_kinds_merge_non_empty_parent_pages_with_exact_pagination() {
     ];
     let nod_added = nod_item(entity(25, 2), owner);
     let mut nod_source = MemoryParent::default();
-    let nod_scope = ExecutionScope::new();
+    let nod_tree = Arc::new(TestAuthenticatedTree::default());
+    let nod_scope = scope_with_tree(nod_tree.clone());
     let mut nod_provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut nod_provider, |storage| {
         for body in &nod_parent {
-            seed_parent_nod_item(storage.clone(), &mut nod_source, body);
+            seed_parent_nod_item(&mut nod_source, nod_tree.as_ref(), body);
         }
         begin_block(storage.clone(), &nod_scope).unwrap();
         let removed = read(
@@ -2288,12 +2492,11 @@ fn pagination_and_parent_corruption_boundaries_fail_closed() {
             next_after: None,
         }])),
     };
-    let scope = ExecutionScope::new();
+    let tree = Arc::new(TestAuthenticatedTree::default());
+    tree.insert(EntityRef::Tribute(id), tribute_commitment(&body));
+    let scope = scope_with_tree(tree);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        State::new(storage.clone())
-            .write_commitment(Collection::Tribute, id, tribute_commitment(&body))
-            .unwrap();
         begin_block(storage.clone(), &scope).unwrap();
         let cap = read(storage.clone(), &scope, &scripted, EntityRef::Tribute(id))
             .unwrap()

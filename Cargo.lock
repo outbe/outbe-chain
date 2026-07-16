@@ -7237,6 +7237,7 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "eyre",
+ "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
@@ -7311,8 +7312,12 @@ dependencies = [
  "outbe-macros",
  "outbe-poseidon",
  "outbe-primitives",
+ "outbe-sparse-merkle-tree-v061",
+ "outbe-sparse-merkle-tree-v061-pristine",
+ "reth-db",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -7495,6 +7500,7 @@ name = "outbe-engine"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "bytes",
@@ -7518,6 +7524,7 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-util",
+ "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-node",
  "outbe-primitives",
@@ -7527,14 +7534,17 @@ dependencies = [
  "outbe-validatorset",
  "proptest",
  "rand_core 0.6.4",
+ "reth-chain-state",
  "reth-ethereum",
  "reth-node-builder",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-storage-api",
  "reth-transaction-pool",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
@@ -7861,6 +7871,7 @@ dependencies = [
  "hex",
  "metrics",
  "mongodb",
+ "outbe-compressed-entities",
  "outbe-evm",
  "outbe-offchain-data",
  "outbe-offchain-storage",
@@ -7933,6 +7944,7 @@ dependencies = [
  "outbe-tribute",
  "postcard",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -8129,6 +8141,14 @@ dependencies = [
  "rand_chacha 0.3.1",
  "tracing",
 ]
+
+[[package]]
+name = "outbe-sparse-merkle-tree-v061"
+version = "0.6.1"
+
+[[package]]
+name = "outbe-sparse-merkle-tree-v061-pristine"
+version = "0.6.1"
 
 [[package]]
 name = "outbe-staking"

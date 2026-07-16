@@ -33,6 +33,8 @@ jobs:
           cache: true
       # mise installs the rust toolchain with the default profile (no rustfmt).
       - run: rustup component add rustfmt
+      - name: Verify vendored CKB SMT provenance and panic safety
+        run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
   clippy:

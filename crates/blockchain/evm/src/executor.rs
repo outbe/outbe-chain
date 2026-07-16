@@ -368,13 +368,13 @@ fn validator_fee_for_gas(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ZeroFeeCfgSnapshot {
+pub(crate) struct ZeroFeeCfgSnapshot {
     disable_balance_check: bool,
     disable_base_fee: bool,
     disable_fee_charge: bool,
 }
 
-trait ZeroFeeCfgAccess {
+pub(crate) trait ZeroFeeCfgAccess {
     fn enable_zero_fee_overrides(&mut self) -> ZeroFeeCfgSnapshot;
     fn restore_zero_fee_overrides(&mut self, snapshot: ZeroFeeCfgSnapshot);
 }
@@ -563,13 +563,27 @@ where
     DB::Error: std::fmt::Display,
     F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
 {
+    run_atomic_storage_hook_with_output(db, ctx, hooks)
+        .map(|(changes, events, ())| (changes, events))
+}
+
+fn run_atomic_storage_hook_with_output<DB, F, R>(
+    db: &mut DB,
+    ctx: BlockContext,
+    hooks: F,
+) -> Result<(AddressMap<Account>, Vec<Log>, R), BlockExecutionError>
+where
+    DB: StateDB,
+    DB::Error: std::fmt::Display,
+    F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<R>,
+{
     let mut provider = DirectStorageProvider::new(db, ctx.clone());
     let storage = StorageHandle::new(&mut provider);
     let runtime_ctx = BlockRuntimeContext::new(ctx, storage.clone());
 
     let result = storage.with_checkpoint(|| hooks(&runtime_ctx));
 
-    result.map_err(|e| {
+    let output = result.map_err(|e| {
         BlockExecutionError::Internal(InternalBlockExecutionError::Other(
             format!("outbe hook: {e}").into(),
         ))
@@ -583,7 +597,7 @@ where
 
     let changes = provider.take_committed_changes();
     let events = provider.take_events();
-    Ok((changes, events))
+    Ok((changes, events, output))
 }
 
 fn build_block_context<DB>(
@@ -802,6 +816,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// One lifecycle capability shared with every precompile in this EVM.
     compressed_entities_scope: Arc<ExecutionScope>,
     compressed_entities_started: bool,
+    compressed_entities_seal_output: Option<outbe_compressed_entities::SealOutput>,
+    compressed_tree_service: Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
 }
 
 // test-only opt-out: scoped flag that disables the Phase 1
@@ -879,12 +895,34 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             execution_read_budget_guard: None,
             compressed_entities_scope: Arc::new(ExecutionScope::new()),
             compressed_entities_started: false,
+            compressed_entities_seal_output: None,
+            compressed_tree_service: None,
         }
     }
 
     pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
         self.compressed_entities_scope = scope;
         self
+    }
+
+    pub(crate) fn take_compressed_entities_seal_output(
+        &mut self,
+    ) -> Option<outbe_compressed_entities::SealOutput> {
+        self.compressed_entities_seal_output.take()
+    }
+
+    pub(crate) fn with_compressed_tree_service(
+        mut self,
+        service: Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
+    ) -> Self {
+        self.compressed_tree_service = service;
+        self
+    }
+
+    pub(crate) fn compressed_tree_service(
+        &self,
+    ) -> Option<Arc<outbe_compressed_entities::CompressedTreeService>> {
+        self.compressed_tree_service.clone()
     }
 
     pub(crate) fn with_runtime_body_readers(
@@ -1227,10 +1265,10 @@ where
         let chain_id = self.inner.evm.chain_id();
         let proposer = self.inner.evm.block().beneficiary();
         let scope = self.compressed_entities_scope.clone();
-        let (changes, events) = {
+        let (changes, events, seal_output) = {
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
-            run_atomic_storage_hooks(db, ctx, |hook_ctx| {
+            run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
                 let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
                     hook_ctx.clone(),
                     scope.as_ref(),
@@ -1255,6 +1293,7 @@ where
             );
         }
         self.compressed_entities_started = false;
+        self.compressed_entities_seal_output = Some(seal_output);
         Ok(())
     }
 
@@ -2712,29 +2751,37 @@ where
         tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        let (mut tx_env, recovered) = tx.into_parts();
-        let tx = recovered.tx();
-        let signer = *recovered.signer();
+        let ce_scope = self.compressed_entities_scope.clone();
+        let ce_checkpoint = ce_scope
+            .ce_work_checkpoint()
+            .map_err(BlockExecutionError::other)?;
+        ce_scope
+            .begin_ce_work_transaction()
+            .map_err(BlockExecutionError::other)?;
+        let outcome = (|| {
+            let (mut tx_env, recovered) = tx.into_parts();
+            let tx = recovered.tx();
+            let signer = *recovered.signer();
 
-        if is_reserved_system_tx(tx) {
-            let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-            let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-                .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            if is_reserved_system_tx(tx) {
+                let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+                let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+                    .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
 
-            // Witness validate-without-reexec: if Phase 1
-            // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
-            // the cursor carries the cached witness `tx_hash`. Body[0] in the
-            // main tx loop is the proposer-supplied Phase 1 tx — validate it
-            // matches the cache (signature hash) and skip re-execution.
-            // Receipt + state already exist from the pre-exec commit.
-            if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-                tx_hash: cached_hash,
-                ..
-            } = self.system_tx_phase_cursor
-            {
-                if !cached_hash.is_zero() {
-                    if tx.signature_hash() != cached_hash {
-                        return Err(BlockExecutionError::Internal(
+                // Witness validate-without-reexec: if Phase 1
+                // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
+                // the cursor carries the cached witness `tx_hash`. Body[0] in the
+                // main tx loop is the proposer-supplied Phase 1 tx — validate it
+                // matches the cache (signature hash) and skip re-execution.
+                // Receipt + state already exist from the pre-exec commit.
+                if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
+                    tx_hash: cached_hash,
+                    ..
+                } = self.system_tx_phase_cursor
+                {
+                    if !cached_hash.is_zero() {
+                        if tx.signature_hash() != cached_hash {
+                            return Err(BlockExecutionError::Internal(
                             InternalBlockExecutionError::Other(
                                 format!(
                                     "Phase 1 body[0] witness signature_hash mismatch: expected {cached_hash}, got {}",
@@ -2743,45 +2790,46 @@ where
                                 .into(),
                             ),
                         ));
+                        }
+                        // Advance cursor past Phase 1; CycleTick body_index=1 next.
+                        let has_boundary_outcome = matches!(
+                            block_artifacts.consensus_header_artifact,
+                            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+                        );
+                        let has_tee_bootstrap = self.block_has_tee_bootstrap();
+                        self.system_tx_phase_cursor = self
+                            .system_tx_phase_cursor
+                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                        // Ok(None) signals "no further commit" — pre-exec already
+                        // pushed receipt[0] and committed state. The block builder
+                        // still keeps this validated witness in body[0].
+                        return Ok(None);
                     }
-                    // Advance cursor past Phase 1; CycleTick body_index=1 next.
-                    let has_boundary_outcome = matches!(
-                        block_artifacts.consensus_header_artifact,
-                        Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-                    );
-                    let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
-                    // Ok(None) signals "no further commit" — pre-exec already
-                    // pushed receipt[0] and committed state. The block builder
-                    // still keeps this validated witness in body[0].
-                    return Ok(None);
                 }
-            }
 
-            // cursor-driven phase routing replaces the previous
-            // `self.inner.receipts.len()` derivation. The cursor was
-            // initialised in `apply_pre_execution_changes` and advances
-            // exactly once per consumed begin-zone system tx (see the
-            // `advance_after_commit` call below). This is the only
-            // production reader of `self.system_tx_phase_cursor`.
-            let (
-                body_index,
-                expected_phase,
-                expected_input,
-                finalized_summary,
-                intrinsic_gas,
-                planned_gas_limit,
-            ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
-            let actual_input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("decode system tx at body_index={body_index}: {error}").into(),
-                ))
-            })?;
-            let actual_phase = actual_input.kind();
-            if actual_phase != expected_phase {
-                return Err(BlockExecutionError::Internal(
+                // cursor-driven phase routing replaces the previous
+                // `self.inner.receipts.len()` derivation. The cursor was
+                // initialised in `apply_pre_execution_changes` and advances
+                // exactly once per consumed begin-zone system tx (see the
+                // `advance_after_commit` call below). This is the only
+                // production reader of `self.system_tx_phase_cursor`.
+                let (
+                    body_index,
+                    expected_phase,
+                    expected_input,
+                    finalized_summary,
+                    intrinsic_gas,
+                    planned_gas_limit,
+                ) = self.expected_system_tx_for_cursor(block_number, &block_artifacts)?;
+                let actual_input =
+                    SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
+                        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                            format!("decode system tx at body_index={body_index}: {error}").into(),
+                        ))
+                    })?;
+                let actual_phase = actual_input.kind();
+                if actual_phase != expected_phase {
+                    return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
                         format!(
                             "system tx phase mismatch at body_index={body_index}: expected {expected_phase:?}, got {actual_phase:?}"
@@ -2789,9 +2837,9 @@ where
                         .into(),
                     ),
                 ));
-            }
-            if actual_input != expected_input {
-                return Err(BlockExecutionError::Internal(
+                }
+                if actual_input != expected_input {
+                    return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
                         format!(
                             "system tx calldata mismatch at body_index={body_index} for {expected_phase:?}"
@@ -2799,28 +2847,29 @@ where
                         .into(),
                     ),
                 ));
-            }
+                }
 
-            let ordinal = body_index.try_into().map_err(|_| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("system tx body_index {body_index} exceeds u8 range").into(),
-                ))
-            })?;
-            let unsigned = build_unsigned_system_tx_with_gas_limit(
-                expected_phase,
-                ordinal,
-                block_number,
-                self.inner.evm.chain_id(),
-                tx.input().clone(),
-                planned_gas_limit,
-            )
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("build expected system tx at body_index={body_index}: {error}").into(),
-                ))
-            })?;
-            if tx.signature_hash() != unsigned.signature_hash() {
-                return Err(BlockExecutionError::Internal(
+                let ordinal = body_index.try_into().map_err(|_| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("system tx body_index {body_index} exceeds u8 range").into(),
+                    ))
+                })?;
+                let unsigned = build_unsigned_system_tx_with_gas_limit(
+                    expected_phase,
+                    ordinal,
+                    block_number,
+                    self.inner.evm.chain_id(),
+                    tx.input().clone(),
+                    planned_gas_limit,
+                )
+                .map_err(|error| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("build expected system tx at body_index={body_index}: {error}")
+                            .into(),
+                    ))
+                })?;
+                if tx.signature_hash() != unsigned.signature_hash() {
+                    return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
                         format!(
                             "system tx signature_hash mismatch at body_index={body_index} for {expected_phase:?}"
@@ -2828,14 +2877,14 @@ where
                         .into(),
                     ),
                 ));
-            }
-            let visible_gas_limit = tx.gas_limit();
+                }
+                let visible_gas_limit = tx.gas_limit();
 
-            let proposer = self
-                .begin_zone_proposer(block_number)?
-                .unwrap_or_else(|| self.inner.evm.block().beneficiary());
-            if signer != proposer {
-                return Err(BlockExecutionError::Internal(
+                let proposer = self
+                    .begin_zone_proposer(block_number)?
+                    .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+                if signer != proposer {
+                    return Err(BlockExecutionError::Internal(
                     InternalBlockExecutionError::Other(
                         format!(
                             "system tx signer mismatch at body_index={body_index} for {expected_phase:?}: expected proposer {proposer}, got {signer}"
@@ -2843,57 +2892,61 @@ where
                         .into(),
                     ),
                 ));
-            }
-
-            if expected_phase == SystemTxKind::HookEvents {
-                let has_boundary_outcome = matches!(
-                    block_artifacts.consensus_header_artifact,
-                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-                );
-                let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
-                let commit_outcome = self
-                    .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
-                    .map(Some);
-                if commit_outcome.is_ok() {
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
                 }
-                return commit_outcome;
-            }
 
-            let phase_context = PreloadedSystemTxContext {
-                proposer,
-                finalized_summary,
-                allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
-                // same VRF-proof-hash plumbing as the
-                // pre-exec commit path. Cached by the preflight; falls
-                // back to `B256::ZERO` only when the preflight was
-                // skipped (which never co-occurs with this main-loop
-                // path entering Phase 1 in production).
-                canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
-            };
-            // Phase 1-4 EVM result failures (`Revert` / `Halt`) are converted
-            // into a `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
-            // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`; revm did not commit the call so no
-            // state change leaks. Raw `Err` from the system-call engine remains fatal because
-            // upstream revm documents that the journal may be inconsistent on that path.
-            // Body-parity validation above (decode / phase / calldata / signature / signer)
-            // also remains fatal: those are validator-side checks that the proposer never
-            // produces for itself.
-            let ce_gas_limit = visible_gas_limit
-                .checked_sub(intrinsic_gas)
-                .ok_or_else(|| {
-                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                        format!(
+                if expected_phase == SystemTxKind::HookEvents {
+                    let has_boundary_outcome = matches!(
+                        block_artifacts.consensus_header_artifact,
+                        Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+                    );
+                    let has_tee_bootstrap = self.block_has_tee_bootstrap();
+                    let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
+                    let commit_outcome = self
+                        .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
+                        .map(Some);
+                    if commit_outcome.is_ok() {
+                        self.system_tx_phase_cursor = self
+                            .system_tx_phase_cursor
+                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    }
+                    return commit_outcome;
+                }
+
+                let phase_context = PreloadedSystemTxContext {
+                    proposer,
+                    finalized_summary,
+                    allow_boundary_proposer: self
+                        .boundary_allows_proposer(&block_artifacts, proposer),
+                    // same VRF-proof-hash plumbing as the
+                    // pre-exec commit path. Cached by the preflight; falls
+                    // back to `B256::ZERO` only when the preflight was
+                    // skipped (which never co-occurs with this main-loop
+                    // path entering Phase 1 in production).
+                    canonical_vrf_proof_hash: self
+                        .verified_phase1_vrf_proof_hash
+                        .unwrap_or(B256::ZERO),
+                };
+                // Phase 1-4 EVM result failures (`Revert` / `Halt`) are converted
+                // into a `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
+                // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`; revm did not commit the call so no
+                // state change leaks. Raw `Err` from the system-call engine remains fatal because
+                // upstream revm documents that the journal may be inconsistent on that path.
+                // Body-parity validation above (decode / phase / calldata / signature / signer)
+                // also remains fatal: those are validator-side checks that the proposer never
+                // produces for itself.
+                let ce_gas_limit =
+                    visible_gas_limit
+                        .checked_sub(intrinsic_gas)
+                        .ok_or_else(|| {
+                            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                                format!(
                             "system tx signed gas below intrinsic at body_index={body_index}: \
                          signed={visible_gas_limit}, intrinsic={intrinsic_gas}"
                         )
-                        .into(),
-                    ))
-                })?;
-            let gas_window = self
+                                .into(),
+                            ))
+                        })?;
+                let gas_window = self
                 .compressed_entities_scope
                 .begin_explicit_gas_window(ce_gas_limit)
                 .map_err(|error| {
@@ -2904,37 +2957,37 @@ where
                         .into(),
                     ))
                 })?;
-            let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
-                self.inner.evm.transact_system_call(
-                    outbe_primitives::addresses::SYSTEM_ADDRESS,
-                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                    tx.input().clone(),
-                )
-            });
-            // precompute the boundary-outcome flag so the cursor
-            // advance below stays consistent with the resolved expected set
-            // for this block (block 1 always carries the boundary outcome
-            // under V2; other blocks depend on the header artifact).
-            let has_boundary_outcome = matches!(
-                block_artifacts.consensus_header_artifact,
-                Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-            );
-            let has_tee_bootstrap = self.block_has_tee_bootstrap();
-            // Only EVM result failures use the soft-failure receipt path.
-            // Raw engine/provider `Err` was handled above as fatal.
-            let result = match transact_outcome {
-                Ok(value) => value,
-                Err(error) => {
-                    let reason = format!(
+                let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
+                    self.inner.evm.transact_system_call(
+                        outbe_primitives::addresses::SYSTEM_ADDRESS,
+                        outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                        tx.input().clone(),
+                    )
+                });
+                // precompute the boundary-outcome flag so the cursor
+                // advance below stays consistent with the resolved expected set
+                // for this block (block 1 always carries the boundary outcome
+                // under V2; other blocks depend on the header artifact).
+                let has_boundary_outcome = matches!(
+                    block_artifacts.consensus_header_artifact,
+                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+                );
+                let has_tee_bootstrap = self.block_has_tee_bootstrap();
+                // Only EVM result failures use the soft-failure receipt path.
+                // Raw engine/provider `Err` was handled above as fatal.
+                let result = match transact_outcome {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let reason = format!(
                         "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
                     );
-                    tracing::error!(target: "outbe::executor", %reason);
-                    return Err(BlockExecutionError::Internal(
-                        InternalBlockExecutionError::Other(reason.into()),
-                    ));
-                }
-            };
-            let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
+                        tracing::error!(target: "outbe::executor", %reason);
+                        return Err(BlockExecutionError::Internal(
+                            InternalBlockExecutionError::Other(reason.into()),
+                        ));
+                    }
+                };
+                let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                     format!(
                         "read CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
@@ -2942,406 +2995,424 @@ where
                     .into(),
                 ))
             })?;
-            drop(gas_window);
-            if !result.result.is_success() {
-                tracing::error!(
-                    target: "outbe::executor",
-                    ?expected_phase,
-                    body_index,
-                    block_number,
-                    gas_used = result.result.tx_gas_used(),
-                    gas_limit = tx.gas_limit(),
-                    result = ?result.result,
-                    "system tx failed"
-                );
-                let code = system_tx_failure_code_for_result(&result.result);
-                // a revert/halt in a consensus- or economic-critical
-                // begin-zone phase is a hard block failure, not a soft-receipt
-                // skip. Their work is one-shot and never retried, so swallowing a
-                // revert permanently loses it (stranded fee escrow, dropped
-                // emission/reshare, unrecorded parent accounting). The revert is a
-                // deterministic function of committed chain state, so every
-                // validator rejects the same block identically — no state-root
-                // split. Non-critical phases (OracleSlashWindow, TeeBootstrap)
-                // keep the soft-receipt skip.
-                if expected_phase.revert_fails_block() {
-                    let reason = format!(
+                drop(gas_window);
+                if !result.result.is_success() {
+                    tracing::error!(
+                        target: "outbe::executor",
+                        ?expected_phase,
+                        body_index,
+                        block_number,
+                        gas_used = result.result.tx_gas_used(),
+                        gas_limit = tx.gas_limit(),
+                        result = ?result.result,
+                        "system tx failed"
+                    );
+                    let code = system_tx_failure_code_for_result(&result.result);
+                    // a revert/halt in a consensus- or economic-critical
+                    // begin-zone phase is a hard block failure, not a soft-receipt
+                    // skip. Their work is one-shot and never retried, so swallowing a
+                    // revert permanently loses it (stranded fee escrow, dropped
+                    // emission/reshare, unrecorded parent accounting). The revert is a
+                    // deterministic function of committed chain state, so every
+                    // validator rejects the same block identically — no state-root
+                    // split. Non-critical phases (OracleSlashWindow, TeeBootstrap)
+                    // keep the soft-receipt skip.
+                    if expected_phase.revert_fails_block() {
+                        let reason = format!(
                         "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
                          body_index={body_index}, block_number={block_number}, \
                          failure_code={code}: {:?}",
                         result.result
                     );
-                    tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
-                    return Err(BlockExecutionError::Internal(
-                        InternalBlockExecutionError::Other(reason.into()),
-                    ));
-                }
-                let reason = format!(
+                        tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
+                        return Err(BlockExecutionError::Internal(
+                            InternalBlockExecutionError::Other(reason.into()),
+                        ));
+                    }
+                    let reason = format!(
                     "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
                     result.result
                 );
-                let tx_type = tx.tx_type();
-                let receipt_ce_gas = if matches!(
-                    result.result,
-                    ExecutionResult::Halt {
-                        reason: HaltReason::OutOfGas(_),
-                        ..
-                    }
-                ) {
-                    ce_gas_limit
-                } else {
-                    compressed_entities_gas
+                    let tx_type = tx.tx_type();
+                    let receipt_ce_gas = if matches!(
+                        result.result,
+                        ExecutionResult::Halt {
+                            reason: HaltReason::OutOfGas(_),
+                            ..
+                        }
+                    ) {
+                        ce_gas_limit
+                    } else {
+                        compressed_entities_gas
+                    };
+                    let gas_output =
+                        self.push_system_failure_receipt(SystemFailureReceiptInput {
+                            tx_type,
+                            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                            code,
+                            reason,
+                            intrinsic_gas,
+                            compressed_entities_gas: receipt_ce_gas,
+                            signed_gas_limit: visible_gas_limit,
+                            internal_gas_used: result.result.tx_gas_used(),
+                        })?;
+                    self.system_tx_phase_cursor = self
+                        .system_tx_phase_cursor
+                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    return Ok(Some(gas_output));
+                }
+
+                let output = EthTxResult {
+                    result,
+                    blob_gas_used: 0,
+                    tx_type: tx.tx_type(),
                 };
-                let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
-                    tx_type,
-                    log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                    code,
-                    reason,
-                    intrinsic_gas,
-                    compressed_entities_gas: receipt_ce_gas,
-                    signed_gas_limit: visible_gas_limit,
-                    internal_gas_used: result.result.tx_gas_used(),
-                })?;
-                self.system_tx_phase_cursor = self
-                    .system_tx_phase_cursor
-                    .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
-                return Ok(Some(gas_output));
+                if !f(&output).should_commit() {
+                    // Cursor does not advance: caller has chosen not to commit,
+                    // so the body-index slot remains owned by this phase.
+                    return Ok(None);
+                }
+                let commit_outcome = self
+                    .commit_system_transaction(
+                        output,
+                        intrinsic_gas,
+                        compressed_entities_gas,
+                        visible_gas_limit,
+                    )
+                    .map(Some);
+                if commit_outcome.is_ok() {
+                    self.system_tx_phase_cursor = self
+                        .system_tx_phase_cursor
+                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                }
+                return commit_outcome;
             }
 
-            let output = EthTxResult {
-                result,
-                blob_gas_used: 0,
-                tx_type: tx.tx_type(),
+            if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
+                return Err(BlockExecutionError::msg(format!(
+                    "transaction gas limit {} is below intrinsic gas floor {}",
+                    tx.gas_limit(),
+                    Self::SOFT_FAILURE_GAS
+                )));
+            }
+
+            // a zero-fee policy rejection used to be `BlockExecutionError::msg(.)`,
+            // which payload_builder turned into a fatal `PayloadBuilderError::evm(...)` and
+            // aborted block build — see EPIC for the halt of 2026-05-15. The tx is now
+            // included with a `status=0` synthetic receipt carrying an `OutbeFailure(code, reason)`
+            // log. Mempool eviction happens via Reth's standard `on_canonical_state_change` once
+            // the block becomes canonical (`pool.remove_transactions(block.body)`), so no custom
+            // side-channel is required (см. Won't Do).
+            let zero_fee_tx = zero_fee_transaction(tx, signer);
+            let zero_fee = match outbe_zerofee::registry().classify(&zero_fee_tx) {
+                Ok(value) => value,
+                Err(err) => {
+                    // account for this zero-fee soft-failure and reject
+                    // it past the per-block cap (skipped on build, block rejected on
+                    // validate) so it cannot stuff the block with zero-cost 21k
+                    // soft-failures.
+                    self.record_zero_fee_soft_failure(*tx.tx_hash())?;
+                    let tx_type = tx.tx_type();
+                    let code = err.code();
+                    self.push_failure_receipt(
+                        tx_type,
+                        outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
+                        code,
+                        err.to_string(),
+                    );
+                    return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
+                }
             };
-            if !f(&output).should_commit() {
-                // Cursor does not advance: caller has chosen not to commit,
-                // so the body-index slot remains owned by this phase.
-                return Ok(None);
-            }
-            let commit_outcome = self
-                .commit_system_transaction(
-                    output,
-                    intrinsic_gas,
-                    compressed_entities_gas,
-                    visible_gas_limit,
-                )
-                .map(Some);
-            if commit_outcome.is_ok() {
-                self.system_tx_phase_cursor = self
-                    .system_tx_phase_cursor
-                    .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
-            }
-            return commit_outcome;
-        }
 
-        if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
-            return Err(BlockExecutionError::msg(format!(
-                "transaction gas limit {} is below intrinsic gas floor {}",
-                tx.gas_limit(),
-                Self::SOFT_FAILURE_GAS
-            )));
-        }
+            if let Some(candidate) = zero_fee {
+                let block_number = self.inner.evm.block().number().saturating_to::<u64>();
 
-        // a zero-fee policy rejection used to be `BlockExecutionError::msg(.)`,
-        // which payload_builder turned into a fatal `PayloadBuilderError::evm(...)` and
-        // aborted block build — see EPIC for the halt of 2026-05-15. The tx is now
-        // included with a `status=0` synthetic receipt carrying an `OutbeFailure(code, reason)`
-        // log. Mempool eviction happens via Reth's standard `on_canonical_state_change` once
-        // the block becomes canonical (`pool.remove_transactions(block.body)`), so no custom
-        // side-channel is required (см. Won't Do).
-        let zero_fee_tx = zero_fee_transaction(tx, signer);
-        let zero_fee = match outbe_zerofee::registry().classify(&zero_fee_tx) {
-            Ok(value) => value,
-            Err(err) => {
-                // account for this zero-fee soft-failure and reject
-                // it past the per-block cap (skipped on build, block rejected on
-                // validate) so it cannot stuff the block with zero-cost 21k
-                // soft-failures.
-                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
-                let tx_type = tx.tx_type();
-                let code = err.code();
-                self.push_failure_receipt(
-                    tx_type,
-                    outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
-                    code,
-                    err.to_string(),
+                let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+                let chain_id = self.inner.evm.chain_id();
+                let proposer = self.inner.evm.block().beneficiary();
+                let ctx =
+                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+
+                // Same soft-failure path as `classify`: stateful authorization rejection becomes a
+                // `status=0` receipt rather than a hard block error. We borrow `db` only inside the
+                // scope that calls `authorize_fee_waiver`, then drop it before mutating the
+                // executor's own state (push_failure_receipt).
+                let authorize_outcome = {
+                    let db = self.inner.evm.db_mut();
+                    let mut provider = DirectStorageProvider::new(db, ctx);
+                    let storage = StorageHandle::new(&mut provider);
+                    outbe_zerofee::registry()
+                        .authorize_fee_waiver(storage, candidate)
+                        .map(|_| ())
+                };
+                if let Err(err) = authorize_outcome {
+                    // account for this zero-fee soft-failure and reject
+                    // it past the per-block cap (skipped on build, block rejected on
+                    // validate) so it cannot stuff the block with zero-cost 21k
+                    // soft-failures.
+                    self.record_zero_fee_soft_failure(*tx.tx_hash())?;
+                    let tx_type = tx.tx_type();
+                    let code = err.code();
+                    self.push_failure_receipt(
+                        tx_type,
+                        outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
+                        code,
+                        err.to_string(),
+                    );
+                    return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
+                }
+
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let result = self.inner.execute_transaction_with_commit_condition(
+                    WithTxEnv {
+                        tx_env,
+                        tx: Arc::new(recovered),
+                    },
+                    f,
                 );
-                return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                return result;
             }
-        };
 
-        if let Some(candidate) = zero_fee {
+            // EIP-7702 sponsored free-tx path. Oracle hook had its chance via
+            // `classify` above; this branch handles the second source of fee
+            // waivers — EOAs that have delegated to [`outbe_zerofee::ZEROFEE_ADDRESS`]
+            // via a Pectra set-code authorization. The same `disable_balance_check
+            // + disable_base_fee + disable_fee_charge` cfg snapshot is applied;
+            // the counter increment is committed to the persistent state through
+            // `DirectStorageProvider::flush` BEFORE the inner tx runs, so a
+            // revert inside the tx does not un-burn the daily slot.
             let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-
             let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
             let chain_id = self.inner.evm.chain_id();
             let proposer = self.inner.evm.block().beneficiary();
-            let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
 
-            // Same soft-failure path as `classify`: stateful authorization rejection becomes a
-            // `status=0` receipt rather than a hard block error. We borrow `db` only inside the
-            // scope that calls `authorize_fee_waiver`, then drop it before mutating the
-            // executor's own state (push_failure_receipt).
-            let authorize_outcome = {
-                let db = self.inner.evm.db_mut();
-                let mut provider = DirectStorageProvider::new(db, ctx);
-                let storage = StorageHandle::new(&mut provider);
-                outbe_zerofee::registry()
-                    .authorize_fee_waiver(storage, candidate)
-                    .map(|_| ())
-            };
-            if let Err(err) = authorize_outcome {
-                // account for this zero-fee soft-failure and reject
-                // it past the per-block cap (skipped on build, block rejected on
-                // validate) so it cannot stuff the block with zero-cost 21k
-                // soft-failures.
-                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
-                let tx_type = tx.tx_type();
-                let code = err.code();
-                self.push_failure_receipt(
-                    tx_type,
-                    outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
-                    code,
-                    err.to_string(),
-                );
-                return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
-            }
-
-            let snapshot = self.inner.evm.enable_zero_fee_overrides();
-            tx_env.gas_price = 0;
-            tx_env.gas_priority_fee = Some(0);
-            let result = self.inner.execute_transaction_with_commit_condition(
-                WithTxEnv {
-                    tx_env,
-                    tx: Arc::new(recovered),
-                },
-                f,
-            );
-            self.inner.evm.restore_zero_fee_overrides(snapshot);
-            return result;
-        }
-
-        // EIP-7702 sponsored free-tx path. Oracle hook had its chance via
-        // `classify` above; this branch handles the second source of fee
-        // waivers — EOAs that have delegated to [`outbe_zerofee::ZEROFEE_ADDRESS`]
-        // via a Pectra set-code authorization. The same `disable_balance_check
-        // + disable_base_fee + disable_fee_charge` cfg snapshot is applied;
-        // the counter increment is committed to the persistent state through
-        // `DirectStorageProvider::flush` BEFORE the inner tx runs, so a
-        // revert inside the tx does not un-burn the daily slot.
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
-        let chain_id = self.inner.evm.chain_id();
-        let proposer = self.inner.evm.block().beneficiary();
-
-        // Pull `(balance, nonce, code_hash, maybe_code)` from the
-        // provider. `State<DB>::basic()` (the underlying source) only
-        // populates `info.code` for accounts that have had recent
-        // changes; otherwise the bytecode lives behind `code_by_hash`
-        // and `info.code` is None. The fix below performs the second
-        // lookup when needed so the EIP-7702 delegation probe sees the
-        // real bytecode in steady state.
-        let signer_state = {
-            let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
-            let mut provider = DirectStorageProvider::new(db, ctx);
-            let storage = StorageHandle::new(&mut provider);
-            storage.with_account_info(signer, |info| {
-                Ok((info.balance, info.nonce, info.code_hash, info.code.clone()))
-            })
-        };
-
-        let (signer_balance, _signer_nonce, code_hash, maybe_code) = match signer_state {
-            Ok(quad) => quad,
-            Err(err) => {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!("free-tx signer account read failed: {err}").into(),
-                    ),
-                ));
-            }
-        };
-
-        let delegated_to = if let Some(code) = maybe_code {
-            code.eip7702_address()
-        } else if code_hash != revm::primitives::KECCAK_EMPTY {
-            // basic() did not populate `code` — fetch bytecode by
-            // hash directly. This is the steady-state path for any
-            // account whose code was set in a prior block.
-            match self.inner.evm.db_mut().code_by_hash(code_hash) {
-                Ok(code) => code.eip7702_address(),
-                Err(err) => {
-                    return Err(BlockExecutionError::Internal(
-                        InternalBlockExecutionError::Other(
-                            format!("free-tx signer code lookup failed: {err}").into(),
-                        ),
-                    ));
-                }
-            }
-        } else {
-            None
-        };
-
-        // A delegated account opts into sponsorship ONLY by sending the
-        // exact free-tx envelope (`classify_sponsorship` Ok: value == 0,
-        // priority_fee == 0, gas <= cap, calldata <= cap, to in
-        // whitelist). If the envelope does not match — most importantly
-        // `priority_fee > 0` ("I am paying") — the transaction is NOT a
-        // sponsorship request and falls through to the normal fee path
-        // below, even though the account is delegated. This keeps
-        // EIP-7702 delegation ADDITIVE: delegating to the paymaster never
-        // jails an account into free-only mode, and once a signer's daily
-        // quota is exhausted they simply set a tip and pay as usual.
-        //
-        // The stateful `authorize_sponsorship` inside the branch still
-        // soft-fails a correctly-shaped attempt with code 110 (quota
-        // exhausted), 111 (anti-sybil: balance 0), or 107 (self) — those
-        // are zero-tip requests that explicitly asked for free and must
-        // not be silently charged.
-        let wants_sponsorship = delegated_to == Some(outbe_zerofee::ZEROFEE_ADDRESS)
-            && outbe_zerofee::classify_sponsorship(&zero_fee_tx).is_ok();
-
-        if wants_sponsorship {
-            // Stateful authorize + record_use under a single
-            // `DirectStorageProvider` scope, then `flush()` so the counter
-            // increment lands in `State<DB>` BEFORE the inner tx runs.
-            // A REVERT inside the tx affects only its own journal frame
-            // and cannot undo the flushed counter write.
-            let (authorize_outcome, sponsorship_events, sponsorship_changes) = {
+            // Pull `(balance, nonce, code_hash, maybe_code)` from the
+            // provider. `State<DB>::basic()` (the underlying source) only
+            // populates `info.code` for accounts that have had recent
+            // changes; otherwise the bytecode lives behind `code_by_hash`
+            // and `info.code` is None. The fix below performs the second
+            // lookup when needed so the EIP-7702 delegation probe sees the
+            // real bytecode in steady state.
+            let signer_state = {
                 let db = self.inner.evm.db_mut();
                 let ctx =
                     BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
                 let mut provider = DirectStorageProvider::new(db, ctx);
-                let outcome = {
-                    let storage = StorageHandle::new(&mut provider);
-                    outbe_zerofee::authorize_sponsorship(
-                        storage.clone(),
-                        signer,
-                        signer_balance,
-                        timestamp,
-                    )
-                    .and_then(|auth| {
-                        outbe_zerofee::record_sponsorship_use(storage, signer, auth.current_day)
-                            .map(|_| auth)
-                    })
-                };
-                let result = match outcome {
-                    Ok(auth) => provider
-                        .flush()
-                        .map(|_| auth)
-                        .map_err(outbe_zerofee::ZeroFeePolicyError::from),
-                    Err(err) => Err(err),
-                };
-                // Drain the `SponsorshipAuthorized` logs that
-                // `record_sponsorship_use` pushed through the storage
-                // handle. They are kept aside even on Err so a future
-                // failure-path that emits diagnostic events still
-                // surfaces them; today the only writer pushes on
-                // success and is gated by `.and_then`.
-                let events = provider.take_events();
-                // Drain the committed counter-write so the parallel
-                // state-root task observes it through the same
-                // `OnStateHook` channel that begin-block hooks use
-                // (see line 1944). Without this notification the
-                // parallel task computes a partial root that omits
-                // ZEROFEE_ADDRESS' counter slot and forces a fallback
-                // recompute at block close — correctness is preserved
-                // because the final root walks the full bundle state,
-                // but the parallel optimisation is lost.
-                let changes = provider.take_committed_changes();
-                (result, events, changes)
+                let storage = StorageHandle::new(&mut provider);
+                storage.with_account_info(signer, |info| {
+                    Ok((info.balance, info.nonce, info.code_hash, info.code.clone()))
+                })
             };
 
-            // Notify the parallel state-root task about the counter
-            // write committed via the provider above. The pre-fee
-            // counter increment is logically part of THIS transaction's
-            // processing — `Transaction(idx)` is the canonical variant
-            // alloy-evm itself uses in `commit_transaction` after each
-            // tx (see alloy_evm::block::state_hook). `receipts.len()`
-            // is this tx's zero-based index: its receipt has not yet
-            // been pushed when the pre-fee hook runs.
-            if !sponsorship_changes.is_empty() {
-                use alloy_evm::block::StateChangeSource;
-                self.inner.system_caller.on_state(
-                    StateChangeSource::Transaction(self.inner.receipts.len()),
-                    &sponsorship_changes,
+            let (signer_balance, _signer_nonce, code_hash, maybe_code) = match signer_state {
+                Ok(quad) => quad,
+                Err(err) => {
+                    return Err(BlockExecutionError::Internal(
+                        InternalBlockExecutionError::Other(
+                            format!("free-tx signer account read failed: {err}").into(),
+                        ),
+                    ));
+                }
+            };
+
+            let delegated_to = if let Some(code) = maybe_code {
+                code.eip7702_address()
+            } else if code_hash != revm::primitives::KECCAK_EMPTY {
+                // basic() did not populate `code` — fetch bytecode by
+                // hash directly. This is the steady-state path for any
+                // account whose code was set in a prior block.
+                match self.inner.evm.db_mut().code_by_hash(code_hash) {
+                    Ok(code) => code.eip7702_address(),
+                    Err(err) => {
+                        return Err(BlockExecutionError::Internal(
+                            InternalBlockExecutionError::Other(
+                                format!("free-tx signer code lookup failed: {err}").into(),
+                            ),
+                        ));
+                    }
+                }
+            } else {
+                None
+            };
+
+            // A delegated account opts into sponsorship ONLY by sending the
+            // exact free-tx envelope (`classify_sponsorship` Ok: value == 0,
+            // priority_fee == 0, gas <= cap, calldata <= cap, to in
+            // whitelist). If the envelope does not match — most importantly
+            // `priority_fee > 0` ("I am paying") — the transaction is NOT a
+            // sponsorship request and falls through to the normal fee path
+            // below, even though the account is delegated. This keeps
+            // EIP-7702 delegation ADDITIVE: delegating to the paymaster never
+            // jails an account into free-only mode, and once a signer's daily
+            // quota is exhausted they simply set a tip and pay as usual.
+            //
+            // The stateful `authorize_sponsorship` inside the branch still
+            // soft-fails a correctly-shaped attempt with code 110 (quota
+            // exhausted), 111 (anti-sybil: balance 0), or 107 (self) — those
+            // are zero-tip requests that explicitly asked for free and must
+            // not be silently charged.
+            let wants_sponsorship = delegated_to == Some(outbe_zerofee::ZEROFEE_ADDRESS)
+                && outbe_zerofee::classify_sponsorship(&zero_fee_tx).is_ok();
+
+            if wants_sponsorship {
+                // Stateful authorize + record_use under a single
+                // `DirectStorageProvider` scope, then `flush()` so the counter
+                // increment lands in `State<DB>` BEFORE the inner tx runs.
+                // A REVERT inside the tx affects only its own journal frame
+                // and cannot undo the flushed counter write.
+                let (authorize_outcome, sponsorship_events, sponsorship_changes) = {
+                    let db = self.inner.evm.db_mut();
+                    let ctx =
+                        BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                    let mut provider = DirectStorageProvider::new(db, ctx);
+                    let outcome = {
+                        let storage = StorageHandle::new(&mut provider);
+                        outbe_zerofee::authorize_sponsorship(
+                            storage.clone(),
+                            signer,
+                            signer_balance,
+                            timestamp,
+                        )
+                        .and_then(|auth| {
+                            outbe_zerofee::record_sponsorship_use(storage, signer, auth.current_day)
+                                .map(|_| auth)
+                        })
+                    };
+                    let result = match outcome {
+                        Ok(auth) => provider
+                            .flush()
+                            .map(|_| auth)
+                            .map_err(outbe_zerofee::ZeroFeePolicyError::from),
+                        Err(err) => Err(err),
+                    };
+                    // Drain the `SponsorshipAuthorized` logs that
+                    // `record_sponsorship_use` pushed through the storage
+                    // handle. They are kept aside even on Err so a future
+                    // failure-path that emits diagnostic events still
+                    // surfaces them; today the only writer pushes on
+                    // success and is gated by `.and_then`.
+                    let events = provider.take_events();
+                    // Drain the committed counter-write so the parallel
+                    // state-root task observes it through the same
+                    // `OnStateHook` channel that begin-block hooks use
+                    // (see line 1944). Without this notification the
+                    // parallel task computes a partial root that omits
+                    // ZEROFEE_ADDRESS' counter slot and forces a fallback
+                    // recompute at block close — correctness is preserved
+                    // because the final root walks the full bundle state,
+                    // but the parallel optimisation is lost.
+                    let changes = provider.take_committed_changes();
+                    (result, events, changes)
+                };
+
+                // Notify the parallel state-root task about the counter
+                // write committed via the provider above. The pre-fee
+                // counter increment is logically part of THIS transaction's
+                // processing — `Transaction(idx)` is the canonical variant
+                // alloy-evm itself uses in `commit_transaction` after each
+                // tx (see alloy_evm::block::state_hook). `receipts.len()`
+                // is this tx's zero-based index: its receipt has not yet
+                // been pushed when the pre-fee hook runs.
+                if !sponsorship_changes.is_empty() {
+                    use alloy_evm::block::StateChangeSource;
+                    self.inner.system_caller.on_state(
+                        StateChangeSource::Transaction(self.inner.receipts.len()),
+                        &sponsorship_changes,
+                    );
+                }
+
+                if let Err(err) = authorize_outcome {
+                    // account for this zero-fee soft-failure and reject
+                    // it past the per-block cap (skipped on build, block rejected on
+                    // validate) so it cannot stuff the block with zero-cost 21k
+                    // soft-failures.
+                    self.record_zero_fee_soft_failure(*tx.tx_hash())?;
+                    let tx_type = tx.tx_type();
+                    let code = err.code();
+                    self.push_failure_receipt(
+                        tx_type,
+                        outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
+                        code,
+                        err.to_string(),
+                    );
+                    return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
+                }
+
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let result = self.inner.execute_transaction_with_commit_condition(
+                    WithTxEnv {
+                        tx_env,
+                        tx: Arc::new(recovered),
+                    },
+                    f,
                 );
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                // Attach the `SponsorshipAuthorized` log(s) to the receipt
+                // the inner tx just pushed. Without this the event the
+                // module README and `record_sponsorship_use` doc promise
+                // would never reach `eth_getLogs` filters. We only mutate
+                // the receipt on a successful execute; on inner-tx
+                // bail-out the inner builder did not push a receipt and
+                // there is nothing to attach to (the counter was already
+                // burned, which matches the anti-revert-drain contract).
+                if result.is_ok() && !sponsorship_events.is_empty() {
+                    if let Some(receipt) = self.inner.receipts.last_mut() {
+                        receipt.logs.extend(sponsorship_events);
+                    }
+                }
+                return result;
             }
 
-            if let Err(err) = authorize_outcome {
-                // account for this zero-fee soft-failure and reject
-                // it past the per-block cap (skipped on build, block rejected on
-                // validate) so it cannot stuff the block with zero-cost 21k
-                // soft-failures.
-                self.record_zero_fee_soft_failure(*tx.tx_hash())?;
-                let tx_type = tx.tx_type();
-                let code = err.code();
-                self.push_failure_receipt(
-                    tx_type,
-                    outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS,
-                    code,
-                    err.to_string(),
-                );
-                return Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)));
-            }
+            let base_fee_per_gas = self.inner.evm.block().basefee() as u128;
+            let max_fee_per_gas = tx.max_fee_per_gas();
+            let max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
 
-            let snapshot = self.inner.evm.enable_zero_fee_overrides();
-            tx_env.gas_price = 0;
-            tx_env.gas_priority_fee = Some(0);
             let result = self.inner.execute_transaction_with_commit_condition(
                 WithTxEnv {
                     tx_env,
                     tx: Arc::new(recovered),
                 },
                 f,
-            );
-            self.inner.evm.restore_zero_fee_overrides(snapshot);
-            // Attach the `SponsorshipAuthorized` log(s) to the receipt
-            // the inner tx just pushed. Without this the event the
-            // module README and `record_sponsorship_use` doc promise
-            // would never reach `eth_getLogs` filters. We only mutate
-            // the receipt on a successful execute; on inner-tx
-            // bail-out the inner builder did not push a receipt and
-            // there is nothing to attach to (the counter was already
-            // burned, which matches the anti-revert-drain contract).
-            if result.is_ok() && !sponsorship_events.is_empty() {
-                if let Some(receipt) = self.inner.receipts.last_mut() {
-                    receipt.logs.extend(sponsorship_events);
-                }
+            )?;
+
+            if let Some(gas_used) = result {
+                let validator_fee = validator_fee_for_gas(
+                    max_fee_per_gas,
+                    max_priority_fee_per_gas,
+                    gas_used.tx_gas_used(),
+                    base_fee_per_gas,
+                );
+                self.current_block_validator_fees = self
+                    .current_block_validator_fees
+                    .checked_add(validator_fee)
+                    .ok_or_else(|| {
+                        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                            "validator fee accumulator overflow".into(),
+                        ))
+                    })?;
             }
-            return result;
+
+            Ok(result)
+        })();
+
+        let ce_failure = ce_scope.take_ce_work_failure();
+        ce_scope
+            .end_ce_work_transaction()
+            .map_err(BlockExecutionError::other)?;
+        if !matches!(&outcome, Ok(Some(_))) {
+            ce_scope
+                .restore_ce_work_checkpoint(ce_checkpoint)
+                .map_err(BlockExecutionError::other)?;
         }
-
-        let base_fee_per_gas = self.inner.evm.block().basefee() as u128;
-        let max_fee_per_gas = tx.max_fee_per_gas();
-        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
-
-        let result = self.inner.execute_transaction_with_commit_condition(
-            WithTxEnv {
-                tx_env,
-                tx: Arc::new(recovered),
-            },
-            f,
-        )?;
-
-        if let Some(gas_used) = result {
-            let validator_fee = validator_fee_for_gas(
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
-                gas_used.tx_gas_used(),
-                base_fee_per_gas,
-            );
-            self.current_block_validator_fees = self
-                .current_block_validator_fees
-                .checked_add(validator_fee)
-                .ok_or_else(|| {
-                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                        "validator fee accumulator overflow".into(),
-                    ))
-                })?;
+        if let Some(error) = ce_failure {
+            return Err(BlockExecutionError::other(error));
         }
-
-        Ok(result)
+        outcome
     }
 
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
@@ -3391,6 +3462,11 @@ where
         // and records the committed execution summary.
 
         let (evm, result) = self.inner.finish()?;
+        // Validator/import execution ends before Reth validates receipt and
+        // state roots, so it must not publish speculative CE state here. The
+        // proposer publishes only after block assembly supplies the final hash;
+        // a finalized validator block is reconstructed from durable canonical
+        // receipts after the DB-only persistence barrier.
         if let (Some(bridge), Some(block_hash), Some(summary)) = (
             self.bridge.as_ref(),
             self.block_hash,
@@ -3428,7 +3504,11 @@ mod tests {
     use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
-    use outbe_compressed_entities::{CommitmentState, EntityId36, ExecutionScope};
+    use outbe_compressed_entities::{
+        CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
+        ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
+        LOCAL_STORAGE_SCHEMA_VERSION,
+    };
     use outbe_nod::{
         precompile::INod, NodBucketState, NodContract, NodItemState, NodRepositoryReader,
         NodRepositoryWriter,
@@ -3481,6 +3561,39 @@ mod tests {
 
     const CHAIN_ID: u64 = 1;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+    fn persistent_test_tree(genesis_hash: B256) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
+        let directory = tempfile::tempdir().expect("CE test directory must be created");
+        let db = CeMdbx::open(
+            directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: CHAIN_ID,
+                genesis_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: genesis_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: B256::ZERO,
+            },
+        )
+        .expect("CE test MDBX must open");
+        let service = CompressedTreeService::new(
+            db,
+            CandidateCacheLimits {
+                max_candidates: 4,
+                max_encoded_bytes: 1_000_000,
+            },
+        )
+        .expect("CE test tree service must open");
+        (directory, Arc::new(service))
+    }
 
     /// reth22-1 regression: the per-block EIP-161 marker list MUST cover every
     /// *stateful* dispatch-registered precompile, or that account is pruned at
@@ -3634,7 +3747,16 @@ mod tests {
         validators: &[(Address, [u8; 48])],
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        state_with_active_validators_seeded_at_block(validators, 0, seed_extra)
+    }
+
+    fn state_with_active_validators_seeded_at_block(
+        validators: &[(Address, [u8; 48])],
+        block_number: u64,
+        seed_extra: impl FnOnce(StorageHandle),
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
         let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
+        seed_storage.set_block_number(block_number);
         StorageHandle::enter(&mut seed_storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -6326,34 +6448,62 @@ mod tests {
         let floor_price_minor = U256::from(500_000_000_000_000_000u128);
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
         let seed_state = || {
-            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-                let scope = ExecutionScope::new();
-                outbe_compressed_entities::begin_block(storage.clone(), &scope)
-                    .expect("open compressed-entity seed scope");
-                let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-                outbe_nod::api::add_nod(
-                    &storage,
-                    &scope,
-                    &empty_reader,
-                    &NodItemState {
-                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
-                        owner: proposer,
-                        gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
-                        worldwide_day,
-                        league_id: 1,
-                        floor_price_minor,
-                        bucket_key,
-                        cost_amount_minor: U256::ZERO,
-                        issuance_currency: 840,
-                        reference_currency: 840,
-                        issued_at: 1,
-                    },
-                    U256::from(450_000_000_000_000_000u128),
-                )
-                .expect("seed compact Nod scheduling state");
-                outbe_compressed_entities::end_block(storage, &scope)
-                    .expect("close compressed-entity seed scope");
-            })
+            let (directory, tree_service) = persistent_test_tree(B256::ZERO);
+            let parent_tree = tree_service
+                .open_parent(ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 0,
+                    block_hash: B256::ZERO,
+                    root: B256::ZERO,
+                })
+                .expect("open exact empty CE parent");
+            let scope =
+                ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+            let mut staged = None;
+            let state = state_with_active_validators_seeded_at_block(
+                &[(proposer, dummy_pubkey(0xA2))],
+                1,
+                |storage| {
+                    outbe_compressed_entities::begin_block(storage.clone(), &scope)
+                        .expect("open compressed-entity seed scope");
+                    let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+                    outbe_nod::api::add_nod(
+                        &storage,
+                        &scope,
+                        &empty_reader,
+                        &NodItemState {
+                            nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
+                            owner: proposer,
+                            gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+                            worldwide_day,
+                            league_id: 1,
+                            floor_price_minor,
+                            bucket_key,
+                            cost_amount_minor: U256::ZERO,
+                            issuance_currency: 840,
+                            reference_currency: 840,
+                            issued_at: 1,
+                        },
+                        U256::from(450_000_000_000_000_000u128),
+                    )
+                    .expect("seed compact Nod scheduling state");
+                    staged = Some(
+                        outbe_compressed_entities::end_block(storage, &scope)
+                            .expect("close compressed-entity seed scope")
+                            .staged_tree_batch,
+                    );
+                },
+            );
+            let staged = staged.expect("seed lifecycle must produce a tree batch");
+            let seed_hash = B256::repeat_byte(0x41);
+            let seed_root = staged.new_root;
+            tree_service
+                .publish_candidate(seed_hash, staged)
+                .expect("publish seed CE candidate");
+            tree_service
+                .apply_finalized(1, seed_hash, seed_root)
+                .expect("finalize seed CE candidate");
+            (state, directory, tree_service, seed_hash)
         };
         let independent_readers = || {
             let adapter = Arc::new(MemoryStorage::new());
@@ -6385,15 +6535,33 @@ mod tests {
             use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
 
             let signer = test_evm_signer();
+            let (mut state, _tree_directory, tree_service, seed_hash) = seed_state();
             let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
-                .with_evm_signer(signer);
-            let system_txs =
-                begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+                .with_evm_signer(signer)
+                .with_compressed_tree_service(tree_service.clone());
+            let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+            parent_metadata.finalized_block_number = 1;
+            parent_metadata.finalized_block_hash = seed_hash;
+            let system_txs = begin_system_txs_for_test(
+                &config,
+                2,
+                seed_hash,
+                &Bytes::new(),
+                Some(parent_metadata.clone()),
+                proposer,
+            );
             let visible_envelopes: Vec<u64> =
                 system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
-            let mut state = seed_state();
-            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-            let mut execution = execution_ctx(Some(0), Bytes::new());
+            let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+            let mut execution = execution_ctx(Some(1), Bytes::new());
+            execution.inner.parent_hash = seed_hash;
+            execution.parent_consensus_metadata = Some(parent_metadata);
+            execution.parent_artifact_hint = Some(AccountedParentArtifact {
+                summary: ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                timestamp: 0,
+            });
             execution.proposer_evm_address = Some(proposer);
             if expected_validator_body {
                 execution.expected_begin_system_txs = system_txs.clone();
@@ -6426,9 +6594,11 @@ mod tests {
                     *cleanup_hook_capture.lock().unwrap() = Some(cleared_slots);
                 },
             )));
-            executor
-                .apply_pre_execution_changes()
-                .expect("reader-backed pre-execution hook must succeed");
+            super::with_phase1_verify_disabled(|| {
+                executor
+                    .apply_pre_execution_changes()
+                    .expect("reader-backed pre-execution hook must succeed");
+            });
             for tx in system_txs {
                 executor
                     .execute_transaction(tx)
@@ -6450,6 +6620,17 @@ mod tests {
             executor
                 .finalize_compressed_entities()
                 .expect("pre-root compressed-entity cleanup must succeed");
+            let sealed = executor
+                .take_compressed_entities_seal_output()
+                .expect("block cleanup must produce a CE tree batch");
+            let block_hash = B256::repeat_byte(0x42);
+            let block_root = sealed.new_root;
+            tree_service
+                .publish_candidate(block_hash, sealed.staged_tree_batch)
+                .expect("publish block CE candidate");
+            tree_service
+                .apply_finalized(2, block_hash, block_root)
+                .expect("finalize block CE candidate");
             let cleanup_hook_cleared_slots = cleanup_hook_observation
                 .lock()
                 .unwrap()
@@ -6469,11 +6650,21 @@ mod tests {
             // A new lifecycle can only open when every pending body/index record and
             // touched list from the finished block has been removed. This checks the
             // same committed bundle used for the state root above, not a mock store.
-            let clean_scope = ExecutionScope::new();
-            let clean_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer]);
+            let clean_parent = tree_service
+                .open_parent(ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 2,
+                    block_hash,
+                    root: block_root,
+                })
+                .expect("open finalized block CE parent");
+            let clean_scope =
+                ExecutionScope::with_parent_tree(clean_parent, CeWorkConfig::new(0, 0, u64::MAX));
+            let clean_ctx = BlockContext::new(3, 2, CHAIN_ID, proposer, vec![proposer]);
             super::run_atomic_storage_hooks(&mut state, clean_ctx, |hook_ctx| {
                 outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
                 outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &clean_scope)
+                    .map(|_| ())
             })
             .expect("finished block must leave a clean compressed-entity overlay");
             (
@@ -6562,7 +6753,6 @@ mod tests {
         let nod_owner = Address::repeat_byte(0x32);
         let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
         let bucket_key = NodContract::bucket_key(day, U256::from(13));
-        let bucket_id = EntityId36::new(day, bucket_key.0);
         let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
         let run = || {
@@ -6609,20 +6799,21 @@ mod tests {
                         U256::from(16),
                     )?;
                     outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope)
+                        .map(|_| ())
                 })
                 .expect("body mint execution must succeed");
-            let commitments = {
+            let compressed_root = {
                 let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
                     &mut state,
                     ctx.clone(),
                 );
                 StorageHandle::enter(&mut provider, |storage| {
-                    let state = CommitmentState::new(storage);
-                    Ok::<_, outbe_primitives::error::PrecompileError>((
-                        state.tribute(tribute_id)?.unwrap(),
-                        state.nod_item(nod_id)?.unwrap(),
-                        state.nod_bucket(bucket_id)?.unwrap(),
-                    ))
+                    storage
+                        .sload(
+                            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                            U256::from(1),
+                        )
+                        .map(|root| B256::from(root.to_be_bytes::<32>()))
                 })
                 .unwrap()
             };
@@ -6632,7 +6823,7 @@ mod tests {
             (
                 changes,
                 events,
-                commitments,
+                compressed_root,
                 root,
                 state.bundle_state,
                 proposer_balance,
@@ -6707,10 +6898,12 @@ mod tests {
         let mut read_provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut failed_state, ctx);
         StorageHandle::enter(&mut read_provider, |storage| {
-            let commitments = CommitmentState::new(storage.clone());
-            assert!(commitments.tribute(tribute_id)?.is_none());
-            assert!(commitments.nod_item(nod_id)?.is_none());
-            assert!(commitments.nod_bucket(bucket_id)?.is_none());
+            assert!(storage
+                .sload(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1),
+                )?
+                .is_zero());
             assert_eq!(TributeContract::new(storage.clone()).total_supply()?, 0);
             assert_eq!(NodContract::new(storage).total_supply()?, 0);
             Ok::<_, outbe_primitives::error::PrecompileError>(())

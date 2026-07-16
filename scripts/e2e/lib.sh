@@ -186,6 +186,7 @@ e2e_launch_joiner(){
   projection_database="$(e2e_projection_database joiner_4)"
   OUTBE_PROJECTION_MONGODB_DATABASE="$projection_database" RUST_MIN_STACK=16777216 \
     nohup "$E2E_BIN" node --validator --chain "$E2E_DIR/genesis.json" --datadir "$vd/data" \
+    --engine.persistence-threshold 0 --engine.memory-block-buffer-target 0 \
     --http --http.addr 0.0.0.0 --http.port 8549 --http.api eth,net,web3,outbe --port 30307 --discovery.port 30307 \
     --discovery.v5.addr 127.0.0.1 --discovery.v5.port 31307 --bootnodes "$bootnodes" --p2p-secret-key-hex "$secret" \
     --authrpc.port 8555 --ipcpath "$vd/data/reth.ipc" --metrics 0.0.0.0:9105 --log.file.directory "$vd/logs" \

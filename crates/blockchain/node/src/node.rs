@@ -7,6 +7,7 @@ use crate::{
     consensus::OutbeConsensusBuilder, engine::OutbeEngineValidatorBuilder,
     payload_builder::OutbePayloadBuilder,
 };
+use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
@@ -40,6 +41,8 @@ pub struct OutbeNode {
     pub evm_signer: Option<SharedOutbeEvmSigner>,
     /// Mandatory typed read-only body capabilities for execution.
     pub runtime_body_readers: RuntimeBodyReaders,
+    /// Explicit CE tree owner shared with execution and finalized persistence.
+    pub compressed_tree_service: std::sync::Arc<CompressedTreeService>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -51,6 +54,7 @@ impl std::fmt::Debug for OutbeNode {
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
             .field("runtime_body_readers", &"configured")
+            .field("compressed_tree_service", &"configured")
             .finish()
     }
 }
@@ -60,11 +64,13 @@ impl OutbeNode {
     pub fn with_bridge(
         bridge: ConsensusExecutionBridge,
         runtime_body_readers: RuntimeBodyReaders,
+        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
             runtime_body_readers,
+            compressed_tree_service,
         }
     }
 
@@ -72,11 +78,13 @@ impl OutbeNode {
         bridge: ConsensusExecutionBridge,
         evm_signer: SharedOutbeEvmSigner,
         runtime_body_readers: RuntimeBodyReaders,
+        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
             runtime_body_readers,
+            compressed_tree_service,
         }
     }
 }
@@ -118,7 +126,9 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
-        let executor = executor.with_runtime_body_readers(self.runtime_body_readers.clone());
+        let executor = executor
+            .with_runtime_body_readers(self.runtime_body_readers.clone())
+            .with_compressed_tree_service(self.compressed_tree_service.clone());
 
         ComponentsBuilder::default()
             .node_types::<N>()

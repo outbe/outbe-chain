@@ -1,6 +1,12 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        Arc, Mutex,
+    },
+};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -13,11 +19,168 @@ use crate::{
 pub const MAX_ID_PAGE_LIMIT: u32 = 1_024;
 
 /// One of the fork-fixed compressed-body namespaces.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EntityRef {
     Tribute(EntityId36),
     NodItem(EntityId36),
     NodBucket(EntityId36),
+}
+
+/// Exact-parent authenticated leaf reader owned by one block execution.
+/// Implementations may cache only successfully verified evidence for the
+/// immutable `(parent_root, entity)` pair.
+pub trait AuthenticatedParentTree: Send + Sync + core::fmt::Debug {
+    fn parent_block_hash(&self) -> B256;
+
+    fn parent_root(&self) -> B256;
+
+    fn read_leaf_verified(
+        &self,
+        entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<crate::Commitment>>;
+
+    /// Prepare an immutable, side-effect-free candidate batch against this
+    /// exact parent. Implementations must authenticate the complete unique
+    /// touched set and eliminate parent-equal final leaves.
+    fn prepare_seal(
+        &self,
+        block_number: u64,
+        mutations: &[FinalLeafMutation],
+    ) -> Result<crate::ProvisionalTreeBatch>;
+}
+
+/// Node-owned opener for one exact finalized parent. The lifecycle supplies
+/// the authoritative EVM root only after slot 1 has been read in begin-block.
+pub trait AuthenticatedParentTreeFactory: Send + Sync + core::fmt::Debug {
+    fn open_parent(
+        &self,
+        identity: crate::ExactParentIdentity,
+    ) -> Result<Arc<dyn AuthenticatedParentTree>>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalLeafMutation {
+    pub entity: EntityRef,
+    pub final_leaf: Option<crate::Commitment>,
+}
+
+/// Deterministic, benchmark-supplied CE work coefficients.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CeWorkConfig {
+    pub seal_base_units: u64,
+    pub unique_key_units: u64,
+    pub work_limit: u64,
+}
+
+impl CeWorkConfig {
+    pub const fn new(seal_base_units: u64, unique_key_units: u64, work_limit: u64) -> Self {
+        Self {
+            seal_base_units,
+            unique_key_units,
+            work_limit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CeWorkState {
+    used: u64,
+    seen_keys: BTreeSet<EntityRef>,
+    transaction_start: Option<CeWorkTransactionStart>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CeWorkTransactionStart {
+    transaction_keys: BTreeSet<EntityRef>,
+}
+
+const CE_WORK_FAILURE_NONE: u8 = 0;
+const CE_WORK_FAILURE_TRANSACTION: u8 = 1;
+const CE_WORK_FAILURE_BLOCK: u8 = 2;
+
+/// Payload-builder checkpoint. Restoring it is valid only when the entire
+/// speculative transaction is excluded together with its EVM journal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CeWorkCheckpoint(CeWorkState);
+
+#[derive(Debug)]
+struct EmptyAuthenticatedTree;
+
+impl AuthenticatedParentTree for EmptyAuthenticatedTree {
+    fn parent_block_hash(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn parent_root(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn read_leaf_verified(
+        &self,
+        _entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<crate::Commitment>> {
+        if expected_parent_root != B256::ZERO {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "empty reference parent does not match the EVM root".into(),
+            ));
+        }
+        Ok(None)
+    }
+
+    fn prepare_seal(
+        &self,
+        block_number: u64,
+        mutations: &[FinalLeafMutation],
+    ) -> Result<crate::ProvisionalTreeBatch> {
+        use crate::{
+            schema::Collection,
+            smt::{derive_tree_key, PoseidonSmt, TreeLeaf},
+        };
+        let mut tree = PoseidonSmt::empty();
+        let mut updates = Vec::with_capacity(mutations.len());
+        let mut leaf_changes = std::collections::BTreeMap::new();
+        for mutation in mutations {
+            let (collection, entity_id) = match mutation.entity {
+                EntityRef::Tribute(id) => (Collection::Tribute, id),
+                EntityRef::NodItem(id) => (Collection::NodItem, id),
+                EntityRef::NodBucket(id) => (Collection::NodBucket, id),
+            };
+            let key = derive_tree_key(collection, entity_id)
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let leaf = match mutation.final_leaf {
+                Some(commitment) => TreeLeaf::from_be_bytes(*commitment.as_bytes())
+                    .map_err(|error| fatal_scope(error.to_string()))?,
+                None => TreeLeaf::ZERO,
+            };
+            updates.push((key, leaf));
+            let persisted_key = crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let change = match mutation.final_leaf {
+                Some(commitment) => crate::TreeChange::Set(
+                    crate::persistence::LeafValue::try_from(B256::from(*commitment.as_bytes()))
+                        .map_err(|error| fatal_scope(error.to_string()))?,
+                ),
+                None => crate::TreeChange::Delete,
+            };
+            if leaf_changes.insert(persisted_key, change).is_some() {
+                return Err(fatal_scope("compressed-entity tree-key collision"));
+            }
+        }
+        let new_root = tree
+            .update_all(updates)
+            .map_err(|error| fatal_scope(error.to_string()))?;
+        crate::ProvisionalTreeBatch::new(
+            block_number,
+            B256::ZERO,
+            B256::ZERO,
+            B256::from(new_root.as_bytes()),
+            Default::default(),
+            leaf_changes,
+        )
+        .map_err(|error| fatal_scope(error.to_string()))
+    }
 }
 
 impl EntityRef {
@@ -220,6 +383,13 @@ pub struct ExecutionScope {
     explicit_gas_window_active: AtomicBool,
     explicit_gas_window_start: AtomicU64,
     explicit_gas_window_limit: AtomicU64,
+    parent_tree: Mutex<Option<Arc<dyn AuthenticatedParentTree>>>,
+    parent_tree_factory: Mutex<Option<Arc<dyn AuthenticatedParentTreeFactory>>>,
+    parent_identity_without_root: Mutex<Option<(u32, u64, B256)>>,
+    parent_binding_configured: AtomicBool,
+    ce_work_config: CeWorkConfig,
+    ce_work: Mutex<CeWorkState>,
+    ce_work_failure: AtomicU8,
 }
 
 /// Opaque snapshot of explicit compressed-entity gas charged in one execution
@@ -251,14 +421,339 @@ impl Drop for ExplicitGasWindow<'_> {
 
 impl ExecutionScope {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        // This constructor is retained for empty-tree harnesses. Production
+        // execution installs an exact finalized parent with `with_parent_tree`.
         Self {
             phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
             explicit_gas_charged: AtomicU64::new(0),
             explicit_gas_window_active: AtomicBool::new(false),
             explicit_gas_window_start: AtomicU64::new(0),
             explicit_gas_window_limit: AtomicU64::new(0),
+            parent_tree: Mutex::new(Some(Arc::new(EmptyAuthenticatedTree))),
+            parent_tree_factory: Mutex::new(None),
+            parent_identity_without_root: Mutex::new(None),
+            parent_binding_configured: AtomicBool::new(false),
+            ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
+            ce_work: Mutex::new(CeWorkState {
+                used: 0,
+                seen_keys: BTreeSet::new(),
+                transaction_start: None,
+            }),
+            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
         }
+    }
+
+    #[must_use]
+    pub fn with_parent_tree(
+        parent_tree: Arc<dyn AuthenticatedParentTree>,
+        ce_work_config: CeWorkConfig,
+    ) -> Self {
+        Self {
+            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
+            explicit_gas_charged: AtomicU64::new(0),
+            explicit_gas_window_active: AtomicBool::new(false),
+            explicit_gas_window_start: AtomicU64::new(0),
+            explicit_gas_window_limit: AtomicU64::new(0),
+            parent_tree: Mutex::new(Some(parent_tree)),
+            parent_tree_factory: Mutex::new(None),
+            parent_identity_without_root: Mutex::new(None),
+            parent_binding_configured: AtomicBool::new(true),
+            ce_work_config,
+            ce_work: Mutex::new(CeWorkState {
+                used: 0,
+                seen_keys: BTreeSet::new(),
+                transaction_start: None,
+            }),
+            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
+        }
+    }
+
+    #[must_use]
+    pub fn with_parent_tree_factory(
+        factory: Arc<dyn AuthenticatedParentTreeFactory>,
+        commitment_scheme_version: u32,
+        parent_block_number: u64,
+        parent_block_hash: B256,
+        ce_work_config: CeWorkConfig,
+    ) -> Self {
+        Self {
+            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
+            explicit_gas_charged: AtomicU64::new(0),
+            explicit_gas_window_active: AtomicBool::new(false),
+            explicit_gas_window_start: AtomicU64::new(0),
+            explicit_gas_window_limit: AtomicU64::new(0),
+            parent_tree: Mutex::new(None),
+            parent_tree_factory: Mutex::new(Some(factory)),
+            parent_identity_without_root: Mutex::new(Some((
+                commitment_scheme_version,
+                parent_block_number,
+                parent_block_hash,
+            ))),
+            parent_binding_configured: AtomicBool::new(true),
+            ce_work_config,
+            ce_work: Mutex::new(CeWorkState {
+                used: 0,
+                seen_keys: BTreeSet::new(),
+                transaction_start: None,
+            }),
+            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
+        }
+    }
+
+    /// Binds the factory/identity to the scope already captured by this EVM's
+    /// precompiles. Live wiring calls this after the block parent is known and
+    /// before begin-block; lifecycle and every nested precompile therefore keep
+    /// using the same `Arc<ExecutionScope>`.
+    pub fn configure_parent_tree_factory(
+        &self,
+        factory: Arc<dyn AuthenticatedParentTreeFactory>,
+        commitment_scheme_version: u32,
+        parent_block_number: u64,
+        parent_block_hash: B256,
+    ) -> Result<()> {
+        if self.phase.load(Ordering::Acquire) != PHASE_BEFORE_BEGIN {
+            return Err(fatal_scope(
+                "exact-parent tree factory configured after begin-block",
+            ));
+        }
+        self.parent_binding_configured
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| fatal_scope("exact-parent tree factory configured more than once"))?;
+
+        let mut tree = self
+            .parent_tree
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
+        let mut installed_factory = self
+            .parent_tree_factory
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent tree factory lock poisoned"))?;
+        let mut identity = self
+            .parent_identity_without_root
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent identity lock poisoned"))?;
+        *tree = None;
+        *installed_factory = Some(factory);
+        *identity = Some((
+            commitment_scheme_version,
+            parent_block_number,
+            parent_block_hash,
+        ));
+        Ok(())
+    }
+
+    pub(crate) fn open_exact_parent(&self, evm_root: B256) -> Result<()> {
+        let mut tree = self
+            .parent_tree
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
+        if let Some(opened) = tree.as_ref() {
+            if opened.parent_root() != evm_root {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "opened parent tree root does not match EVM slot 1".into(),
+                ));
+            }
+            return Ok(());
+        }
+        let factory = self
+            .parent_tree_factory
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent tree factory lock poisoned"))?
+            .clone()
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::TreeUnavailable(
+                    "no exact-parent tree factory was installed".into(),
+                )
+            })?;
+        let (commitment_scheme_version, block_number, block_hash) = self
+            .parent_identity_without_root
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent identity lock poisoned"))?
+            .ok_or_else(|| fatal_scope("missing exact-parent identity metadata"))?;
+        let opened = factory.open_parent(crate::ExactParentIdentity {
+            commitment_scheme_version,
+            block_number,
+            block_hash,
+            root: evm_root,
+        })?;
+        if opened.parent_block_hash() != block_hash || opened.parent_root() != evm_root {
+            return Err(fatal_scope(
+                "exact-parent factory returned a tree with the wrong block hash or root",
+            ));
+        }
+        *tree = Some(opened);
+        Ok(())
+    }
+
+    fn opened_parent_tree(&self) -> Result<Arc<dyn AuthenticatedParentTree>> {
+        self.parent_tree
+            .lock()
+            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?
+            .clone()
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::TreeUnavailable(
+                    "exact-parent tree has not been opened by begin-block".into(),
+                )
+            })
+    }
+
+    pub fn read_parent_leaf_verified(
+        &self,
+        entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<crate::Commitment>> {
+        self.require_active()?;
+        let parent_tree = self.opened_parent_tree()?;
+        if parent_tree.parent_root() != expected_parent_root {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "authenticated parent tree root does not match EVM slot 1".into(),
+            ));
+        }
+        parent_tree.read_leaf_verified(entity, expected_parent_root)
+    }
+
+    pub fn parent_root(&self) -> Result<B256> {
+        self.opened_parent_tree().map(|tree| tree.parent_root())
+    }
+
+    pub(crate) fn prepare_tree_seal(
+        &self,
+        block_number: u64,
+        mutations: &[FinalLeafMutation],
+    ) -> Result<crate::ProvisionalTreeBatch> {
+        self.require_active()?;
+        self.opened_parent_tree()?
+            .prepare_seal(block_number, mutations)
+    }
+
+    pub fn ce_work_checkpoint(&self) -> Result<CeWorkCheckpoint> {
+        self.ce_work
+            .lock()
+            .map(|state| CeWorkCheckpoint(state.clone()))
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))
+    }
+
+    /// Opens one executor transaction window so overflow can distinguish a
+    /// transaction that cannot fit an empty block from ordinary remaining
+    /// block-capacity exhaustion.
+    pub fn begin_ce_work_transaction(&self) -> Result<()> {
+        self.ce_work_failure
+            .store(CE_WORK_FAILURE_NONE, Ordering::Release);
+        let mut state = self
+            .ce_work
+            .lock()
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+        if state.transaction_start.is_some() {
+            return Err(fatal_scope(
+                "compressed-entity work transaction window is already active",
+            ));
+        }
+        state.transaction_start = Some(CeWorkTransactionStart {
+            transaction_keys: BTreeSet::new(),
+        });
+        Ok(())
+    }
+
+    /// Closes the current executor transaction window. Work remains reserved;
+    /// excluded transactions are restored separately from their checkpoint.
+    pub fn end_ce_work_transaction(&self) -> Result<()> {
+        let mut state = self
+            .ce_work
+            .lock()
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+        if state.transaction_start.take().is_none() {
+            return Err(fatal_scope(
+                "compressed-entity work transaction window is not active",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns and clears the typed CE admission failure recorded through the
+    /// infallible revm precompile boundary.
+    pub fn take_ce_work_failure(&self) -> Option<outbe_primitives::error::PrecompileError> {
+        match self
+            .ce_work_failure
+            .swap(CE_WORK_FAILURE_NONE, Ordering::AcqRel)
+        {
+            CE_WORK_FAILURE_TRANSACTION => {
+                Some(outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded)
+            }
+            CE_WORK_FAILURE_BLOCK => {
+                Some(outbe_primitives::error::PrecompileError::BlockCeWorkCapacityExhausted)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn restore_ce_work_checkpoint(&self, checkpoint: CeWorkCheckpoint) -> Result<()> {
+        let mut state = self
+            .ce_work
+            .lock()
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+        if checkpoint.0.used > state.used || !checkpoint.0.seen_keys.is_subset(&state.seen_keys) {
+            return Err(fatal_scope(
+                "invalid compressed-entity work checkpoint restore",
+            ));
+        }
+        *state = checkpoint.0;
+        Ok(())
+    }
+
+    pub fn ce_work_used(&self) -> Result<u64> {
+        self.ce_work
+            .lock()
+            .map(|state| state.used)
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))
+    }
+
+    pub(crate) fn reserve_unique_key_work(&self, entity: EntityRef) -> Result<()> {
+        self.require_active()?;
+        let mut state = self
+            .ce_work
+            .lock()
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+        let transaction_unique_keys = state.transaction_start.as_ref().map_or(1_usize, |start| {
+            if start.transaction_keys.contains(&entity) {
+                0
+            } else {
+                start.transaction_keys.len().saturating_add(1)
+            }
+        });
+        if transaction_unique_keys == 0 {
+            return Ok(());
+        }
+        let transaction_units = u64::try_from(transaction_unique_keys)
+            .ok()
+            .and_then(|count| self.ce_work_config.unique_key_units.checked_mul(count))
+            .and_then(|units| self.ce_work_config.seal_base_units.checked_add(units));
+        if transaction_units.is_none_or(|units| units > self.ce_work_config.work_limit) {
+            self.ce_work_failure
+                .store(CE_WORK_FAILURE_TRANSACTION, Ordering::Release);
+            return Err(outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded);
+        }
+        if state.seen_keys.contains(&entity) {
+            if let Some(start) = state.transaction_start.as_mut() {
+                start.transaction_keys.insert(entity);
+            }
+            return Ok(());
+        }
+        let next = state
+            .used
+            .checked_add(self.ce_work_config.unique_key_units)
+            .ok_or(outbe_primitives::error::PrecompileError::BlockCeWorkCapacityExhausted)?;
+        if next > self.ce_work_config.work_limit {
+            self.ce_work_failure
+                .store(CE_WORK_FAILURE_BLOCK, Ordering::Release);
+            return Err(outbe_primitives::error::PrecompileError::BlockCeWorkCapacityExhausted);
+        }
+        state.seen_keys.insert(entity);
+        if let Some(start) = state.transaction_start.as_mut() {
+            start.transaction_keys.insert(entity);
+        }
+        state.used = next;
+        Ok(())
     }
 
     /// Opens the receipt-visible CE gas budget for one system transaction.
@@ -351,7 +846,20 @@ impl ExecutionScope {
                 outbe_primitives::error::PrecompileError::Fatal(
                     "compressed-entity begin_block called more than once".into(),
                 )
-            })
+            })?;
+        let mut work = self
+            .ce_work
+            .lock()
+            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+        if self.ce_work_config.seal_base_units > self.ce_work_config.work_limit {
+            return Err(outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded);
+        }
+        work.used = self.ce_work_config.seal_base_units;
+        work.seen_keys.clear();
+        work.transaction_start = None;
+        self.ce_work_failure
+            .store(CE_WORK_FAILURE_NONE, Ordering::Release);
+        Ok(())
     }
 
     pub(crate) fn finish(&self) -> Result<()> {
@@ -371,6 +879,10 @@ impl ExecutionScope {
     }
 }
 
+fn fatal_scope(message: impl Into<String>) -> outbe_primitives::error::PrecompileError {
+    outbe_primitives::error::PrecompileError::Fatal(message.into())
+}
+
 impl Default for ExecutionScope {
     fn default() -> Self {
         Self::new()
@@ -381,7 +893,7 @@ pub fn begin_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result
     lifecycle::begin_block(storage, scope)
 }
 
-pub fn end_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result<()> {
+pub fn end_block(storage: StorageHandle<'_>, scope: &ExecutionScope) -> Result<crate::SealOutput> {
     lifecycle::end_block(storage, scope)
 }
 

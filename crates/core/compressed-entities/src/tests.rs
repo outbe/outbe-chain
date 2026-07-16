@@ -8,16 +8,17 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_tribute_v1,
     decode_tribute_v1, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
-    encode_tribute_v1, identity_field, pbytes, CanonicalBodyError, CommitmentError,
-    CommitmentState, EntityId36, NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, CES1_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB,
-    TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_ID, TAG_KEY, TAG_LEAF, TAG_SMT_BASE, TAG_SMT_NORMAL,
-    TAG_SMT_ZERO,
+    encode_tribute_v1, identity_field, pbytes, CanonicalBodyError, CommitmentError, EntityId36,
+    NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1, ACTIVE_COMMITMENT_SCHEME,
+    BODY_SCHEMA_V1, CES1_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB, TAG_BYTES_FINAL, TAG_BYTES_INIT,
+    TAG_ID, TAG_KEY, TAG_LEAF, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO,
 };
-use crate::{schema::Collection, state::State};
+use crate::{schema::CompressedEntitiesSchema, state::State};
 
 #[path = "tests/adr007.rs"]
 mod adr007;
+#[path = "tests/adr008_scope.rs"]
+mod adr008_scope;
 
 fn commitment_vectors() -> serde_json::Value {
     serde_json::from_str(include_str!("../vectors/ces1-noble-poseidon.json")).unwrap()
@@ -288,39 +289,17 @@ fn typed_stored_body_and_wire_profile_reject_alternative_representations() {
 }
 
 #[test]
-fn direct_commitment_mappings_keep_typed_namespaces_and_zero_absence() {
-    let identity = EntityId36::new(WorldwideDay::from(1), [0x55; 32]);
-    let leaf = body_commitment(ACTIVE_COMMITMENT_SCHEME, 1, identity, &[0x77]).unwrap();
+fn schema_v2_has_one_root_and_keeps_reserved_slots_empty() {
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        let facade = CommitmentState::new(storage.clone());
-        let state = State::new(storage);
-        assert_eq!(facade.tribute(identity).unwrap(), None);
-        assert_eq!(facade.nod_item(identity).unwrap(), None);
-        assert_eq!(facade.nod_bucket(identity).unwrap(), None);
-
-        state
-            .write_commitment(Collection::Tribute, identity, leaf)
-            .unwrap();
-        assert_eq!(facade.tribute(identity).unwrap(), Some(leaf));
-        assert_eq!(facade.nod_item(identity).unwrap(), None);
-        assert_eq!(facade.nod_bucket(identity).unwrap(), None);
-
-        state
-            .write_commitment(Collection::NodItem, identity, leaf)
-            .unwrap();
-        state
-            .write_commitment(Collection::NodBucket, identity, leaf)
-            .unwrap();
-        assert_eq!(facade.nod_item(identity).unwrap(), Some(leaf));
-        assert_eq!(facade.nod_bucket(identity).unwrap(), Some(leaf));
-
-        state
-            .clear_commitment(Collection::Tribute, identity)
-            .unwrap();
-        assert_eq!(facade.tribute(identity).unwrap(), None);
-        assert_eq!(facade.nod_item(identity).unwrap(), Some(leaf));
+        let state = State::new(storage.clone());
+        state.ensure_schema().unwrap();
+        assert_eq!(state.root().unwrap(), B256::ZERO);
+        let schema = CompressedEntitiesSchema::new(storage);
+        assert_eq!(schema.storage_schema_version.read().unwrap(), 2);
+        assert_eq!(schema.reserved_2.read().unwrap(), U256::ZERO);
+        assert_eq!(schema.reserved_3.read().unwrap(), U256::ZERO);
     });
 }
 

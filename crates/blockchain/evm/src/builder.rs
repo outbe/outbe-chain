@@ -63,7 +63,12 @@ where
     DB: Database + 'a,
     OutbeBlockExecutor<'a, EVM>:
         BlockExecutor<Evm = EVM, Transaction = TransactionSigned, Receipt = reth_ethereum::Receipt>,
-    EVM: Evm<DB = &'a mut State<DB>, Spec = SpecId, BlockEnv = BlockEnv>,
+    EVM: Evm<
+            DB = &'a mut State<DB>,
+            Spec = SpecId,
+            BlockEnv = BlockEnv,
+            Tx = reth_ethereum::evm::revm::context::TxEnv,
+        > + crate::executor::ZeroFeeCfgAccess,
 {
     type Primitives = OutbePrimitives;
     type Executor = OutbeBlockExecutor<'a, EVM>;
@@ -120,6 +125,14 @@ where
         self.executor
             .set_final_extra_data(self.ctx.inner.extra_data.clone());
 
+        // Proposer execution does not know the block hash until assembly. Seal
+        // first, retain the immutable provisional batch across assembly, then
+        // publish it under the exact computed hash. Validator execution uses
+        // the known hash path in `OutbeBlockExecutor::finish`.
+        self.executor.finalize_compressed_entities()?;
+        let compressed_tree_service = self.executor.compressed_tree_service();
+        let compressed_seal_output = self.executor.take_compressed_entities_seal_output();
+
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
 
@@ -154,6 +167,11 @@ where
         ))?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
+        if let (Some(output), Some(service)) = (compressed_seal_output, compressed_tree_service) {
+            service
+                .publish_candidate(block.hash(), output.staged_tree_batch)
+                .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+        }
         if let Some(bridge) = &self.bridge {
             bridge.record_execution_summary(
                 block.header().inner.number,
@@ -190,6 +208,10 @@ mod tests {
 
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
+    use outbe_compressed_entities::{
+        CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
+        ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    };
     use outbe_primitives::addresses::REWARDS_ADDRESS;
     use outbe_primitives::block::BlockContext;
     use outbe_primitives::consensus::ConsensusExecutionBridge;
@@ -210,6 +232,7 @@ mod tests {
         execute::{BlockBuilder, Executor, ProviderError},
         ConfigureEvm, NextBlockEnvAttributes,
     };
+    use reth_primitives_traits::RecoveredBlock;
     use reth_provider::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
         StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
@@ -384,6 +407,39 @@ mod tests {
     fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
         OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
             .with_evm_signer(test_evm_signer())
+    }
+
+    fn test_tree_service(parent_hash: B256) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
+        let directory = tempfile::tempdir().expect("CE test directory must be created");
+        let db = CeMdbx::open(
+            directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: MAINNET.chain().id(),
+                genesis_hash: parent_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: parent_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: B256::ZERO,
+            },
+        )
+        .expect("CE test MDBX must open");
+        let service = CompressedTreeService::new(
+            db,
+            CandidateCacheLimits {
+                max_candidates: 4,
+                max_encoded_bytes: 1_000_000,
+            },
+        )
+        .expect("CE test service must open");
+        (directory, Arc::new(service))
     }
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
@@ -877,6 +933,91 @@ mod tests {
         assert_eq!(
             built_root, reexecuted_root,
             "block with header artifact must re-execute to the same state root",
+        );
+
+        // Reth validates receipt and state roots only after `execute_one`
+        // returns. Validator execution must therefore retain no CE candidate,
+        // even when execution itself succeeds for a header that the following
+        // post-execution check rejects.
+        let mut wrong_receipt_block = built_block.clone().into_block();
+        wrong_receipt_block.header.inner.receipts_root = B256::repeat_byte(0x71);
+        let wrong_receipt_block =
+            RecoveredBlock::new_unhashed(wrong_receipt_block, built_block.senders().to_vec());
+        let (_receipt_directory, receipt_service) = test_tree_service(parent.hash());
+        let receipt_config = config
+            .clone()
+            .with_compressed_tree_service(receipt_service.clone());
+        let mut receipt_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        seed_active_validators(&mut receipt_db, &active_set);
+        let receipt_state = State::builder()
+            .with_database(receipt_db)
+            .with_bundle_update()
+            .build();
+        let mut receipt_executor = receipt_config.batch_executor(receipt_state);
+        let receipt_result = receipt_executor
+            .execute_one(&wrong_receipt_block)
+            .expect("wrong receipt root is checked after successful execution");
+        let receipt_validation_spec = reth_ethereum::chainspec::ChainSpecBuilder::from(&*MAINNET)
+            .byzantium_activated()
+            .build();
+        assert!(
+            reth_ethereum::consensus::validate_block_post_execution(
+                &wrong_receipt_block,
+                &receipt_validation_spec,
+                &receipt_result,
+                None,
+            )
+            .is_err(),
+            "the fixture must reach Reth's receipt-root rejection seam",
+        );
+        assert!(
+            receipt_service
+                .candidate(
+                    wrong_receipt_block.header().inner.number,
+                    wrong_receipt_block.hash(),
+                )
+                .unwrap()
+                .is_none(),
+            "receipt-invalid validator execution must not publish a CE candidate",
+        );
+
+        let mut wrong_state_block = built_block.clone().into_block();
+        wrong_state_block.header.inner.state_root = B256::repeat_byte(0x72);
+        let wrong_state_block =
+            RecoveredBlock::new_unhashed(wrong_state_block, built_block.senders().to_vec());
+        let (_state_directory, state_service) = test_tree_service(parent.hash());
+        let state_config = config
+            .clone()
+            .with_compressed_tree_service(state_service.clone());
+        let mut state_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        seed_active_validators(&mut state_db, &active_set);
+        let state = State::builder()
+            .with_database(state_db)
+            .with_bundle_update()
+            .build();
+        let mut state_executor = state_config.batch_executor(state);
+        state_executor
+            .execute_one(&wrong_state_block)
+            .expect("wrong state root is checked after successful execution");
+        let state = state_executor.into_state();
+        let reexecuted_hashed_state = provider.hashed_post_state(&state.bundle_state);
+        let (actual_state_root, _) = provider
+            .state_root_with_updates(reexecuted_hashed_state)
+            .expect("state root must be computed at Reth's validation seam");
+        assert_ne!(
+            wrong_state_block.header().inner.state_root,
+            actual_state_root,
+            "the fixture must reach Reth's state-root rejection seam",
+        );
+        assert!(
+            state_service
+                .candidate(
+                    wrong_state_block.header().inner.number,
+                    wrong_state_block.hash(),
+                )
+                .unwrap()
+                .is_none(),
+            "state-root-invalid validator execution must not publish a CE candidate",
         );
     }
 }

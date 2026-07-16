@@ -1,20 +1,34 @@
 //! Canonical compressed-body identities, encodings, and commitments.
 
+// Persistence errors intentionally retain both exact markers/identities so a
+// startup or finality conflict can be diagnosed without a second database read.
+#![allow(clippy::result_large_err)]
+
 mod api;
 mod commitment;
 mod errors;
 mod identity;
 mod lifecycle;
+mod persistence;
 mod protobuf;
+mod replay;
 mod runtime;
 mod schema;
+mod smt;
+mod staging;
 mod state;
+mod tree_manager;
+mod tree_service;
+
+#[doc(hidden)]
+pub mod bench_support;
 
 pub use api::{
-    begin_block, delete, end_block, list, mint, read, update, BodyInput, EntityRef, ExecutionScope,
-    ExplicitGasCheckpoint, ExplicitGasWindow, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceRef, QueryRef, VerifiedBody, VerifiedBodyPage, VerifiedPayload,
-    MAX_ID_PAGE_LIMIT,
+    begin_block, delete, end_block, list, mint, read, update, AuthenticatedParentTree,
+    AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint, CeWorkConfig, EntityRef,
+    ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow, FinalLeafMutation, IdPage,
+    IdPageRequest, ParentBodySource, ParentBodySourceRef, QueryRef, VerifiedBody, VerifiedBodyPage,
+    VerifiedPayload, MAX_ID_PAGE_LIMIT,
 };
 
 pub use commitment::{
@@ -25,14 +39,28 @@ pub use commitment::{
 };
 pub use errors::ParentBodySourceError;
 pub use identity::{EntityId36, EntityIdError};
-pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext};
+pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, SealOutput};
+pub use persistence::{
+    classify_restart, ApplyOutcome, CeMdbx, CeRetentionCursor, DurableFinalizedCheckpoint,
+    EnvironmentIdentity, ExactParentIdentity, FinalizationStage, FinalizedMarker, PersistenceError,
+    RestartClassification, CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
+};
 pub use protobuf::{
     decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_nod_bucket_v1,
     decode_stored_nod_item_v1, decode_stored_tribute_v1, decode_tribute_v1, encode_nod_bucket_v1,
     encode_nod_item_v1, encode_tribute_v1, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1,
     StoredBody, TributeBodyV1, BODY_SCHEMA_V1,
 };
-pub use state::CommitmentState;
+pub use replay::{
+    decode_canonical_body_event, reconstruct_effective_final_mutations, CanonicalBodyEvent,
+    ReplayEventError,
+};
+pub use staging::{
+    CandidateCache, CandidateCacheLimits, ProvisionalTreeBatch, PublicationOutcome,
+    StagedTreeBatch, StagingError, TreeChange,
+};
+pub use tree_manager::{CompressedTreeService, FinalizedCandidateOutcome, TreeServiceError};
+pub use tree_service::MdbxAuthenticatedTree;
 
 #[cfg(test)]
 mod tests;
