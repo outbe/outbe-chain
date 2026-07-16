@@ -928,8 +928,10 @@ header artifact tag 0x08:
 ```
 
 `0x08` is the next unassigned tag in the current `OutbeBlockArtifacts` namespace; `0x07` is already assigned to
-committee pre-announcement. Adding the compressed-entity record also requires the corresponding artifact-envelope
-version bump. The tag is a wire integration identifier, not part of the Poseidon commitment scheme.
+committee pre-announcement. ADR-012 keeps pre-production envelope version `0x0A`: the coordinated reset discards
+all earlier header history, and old binaries already reject the unknown `0x08` tag fail-closed, so a version bump
+would add no compatibility or safety. Any later schema change that must preserve history uses a new envelope
+version. The tag is a wire integration identifier, not part of the Poseidon commitment scheme.
 
 The EVM slot serves contracts. The header artifact serves header/light-client verification without an EVM state
 proof. Every validator requires slot, artifact, and locally recomputed root to match for `B >= 1`. A verifier of
@@ -966,32 +968,53 @@ The proof establishes membership relative to that chosen root. An RPC-provided r
 ### 10.3 Point-proof package `[Q7, Q20 decided]`
 
 ```text
-chain_id
-block_height
-block_hash
-commitment_scheme_version
-R_sealed
-domain_id
-partition_key_or_none
-raw_id
-schema_version
-hash_version
-body_bytes
-proof_encoding_version
-smt_proof
-collection_shard_proof
-root_catalog_proof
+PointReadResultV1 =
+  Present {
+    common: {
+      proof_encoding_version,
+      chain_id, block_height, block_hash,
+      domain_id, raw_id,
+    },
+    body_bytes,                    // exact canonical StoredBody envelope
+    shard_smt_compiled_proof,
+    shard_top_siblings,
+    root_catalog_compiled_proof,
+  }
+| Absent {
+    common,
+    evidence:
+      CollectionAbsent { root_catalog_compiled_proof }
+    | EntityAbsentInCollection {
+        shard_smt_compiled_proof,
+        shard_top_siblings,
+        root_catalog_compiled_proof,
+      },
+  }
+| Unavailable
 ```
+
+There is no independent status field and no optional body/proof payload. `Unavailable` contains no partial proof
+evidence. The package does not echo `commitment_scheme_version` or `R_sealed`; the verifier obtains both only
+from the independently finalized header and fork schedule. `body_bytes` exists only in `Present` and is the exact canonical
+`StoredBody { schema_version, payload }` envelope stored in MongoDB; the package does not duplicate either
+envelope field. The verifier strict-decodes and byte-for-byte re-encodes it before deriving the leaf.
+
+For `proof_encoding_version = 1`, both CKB proofs are canonical length-delimited bytes of the pinned CKB
+`CompiledMerkleProof`; the package defines no second bitmap/sibling proof codec. `shard_top_siblings` is the
+separate fixed `log2(K_domain)` Poseidon top path. A Root Catalog non-membership proof for an absent collection
+omits both shard fields.
 
 Verification:
 
-1. Bind the package identity to the verifier's expected `{domain_id, partition_key_or_none, raw_id}`. For an RPC response these values
+1. Bind the package identity to the verifier's expected `{domain_id, raw_id}`. For an RPC response these values
    must exactly equal the request; for offline verification they are explicit verifier inputs. A package without
    an independently supplied expected identity proves only the identity stated by that package.
-2. Resolve the fork-active ID/partition policy and `K_domain`; derive/validate `partition_key`, `collection_key`,
+2. Resolve the fork-active ID/partition policy and `K_domain`; derive `partition_key` from the expected raw ID,
+   then derive/validate `collection_key`,
    `id_bytes`, `tree_key`, and shard index. The RPC/package cannot select any derived locator. Any redundant
    transported value must match exactly.
-3. Recompute `leaf_value` from the exact body bytes and versions.
+3. Strict-decode the exact body envelope, obtain its schema version, take the commitment scheme only from the
+   finalized header/fork schedule, and recompute `leaf_value`.
 4. Verify `(tree_key → leaf_value)` against the shard root.
 5. Verify the shard root through the `log2(K_domain)` collection-top path and recompute `R_collection`.
 6. Verify `collection_key → R_collection` through the Root Catalog proof, recompute `R_sealed`, and compare it
@@ -1020,31 +1043,35 @@ An in-place tree does not promise later generation of historical proofs.
 
 ### 11.1 Point reads `[Q20 decided]`
 
-`outbe_getBody(domain_id, partition_key?, raw_id, height?)` returns the verification package above or one of the
-following results. For `Singleton`, `partition_key` is absent; for Tribute it is derived from `raw_id[0..4]` and
-any explicit echo must match:
+`outbe_getBody(domain_id, raw_id)` selects the latest root-verified finalized CE MDBX snapshot visible when its
+single proof transaction opens and returns that snapshot's verification package or one of the following results.
+V1 serves only `H >= 1`, where tag `0x08` is mandatory; at genesis height `0` the proof service is not ready and
+returns no package. For Tribute, the partition is derived from `raw_id[0..4]`; singleton domains have no partition
+input:
 
 ```text
 absent       a valid non-membership proof is returned
-unavailable  the node has the commitment/proof capability but not the body bytes
-unsupported  the requested historical height/proof version cannot be served
+unavailable  the node cannot return a complete matching body/proof package
 ```
+
+V1 has no caller-selected block, height, root, commitment version, or proof version. An unknown future proof
+encoding is a client verifier/decoder error, not an RPC result variant.
 
 `unavailable` is never treated as `absent`.
 
 `absent` is valid only when the non-membership proof verifies for the `tree_key` that the client independently
-derives from the requested `{domain_id, partition_key?, raw_id}` and the fork-active registry at the selected height. A node that
+derives from the requested `{domain_id, raw_id}` and the fork-active rules at the returned height. A node that
 lacks body bytes, has stale projection data, or supplies a proof for another identity must return or be treated as
 `unavailable`/invalid; it cannot turn that condition into `absent`.
 
 `absent` describes only the selected current root. Historical receipts, when retained, distinguish never-minted keys from deleted keys.
 
 Any node may return `unavailable` when the selected root proves presence but matching local body bytes are not
-currently available. This is a local availability failure, not absence and not a consensus-state change. If the
-body-store cursor is ahead of the served tree checkpoint, a mismatch may be a newer body rather than missing or
-corrupt data; the node first waits for tree catch-up or retrieves the body version for the selected root. It
-fetches/rebuilds current bytes from peers, retained events, or snapshot chunks only after cursor alignment still
-shows them missing or invalid.
+currently available. This is a local availability failure, not absence and not a consensus-state change. The CE
+MDBX transaction closes after its tree evidence is copied and before MongoDB is read. Mongo may advance in that
+interval; v1 adds no cross-store snapshot, fence, or automatic retry. Exact body-to-leaf equality returns the
+package, while a missing or mismatching body returns bare `unavailable` without partial proof evidence. The caller
+may retry or ask another node.
 
 ### 11.2 Secondary indexes
 
@@ -1323,8 +1350,8 @@ leaf record:
   collection_key, shard_index, tree_key, leaf_value
 
 body record:
-  domain_id, partition_key_or_none, schema_version, hash_version,
-  canonical id bytes, canonical body bytes,
+  domain_id, partition_key_or_none,
+  canonical id bytes, canonical StoredBody envelope bytes,
   expected tree_key, expected leaf_value
 
 logical range:
@@ -1332,8 +1359,11 @@ logical range:
 ```
 
 `shard_index` must equal the index derived from `tree_key` and the registered `K_domain`; mismatch rejects the
-record. The body record carries `schema_version`/`hash_version` (mirroring the §10.3 package) so the importer
-can recompute `leaf_value` even when §16.1 keeps more than one schema version readable at `H`. Records are ordered by payload kind, collection, shard, and key. Duplicate keys, conflicting records, out-of-order input,
+record. The body record carries the complete canonical `StoredBody` envelope (mirroring the §10.3 package), while
+the selected header height and `commitment_scheme_version` select the hash recipe. The importer strict-decodes
+the envelope to obtain its schema version and payload, then recomputes `leaf_value`, including when §16.1 keeps
+more than one schema version readable at `H`. Records are ordered by payload kind, collection, shard, and key.
+Duplicate keys, conflicting records, out-of-order input,
 non-canonical encodings, and invalid range continuation are rejected. Independent producers may package records
 differently, but must return the same ordered records for the same logical range and checkpoint.
 
