@@ -30,6 +30,23 @@ MongoDB и обхода compressed-entity lifecycle здесь нет.
 Общий порядок запуска и настройки описан в разделе `Managed localnet stack` в
 корневом [`README.md`](../README.md). Для этого сценария достаточно:
 
+```sh
+mise run localnet-stack-start
+mise run tribute-offer
+mise run tribute-show-mongo
+```
+
+Это весь короткий demo flow: первая команда поднимает инфраструктуру, вторая
+создаёт один Tribute, третья показывает и проверяет его MongoDB projection на
+всех четырёх валидаторах. Очистка после демонстрации:
+
+```sh
+mise run localnet-stack-clean
+```
+
+Ниже приведён альтернативный подробный путь по отдельным командам для ручной
+диагностики.
+
 Сначала поднимите полноценное локальное окружение:
 
 ```sh

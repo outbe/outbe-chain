@@ -212,6 +212,14 @@ run = "bash ./scripts/localnet-stack.sh stop"
 description = "Stop the managed localnet and MongoDB, then remove chain data"
 run = "bash ./scripts/localnet-stack.sh clean"
 
+[tasks.tribute-offer]
+description = "Create one encrypted Tribute on the running managed localnet"
+run = "bash ./scripts/tribute-demo-actions.sh offer"
+
+[tasks.tribute-show-mongo]
+description = "Show the Tribute from the most recent tribute-offer in every validator MongoDB projection"
+run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
+
 # Full S1-S7 gramine-mock TEE e2e scenario suite plus update operator smoke.
 # Builds the node, CLI, and mock enclave, then runs all scenario scripts.
 # Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner

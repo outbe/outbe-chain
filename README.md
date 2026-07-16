@@ -370,6 +370,17 @@ mise run localnet-stack-stop
 mise run localnet-stack-clean
 ```
 
+The shortest manual Tribute demonstration on top of this general stack is:
+
+```bash
+mise run localnet-stack-start
+mise run tribute-offer
+mise run tribute-show-mongo
+```
+
+The last command prints the matching Tribute document and index counts from all
+four validator projection databases.
+
 `localnet-stack-start` is intentionally fresh/destructive for its dedicated
 `/tmp/outbe-*` directory. To run another isolated stack, override all of
 `LOCALNET_STACK_DIR`, `LOCALNET_STACK_MONGO_NAME`,
