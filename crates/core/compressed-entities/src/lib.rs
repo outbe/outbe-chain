@@ -56,7 +56,7 @@ pub use replay::{
     decode_canonical_body_event, reconstruct_effective_final_mutations, CanonicalBodyEvent,
     ReplayEventError,
 };
-pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES, K_TEST};
+pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES, K_TARGET, K_TEST};
 pub use staging::{
     CandidateCache, CandidateCacheLimits, ProvisionalTreeBatch, PublicationOutcome,
     StagedTreeBatch, StagingError, TreeChange,

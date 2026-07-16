@@ -517,7 +517,7 @@ fn run_node() -> eyre::Result<()> {
             chain_id: builder.config().chain.chain().id(),
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            shard_count: outbe_compressed_entities::K_TEST,
+            shard_count: outbe_compressed_entities::K_TARGET,
             tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         };
@@ -528,7 +528,7 @@ fn run_node() -> eyre::Result<()> {
             parent_block_hash: Default::default(),
             parent_root: Default::default(),
             new_root: outbe_compressed_entities::empty_shard_top_root(
-                outbe_compressed_entities::K_TEST,
+                outbe_compressed_entities::K_TARGET,
             )?,
         };
         let ce_db = CeMdbx::open(&ce_data_dir, ce_identity, genesis_marker)

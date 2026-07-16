@@ -170,7 +170,7 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
 }
 
 #[test]
-fn compressed_entities_genesis_binds_schema_and_k16_empty_top_root() {
+fn compressed_entities_genesis_binds_schema_and_k_target_empty_top_root() {
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
         FIXTURE_SEED,
@@ -189,9 +189,11 @@ fn compressed_entities_genesis_binds_schema_and_k16_empty_top_root() {
         format!(
             "{:#066x}",
             U256::from_be_slice(
-                outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST,)
-                    .unwrap()
-                    .as_slice(),
+                outbe_compressed_entities::empty_shard_top_root(
+                    outbe_compressed_entities::K_TARGET,
+                )
+                .unwrap()
+                .as_slice(),
             )
         )
     );

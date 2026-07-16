@@ -11,10 +11,9 @@ combined full-path distribution plus separate proof/seal, shard-aggregation,
 and finalized-MDBX-apply distributions. Fixture construction is outside every
 timed interval, and artifact checksum generation is outside production timing.
 
-ADR-009 keeps the active pre-production value at `K_PROVISIONAL = 16`.
-ADR-017 owns the complete-system matrix and the final `K_PRODUCTION` decision.
-The checked-in target-host short run below is diagnostic evidence for that
-later decision; it does not change the ADR-009 value.
+ADR-009 uses the fork-fixed `K_TARGET = 8` selected from the target-host short
+run below. ADR-017 still owns complete-system capacity and activation limits;
+changing K again would require an explicit reset or migration decision.
 
 ## Commands
 
@@ -122,13 +121,12 @@ All 30 case manifests have the same dataset checksum
 the expected root, batch checksum, and staged size are stable for each K across
 all five repetitions.
 
-For this scenario, K=8 is the reviewed preferred trade-off: its mean is
+For this scenario, K=8 is the reviewed and selected trade-off: its mean is
 2.135 ms (3.01%) above K=1 and 2.817 ms (4.01%) above the latency-minimizing
 K=2, while it exposes eight shards, is 1.318 ms (1.77%) faster than K=4, and
 adds only 12,815 staged bytes (1.13%) over K=1. This is not a claim that K=8
-has the lowest latency or that it is the final production choice. The full
-warm/cold workload matrix and co-located off-chain contention measurement are
-postponed to ADR-017.
+has the lowest latency. The full warm/cold workload matrix and co-located
+off-chain contention measurement remain ADR-017 work for capacity closure.
 
 Reproducible evidence is in
 `results/2026-07-16-xeon-e2388g-short/`: the host profile, all 300 raw sample

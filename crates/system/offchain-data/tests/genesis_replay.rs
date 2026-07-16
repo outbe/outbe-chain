@@ -255,7 +255,7 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             chain_id: 91,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            shard_count: outbe_compressed_entities::K_TEST,
+            shard_count: outbe_compressed_entities::K_TARGET,
             tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },
@@ -266,7 +266,7 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
             new_root: outbe_compressed_entities::empty_shard_top_root(
-                outbe_compressed_entities::K_TEST,
+                outbe_compressed_entities::K_TARGET,
             )
             .unwrap(),
         },
@@ -356,7 +356,8 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let bucket_id = EntityId36::new(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
     let empty_root =
-        outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST).unwrap();
+        outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TARGET)
+            .unwrap();
     StorageHandle::enter(&mut execution, |storage| {
         storage
             .sstore(

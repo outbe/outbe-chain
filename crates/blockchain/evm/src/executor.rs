@@ -3571,7 +3571,7 @@ mod tests {
                 chain_id: CHAIN_ID,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                shard_count: outbe_compressed_entities::K_TEST,
+                shard_count: outbe_compressed_entities::K_TARGET,
                 tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -3582,7 +3582,7 @@ mod tests {
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
                 new_root: outbe_compressed_entities::empty_shard_top_root(
-                    outbe_compressed_entities::K_TEST,
+                    outbe_compressed_entities::K_TARGET,
                 )
                 .unwrap(),
             },
@@ -6453,9 +6453,10 @@ mod tests {
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
         let seed_state = || {
             let (directory, tree_service) = persistent_test_tree(B256::ZERO);
-            let empty_root =
-                outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST)
-                    .unwrap();
+            let empty_root = outbe_compressed_entities::empty_shard_top_root(
+                outbe_compressed_entities::K_TARGET,
+            )
+            .unwrap();
             let parent_tree = tree_service
                 .open_parent(ExactParentIdentity {
                     commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,

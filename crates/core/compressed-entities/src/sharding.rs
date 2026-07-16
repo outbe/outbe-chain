@@ -10,6 +10,9 @@ use crate::{
     TAG_TOP_NODE,
 };
 
+/// Fork-fixed shard count selected by the ADR-009 target-host benchmark.
+pub const K_TARGET: u32 = 8;
+/// Wider shard count retained by correctness and cross-architecture vectors.
 pub const K_TEST: u32 = 16;
 pub const K_CANDIDATES: [u32; 6] = [1, 2, 4, 8, 16, 32];
 

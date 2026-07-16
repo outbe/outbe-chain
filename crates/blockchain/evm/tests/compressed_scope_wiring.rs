@@ -29,7 +29,8 @@ fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
 fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
     let parent_hash = B256::repeat_byte(0x42);
     let parent_root =
-        outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST).unwrap();
+        outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TARGET)
+            .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let db = CeMdbx::open(
         directory.path(),
@@ -38,7 +39,7 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
             chain_id: MAINNET.chain().id(),
             genesis_hash: parent_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            shard_count: outbe_compressed_entities::K_TEST,
+            shard_count: outbe_compressed_entities::K_TARGET,
             tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".into(),
             vendor_revision: "scope-wiring-regression".into(),
         },

@@ -634,7 +634,7 @@ mod ce_work_tests {
                 chain_id: 1,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                shard_count: outbe_compressed_entities::K_TEST,
+                shard_count: outbe_compressed_entities::K_TARGET,
                 tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -645,7 +645,7 @@ mod ce_work_tests {
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
                 new_root: outbe_compressed_entities::empty_shard_top_root(
-                    outbe_compressed_entities::K_TEST,
+                    outbe_compressed_entities::K_TARGET,
                 )
                 .unwrap(),
             },
@@ -684,7 +684,7 @@ mod ce_work_tests {
         let genesis_hash = B256::repeat_byte(0x11);
         let block_hash = B256::repeat_byte(0x22);
         let genesis_root =
-            outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST)
+            outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TARGET)
                 .unwrap();
         let provisional = service
             .open_parent(ExactParentIdentity {
