@@ -455,7 +455,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     const typedData = revealBidTypedData({
       chainId: n.chainId,
       verifyingContract: addr(n, "auction"),
-      seriesId: series,
+      worldwideDay: series,
       bidder: account.address,
       quantity,
       bidRate: Number(bidRate),

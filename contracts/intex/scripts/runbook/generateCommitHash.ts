@@ -65,7 +65,7 @@ async function main() {
     },
     types: {
       RevealBid: [
-        { name: "seriesId", type: "uint32" },
+        { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
@@ -73,7 +73,7 @@ async function main() {
     },
     primaryType: "RevealBid",
     message: {
-      seriesId,
+      worldwideDay: seriesId,
       bidder,
       quantity: Number(quantity),
       bidRate: Number(bidRate),

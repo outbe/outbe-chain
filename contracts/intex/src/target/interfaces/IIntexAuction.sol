@@ -257,7 +257,7 @@ interface IIntexAuction {
     ///      it until `revealEnd + COMMIT_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param worldwideDay Auction series id.
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
-    ///                   signature over `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`
+    ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)`
     ///                   under the `IntexAuction` v1 domain (`chainId`, `verifyingContract = address(this)`).
     function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
 

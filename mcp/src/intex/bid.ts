@@ -11,7 +11,7 @@ import { type Address, type Hex, keccak256 } from "viem";
  *
  * Scheme (verbatim from contracts/intex/contracts/bnb/IntexAuction.sol):
  *  - domain  EIP712("IntexAuction", "1"), chainId = target chain, verifyingContract = auction
- *  - type    RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)
+ *  - type    RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)
  *  - commit  commitHash = keccak256(signature)
  *  - reveal  recovered signer must equal the bidder and keccak256(signature) the commit
  */
@@ -19,7 +19,7 @@ import { type Address, type Hex, keccak256 } from "viem";
 export interface RevealBidParams {
   chainId: number;
   verifyingContract: Address;
-  seriesId: number;
+  worldwideDay: number;
   bidder: Address;
   quantity: number;
   /** Bid rate, 1e6 fixed-point (% of strike); RATE_SCALE = 1_000_000 = 100%. Fits uint32. */
@@ -37,7 +37,7 @@ export function revealBidTypedData(p: RevealBidParams) {
     },
     types: {
       RevealBid: [
-        { name: "seriesId", type: "uint32" },
+        { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
@@ -45,7 +45,7 @@ export function revealBidTypedData(p: RevealBidParams) {
     },
     primaryType: "RevealBid",
     message: {
-      seriesId: p.seriesId,
+      worldwideDay: p.worldwideDay,
       bidder: p.bidder,
       quantity: p.quantity,
       bidRate: p.bidRate,

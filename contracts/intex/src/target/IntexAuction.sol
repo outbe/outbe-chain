@@ -34,10 +34,9 @@ contract IntexAuction is
     ///         only after this period; reveal/cancel/red-day return it immediately.
     uint32 public constant COMMIT_BOND_LOCK_PERIOD = 21 days;
 
-    /// @dev EIP-712 type hash for `RevealBid(uint32 seriesId,...)`; the field name is flipped to worldwideDay together
-    /// with the MCP signers in the next commit (digest change audited in isolation).
+    /// @dev EIP-712 type hash for `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)`.
     bytes32 private constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
 
     /// @custom:storage-location erc7201:outbe.intex.IntexAuction
     struct IntexAuctionStorage {

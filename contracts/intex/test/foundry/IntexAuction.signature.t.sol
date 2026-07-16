@@ -23,7 +23,7 @@ contract AuctionSignatureTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -323,7 +323,7 @@ contract AuctionSignatureTest is Test {
     function test_eip712_goldenDigest() public pure {
         address vc = 0x000000000000000000000000000000000000cafE;
         address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0x70716e6ae3662c444c19b813699627b7859e3333edfe1fded1ee2a3863bb710d;
+        bytes32 expected = 0xe1855751c617ab5e006fbbca06a1d811196fd8a457fe20f788d6af02c632faa6;
 
         bytes32 domain = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)

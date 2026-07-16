@@ -74,7 +74,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
     },
     types: {
       RevealBid: [
-        { name: "seriesId", type: "uint32" },
+        { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
@@ -82,7 +82,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
     },
     primaryType: "RevealBid",
     message: {
-      seriesId,
+      worldwideDay: seriesId,
       bidder,
       quantity: Number(quantity),
       bidRate: Number(bidRate),
