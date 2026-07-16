@@ -1,0 +1,59 @@
+{
+  "version": "ADR-009",
+  "k_test": 16,
+  "identity_hex": "00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "synthetic": [
+    {
+      "tree_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "shard_count": 1,
+      "shard_index": 0
+    },
+    {
+      "tree_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "shard_count": 16,
+      "shard_index": 0
+    },
+    {
+      "tree_key_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+      "shard_count": 16,
+      "shard_index": 1
+    },
+    {
+      "tree_key_hex": "000000000000000000000000000000000000000000000000000000000000000f",
+      "shard_count": 16,
+      "shard_index": 15
+    },
+    {
+      "tree_key_hex": "0000000000000000000000000000000000000000000000000000000000000010",
+      "shard_count": 16,
+      "shard_index": 0
+    },
+    {
+      "tree_key_hex": "00000000000000000000000000000000000000000000000000000000000000ff",
+      "shard_count": 16,
+      "shard_index": 15
+    },
+    {
+      "tree_key_hex": "0f00000000000000000000000000000000000000000000000000000000000000",
+      "shard_count": 16,
+      "shard_index": 0
+    }
+  ],
+  "real": [
+    {
+      "collection": "Tribute",
+      "tree_key_hex": "25a765342d7a4c06cc0c36c337dbd5d7fbc5d2d98140b89d8086e5337ce817fa",
+      "shard_index": 10
+    },
+    {
+      "collection": "NodItem",
+      "tree_key_hex": "05e1737089dcf8e7ec8f7fde081f60028868c8fe014fa80bacd36fb02734a2fa",
+      "shard_index": 10
+    },
+    {
+      "collection": "NodBucket",
+      "tree_key_hex": "19490606cdc2aaa6f511bba1173d6876f226793b309a4bf88a50fb65d3f332a7",
+      "shard_index": 7
+    }
+  ]
+}

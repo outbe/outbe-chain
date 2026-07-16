@@ -191,6 +191,14 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
+# Compressed-entity schema V2. ADR-009's provisional K_TEST=16 layout has a
+# non-zero all-empty shard-top root and must be present in authoritative EVM
+# storage from genesis so the CE MDBX height-0 marker binds the same root.
+COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 2
+COMPRESSED_ENTITIES_K_TEST_16_EMPTY_ROOT = int(
+    "1fd758a4ca8aadda625825fd7f9a75f8ba9012e2afa66ad76ee23a5fa3c06e5c", 16
+)
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config; the rest of the
 # registry is written by the block-1 `TeeBootstrap` system tx. The account is
@@ -221,7 +229,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     GOVERNANCE_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
-    ZEROFEE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
 ]
 
 # Protocol-owned balance accumulators without precompile dispatch. They are
@@ -1106,6 +1114,12 @@ def seed_accounting_progress(storage: StorageBuilder):
     storage.set_slot(0, 0)
 
 
+def seed_compressed_entities(storage: StorageBuilder):
+    """Seed schema V2 and ADR-009 K_TEST=16's authoritative empty top root."""
+    storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
+    storage.set_slot(1, COMPRESSED_ENTITIES_K_TEST_16_EMPTY_ROOT)
+
+
 def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
     """
     Governance storage layout. All seeded fields are one slot each and precede
@@ -1589,6 +1603,16 @@ def main():
     print(
         f"  AccountingProgress: slot 0 = 0, "
         f"{len(accounting_storage.entries)} storage entries"
+    )
+
+    compressed_entities_storage = StorageBuilder()
+    seed_compressed_entities(compressed_entities_storage)
+    alloc[COMPRESSED_ENTITIES_ADDRESS].setdefault("storage", {}).update(
+        compressed_entities_storage.entries
+    )
+    print(
+        "  CompressedEntities: slot 0 = 2, "
+        "slot 1 = ADR-009 K_TEST=16 empty shard-top root"
     )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README

@@ -73,7 +73,7 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
         block_number: u64,
         _mutations: &[FinalLeafMutation],
     ) -> Result<ProvisionalTreeBatch> {
-        ProvisionalTreeBatch::new(
+        ProvisionalTreeBatch::new_unsharded(
             block_number,
             B256::ZERO,
             B256::ZERO,

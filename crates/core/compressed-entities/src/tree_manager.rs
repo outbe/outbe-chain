@@ -89,6 +89,12 @@ impl CompressedTreeService {
             .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
         let current = self.db.marker()?;
         let batch = provisional.freeze(block_hash);
+        if batch.shard_count() != self.db.identity().shard_count {
+            return Err(TreeServiceError::ShardCountMismatch {
+                expected: self.db.identity().shard_count,
+                actual: batch.shard_count(),
+            });
+        }
         if current.height == batch.block_number
             && current.block_hash == batch.block_hash
             && current.parent_block_hash == batch.parent_block_hash
@@ -271,6 +277,8 @@ pub enum TreeServiceError {
     Persistence(#[from] PersistenceError),
     #[error(transparent)]
     Staging(#[from] StagingError),
+    #[error("candidate shard count mismatch: expected {expected}, got {actual}")]
+    ShardCountMismatch { expected: u32, actual: u32 },
     #[error("unable to open exact compressed-tree parent: {0}")]
     ParentView(PrecompileError),
     #[error("compressed-tree {0} lock is poisoned")]
@@ -318,8 +326,9 @@ mod tests {
     use outbe_common::WorldwideDay;
 
     use crate::{
+        empty_shard_top_root,
         persistence::{EnvironmentIdentity, LOCAL_STORAGE_SCHEMA_VERSION},
-        Commitment, EntityId36, EntityRef, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME,
+        Commitment, EntityId36, EntityRef, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME, K_TEST,
     };
 
     fn b256(last: u8) -> B256 {
@@ -334,7 +343,8 @@ mod tests {
             chain_id: 8080,
             genesis_hash: b256(1),
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            shard_count: K_TEST,
+            tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         }
     }
@@ -346,7 +356,7 @@ mod tests {
             block_hash: environment().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: empty_shard_top_root(K_TEST).unwrap(),
         }
     }
 
@@ -368,7 +378,7 @@ mod tests {
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
             block_number: 0,
             block_hash: genesis().block_hash,
-            root: B256::ZERO,
+            root: genesis().new_root,
         }
     }
 
@@ -458,7 +468,7 @@ mod tests {
         );
 
         let staged = service.candidate(1, block_hash).unwrap().unwrap();
-        assert_eq!(staged.parent_root, B256::ZERO);
+        assert_eq!(staged.parent_root, genesis().new_root);
         let new_root = staged.new_root;
         assert_eq!(
             service.apply_finalized(1, block_hash, new_root).unwrap(),
@@ -478,6 +488,65 @@ mod tests {
         assert_eq!(
             reopened.read_leaf_verified(entity, new_root).unwrap(),
             Some(commitment)
+        );
+    }
+
+    #[test]
+    fn one_candidate_atomically_seals_and_reopens_changes_from_multiple_shards() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = service(directory.path());
+        let identity = EntityId36::try_from(
+            hex::decode("00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+        let tribute = EntityRef::Tribute(identity);
+        let bucket = EntityRef::NodBucket(identity);
+        let tribute_leaf = Commitment::try_from(b256(11).0).unwrap();
+        let bucket_leaf = Commitment::try_from(b256(12).0).unwrap();
+
+        let parent = service.open_parent(genesis_identity()).unwrap();
+        let provisional = parent
+            .prepare_seal(
+                1,
+                &[
+                    FinalLeafMutation {
+                        entity: tribute,
+                        final_leaf: Some(tribute_leaf),
+                    },
+                    FinalLeafMutation {
+                        entity: bucket,
+                        final_leaf: Some(bucket_leaf),
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(provisional.shard_count(), K_TEST);
+        assert_eq!(provisional.changed_shard_count(), 2);
+        assert_eq!(provisional.parent_shard_roots().len(), 16);
+        assert_eq!(provisional.new_shard_roots().len(), 16);
+
+        let block_hash = b256(91);
+        let new_root = provisional.new_root();
+        service.publish_candidate(block_hash, provisional).unwrap();
+        service.apply_finalized(1, block_hash, new_root).unwrap();
+
+        let reopened = service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 1,
+                block_hash,
+                root: new_root,
+            })
+            .unwrap();
+        assert_eq!(
+            reopened.read_leaf_verified(tribute, new_root).unwrap(),
+            Some(tribute_leaf)
+        );
+        assert_eq!(
+            reopened.read_leaf_verified(bucket, new_root).unwrap(),
+            Some(bucket_leaf)
         );
     }
 
@@ -550,12 +619,15 @@ mod tests {
     fn stale_or_wrong_parent_candidate_is_rejected_before_cache_publication() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
+        let empty_root = empty_shard_top_root(K_TEST).unwrap();
         let wrong_parent = ProvisionalTreeBatch::new(
             1,
             b256(44),
-            B256::ZERO,
-            B256::ZERO,
-            Default::default(),
+            empty_root,
+            empty_root,
+            K_TEST,
+            vec![B256::ZERO; K_TEST as usize],
+            vec![B256::ZERO; K_TEST as usize],
             Default::default(),
         )
         .unwrap();

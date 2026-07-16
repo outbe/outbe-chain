@@ -18,17 +18,15 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    begin_block, body_commitment, encode_nod_item_v1, identity_field, ExecutionScope,
+    begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
+    Commitment, EntityRef, ExecutionScope, FinalLeafMutation, ProvisionalTreeBatch,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_evm::sub_call;
 use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
-use outbe_primitives::addresses::{
-    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
-};
-use outbe_primitives::storage::types::StorageKey;
+use outbe_primitives::addresses::{NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
@@ -41,6 +39,47 @@ use revm::{
 };
 
 const CALLER: Address = Address::new([0xC0; 20]);
+
+#[derive(Debug)]
+struct StaticAuthenticatedParent {
+    entity: EntityRef,
+    commitment: Commitment,
+}
+
+impl AuthenticatedParentTree for StaticAuthenticatedParent {
+    fn parent_block_hash(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn parent_root(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn read_leaf_verified(
+        &self,
+        entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> outbe_primitives::error::Result<Option<Commitment>> {
+        assert_eq!(expected_parent_root, B256::ZERO);
+        Ok((entity == self.entity).then_some(self.commitment))
+    }
+
+    fn prepare_seal(
+        &self,
+        block_number: u64,
+        _mutations: &[FinalLeafMutation],
+    ) -> outbe_primitives::error::Result<ProvisionalTreeBatch> {
+        ProvisionalTreeBatch::new_unsharded(
+            block_number,
+            B256::ZERO,
+            B256::ZERO,
+            B256::ZERO,
+            Default::default(),
+            Default::default(),
+        )
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+    }
+}
 
 #[test]
 fn subcall_reaches_outbe_poseidon_precompile() {
@@ -132,17 +171,14 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();
     let commitment =
         body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
-    let direct_key = U256::from_be_bytes(identity_field(nod_id).unwrap());
-    let direct_slot = direct_key.mapping_slot(U256::from(2));
     let mut database = CacheDB::new(EmptyDB::default());
-    database
-        .insert_account_storage(
-            COMPRESSED_ENTITIES_ADDRESS,
-            direct_slot,
-            commitment.to_u256(),
-        )
-        .unwrap();
-    let scope = Arc::new(ExecutionScope::new());
+    let scope = Arc::new(ExecutionScope::with_parent_tree(
+        Arc::new(StaticAuthenticatedParent {
+            entity: EntityRef::NodItem(nod_id),
+            commitment,
+        }),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    ));
     let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
@@ -173,7 +209,12 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     )
     .expect("repository-backed Nod sub-call must execute");
 
-    assert!(matches!(result.status, SubCallStatus::Success));
+    assert!(
+        matches!(result.status, SubCallStatus::Success),
+        "expected Success, got {:?} with returndata 0x{}",
+        result.status,
+        hex::encode(&result.returndata),
+    );
     assert_eq!(
         INod::ownerOfCall::abi_decode_returns(&result.returndata).unwrap(),
         owner

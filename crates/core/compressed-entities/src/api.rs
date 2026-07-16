@@ -157,21 +157,29 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
             updates.push((key, leaf));
             let persisted_key = crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
                 .map_err(|error| fatal_scope(error.to_string()))?;
-            let change = match mutation.final_leaf {
-                Some(commitment) => crate::TreeChange::Set(
-                    crate::persistence::LeafValue::try_from(B256::from(*commitment.as_bytes()))
-                        .map_err(|error| fatal_scope(error.to_string()))?,
-                ),
-                None => crate::TreeChange::Delete,
-            };
-            if leaf_changes.insert(persisted_key, change).is_some() {
-                return Err(fatal_scope("compressed-entity tree-key collision"));
+            let change = mutation
+                .final_leaf
+                .map(
+                    |commitment| -> Result<crate::TreeChange<crate::persistence::LeafValue>> {
+                        Ok(crate::TreeChange::Set(
+                            crate::persistence::LeafValue::try_from(B256::from(
+                                *commitment.as_bytes(),
+                            ))
+                            .map_err(|error| fatal_scope(error.to_string()))?,
+                        ))
+                    },
+                )
+                .transpose()?;
+            if let Some(change) = change {
+                if leaf_changes.insert(persisted_key, change).is_some() {
+                    return Err(fatal_scope("compressed-entity tree-key collision"));
+                }
             }
         }
         let new_root = tree
             .update_all(updates)
             .map_err(|error| fatal_scope(error.to_string()))?;
-        crate::ProvisionalTreeBatch::new(
+        crate::ProvisionalTreeBatch::new_unsharded(
             block_number,
             B256::ZERO,
             B256::ZERO,

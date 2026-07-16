@@ -22,9 +22,12 @@ use reth_db::{
 };
 use thiserror::Error;
 
-use crate::staging::{FinalizedTreeSnapshot, StagedTreeBatch, StagingError, TreeChange};
+use crate::{
+    sharding::aggregate_b256_shard_roots,
+    staging::{FinalizedTreeSnapshot, ShardIndex, StagedTreeBatch, StagingError, TreeChange},
+};
 
-pub const LOCAL_STORAGE_SCHEMA_VERSION: u32 = 1;
+pub const LOCAL_STORAGE_SCHEMA_VERSION: u32 = 2;
 pub const FINALIZED_MARKER_ENCODED_LEN: usize = 4 + 8 + 32 * 4;
 pub const CE_SMT_RELATIVE_PATH: &str = "compressed_entities/smt";
 
@@ -309,6 +312,7 @@ pub struct EnvironmentIdentity {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub commitment_scheme_version: u32,
+    pub shard_count: u32,
     pub tree_format: String,
     pub vendor_revision: String,
 }
@@ -320,11 +324,12 @@ impl EnvironmentIdentity {
         let tree_len = u16::try_from(tree.len()).map_err(|_| PersistenceError::LengthOverflow)?;
         let vendor_len =
             u16::try_from(vendor.len()).map_err(|_| PersistenceError::LengthOverflow)?;
-        let mut bytes = Vec::with_capacity(52 + tree.len() + vendor.len());
+        let mut bytes = Vec::with_capacity(56 + tree.len() + vendor.len());
         bytes.extend_from_slice(&self.local_storage_schema_version.to_be_bytes());
         bytes.extend_from_slice(&self.chain_id.to_be_bytes());
         bytes.extend_from_slice(self.genesis_hash.as_slice());
         bytes.extend_from_slice(&self.commitment_scheme_version.to_be_bytes());
+        bytes.extend_from_slice(&self.shard_count.to_be_bytes());
         bytes.extend_from_slice(&tree_len.to_be_bytes());
         bytes.extend_from_slice(tree);
         bytes.extend_from_slice(&vendor_len.to_be_bytes());
@@ -338,6 +343,7 @@ impl EnvironmentIdentity {
         let chain_id = decoder.u64()?;
         let genesis_hash = decoder.b256()?;
         let commitment_scheme_version = decoder.u32()?;
+        let shard_count = decoder.u32()?;
         let tree_format = decoder.string_u16()?;
         let vendor_revision = decoder.string_u16()?;
         decoder.finish()?;
@@ -346,6 +352,7 @@ impl EnvironmentIdentity {
             chain_id,
             genesis_hash,
             commitment_scheme_version,
+            shard_count,
             tree_format,
             vendor_revision,
         })
@@ -582,7 +589,7 @@ mod tables {
     #[derive(Debug)]
     pub struct CeMetadata;
     impl Table for CeMetadata {
-        const NAME: &'static str = "OutbeCompressedEntitiesMetadataV1";
+        const NAME: &'static str = "OutbeCompressedEntitiesMetadataV2";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
@@ -599,7 +606,7 @@ mod tables {
     #[derive(Debug)]
     pub struct CeBranches;
     impl Table for CeBranches {
-        const NAME: &'static str = "OutbeCompressedEntitiesBranchesV1";
+        const NAME: &'static str = "OutbeCompressedEntitiesBranchesV2";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
@@ -616,12 +623,29 @@ mod tables {
     #[derive(Debug)]
     pub struct CeLeaves;
     impl Table for CeLeaves {
-        const NAME: &'static str = "OutbeCompressedEntitiesLeavesV1";
+        const NAME: &'static str = "OutbeCompressedEntitiesLeavesV2";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
     }
     impl TableInfo for CeLeaves {
+        fn name(&self) -> &'static str {
+            <Self as Table>::NAME
+        }
+        fn is_dupsort(&self) -> bool {
+            <Self as Table>::DUPSORT
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct CeShardRoots;
+    impl Table for CeShardRoots {
+        const NAME: &'static str = "OutbeCompressedEntitiesShardRootsV2";
+        const DUPSORT: bool = false;
+        type Key = Vec<u8>;
+        type Value = Vec<u8>;
+    }
+    impl TableInfo for CeShardRoots {
         fn name(&self) -> &'static str {
             <Self as Table>::NAME
         }
@@ -639,6 +663,7 @@ mod tables {
                     Box::new(CeMetadata) as Box<dyn TableInfo>,
                     Box::new(CeBranches) as Box<dyn TableInfo>,
                     Box::new(CeLeaves) as Box<dyn TableInfo>,
+                    Box::new(CeShardRoots) as Box<dyn TableInfo>,
                 ]
                 .into_iter(),
             )
@@ -671,6 +696,14 @@ impl CeMdbx {
         {
             return Err(PersistenceError::EmptyEnvironmentIdentityField);
         }
+        if expected_identity.shard_count == 0
+            || expected_identity.shard_count > 32
+            || !expected_identity.shard_count.is_power_of_two()
+        {
+            return Err(PersistenceError::InvalidShardCount {
+                actual: expected_identity.shard_count,
+            });
+        }
         if genesis_marker.height != 0 || genesis_marker.block_hash != expected_identity.genesis_hash
         {
             return Err(PersistenceError::InvalidGenesisMarker {
@@ -683,6 +716,22 @@ impl CeMdbx {
         }
         validate_root(genesis_marker.parent_root)?;
         validate_root(genesis_marker.new_root)?;
+        let empty_roots = vec![
+            B256::ZERO;
+            usize::try_from(expected_identity.shard_count).map_err(|_| {
+                PersistenceError::InvalidShardCount {
+                    actual: expected_identity.shard_count,
+                }
+            })?
+        ];
+        let expected_genesis_root = aggregate_b256_shard_roots(&empty_roots)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        if genesis_marker.new_root != expected_genesis_root {
+            return Err(PersistenceError::InvalidGenesisShardRoot {
+                expected: expected_genesis_root,
+                actual: genesis_marker.new_root,
+            });
+        }
 
         let path = datadir.join(CE_SMT_RELATIVE_PATH);
         std::fs::create_dir_all(&path).map_err(|error| PersistenceError::Io {
@@ -735,10 +784,13 @@ impl CeMdbx {
     pub fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {
         let tx = self.tx()?;
         let marker = read_marker(&tx, &self.path)?;
+        let shard_roots =
+            read_shard_roots(&tx, &self.path, self.identity.shard_count, marker.new_root)?;
         Ok(Box::new(MdbxSnapshot {
             path: self.path.clone(),
             tx,
             marker,
+            shard_roots,
         }))
     }
 
@@ -753,10 +805,18 @@ impl CeMdbx {
             .map_err(|error| PersistenceError::Staging(error.to_string()))?;
         validate_root(batch.parent_root)?;
         validate_root(batch.new_root)?;
+        if batch.shard_count != self.identity.shard_count {
+            return Err(PersistenceError::ShardCountMismatch {
+                expected: self.identity.shard_count,
+                actual: batch.shard_count,
+            });
+        }
         let next = batch.marker(self.identity.commitment_scheme_version);
-        let current = self.marker()?;
+        let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
+        let current = read_marker(&tx, &self.path)?;
 
         if next == current {
+            tx.commit().map_err(|error| self.db_error(error))?;
             return Ok(ApplyOutcome::AlreadyApplied(current));
         }
         if next.height <= current.height {
@@ -770,30 +830,58 @@ impl CeMdbx {
             return Err(PersistenceError::NonContiguousFinalizedApply { current, next });
         }
 
-        let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
-        for (key, change) in &batch.branch_changes {
-            let key = key.encode().to_vec();
-            match change {
-                TreeChange::Set(node) => tx
-                    .put::<tables::CeBranches>(key, node.encode())
-                    .map_err(|error| self.db_error(error))?,
-                TreeChange::Delete => {
-                    tx.delete::<tables::CeBranches>(key, None)
-                        .map_err(|error| self.db_error(error))?;
-                }
-            }
+        let persisted_roots =
+            read_shard_roots(&tx, &self.path, self.identity.shard_count, current.new_root)?;
+        if persisted_roots != batch.parent_shard_roots {
+            return Err(PersistenceError::ParentShardRootsMismatch);
         }
-        for (key, change) in &batch.leaf_changes {
-            let key = key.encode().to_vec();
-            match change {
-                TreeChange::Set(value) => tx
-                    .put::<tables::CeLeaves>(key, value.encode().to_vec())
-                    .map_err(|error| self.db_error(error))?,
-                TreeChange::Delete => {
-                    tx.delete::<tables::CeLeaves>(key, None)
-                        .map_err(|error| self.db_error(error))?;
+        let mut resulting_roots = persisted_roots;
+        for (shard_index, shard) in &batch.changed_shards {
+            for (key, change) in &shard.branch_changes {
+                let key = prefixed_key(*shard_index, &key.encode());
+                match change {
+                    TreeChange::Set(node) => tx
+                        .put::<tables::CeBranches>(key, node.encode())
+                        .map_err(|error| self.db_error(error))?,
+                    TreeChange::Delete => {
+                        tx.delete::<tables::CeBranches>(key, None)
+                            .map_err(|error| self.db_error(error))?;
+                    }
                 }
             }
+            for (key, change) in &shard.leaf_changes {
+                let key = prefixed_key(*shard_index, &key.encode());
+                match change {
+                    TreeChange::Set(value) => tx
+                        .put::<tables::CeLeaves>(key, value.encode().to_vec())
+                        .map_err(|error| self.db_error(error))?,
+                    TreeChange::Delete => {
+                        tx.delete::<tables::CeLeaves>(key, None)
+                            .map_err(|error| self.db_error(error))?;
+                    }
+                }
+            }
+            tx.put::<tables::CeShardRoots>(
+                shard_index.to_be_bytes().to_vec(),
+                shard.new_shard_root.as_slice().to_vec(),
+            )
+            .map_err(|error| self.db_error(error))?;
+            resulting_roots[usize::try_from(*shard_index).map_err(|_| {
+                PersistenceError::InvalidShardCount {
+                    actual: *shard_index,
+                }
+            })?] = shard.new_shard_root;
+        }
+        if resulting_roots != batch.new_shard_roots {
+            return Err(PersistenceError::NewShardRootsMismatch);
+        }
+        let resulting_root = aggregate_b256_shard_roots(&resulting_roots)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        if resulting_root != batch.new_root {
+            return Err(PersistenceError::ShardRootAggregateMismatch {
+                expected: batch.new_root,
+                actual: resulting_root,
+            });
         }
         // Progress is deliberately the final write in this transaction.
         tx.put::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec(), next.encode().to_vec())
@@ -825,20 +913,31 @@ impl CeMdbx {
         let leaf_records = tx
             .entries::<tables::CeLeaves>()
             .map_err(|error| self.db_error(error))?;
+        let shard_root_records = tx
+            .entries::<tables::CeShardRoots>()
+            .map_err(|error| self.db_error(error))?;
         tx.commit().map_err(|error| self.db_error(error))?;
 
         match (stored_identity, stored_marker) {
             (None, None) => {
-                if branch_records != 0 || leaf_records != 0 {
+                if branch_records != 0 || leaf_records != 0 || shard_root_records != 0 {
                     return Err(PersistenceError::OrphanTreeRecords {
                         branches: branch_records,
                         leaves: leaf_records,
+                        shard_roots: shard_root_records,
                     });
                 }
                 let identity = expected_identity.encode()?;
                 let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
                 tx.put::<tables::CeMetadata>(IDENTITY_KEY.to_vec(), identity)
                     .map_err(|error| self.db_error(error))?;
+                for shard_index in 0..expected_identity.shard_count {
+                    tx.put::<tables::CeShardRoots>(
+                        shard_index.to_be_bytes().to_vec(),
+                        B256::ZERO.as_slice().to_vec(),
+                    )
+                    .map_err(|error| self.db_error(error))?;
+                }
                 tx.put::<tables::CeMetadata>(
                     LAST_APPLIED_KEY.to_vec(),
                     genesis_marker.encode().to_vec(),
@@ -863,6 +962,14 @@ impl CeMdbx {
                 if marker.commitment_scheme_version != expected_identity.commitment_scheme_version {
                     return Err(PersistenceError::EnvironmentMarkerSchemeMismatch);
                 }
+                let tx = self.tx()?;
+                read_shard_roots(
+                    &tx,
+                    &self.path,
+                    expected_identity.shard_count,
+                    marker.new_root,
+                )?;
+                tx.commit().map_err(|error| self.db_error(error))?;
             }
             _ => return Err(PersistenceError::PartialEnvironmentInitialization),
         }
@@ -885,6 +992,7 @@ struct MdbxSnapshot {
     path: PathBuf,
     tx: Tx<RO>,
     marker: FinalizedMarker,
+    shard_roots: Vec<B256>,
 }
 
 impl FinalizedTreeSnapshot for MdbxSnapshot {
@@ -892,9 +1000,17 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
         Ok(self.marker)
     }
 
-    fn read_branch(&self, key: BranchKey) -> Result<Option<BranchNode>, PersistenceError> {
+    fn shard_roots(&self) -> Result<Vec<B256>, PersistenceError> {
+        Ok(self.shard_roots.clone())
+    }
+
+    fn read_branch(
+        &self,
+        shard_index: ShardIndex,
+        key: BranchKey,
+    ) -> Result<Option<BranchNode>, PersistenceError> {
         self.tx
-            .get::<tables::CeBranches>(key.encode().to_vec())
+            .get::<tables::CeBranches>(prefixed_key(shard_index, &key.encode()))
             .map_err(|error| PersistenceError::Database {
                 path: self.path.clone(),
                 message: error.to_string(),
@@ -903,9 +1019,13 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
             .transpose()
     }
 
-    fn read_leaf(&self, key: TreeKey) -> Result<Option<LeafValue>, PersistenceError> {
+    fn read_leaf(
+        &self,
+        shard_index: ShardIndex,
+        key: TreeKey,
+    ) -> Result<Option<LeafValue>, PersistenceError> {
         self.tx
-            .get::<tables::CeLeaves>(key.encode().to_vec())
+            .get::<tables::CeLeaves>(prefixed_key(shard_index, &key.encode()))
             .map_err(|error| PersistenceError::Database {
                 path: self.path.clone(),
                 message: error.to_string(),
@@ -915,7 +1035,57 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
     }
 }
 
-fn read_marker(tx: &Tx<RO>, path: &Path) -> Result<FinalizedMarker, PersistenceError> {
+fn prefixed_key(shard_index: ShardIndex, key: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(4 + key.len());
+    output.extend_from_slice(&shard_index.to_be_bytes());
+    output.extend_from_slice(key);
+    output
+}
+
+fn read_shard_roots<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    shard_count: u32,
+    authoritative_root: B256,
+) -> Result<Vec<B256>, PersistenceError> {
+    let actual =
+        tx.entries::<tables::CeShardRoots>()
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    let expected =
+        usize::try_from(shard_count).map_err(|_| PersistenceError::InvalidShardCount {
+            actual: shard_count,
+        })?;
+    if actual != expected {
+        return Err(PersistenceError::ShardRootCountMismatch { expected, actual });
+    }
+    let mut roots = Vec::with_capacity(expected);
+    for index in 0..shard_count {
+        let bytes = tx
+            .get::<tables::CeShardRoots>(index.to_be_bytes().to_vec())
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?
+            .ok_or(PersistenceError::MissingShardRoot { index })?;
+        let root = decode_b256(&bytes, "shard root")?;
+        validate_root(root)?;
+        roots.push(root);
+    }
+    let aggregate = aggregate_b256_shard_roots(&roots)
+        .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+    if aggregate != authoritative_root {
+        return Err(PersistenceError::ShardRootAggregateMismatch {
+            expected: authoritative_root,
+            actual: aggregate,
+        });
+    }
+    Ok(roots)
+}
+
+fn read_marker<T: DbTx>(tx: &T, path: &Path) -> Result<FinalizedMarker, PersistenceError> {
     let bytes = tx
         .get::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec())
         .map_err(|error| PersistenceError::Database {
@@ -1037,6 +1207,10 @@ pub enum PersistenceError {
     },
     #[error("unsupported CE local storage schema {actual}")]
     UnsupportedLocalSchema { actual: u32 },
+    #[error("invalid CE shard count {actual}")]
+    InvalidShardCount { actual: u32 },
+    #[error("CE batch shard count mismatch: expected {expected}, got {actual}")]
+    ShardCountMismatch { expected: u32, actual: u32 },
     #[error("environment identity does not match: expected {expected:?}, actual {actual:?}")]
     EnvironmentIdentityMismatch {
         expected: EnvironmentIdentity,
@@ -1045,9 +1219,13 @@ pub enum PersistenceError {
     #[error("environment identity and finalized marker are only partially initialized")]
     PartialEnvironmentInitialization,
     #[error(
-        "CE MDBX contains tree records without identity/marker: {branches} branches, {leaves} leaves"
+        "CE MDBX contains tree records without identity/marker: {branches} branches, {leaves} leaves, {shard_roots} shard roots"
     )]
-    OrphanTreeRecords { branches: usize, leaves: usize },
+    OrphanTreeRecords {
+        branches: usize,
+        leaves: usize,
+        shard_roots: usize,
+    },
     #[error("environment and finalized marker commitment schemes differ")]
     EnvironmentMarkerSchemeMismatch,
     #[error("tree format and vendor revision must be non-empty")]
@@ -1057,8 +1235,20 @@ pub enum PersistenceError {
         expected_genesis_hash: B256,
         actual: FinalizedMarker,
     },
+    #[error("invalid height-0 shard top root: expected {expected}, got {actual}")]
+    InvalidGenesisShardRoot { expected: B256, actual: B256 },
     #[error("finalized marker is missing")]
     MissingFinalizedMarker,
+    #[error("missing persisted shard root {index}")]
+    MissingShardRoot { index: u32 },
+    #[error("persisted shard root count mismatch: expected {expected}, got {actual}")]
+    ShardRootCountMismatch { expected: usize, actual: usize },
+    #[error("persisted parent shard roots differ from candidate vector")]
+    ParentShardRootsMismatch,
+    #[error("persisted resulting shard roots differ from candidate vector")]
+    NewShardRootsMismatch,
+    #[error("shard-root aggregate mismatch: expected {expected}, got {actual}")]
+    ShardRootAggregateMismatch { expected: B256, actual: B256 },
     #[error("malformed {record}: expected {expected}, got {actual} bytes")]
     MalformedCodec {
         record: &'static str,
@@ -1120,6 +1310,12 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    use crate::{
+        empty_shard_top_root,
+        staging::{ProvisionalShardBatch, ProvisionalTreeBatch},
+        K_TEST,
+    };
+
     fn b256(last: u8) -> B256 {
         let mut bytes = [0_u8; 32];
         bytes[31] = last;
@@ -1139,12 +1335,33 @@ mod tests {
 
     fn identity() -> EnvironmentIdentity {
         EnvironmentIdentity {
-            local_storage_schema_version: 1,
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
             chain_id: 99,
             genesis_hash: b256(42),
             commitment_scheme_version: 1,
+            shard_count: 1,
             tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+        }
+    }
+
+    fn sharded_identity(shard_count: u32) -> EnvironmentIdentity {
+        EnvironmentIdentity {
+            shard_count,
+            tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v1".to_owned(),
+            ..identity()
+        }
+    }
+
+    fn sharded_genesis(shard_count: u32) -> FinalizedMarker {
+        let identity = sharded_identity(shard_count);
+        FinalizedMarker {
+            commitment_scheme_version: identity.commitment_scheme_version,
+            height: 0,
+            block_hash: identity.genesis_hash,
+            parent_block_hash: B256::ZERO,
+            parent_root: B256::ZERO,
+            new_root: empty_shard_top_root(shard_count).unwrap(),
         }
     }
 
@@ -1298,16 +1515,16 @@ mod tests {
 
     #[test]
     fn no_change_batch_still_carries_a_complete_next_marker() {
-        let batch = StagedTreeBatch {
-            block_number: 8,
-            block_hash: b256(8),
-            parent_block_hash: b256(7),
-            parent_root: b256(18),
-            new_root: b256(18),
-            branch_changes: BTreeMap::new(),
-            leaf_changes: BTreeMap::new(),
-            encoded_size: 0,
-        };
+        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
+            8,
+            b256(7),
+            b256(18),
+            b256(18),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .unwrap()
+        .freeze(b256(8));
         let next = batch.marker(1);
         assert_eq!(next.height, 8);
         assert_eq!(next.parent_root, next.new_root);
@@ -1333,7 +1550,7 @@ mod tests {
             left: MergeValue::Value(FieldValue::try_from(b256(6)).unwrap()),
             right: MergeValue::Value(FieldValue::try_from(b256(7)).unwrap()),
         };
-        let batch = crate::staging::ProvisionalTreeBatch::new(
+        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
             1,
             genesis.block_hash,
             genesis.new_root,
@@ -1352,8 +1569,8 @@ mod tests {
         );
         let snapshot = store.open_snapshot().unwrap();
         assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
-        assert_eq!(snapshot.read_leaf(tree_key).unwrap(), Some(leaf));
-        assert_eq!(snapshot.read_branch(branch_key).unwrap(), Some(branch));
+        assert_eq!(snapshot.read_leaf(0, tree_key).unwrap(), Some(leaf));
+        assert_eq!(snapshot.read_branch(0, branch_key).unwrap(), Some(branch));
 
         drop(snapshot);
         drop(store);
@@ -1373,13 +1590,16 @@ mod tests {
             new_root: B256::ZERO,
         };
         let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
-        let gap = crate::staging::ProvisionalTreeBatch::new(
+        let gap = crate::staging::ProvisionalTreeBatch::new_unsharded(
             2,
             genesis.block_hash,
             genesis.new_root,
             b256(51),
             BTreeMap::new(),
-            BTreeMap::new(),
+            BTreeMap::from([(
+                TreeKey::try_from(b256(1)).unwrap(),
+                TreeChange::Set(LeafValue::try_from(b256(2)).unwrap()),
+            )]),
         )
         .unwrap()
         .freeze(b256(52));
@@ -1388,13 +1608,16 @@ mod tests {
             Err(PersistenceError::NonContiguousFinalizedApply { .. })
         ));
 
-        let mut malformed = crate::staging::ProvisionalTreeBatch::new(
+        let mut malformed = crate::staging::ProvisionalTreeBatch::new_unsharded(
             1,
             genesis.block_hash,
             genesis.new_root,
             b256(51),
             BTreeMap::new(),
-            BTreeMap::new(),
+            BTreeMap::from([(
+                TreeKey::try_from(b256(1)).unwrap(),
+                TreeChange::Set(LeafValue::try_from(b256(2)).unwrap()),
+            )]),
         )
         .unwrap()
         .freeze(b256(51));
@@ -1421,7 +1644,7 @@ mod tests {
         let old_snapshot = store.open_snapshot().unwrap();
         let tree_key = TreeKey::try_from(b256(10)).unwrap();
         let leaf = LeafValue::try_from(b256(11)).unwrap();
-        let batch = crate::staging::ProvisionalTreeBatch::new(
+        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
             1,
             genesis.block_hash,
             genesis.new_root,
@@ -1434,10 +1657,10 @@ mod tests {
         store.apply_finalized(&batch).unwrap();
 
         assert_eq!(old_snapshot.marker().unwrap(), genesis);
-        assert_eq!(old_snapshot.read_leaf(tree_key).unwrap(), None);
+        assert_eq!(old_snapshot.read_leaf(0, tree_key).unwrap(), None);
         let new_snapshot = store.open_snapshot().unwrap();
         assert_eq!(new_snapshot.marker().unwrap(), batch.marker(1));
-        assert_eq!(new_snapshot.read_leaf(tree_key).unwrap(), Some(leaf));
+        assert_eq!(new_snapshot.read_leaf(0, tree_key).unwrap(), Some(leaf));
     }
 
     #[test]
@@ -1459,5 +1682,142 @@ mod tests {
             CeMdbx::open(directory.path(), wrong, genesis),
             Err(PersistenceError::EnvironmentIdentityMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn v2_initializes_exact_k_roots_and_rejects_k_drift() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = sharded_identity(K_TEST);
+        let genesis = sharded_genesis(K_TEST);
+        assert_ne!(genesis.new_root, B256::ZERO);
+
+        let store = CeMdbx::open(directory.path(), identity.clone(), genesis).unwrap();
+        let snapshot = store.open_snapshot().unwrap();
+        assert_eq!(
+            snapshot.shard_roots().unwrap(),
+            vec![B256::ZERO; K_TEST as usize]
+        );
+        assert_eq!(snapshot.marker().unwrap(), genesis);
+        drop(snapshot);
+        drop(store);
+
+        let wrong_k = K_TEST / 2;
+        assert!(matches!(
+            CeMdbx::open(
+                directory.path(),
+                sharded_identity(wrong_k),
+                sharded_genesis(wrong_k),
+            ),
+            Err(PersistenceError::EnvironmentIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn v2_reopen_rejects_missing_or_extra_shard_root_records() {
+        for corrupt in ["missing", "extra"] {
+            let directory = tempfile::tempdir().unwrap();
+            let identity = sharded_identity(K_TEST);
+            let genesis = sharded_genesis(K_TEST);
+            let store = CeMdbx::open(directory.path(), identity.clone(), genesis).unwrap();
+            let tx = store.db.tx_mut().unwrap();
+            if corrupt == "missing" {
+                tx.delete::<tables::CeShardRoots>((K_TEST - 1).to_be_bytes().to_vec(), None)
+                    .unwrap();
+            } else {
+                tx.put::<tables::CeShardRoots>(K_TEST.to_be_bytes().to_vec(), B256::ZERO.to_vec())
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+            drop(store);
+
+            assert!(matches!(
+                CeMdbx::open(directory.path(), identity, genesis),
+                Err(PersistenceError::ShardRootCountMismatch { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn v2_leaf_namespaces_are_isolated_by_be4_shard_prefix() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = sharded_identity(K_TEST);
+        let genesis = sharded_genesis(K_TEST);
+        let store = CeMdbx::open(directory.path(), identity, genesis).unwrap();
+        let key = TreeKey::try_from(b256(3)).unwrap();
+        let first = LeafValue::try_from(b256(4)).unwrap();
+        let second = LeafValue::try_from(b256(5)).unwrap();
+        let tx = store.db.tx_mut().unwrap();
+        tx.put::<tables::CeLeaves>(prefixed_key(1, &key.encode()), first.encode().to_vec())
+            .unwrap();
+        tx.put::<tables::CeLeaves>(prefixed_key(2, &key.encode()), second.encode().to_vec())
+            .unwrap();
+        tx.commit().unwrap();
+
+        let snapshot = store.open_snapshot().unwrap();
+        assert_eq!(snapshot.read_leaf(0, key).unwrap(), None);
+        assert_eq!(snapshot.read_leaf(1, key).unwrap(), Some(first));
+        assert_eq!(snapshot.read_leaf(2, key).unwrap(), Some(second));
+    }
+
+    #[test]
+    fn v2_applies_two_changed_shards_under_one_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = sharded_identity(K_TEST);
+        let genesis = sharded_genesis(K_TEST);
+        let store = CeMdbx::open(directory.path(), identity, genesis).unwrap();
+        let key_one = TreeKey::try_from(b256(1)).unwrap();
+        let key_two = TreeKey::try_from(b256(2)).unwrap();
+        let leaf_one = LeafValue::try_from(b256(31)).unwrap();
+        let leaf_two = LeafValue::try_from(b256(32)).unwrap();
+        let mut new_roots = vec![B256::ZERO; K_TEST as usize];
+        new_roots[1] = b256(21);
+        new_roots[2] = b256(22);
+        let new_root = aggregate_b256_shard_roots(&new_roots).unwrap();
+        let batch = ProvisionalTreeBatch::new(
+            1,
+            genesis.block_hash,
+            genesis.new_root,
+            new_root,
+            K_TEST,
+            vec![B256::ZERO; K_TEST as usize],
+            new_roots,
+            BTreeMap::from([
+                (
+                    1,
+                    ProvisionalShardBatch::new(
+                        B256::ZERO,
+                        b256(21),
+                        BTreeMap::new(),
+                        BTreeMap::from([(key_one, TreeChange::Set(leaf_one))]),
+                    )
+                    .unwrap(),
+                ),
+                (
+                    2,
+                    ProvisionalShardBatch::new(
+                        B256::ZERO,
+                        b256(22),
+                        BTreeMap::new(),
+                        BTreeMap::from([(key_two, TreeChange::Set(leaf_two))]),
+                    )
+                    .unwrap(),
+                ),
+            ]),
+        )
+        .unwrap()
+        .freeze(b256(50));
+
+        assert_eq!(batch.changed_shard_count(), 2);
+        assert_eq!(batch.leaf_change_count(), 2);
+        assert_eq!(
+            store.apply_finalized(&batch).unwrap(),
+            ApplyOutcome::Applied(batch.marker(1))
+        );
+        let snapshot = store.open_snapshot().unwrap();
+        assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
+        assert_eq!(snapshot.shard_roots().unwrap(), batch.new_shard_roots());
+        assert_eq!(snapshot.read_leaf(1, key_one).unwrap(), Some(leaf_one));
+        assert_eq!(snapshot.read_leaf(2, key_two).unwrap(), Some(leaf_two));
+        assert_eq!(snapshot.read_leaf(2, key_one).unwrap(), None);
     }
 }

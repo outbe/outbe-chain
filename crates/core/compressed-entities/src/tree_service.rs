@@ -10,13 +10,14 @@ use crate::{
     api::{AuthenticatedParentTree, EntityRef, FinalLeafMutation},
     persistence::{CeMdbx, ExactParentIdentity, PersistenceError},
     schema::Collection,
+    sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeRoot},
-    staging::{AuthenticatedTreeView, StagingCkbStore},
+    staging::{AuthenticatedTreeView, ProvisionalShardBatch, ShardIndex, StagingCkbStore},
     Commitment, ProvisionalTreeBatch,
 };
 
 struct SessionState {
-    tree: Option<PoseidonSmt<StagingCkbStore>>,
+    trees: Option<Vec<PoseidonSmt<StagingCkbStore>>>,
     verified_leaves: BTreeMap<EntityRef, Option<Commitment>>,
 }
 
@@ -27,6 +28,8 @@ struct SessionState {
 /// snapshot into an isolated staged store without an MDBX write transaction.
 pub struct MdbxAuthenticatedTree {
     identity: ExactParentIdentity,
+    shard_count: u32,
+    parent_shard_roots: Vec<B256>,
     state: Mutex<SessionState>,
 }
 
@@ -42,16 +45,26 @@ impl core::fmt::Debug for MdbxAuthenticatedTree {
 impl MdbxAuthenticatedTree {
     pub fn open(db: Arc<CeMdbx>, identity: ExactParentIdentity) -> Result<Self> {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
-        let view = AuthenticatedTreeView::open(snapshot, identity)
+        let shard_count = db.identity().shard_count;
+        let view = AuthenticatedTreeView::open(snapshot, identity, shard_count)
             .map_err(|error| tree_corruption(error.to_string()))?;
-        let root = TreeRoot::from_be_bytes(identity.root.0)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let store = StagingCkbStore::new(view);
-        let tree = PoseidonSmt::open_with_store(root, store);
+        let parent_shard_roots = view.shard_roots().to_vec();
+        let mut trees = Vec::with_capacity(parent_shard_roots.len());
+        for (index, root) in parent_shard_roots.iter().copied().enumerate() {
+            let shard_index = u32::try_from(index)
+                .map_err(|_| tree_corruption("shard index is not representable"))?;
+            let root = TreeRoot::from_be_bytes(root.0)
+                .map_err(|error| tree_corruption(error.to_string()))?;
+            let store = StagingCkbStore::new(view.clone(), shard_index)
+                .map_err(|error| tree_corruption(error.to_string()))?;
+            trees.push(PoseidonSmt::open_with_store(root, store));
+        }
         Ok(Self {
             identity,
+            shard_count,
+            parent_shard_roots,
             state: Mutex::new(SessionState {
-                tree: Some(tree),
+                trees: Some(trees),
                 verified_leaves: BTreeMap::new(),
             }),
         })
@@ -85,10 +98,14 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             return Ok(*cached);
         }
         let key = entity_tree_key(entity)?;
+        let shard = shard_index(key, self.shard_count)
+            .map_err(|error| tree_corruption(error.to_string()))?;
         let tree = state
-            .tree
+            .trees
             .as_ref()
-            .ok_or_else(|| tree_corruption("authenticated tree session already sealed"))?;
+            .ok_or_else(|| tree_corruption("authenticated tree session already sealed"))?
+            .get(usize::try_from(shard).map_err(|_| tree_corruption("shard index overflow"))?)
+            .ok_or_else(|| tree_corruption("derived shard index out of range"))?;
         let leaf = tree
             .get(key)
             .map_err(|error| tree_corruption(error.to_string()))?;
@@ -96,8 +113,12 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             .prove(vec![key])
             .map_err(|error| tree_corruption(error.to_string()))?;
         tree.verify(
-            TreeRoot::from_be_bytes(expected_parent_root.0)
-                .map_err(|error| tree_corruption(error.to_string()))?,
+            TreeRoot::from_be_bytes(
+                self.parent_shard_roots[usize::try_from(shard)
+                    .map_err(|_| tree_corruption("shard index overflow"))?]
+                .0,
+            )
+            .map_err(|error| tree_corruption(error.to_string()))?,
             &proof,
             vec![(key, leaf)],
         )
@@ -128,13 +149,14 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             .state
             .lock()
             .map_err(|_| tree_corruption("authenticated tree session lock poisoned"))?;
-        let mut tree = state
-            .tree
+        let trees = state
+            .trees
             .take()
             .ok_or_else(|| tree_corruption("compressed-entity tree sealed more than once"))?;
 
         let result = (|| {
-            let mut keyed = Vec::with_capacity(mutations.len());
+            let mut keyed_by_shard: BTreeMap<ShardIndex, Vec<(TreeKey, TreeLeaf)>> =
+                BTreeMap::new();
             let mut unique_entities = BTreeSet::new();
             let mut unique_keys = BTreeMap::new();
             for mutation in mutations {
@@ -155,11 +177,25 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                         TreeLeaf::from_be_bytes(*commitment.as_bytes())
                             .map_err(|error| tree_corruption(error.to_string()))
                     })?;
-                keyed.push((key, final_leaf));
+                let shard = shard_index(key, self.shard_count)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                keyed_by_shard
+                    .entry(shard)
+                    .or_default()
+                    .push((key, final_leaf));
             }
-            keyed.sort_by_key(|(key, _)| *key);
+            for keyed in keyed_by_shard.values_mut() {
+                keyed.sort_by_key(|(key, _)| *key);
+            }
 
-            if !keyed.is_empty() {
+            let mut new_shard_roots = self.parent_shard_roots.clone();
+            let mut changed_shards: BTreeMap<ShardIndex, ProvisionalShardBatch> = BTreeMap::new();
+            for (index, mut tree) in trees.into_iter().enumerate() {
+                let shard = u32::try_from(index)
+                    .map_err(|_| tree_corruption("shard index is not representable"))?;
+                let Some(keyed) = keyed_by_shard.remove(&shard) else {
+                    continue;
+                };
                 let keys = keyed.iter().map(|(key, _)| *key).collect::<Vec<_>>();
                 let parent_leaves = keys
                     .iter()
@@ -173,7 +209,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                     .prove(keys)
                     .map_err(|error| tree_corruption(error.to_string()))?;
                 tree.verify(
-                    TreeRoot::from_be_bytes(self.identity.root.0)
+                    TreeRoot::from_be_bytes(self.parent_shard_roots[index].0)
                         .map_err(|error| tree_corruption(error.to_string()))?,
                     &proof,
                     parent_leaves.clone(),
@@ -192,16 +228,40 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                     tree.update_all(effective)
                         .map_err(|error| tree_corruption(error.to_string()))?;
                 }
-            }
-
-            let new_root = B256::from(
-                tree.root()
+                let new_shard_root = B256::from(
+                    tree.root()
+                        .map_err(|error| tree_corruption(error.to_string()))?
+                        .as_bytes(),
+                );
+                new_shard_roots[index] = new_shard_root;
+                if let Some(batch) = tree
+                    .into_store()
+                    .freeze_shard(new_shard_root)
                     .map_err(|error| tree_corruption(error.to_string()))?
-                    .as_bytes(),
-            );
-            tree.into_store()
-                .freeze(block_number, self.identity.block_hash, new_root)
-                .map_err(|error| tree_corruption(error.to_string()))
+                {
+                    changed_shards.insert(shard, batch);
+                }
+            }
+            if !keyed_by_shard.is_empty() {
+                return Err(tree_corruption("derived mutation shard was not prepared"));
+            }
+            let new_root = if mutations.is_empty() {
+                self.identity.root
+            } else {
+                aggregate_b256_shard_roots(&new_shard_roots)
+                    .map_err(|error| tree_corruption(error.to_string()))?
+            };
+            ProvisionalTreeBatch::new(
+                block_number,
+                self.identity.block_hash,
+                self.identity.root,
+                new_root,
+                self.shard_count,
+                self.parent_shard_roots.clone(),
+                new_shard_roots,
+                changed_shards,
+            )
+            .map_err(|error| tree_corruption(error.to_string()))
         })();
 
         if result.is_err() {

@@ -31,7 +31,11 @@ fn benchmark_smt(c: &mut Criterion) {
         bench.iter_batched(
             || (Adr008SmtHarness::empty(), mutations(1)),
             |(mut tree, updates)| black_box(tree.update_all(black_box(&updates)).unwrap()),
-            BatchSize::SmallInput,
+            // MDBX environments map a production-sized address space. Holding
+            // Criterion's input batch alive concurrently exhausted virtual
+            // memory; one complete environment per iteration measures the
+            // same production settings without retaining sibling mappings.
+            BatchSize::PerIteration,
         );
     });
 
@@ -94,6 +98,7 @@ fn open_mdbx() -> BenchMdbx {
             chain_id: 1,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            shard_count: 1,
             tree_format: "ckb-smt-v0.6.1-unsharded".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },

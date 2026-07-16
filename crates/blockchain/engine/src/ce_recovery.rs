@@ -86,10 +86,10 @@ pub(crate) fn apply_replayed_block(
     }
     let mutations = reconstruct_effective_final_mutations(&block.events, &parent_leaves)?;
     let provisional = parent.prepare_seal(block.number, &mutations)?;
-    if provisional.block_number != block.number
-        || provisional.parent_block_hash != block.parent_hash
-        || provisional.parent_root != block.parent_root
-        || provisional.new_root != block.new_root
+    if provisional.block_number() != block.number
+        || provisional.parent_block_hash() != block.parent_hash
+        || provisional.parent_root() != block.parent_root
+        || provisional.new_root() != block.new_root
     {
         eyre::bail!(
             "replayed CE root/identity mismatch at {}/{}: expected parent {}/{}, root {}; computed {:?}",

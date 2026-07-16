@@ -255,7 +255,8 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             chain_id: 91,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            shard_count: outbe_compressed_entities::K_TEST,
+            tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },
         FinalizedMarker {
@@ -264,7 +265,10 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             block_hash: genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: outbe_compressed_entities::empty_shard_top_root(
+                outbe_compressed_entities::K_TEST,
+            )
+            .unwrap(),
         },
     )
     .unwrap();
@@ -351,6 +355,24 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     };
     let bucket_id = EntityId36::new(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
+    let empty_root =
+        outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST).unwrap();
+    StorageHandle::enter(&mut execution, |storage| {
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::ZERO,
+                U256::from(2_u64),
+            )
+            .unwrap();
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1_u64),
+                U256::from_be_bytes(empty_root.0),
+            )
+            .unwrap();
+    });
     let mut observer = ObserverCommitments::default();
     let tree_directory = tempfile::tempdir().unwrap();
     let genesis_hash = B256::repeat_byte(0x91);
@@ -359,7 +381,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         block_number: 0,
         block_hash: genesis_hash,
-        root: B256::ZERO,
+        root: empty_root,
     };
 
     // Block 1: normal domain mint paths emit all three Stored namespaces.

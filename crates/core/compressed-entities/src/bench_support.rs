@@ -2,15 +2,47 @@
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 
 use crate::{
+    api::EntityRef,
     persistence::{
         BranchKey, BranchNode, FieldValue, LeafValue, MergeValue, TreeKey as PersistedTreeKey,
     },
+    schema::Collection,
+    sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{PoseidonSmt, TreeKey, TreeLeaf, TreeProof, TreeRoot},
     ProvisionalTreeBatch, StagedTreeBatch, TreeChange,
 };
+
+/// Returns the protocol-derived shard for a real typed entity. This keeps the
+/// ADR-009 benchmark dataset on the production key-derivation path.
+pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String> {
+    let (collection, identity) = match entity {
+        EntityRef::Tribute(identity) => (Collection::Tribute, identity),
+        EntityRef::NodItem(identity) => (Collection::NodItem, identity),
+        EntityRef::NodBucket(identity) => (Collection::NodBucket, identity),
+    };
+    let key =
+        crate::smt::derive_tree_key(collection, identity).map_err(|error| error.to_string())?;
+    shard_index(key, shard_count).map_err(|error| error.to_string())
+}
+
+/// Stable checksum of the canonical candidate accounting bytes used by reports.
+/// This is an artifact checksum, not a consensus hash.
+#[must_use]
+pub fn candidate_checksum(batch: &StagedTreeBatch) -> B256 {
+    keccak256(
+        batch
+            .canonical_bytes()
+            .expect("validated candidate has canonical accounting bytes"),
+    )
+}
+
+/// Recomputes the production shard-top aggregation for phase benchmarks.
+pub fn aggregate_shard_roots(roots: &[B256]) -> Result<B256, String> {
+    aggregate_b256_shard_roots(roots).map_err(|error| error.to_string())
+}
 
 pub struct Adr008SmtHarness {
     tree: PoseidonSmt,
@@ -118,7 +150,7 @@ pub fn staged_batch(
             TreeChange::Set(LeafValue::try_from(value_word).map_err(|error| error.to_string())?),
         );
     }
-    ProvisionalTreeBatch::new(
+    ProvisionalTreeBatch::new_unsharded(
         block_number,
         parent_block_hash,
         parent_root,

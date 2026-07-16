@@ -14,6 +14,7 @@ mod protobuf;
 mod replay;
 mod runtime;
 mod schema;
+mod sharding;
 mod smt;
 mod staging;
 mod state;
@@ -35,7 +36,7 @@ pub use commitment::{
     body_commitment, derive_poseidon_entity_id, identity_field, pbytes, Commitment,
     CommitmentError, ACTIVE_COMMITMENT_SCHEME, CES1_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB,
     TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_ID, TAG_KEY, TAG_LEAF, TAG_SMT_BASE, TAG_SMT_NORMAL,
-    TAG_SMT_ZERO,
+    TAG_SMT_ZERO, TAG_TOP_NODE,
 };
 pub use errors::ParentBodySourceError;
 pub use identity::{EntityId36, EntityIdError};
@@ -55,6 +56,7 @@ pub use replay::{
     decode_canonical_body_event, reconstruct_effective_final_mutations, CanonicalBodyEvent,
     ReplayEventError,
 };
+pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES, K_TEST};
 pub use staging::{
     CandidateCache, CandidateCacheLimits, ProvisionalTreeBatch, PublicationOutcome,
     StagedTreeBatch, StagingError, TreeChange,

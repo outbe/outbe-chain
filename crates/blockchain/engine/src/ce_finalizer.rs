@@ -326,22 +326,22 @@ impl RethCeFinalizer {
         };
 
         let marker = if let Some(candidate) = self.tree.candidate(block.height, block.block_hash)? {
-            if candidate.parent_block_hash != block.parent_block_hash {
+            if candidate.parent_block_hash() != block.parent_block_hash {
                 eyre::bail!(
                     "finalized CE candidate parent conflict at {}/{}: actor={}, candidate={}",
                     block.height,
                     block.block_hash,
                     block.parent_block_hash,
-                    candidate.parent_block_hash
+                    candidate.parent_block_hash()
                 );
             }
-            if candidate.new_root != authoritative_root {
+            if candidate.new_root() != authoritative_root {
                 eyre::bail!(
                     "durable EVM/CE candidate root conflict at {}/{}: evm={}, candidate={}",
                     block.height,
                     block.block_hash,
                     authoritative_root,
-                    candidate.new_root
+                    candidate.new_root()
                 );
             }
             self.tree
@@ -454,8 +454,8 @@ mod tests {
     use futures::channel::mpsc;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityId36, EntityRef,
-        EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, ProvisionalTreeBatch,
-        ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+        EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME,
+        LOCAL_STORAGE_SCHEMA_VERSION,
     };
 
     use super::*;
@@ -476,16 +476,15 @@ mod tests {
 
     fn candidate(root: B256) -> Arc<StagedTreeBatch> {
         Arc::new(
-            ProvisionalTreeBatch::new(
+            outbe_compressed_entities::bench_support::staged_batch(
                 1,
+                hash(2),
                 hash(1),
                 B256::ZERO,
                 root,
-                BTreeMap::new(),
-                BTreeMap::new(),
+                usize::from(root != B256::ZERO),
             )
-            .unwrap()
-            .freeze(hash(2)),
+            .unwrap(),
         )
     }
 
@@ -498,7 +497,8 @@ mod tests {
                 chain_id: 1,
                 genesis_hash: hash(1),
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                shard_count: 1,
+                tree_format: "ckb-smt-v0.6.1-poseidon-unsharded-control".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -633,7 +633,7 @@ mod tests {
                 .candidate
                 .as_ref()
                 .filter(|candidate| {
-                    candidate.block_number == height && candidate.block_hash == hash
+                    candidate.block_number() == height && candidate.block_hash() == hash
                 })
                 .cloned())
         }
@@ -791,7 +791,7 @@ mod tests {
                 }],
             )
             .unwrap()
-            .new_root;
+            .new_root();
 
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), expected_root);

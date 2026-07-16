@@ -74,7 +74,8 @@ impl TreeHarness {
                 chain_id: 1,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                shard_count: outbe_compressed_entities::K_TEST,
+                tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -83,7 +84,10 @@ impl TreeHarness {
                 block_hash: genesis_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: B256::ZERO,
+                new_root: outbe_compressed_entities::empty_shard_top_root(
+                    outbe_compressed_entities::K_TEST,
+                )
+                .unwrap(),
             },
         )
         .unwrap();
@@ -106,6 +110,24 @@ impl TreeHarness {
     fn activate(&self, provider: &mut HashMapStorageProvider) -> ExecutionScope {
         let marker = self.service.finalized_marker().unwrap();
         provider.set_block_number(marker.height + 1);
+        if marker.height == 0 {
+            StorageHandle::enter(provider, |storage| {
+                storage
+                    .sstore(
+                        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                        U256::ZERO,
+                        U256::from(2_u64),
+                    )
+                    .unwrap();
+                storage
+                    .sstore(
+                        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                        U256::from(1_u64),
+                        U256::from_be_bytes(marker.new_root.0),
+                    )
+                    .unwrap();
+            });
+        }
         let parent = self
             .service
             .open_parent(ExactParentIdentity {
@@ -122,7 +144,7 @@ impl TreeHarness {
 
     fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
         let output = StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
-        let block_number = output.staged_tree_batch.block_number;
+        let block_number = output.staged_tree_batch.block_number();
         let block_hash = keccak256(block_number.to_be_bytes());
         self.service
             .publish_candidate(block_hash, output.staged_tree_batch)

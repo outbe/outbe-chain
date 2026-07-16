@@ -3571,7 +3571,8 @@ mod tests {
                 chain_id: CHAIN_ID,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                shard_count: outbe_compressed_entities::K_TEST,
+                tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -3580,7 +3581,10 @@ mod tests {
                 block_hash: genesis_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: B256::ZERO,
+                new_root: outbe_compressed_entities::empty_shard_top_root(
+                    outbe_compressed_entities::K_TEST,
+                )
+                .unwrap(),
             },
         )
         .expect("CE test MDBX must open");
@@ -6449,12 +6453,15 @@ mod tests {
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
         let seed_state = || {
             let (directory, tree_service) = persistent_test_tree(B256::ZERO);
+            let empty_root =
+                outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TEST)
+                    .unwrap();
             let parent_tree = tree_service
                 .open_parent(ExactParentIdentity {
                     commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                     block_number: 0,
                     block_hash: B256::ZERO,
-                    root: B256::ZERO,
+                    root: empty_root,
                 })
                 .expect("open exact empty CE parent");
             let scope =
@@ -6464,6 +6471,20 @@ mod tests {
                 &[(proposer, dummy_pubkey(0xA2))],
                 1,
                 |storage| {
+                    storage
+                        .sstore(
+                            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                            U256::ZERO,
+                            U256::from(2_u64),
+                        )
+                        .unwrap();
+                    storage
+                        .sstore(
+                            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                            U256::from(1_u64),
+                            U256::from_be_bytes(empty_root.0),
+                        )
+                        .unwrap();
                     outbe_compressed_entities::begin_block(storage.clone(), &scope)
                         .expect("open compressed-entity seed scope");
                     let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
@@ -6496,7 +6517,7 @@ mod tests {
             );
             let staged = staged.expect("seed lifecycle must produce a tree batch");
             let seed_hash = B256::repeat_byte(0x41);
-            let seed_root = staged.new_root;
+            let seed_root = staged.new_root();
             tree_service
                 .publish_candidate(seed_hash, staged)
                 .expect("publish seed CE candidate");

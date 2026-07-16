@@ -18,6 +18,7 @@ pub const TAG_LEAF: u64 = CES1_TAG_BASE + 7;
 pub const TAG_SMT_BASE: u64 = CES1_TAG_BASE + 8;
 pub const TAG_SMT_NORMAL: u64 = CES1_TAG_BASE + 9;
 pub const TAG_SMT_ZERO: u64 = CES1_TAG_BASE + 10;
+pub const TAG_TOP_NODE: u64 = CES1_TAG_BASE + 11;
 pub const ACTIVE_COMMITMENT_SCHEME: u32 = 1;
 
 /// Canonical non-zero BN254 body leaf.

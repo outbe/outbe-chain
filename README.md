@@ -410,10 +410,11 @@ every finalized block cross a real Reth persistence notification before the DB-o
 check and atomic CE marker commit. Marshal is acknowledged only after that sequence succeeds;
 startup fails instead of weakening the barrier when the settings are incompatible.
 
-The CE environment is bound to chain ID, genesis hash, commitment scheme, CKB tree format, vendored
-revision, and local schema. Speculative candidates remain in memory and never mutate MDBX. The EVM
-root is the consensus authority; the local marker and tree nodes are authenticated materialization
-and mismatches fail closed.
+The CE environment is bound to chain ID, genesis hash, commitment scheme, fork-fixed shard count,
+CKB tree format, vendored revision, and local schema. A directory created for another shard count is
+rejected or rebuilt; it is never opened through a compatibility fallback. Speculative candidates
+remain in memory and never mutate MDBX. The EVM root is the consensus authority; the local marker and
+tree nodes are authenticated materialization and mismatches fail closed.
 
 Before validator or follower participation, startup compares the CE marker with the exact durable
 finalized checkpoint. An equal marker resumes, a behind marker replays every contiguous canonical
