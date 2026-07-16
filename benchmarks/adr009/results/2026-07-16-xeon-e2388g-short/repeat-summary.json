@@ -1,0 +1,208 @@
+{
+  "comparisons": {
+    "k8_vs_k1": {
+      "mean_delta_ms": 2.1345603599999947,
+      "mean_delta_percent": 3.010590771821642,
+      "median_delta_ms": 2.17740400000001,
+      "staged_bytes_delta": 12815,
+      "staged_bytes_delta_percent": 1.12901819027591
+    },
+    "k8_vs_k2": {
+      "mean_delta_ms": 2.816872840000002,
+      "mean_delta_percent": 4.011530874093117,
+      "median_delta_ms": 2.8247550000000103,
+      "staged_bytes_delta": 8976,
+      "staged_bytes_delta_percent": 0.7881316643486347
+    },
+    "k8_vs_k4": {
+      "mean_delta_ms": -1.3182733600000063,
+      "mean_delta_percent": -1.7729560041401138,
+      "median_delta_ms": -1.3132994999999994,
+      "staged_bytes_delta": 3737,
+      "staged_bytes_delta_percent": 0.3266222954459108
+    }
+  },
+  "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+  "method": {
+    "dataset": "small/uniform/insert",
+    "measurement_seconds": 0.01,
+    "mode": "warm",
+    "note": "Short target-host selection run; the full warm/cold matrix is postponed.",
+    "runs": 5,
+    "samples_per_k_per_run": 10,
+    "total_samples_per_k": 50,
+    "warm_up_seconds": 0.01
+  },
+  "per_k": {
+    "1": {
+      "between_run_mean_spread_ms": 0.6717830000000049,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x33db70faae45027557ef5d187738296373fb31d956b8e9b89b806275f43b3a66",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x19ee7b2c22868fcfefb2b91b4f7f2cb65d4ec899e999c26bbf39a82b025aeb95",
+        "staged_bytes": 1135057
+      },
+      "max_ms": 71.51145,
+      "mean_ms": 70.90171072,
+      "median_ms": 70.9099955,
+      "min_ms": 70.432342,
+      "p99_ms": 71.51145,
+      "run_means_ms": [
+        70.5542375,
+        70.9839006,
+        71.2260205,
+        70.9386165,
+        70.8057785
+      ],
+      "stddev_ms": 0.32786609767490915
+    },
+    "16": {
+      "between_run_mean_spread_ms": 0.39067319999999484,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x20ff2a970c84b3133ddb300389356a2b0e6b375339b42bf5b64073ffe36a5457",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x119aabd1ba1ad50c0d75634183841ac2aa26efc1d9d7e7b9f30c8620f07642f3",
+        "staged_bytes": 1153678
+      },
+      "max_ms": 82.082547,
+      "mean_ms": 81.5091868,
+      "median_ms": 81.413829,
+      "min_ms": 80.852545,
+      "p99_ms": 82.082547,
+      "run_means_ms": [
+        81.4753175,
+        81.6192026,
+        81.6991061,
+        81.3084329,
+        81.44387490000001
+      ],
+      "stddev_ms": 0.2509136185363808
+    },
+    "2": {
+      "between_run_mean_spread_ms": 0.11596209999999019,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x0bfc54d50e9317bd00633a8bcf887e9770ae3228d3f718a22406eb940d9bd343",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x0be524b5f5c071faf72c635da48e5980677eba153731d9bb54b77948aa22e20d",
+        "staged_bytes": 1138896
+      },
+      "max_ms": 70.701273,
+      "mean_ms": 70.21939823999999,
+      "median_ms": 70.2626445,
+      "min_ms": 69.518406,
+      "p99_ms": 70.701273,
+      "run_means_ms": [
+        70.2555712,
+        70.27996759999999,
+        70.1640055,
+        70.22355879999999,
+        70.1738881
+      ],
+      "stddev_ms": 0.22274306298133859
+    },
+    "32": {
+      "between_run_mean_spread_ms": 0.44401479999999083,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x86ec6543102bda4125931f30adc5e14ae7ee9d938152e7584f57381b99ca1560",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x2dece4017f1b08c21f3f64495fab4facc5bc300d95632fca9dac0e19e8ee6154",
+        "staged_bytes": 1160460
+      },
+      "max_ms": 92.433067,
+      "mean_ms": 91.71238264,
+      "median_ms": 91.6709765,
+      "min_ms": 91.032003,
+      "p99_ms": 92.433067,
+      "run_means_ms": [
+        91.86479,
+        91.95773179999999,
+        91.6503702,
+        91.5753042,
+        91.513717
+      ],
+      "stddev_ms": 0.3020169643139583
+    },
+    "4": {
+      "between_run_mean_spread_ms": 0.2452701999999789,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x8aaa066110ebad0efb1ba0940bd58c727ac3646972f9ff0c83f97263bd134d92",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x13f5d58726246737c9a1323e55c6ec0b5dd28cdc554b0b93b4676d1f0967a569",
+        "staged_bytes": 1144135
+      },
+      "max_ms": 74.986681,
+      "mean_ms": 74.35454444,
+      "median_ms": 74.400699,
+      "min_ms": 73.921693,
+      "p99_ms": 74.986681,
+      "run_means_ms": [
+        74.49070309999999,
+        74.3692429,
+        74.24543290000001,
+        74.3834858,
+        74.2838575
+      ],
+      "stddev_ms": 0.32605461607341496
+    },
+    "8": {
+      "between_run_mean_spread_ms": 0.23671849999999495,
+      "count": 50,
+      "manifest": {
+        "batch_checksum": "0x19eb311367bd36bbcd5274271320f5379850d4567e419a7c1f2fc26052f7f130",
+        "dataset_checksum": "0x733b330e30e27a843b14d9221e38e84bd68ef2fda6977e17f316618e9369c737",
+        "expected_root": "0x197fe5d39a8597dbe367c4f8f9ec400d866f2295fb2b95624966e838ece8214c",
+        "staged_bytes": 1147872
+      },
+      "max_ms": 74.096385,
+      "mean_ms": 73.03627107999999,
+      "median_ms": 73.0873995,
+      "min_ms": 72.456741,
+      "p99_ms": 74.096385,
+      "run_means_ms": [
+        72.9351171,
+        73.1718356,
+        73.090324,
+        72.9837184,
+        73.0003603
+      ],
+      "stddev_ms": 0.3412185018702909
+    }
+  },
+  "resources": [
+    {
+      "cpu_percent": 153,
+      "elapsed": "0:35.54",
+      "max_rss_kib": 243008,
+      "run": 1
+    },
+    {
+      "cpu_percent": 154,
+      "elapsed": "0:35.65",
+      "max_rss_kib": 243120,
+      "run": 2
+    },
+    {
+      "cpu_percent": 153,
+      "elapsed": "0:35.65",
+      "max_rss_kib": 243112,
+      "run": 3
+    },
+    {
+      "cpu_percent": 154,
+      "elapsed": "0:35.58",
+      "max_rss_kib": 242952,
+      "run": 4
+    },
+    {
+      "cpu_percent": 155,
+      "elapsed": "0:35.56",
+      "max_rss_kib": 242884,
+      "run": 5
+    }
+  ]
+}
