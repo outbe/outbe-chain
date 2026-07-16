@@ -22,7 +22,7 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 ///         protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy; the bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor. All auction/series
-///      messages are keyed by `seriesId` (uint32).
+///      auction messages are keyed by `worldwideDay`, series (issuance/mark) by `seriesId`.
 contract OriginRouter is
     IOriginRouter,
     IERC7786TokenReceiver,
@@ -140,30 +140,30 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendAuctionStageReveal(uint32 seriesId, bool isGreenDay) external view returns (uint256) {
+    function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256) {
         return _quoteFee(
-            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
         );
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendAuctionStageClearing(uint32 seriesId) external view returns (uint256) {
+    function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256) {
         return
             _quoteFee(
-                BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), IntexGas.AUCTION_STAGE_CLEARING
+                BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
             );
     }
 
     /// @inheritdoc IOriginRouter
     function quoteSendAuctionResult(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external view returns (uint256) {
         return _quoteFee(
             BNB_CHAIN_ID,
-            BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount),
+            BridgeMsgCodec.encodeAuctionResult(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount),
             IntexGas.AUCTION_RESULT
         );
     }
@@ -179,14 +179,14 @@ contract OriginRouter is
 
     /// @inheritdoc IOriginRouter
     function quoteSendRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external view returns (uint256) {
         return _quoteFee(
             BNB_CHAIN_ID,
-            BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
             IntexGas.refund(bidders.length)
         );
     }
@@ -210,42 +210,42 @@ contract OriginRouter is
         returns (bytes32 sendId)
     {
         sendId = _send(BNB_CHAIN_ID, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
-        emit AuctionStageSent(sendId, params.seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+        emit AuctionStageSent(sendId, params.worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageReveal(uint32 seriesId, bool isGreenDay)
+    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay)
         external
         payable
         onlyRole(DESIS_ROLE)
         returns (bytes32 sendId)
     {
         sendId = _send(
-            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(seriesId, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
         );
-        emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
+        emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageClearing(uint32 seriesId) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
+    function sendAuctionStageClearing(uint32 worldwideDay) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         sendId =
-            _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(seriesId), IntexGas.AUCTION_STAGE_CLEARING);
-        emit AuctionStageSent(sendId, seriesId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+            _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING);
+        emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
     /// @inheritdoc IOriginRouter
     function sendAuctionResult(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         sendId = _send(
             BNB_CHAIN_ID,
-            BridgeMsgCodec.encodeAuctionResult(seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount),
+            BridgeMsgCodec.encodeAuctionResult(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount),
             IntexGas.AUCTION_RESULT
         );
-        emit AuctionResultSent(sendId, seriesId, issuedIntexCount, auctionClearingRate);
+        emit AuctionResultSent(sendId, worldwideDay, issuedIntexCount, auctionClearingRate);
     }
 
     /// @inheritdoc IOriginRouter
@@ -267,7 +267,7 @@ contract OriginRouter is
 
     /// @inheritdoc IOriginRouter
     function sendRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
@@ -278,10 +278,10 @@ contract OriginRouter is
 
         sendId = _send(
             BNB_CHAIN_ID,
-            BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
             IntexGas.refund(len)
         );
-        emit RefundInstructionsSent(sendId, seriesId, len);
+        emit RefundInstructionsSent(sendId, worldwideDay, len);
     }
 
     /// @inheritdoc IOriginRouter
@@ -337,7 +337,7 @@ contract OriginRouter is
     ///      without rolling back the bid intake.
     function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
         (
-            uint32 seriesId,
+            uint32 worldwideDay,
             uint32 bodySrcChainId,
             uint32 relayGeneration,
             uint16 batchIndex,
@@ -353,7 +353,7 @@ contract OriginRouter is
         address desisRecipient = _os().desis;
         IDesis(desisRecipient)
             .processBidsBatch(
-                seriesId,
+                worldwideDay,
                 srcChainId,
                 relayGeneration,
                 batchIndex,
@@ -364,15 +364,15 @@ contract OriginRouter is
                 timestamps
             );
 
-        emit BidsBatchReceived(srcChainId, seriesId, bidderAddresses.length);
+        emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);
 
         // Auto-fire clearing once bids are committed. Local try/catch so a clearing-side revert does not roll back
         // the bid intake — operators can retry clearAuction manually if needed.
-        if (IDesis(desisRecipient).getAuctionStage(seriesId) == IDesis.AuctionStage.BidsReceived) {
-            try IDesis(desisRecipient).clearAuction(seriesId) {
-                emit ClearingAutoDispatched(seriesId);
+        if (IDesis(desisRecipient).getAuctionStage(worldwideDay) == IDesis.AuctionStage.BidsReceived) {
+            try IDesis(desisRecipient).clearAuction(worldwideDay) {
+                emit ClearingAutoDispatched(worldwideDay);
             } catch (bytes memory reason) {
-                emit ClearingAutoDispatchFailed(seriesId, reason);
+                emit ClearingAutoDispatchFailed(worldwideDay, reason);
             }
         }
     }
@@ -381,7 +381,7 @@ contract OriginRouter is
     /// @dev Encode an AUCTION_STAGE_START message from the grouped params struct.
     function _encodeAuctionStageStart(AuctionStageStartParams calldata p) private pure returns (bytes memory) {
         return BridgeMsgCodec.encodeAuctionStageStart(
-            p.seriesId,
+            p.worldwideDay,
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
@@ -483,9 +483,9 @@ contract OriginRouter is
         // anyone could open a distribution for any series and wipe its contributor provenance.
         if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
 
-        uint32 seriesId = abi.decode(extraData, (uint32));
+        uint32 worldwideDay = abi.decode(extraData, (uint32));
         IWCOEN($.wcoen).withdraw(amount);
-        _distributeOrPark(seriesId, SafeCast.toUint128(amount));
+        _distributeOrPark(worldwideDay, SafeCast.toUint128(amount));
 
         return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
     }
@@ -495,21 +495,21 @@ contract OriginRouter is
         ParkedProceeds storage p = _os().parkedProceeds[idx];
         if (p.amount == 0 || p.settled) revert NoParkedProceeds(idx);
         p.settled = true;
-        IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.seriesId);
-        emit ProceedsRetried(idx, p.seriesId, p.amount);
+        IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.worldwideDay);
+        emit ProceedsRetried(idx, p.worldwideDay, p.amount);
     }
 
     /// @dev Hand native proceeds to the factory precompile; park them for retry on failure.
-    function _distributeOrPark(uint32 seriesId, uint128 amount) private {
+    function _distributeOrPark(uint32 worldwideDay, uint128 amount) private {
         // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park write is safe.
         // slither-disable-next-line reentrancy-eth
-        try IIntexFactory(_os().intexFactory).distribute{value: amount}(seriesId) {
-            emit ProceedsDistributed(seriesId, amount);
+        try IIntexFactory(_os().intexFactory).distribute{value: amount}(worldwideDay) {
+            emit ProceedsDistributed(worldwideDay, amount);
         } catch {
             OriginRouterStorage storage $ = _os();
             uint256 idx = $.nextParkedProceedsIdx++;
-            $.parkedProceeds[idx] = ParkedProceeds({seriesId: seriesId, amount: amount, settled: false});
-            emit ProceedsParked(idx, seriesId, amount);
+            $.parkedProceeds[idx] = ParkedProceeds({worldwideDay: worldwideDay, amount: amount, settled: false});
+            emit ProceedsParked(idx, worldwideDay, amount);
         }
     }
 }

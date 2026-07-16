@@ -84,7 +84,7 @@ contract OriginRouterTest is CrossChainTest {
     /// @dev Build a baseline AuctionStageStartParams payload keyed by SERIES_ID.
     function _baseStageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory) {
         return IOriginRouter.AuctionStageStartParams({
-            seriesId: SERIES_ID,
+            worldwideDay: SERIES_ID,
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),

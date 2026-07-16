@@ -180,7 +180,7 @@ pub fn set_authorized_settler(
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
-    series_id: u32,
+    worldwide_day: u32,
     amount: U256,
 ) -> Result<()> {
     if caller != ORIGIN_ROUTER_ADDRESS {
@@ -189,11 +189,11 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
     if total.is_zero() {
-        return Err(IntexFactoryError::NoContributors(series_id).into());
+        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
     }
-    outbe_intex::api::start_distribution(storage, series_id, amount, total)
+    outbe_intex::api::start_distribution(storage, worldwide_day, amount, total)
 }
 
 /// Pay up to `limit` contributors of an in-flight distribution, advancing the

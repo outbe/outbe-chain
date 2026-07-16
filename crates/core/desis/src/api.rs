@@ -77,13 +77,13 @@ pub fn dispatch_stage_clearing(
 /// supply so the caller keeps the full budget (nothing cleared).
 fn clearing_failed(
     storage: StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     reason: &str,
     supply_promis: U256,
 ) -> Result<U256> {
     let mut contract = storage.contract::<DesisContract>();
     contract.emit(IDesis::AuctionDispatchFailed {
-        seriesId: series_id,
+        worldwideDay: worldwide_day,
         stage: "auction_stage_clearing".into(),
         reason: reason.into(),
     })?;
@@ -95,7 +95,7 @@ fn clearing_failed(
 /// caller's block hook.
 fn best_effort(
     storage: StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     stage: &'static str,
     f: impl FnOnce(StorageHandle<'_>) -> Result<()>,
 ) -> Result<bool> {
@@ -104,7 +104,7 @@ fn best_effort(
         Err(err) => {
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionDispatchFailed {
-                seriesId: series_id,
+                worldwideDay: worldwide_day,
                 stage: stage.into(),
                 reason: format!("{err:?}"),
             })?;

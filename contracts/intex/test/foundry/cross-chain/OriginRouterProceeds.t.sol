@@ -97,7 +97,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 0);
         IOriginRouter.ParkedProceeds memory p = origin.parkedProceeds(0);
-        assertEq(p.seriesId, SERIES_ID);
+        assertEq(p.worldwideDay, SERIES_ID);
         assertEq(p.amount, AMOUNT);
         assertEq(p.settled, false);
         assertEq(address(origin).balance, AMOUNT);

@@ -77,7 +77,7 @@ contract EscrowAdapterBondTest is Test {
 
     function test_LockCommitBond_RevertsOnZeroInputs() public {
         vm.startPrank(auction);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "seriesId"));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         escrow.lockCommitBond(0, bidder1, BOND_AMOUNT);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
         escrow.lockCommitBond(seriesId1, address(0), BOND_AMOUNT);

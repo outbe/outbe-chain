@@ -20,7 +20,7 @@ interface IDesis {
     /// @notice Accept a relayed bid batch from BNB. Batches of one `relayGeneration` may arrive in any order over
     ///         the unordered bridge; the receiver collects all `totalBatches` (by `batchIndex`) before finalizing.
     function processBidsBatch(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 srcChainId,
         uint32 relayGeneration,
         uint16 batchIndex,
@@ -32,23 +32,23 @@ interface IDesis {
     ) external;
 
     /// @notice Run clearing and hand issuance to IntexFactory.
-    function clearAuction(uint32 seriesId) external payable;
+    function clearAuction(uint32 worldwideDay) external payable;
 
     // --- Views ---
-    function getAuctionStage(uint32 seriesId) external view returns (AuctionStage);
-    function getBidsCount(uint32 seriesId) external view returns (uint256);
+    function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
+    function getBidsCount(uint32 worldwideDay) external view returns (uint256);
 
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
     // --- Events ---
-    event AuctionCreated(uint32 indexed seriesId);
-    event BidsReceived(uint32 indexed seriesId, uint32 srcChainId, uint256 bidsCount);
-    event AuctionCancelledRedDay(uint32 indexed seriesId);
-    event AuctionCleared(uint32 indexed seriesId, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
-    event AuctionClearedEmpty(uint32 indexed seriesId, uint64 totalDemand);
-    event UnusedSupplyReported(uint32 indexed seriesId, uint256 unusedPromis);
+    event AuctionCreated(uint32 indexed worldwideDay);
+    event BidsReceived(uint32 indexed worldwideDay, uint32 srcChainId, uint256 bidsCount);
+    event AuctionCancelledRedDay(uint32 indexed worldwideDay);
+    event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
+    event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
+    event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
     /// @notice A best-effort auction-stage dispatch from Metadosis failed; the caller
     /// falls back (e.g. routes supply to PromisLimit) instead of halting the block.
-    event AuctionDispatchFailed(uint32 indexed seriesId, string stage, string reason);
+    event AuctionDispatchFailed(uint32 indexed worldwideDay, string stage, string reason);
 }

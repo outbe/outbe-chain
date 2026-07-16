@@ -6,7 +6,8 @@ import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
 /// @title BridgeMsgCodec
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between BNB and Outbe chains.
-/// @dev All auction/series messages are keyed by `seriesId` (uint32).
+/// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
+///      (issuance, mark) are keyed by `seriesId` (both uint32, equal in value while one series per day).
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
 ///      evolve independently of `msgType`; decoders reject unknown versions.
 library BridgeMsgCodec {
@@ -154,7 +155,7 @@ library BridgeMsgCodec {
     ///      `_relayGeneration`; the receiver collects all `_totalBatches` (in any order) before finalizing
     ///      and replaces a re-flushed generation rather than double-counting it. Reverts `PayloadArrayTooLong`
     ///      if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The auction series identifier.
     /// @param _srcChainId The source chainId the bids originated from.
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @param _batchIndex Index of this batch within the flush (0-based).
@@ -165,7 +166,7 @@ library BridgeMsgCodec {
     /// @param _timestamps The bid timestamps per bidder.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
-        uint32 _seriesId,
+        uint32 _worldwideDay,
         uint32 _srcChainId,
         uint32 _relayGeneration,
         uint16 _batchIndex,
@@ -190,7 +191,7 @@ library BridgeMsgCodec {
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
             abi.encode(
-                _seriesId,
+                _worldwideDay,
                 _srcChainId,
                 _relayGeneration,
                 _batchIndex,
@@ -205,11 +206,11 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_STAGE_START message.
     /// @dev encodePacked layout (92 bytes), field order mirrors the Outbe `sol_ext` struct:
-    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
+    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
     ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
     ///      [commitBondMinor(16)]
-    /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The auction series identifier.
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
@@ -227,7 +228,7 @@ library BridgeMsgCodec {
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units); 0 disables the bond.
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
-        uint32 _seriesId,
+        uint32 _worldwideDay,
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
@@ -250,7 +251,7 @@ library BridgeMsgCodec {
             abi.encodePacked(
                 BODY_VERSION_V1,
                 MSG_AUCTION_STAGE_START,
-                _seriesId,
+                _worldwideDay,
                 _commitEnd,
                 _revealEnd,
                 _issuanceEnd,
@@ -271,38 +272,38 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_REVEAL message.
-    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)][isGreenDay(1)]
-    /// @param _seriesId The auction series identifier.
+    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)][isGreenDay(1)]
+    /// @param _worldwideDay The auction series identifier.
     /// @param _isGreenDay The green-day flag for the series.
     /// @return The wire-encoded AUCTION_STAGE_REVEAL message.
-    function encodeAuctionStageReveal(uint32 _seriesId, bool _isGreenDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_REVEAL, _seriesId, _isGreenDay);
+    function encodeAuctionStageReveal(uint32 _worldwideDay, bool _isGreenDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_REVEAL, _worldwideDay, _isGreenDay);
     }
 
     /// @notice Encodes AUCTION_STAGE_CLEARING message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
-    /// @param _seriesId The auction series identifier.
+    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
+    /// @param _worldwideDay The auction series identifier.
     /// @return The wire-encoded AUCTION_STAGE_CLEARING message.
-    function encodeAuctionStageClearing(uint32 _seriesId) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_CLEARING, _seriesId);
+    function encodeAuctionStageClearing(uint32 _worldwideDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_CLEARING, _worldwideDay);
     }
 
     /// @notice Encodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
-    /// @param _seriesId The auction series identifier.
+    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    /// @param _worldwideDay The auction series identifier.
     /// @param _issuedIntexCount The number of intex issued by the cleared auction.
     /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @param _wonBidsCount The number of winning bids.
     /// @return The wire-encoded AUCTION_RESULT message.
     function encodeAuctionResult(
-        uint32 _seriesId,
+        uint32 _worldwideDay,
         uint32 _issuedIntexCount,
         uint64 _auctionClearingRate,
         uint32 _wonBidsCount
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_AUCTION_RESULT, _seriesId, _issuedIntexCount, _auctionClearingRate, _wonBidsCount
+            BODY_VERSION_V1, MSG_AUCTION_RESULT, _worldwideDay, _issuedIntexCount, _auctionClearingRate, _wonBidsCount
         );
     }
 
@@ -331,26 +332,26 @@ library BridgeMsgCodec {
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
     ///         Kept `external` so the struct construction lives in the linked library, off the
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
-    ///         [bodyVersion(1)][msgType(1)][seriesId(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
+    ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///         [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
     ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][intexCallPeriod(4)]
     ///         [callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)][commitBondMinor(16)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
-    /// @return seriesId The auction series identifier.
+    /// @return worldwideDay The auction series identifier.
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
         external
         pure
         returns (
-            uint32 seriesId,
+            uint32 worldwideDay,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         )
     {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        worldwideDay = uint32(bytes4(_msg[2:6]));
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),
             revealEnd: uint32(bytes4(_msg[10:14])),
@@ -392,13 +393,13 @@ library BridgeMsgCodec {
 
     /// @notice Encodes REFUND_INSTRUCTIONS message.
     /// @dev Reverts `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The auction series identifier.
     /// @param _bidders The bidder addresses (parallel with `_refundedAmounts` and `_paidAmounts`).
     /// @param _refundedAmounts The amount refunded to each bidder.
     /// @param _paidAmounts The amount paid by each bidder.
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
-        uint32 _seriesId,
+        uint32 _worldwideDay,
         address[] memory _bidders,
         uint128[] memory _refundedAmounts,
         uint128[] memory _paidAmounts
@@ -408,7 +409,7 @@ library BridgeMsgCodec {
         }
         requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_REFUND_INSTRUCTIONS, abi.encode(_seriesId, _bidders, _refundedAmounts, _paidAmounts)
+            BODY_VERSION_V1, MSG_REFUND_INSTRUCTIONS, abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
         );
     }
 
@@ -466,7 +467,7 @@ library BridgeMsgCodec {
     ///      `BidsArrayLengthMismatch` if the four parallel arrays differ in length, and
     ///      `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
     /// @param _msg The wire-encoded BIDS_BATCH message.
-    /// @return seriesId The auction series identifier.
+    /// @return worldwideDay The auction series identifier.
     /// @return srcChainId The source chainId the bids originated from.
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @return batchIndex Index of this batch within the flush (0-based).
@@ -479,7 +480,7 @@ library BridgeMsgCodec {
         internal
         pure
         returns (
-            uint32 seriesId,
+            uint32 worldwideDay,
             uint32 srcChainId,
             uint32 relayGeneration,
             uint16 batchIndex,
@@ -496,7 +497,7 @@ library BridgeMsgCodec {
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
         (
-            seriesId,
+            worldwideDay,
             srcChainId,
             relayGeneration,
             batchIndex,
@@ -521,49 +522,49 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes AUCTION_STAGE_REVEAL message.
-    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)][isGreenDay(1)]
+    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)][isGreenDay(1)]
     ///      Reverts `InvalidPayloadLength` unless exactly 7 bytes, `UnsupportedBodyVersion` on a
     ///      stale version byte, and `InvalidGreenDayFlag` if the flag byte is neither 0 nor 1.
     /// @param _msg The wire-encoded AUCTION_STAGE_REVEAL message.
-    /// @return seriesId The auction series identifier.
+    /// @return worldwideDay The auction series identifier.
     /// @return isGreenDay The decoded green-day flag.
-    function decodeAuctionStageReveal(bytes calldata _msg) internal pure returns (uint32 seriesId, bool isGreenDay) {
+    function decodeAuctionStageReveal(bytes calldata _msg) internal pure returns (uint32 worldwideDay, bool isGreenDay) {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_REVEAL, MIN_LEN_AUCTION_STAGE_REVEAL);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        worldwideDay = uint32(bytes4(_msg[2:6]));
         uint8 flag = uint8(_msg[6]);
         if (flag > 1) revert InvalidGreenDayFlag(flag);
         isGreenDay = flag == 1;
     }
 
     /// @notice Decodes AUCTION_STAGE_CLEARING message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
+    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_STAGE_CLEARING message.
-    /// @return seriesId The auction series identifier.
-    function decodeAuctionStageClearing(bytes calldata _msg) internal pure returns (uint32 seriesId) {
+    /// @return worldwideDay The auction series identifier.
+    function decodeAuctionStageClearing(bytes calldata _msg) internal pure returns (uint32 worldwideDay) {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_CLEARING, MIN_LEN_AUCTION_STAGE_CLEARING);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        worldwideDay = uint32(bytes4(_msg[2:6]));
     }
 
     /// @notice Decodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][seriesId(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
-    /// @return seriesId The auction series identifier.
+    /// @return worldwideDay The auction series identifier.
     /// @return issuedIntexCount The number of intex issued by the cleared auction.
     /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @return wonBidsCount The number of winning bids.
     function decodeAuctionResult(bytes calldata _msg)
         internal
         pure
-        returns (uint32 seriesId, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount)
+        returns (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount)
     {
         _assertExactLength(_msg, MSG_AUCTION_RESULT, MIN_LEN_AUCTION_RESULT);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        worldwideDay = uint32(bytes4(_msg[2:6]));
         issuedIntexCount = uint32(bytes4(_msg[6:10]));
         auctionClearingRate = uint64(bytes8(_msg[10:18]));
         wonBidsCount = uint32(bytes4(_msg[18:22]));
@@ -607,7 +608,7 @@ library BridgeMsgCodec {
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte and
     ///      `RefundArrayLengthMismatch` if the three parallel arrays differ in length.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
-    /// @return seriesId The auction series identifier.
+    /// @return worldwideDay The auction series identifier.
     /// @return bidders The bidder addresses (parallel with `refundedAmounts` and `paidAmounts`).
     /// @return refundedAmounts The amount refunded to each bidder.
     /// @return paidAmounts The amount paid by each bidder.
@@ -615,7 +616,7 @@ library BridgeMsgCodec {
         external
         pure
         returns (
-            uint32 seriesId,
+            uint32 worldwideDay,
             address[] memory bidders,
             uint128[] memory refundedAmounts,
             uint128[] memory paidAmounts
@@ -625,7 +626,7 @@ library BridgeMsgCodec {
             revert InvalidPayloadLength(MSG_REFUND_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        (seriesId, bidders, refundedAmounts, paidAmounts) =
+        (worldwideDay, bidders, refundedAmounts, paidAmounts) =
             abi.decode(_msg[2:], (uint32, address[], uint128[], uint128[]));
         // The three arrays are indexed in lockstep downstream; unequal lengths would index
         // out of bounds and panic inside the ordered lane. Reject with a typed error instead.

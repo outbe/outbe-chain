@@ -8,28 +8,28 @@ pragma solidity 0.8.30;
 /// @dev Deployed on BNB Chain behind a UUPS proxy. Inbound delivery arrives via
 ///      {ERC7786MessengerBase-receiveMessage}. Outbound `sendBidsBatch` returns the bridge `sendId` and is funded
 ///      either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quoteSendBidsBatch`
-///      returns the native fee. All auction/series messages are keyed by `seriesId` (uint32).
+///      returns the native fee. Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`.
 interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
     /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Series identifier.
     /// @param bidsCount Number of bids sent.
-    event BidsBatchSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 bidsCount);
+    event BidsBatchSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 bidsCount);
 
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Series identifier.
     /// @param stageType BridgeMsgCodec message type (4=AuctionStageStart, 5=AuctionStageReveal, 6=AuctionStageClearing).
-    event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed seriesId, uint8 stageType);
+    event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Series identifier.
     /// @param issuedIntexCount Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultReceived(
-        uint32 indexed srcChainId, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingRate
+        uint32 indexed srcChainId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are received from Outbe.
@@ -40,9 +40,9 @@ interface ITargetRouter {
 
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Series identifier.
     /// @param instructionsCount Number of finalization instructions.
-    event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed seriesId, uint256 instructionsCount);
+    event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
     /// @notice Emitted when a mark-called message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -55,16 +55,16 @@ interface ITargetRouter {
     event MarkQualifiedReceived(uint32 indexed srcChainId, uint32 indexed seriesId);
 
     /// @notice Emitted when the outbound bids relay from `_handleAuctionStageClearing` reverts and
-    ///         the seriesId is parked for later retry via `flushPendingBidsRelay`.
+    ///         the worldwideDay is parked for later retry via `flushPendingBidsRelay`.
     /// @param idx Index of the parked relay slot.
-    /// @param seriesId Series identifier whose bids could not be forwarded.
+    /// @param worldwideDay Series identifier whose bids could not be forwarded.
     /// @param reason Raw revert bytes from the failed send (e.g. insufficient relay float).
-    event BidsRelayDeferred(uint256 indexed idx, uint32 indexed seriesId, bytes reason);
+    event BidsRelayDeferred(uint256 indexed idx, uint32 indexed worldwideDay, bytes reason);
 
     /// @notice Emitted when `flushPendingBidsRelay` successfully forwards a previously deferred relay.
     /// @param idx Index of the parked relay slot that was flushed.
-    /// @param seriesId Series identifier whose bids were forwarded.
-    event BidsRelayFlushed(uint256 indexed idx, uint32 indexed seriesId);
+    /// @param worldwideDay Series identifier whose bids were forwarded.
+    event BidsRelayFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
 
     /// @notice Emitted when the outbound holders bridge from `_handleMarkCalled` reverts and the
     ///         holders+amounts snapshot is parked for later retry via `flushPendingHoldersRelay`.
@@ -75,11 +75,11 @@ interface ITargetRouter {
     event HoldersRelayDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
 
     /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
-    event ProceedsRouted(uint32 indexed seriesId, uint256 amount);
+    event ProceedsRouted(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
-    event ProceedsRouteDeferred(uint256 indexed idx, uint32 indexed seriesId, uint256 amount, bytes reason);
+    event ProceedsRouteDeferred(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount, bytes reason);
     /// @notice Emitted when `flushPendingProceedsRoute` routed a previously deferred amount.
-    event ProceedsRouteFlushed(uint256 indexed idx, uint32 indexed seriesId);
+    event ProceedsRouteFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
 
@@ -101,7 +101,7 @@ interface ITargetRouter {
     // --- Types ---
     /// @notice Parameters for sending a bids batch to Outbe.
     struct BidsBatchParams {
-        uint32 seriesId;
+        uint32 worldwideDay;
         address[] bidderAddresses;
         uint16[] intexQuantities;
         uint32[] intexBidRates;

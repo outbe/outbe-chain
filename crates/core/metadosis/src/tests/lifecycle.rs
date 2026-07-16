@@ -898,7 +898,7 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
     let base_ts = crate::runtime::date_key_to_timestamp(20260601);
 
     // Track one wwd by its date key; many wwds dispatch each tick, so filter the
-    // event by its indexed seriesId (the wwd itself) to isolate it.
+    // event by its indexed worldwideDay (the wwd itself) to isolate it.
     let wwd_key: u32 = 20260601;
     let mut stages: Vec<Option<String>> = Vec::new();
     for k in 0..7u64 {
@@ -912,7 +912,7 @@ fn intex_reveal_dispatched_on_mid_offering_tick() {
                 return None;
             }
             let ev = IDesis::AuctionDispatchFailed::decode_log_data(log).ok()?;
-            (ev.seriesId == wwd_key).then_some(ev.stage)
+            (ev.worldwideDay == wwd_key).then_some(ev.stage)
         });
         println!(
             "tick {k}: date={} stage={stage:?}",

@@ -40,7 +40,7 @@ pub fn dispatch(
                 runtime::process_bids_batch(
                     storage.clone(),
                     sender,
-                    c.seriesId,
+                    c.worldwideDay,
                     c.srcChainId,
                     c.relayGeneration,
                     c.batchIndex,
@@ -49,19 +49,19 @@ pub fn dispatch(
                 )
             }),
             clearAuction(c) => mutate_void_payable(c, caller, value, |sender, c, _val| {
-                runtime::clear_auction(storage.clone(), sender, c.seriesId).map(|_| ())
+                runtime::clear_auction(storage.clone(), sender, c.worldwideDay).map(|_| ())
             }),
             getAuctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let stage = contract.read_stage(c.seriesId)?;
+                let stage = contract.read_stage(c.worldwideDay)?;
                 Ok(IDesis::AuctionStage::try_from(stage as u8)
                     .unwrap_or(IDesis::AuctionStage::None))
             }),
             getBidsCount(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let count = contract.read_bid_count(c.seriesId)?;
+                let count = contract.read_bid_count(c.worldwideDay)?;
                 Ok(U256::from(count))
             }),
             supportsInterface(c) => view(c, |c| {

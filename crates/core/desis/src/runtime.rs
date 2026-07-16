@@ -22,35 +22,35 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Create a new auction for `series_id` and transition to `Started`.
+/// Create a new auction for `worldwide_day` and transition to `Started`.
 ///
 /// Derives minBidQty from the prior clearing (4% of issued count) and
 /// validates the config.
 pub fn start_auction(
     storage: StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     auction_timestamp: u64,
     mut config: AuctionConfig,
 ) -> Result<()> {
-    if series_id == 0 {
-        return Err(DesisError::InvalidSeriesId(0).into());
+    if worldwide_day == 0 {
+        return Err(DesisError::InvalidWorldwideDay(0).into());
     }
     if config.promis_load_minor == 0 || config.escrow_basis_minor() == 0 {
-        return Err(DesisError::InvalidSeriesId(series_id).into());
+        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
 
     let mut contract = storage.contract::<DesisContract>();
 
     // Duplicate guard.
-    let existing = contract.read_stage(series_id)?;
+    let existing = contract.read_stage(worldwide_day)?;
     if existing != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
 
     // Derive minBidQty as 4% of the prior clearing's issued count.
     let min_bid_qty: u16 = {
-        let last_series = contract.read_last_cleared_series()?;
-        if last_series != 0 {
+        let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
+        if last_worldwide_day != 0 {
             let prev_issued = contract.read_last_clearing_issued_count()?;
             let derived =
                 (prev_issued as u64).saturating_mul(BID_QUANTITY_FLOOR_BPS as u64) / 10_000;
@@ -76,11 +76,11 @@ pub fn start_auction(
     let auction_at = u32::try_from(auction_timestamp)
         .map_err(|_| PrecompileError::Revert("auction timestamp exceeds u32".into()))?;
 
-    contract.write_auction_config(series_id, &config)?;
-    contract.write_stage(series_id, AuctionStage::Started)?;
-    contract.auction_at.write(&series_id, auction_at)?;
+    contract.write_auction_config(worldwide_day, &config)?;
+    contract.write_stage(worldwide_day, AuctionStage::Started)?;
+    contract.auction_at.write(&worldwide_day, auction_at)?;
     contract.emit(IDesis::AuctionCreated {
-        seriesId: series_id,
+        worldwideDay: worldwide_day,
     })?;
 
     // Send AUCTION_STAGE_START to BNB.
@@ -105,7 +105,7 @@ pub fn start_auction(
     let call_price_u64 = u64::try_from(call_price)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let stage_params = IOriginRouter::AuctionStageStartParams {
-        seriesId: series_id,
+        worldwideDay: worldwide_day,
         commitEnd: commit_end,
         revealEnd: noon,
         issuanceEnd: issuance_end,
@@ -145,21 +145,21 @@ pub(crate) fn auction_noon(auction_timestamp: u64) -> Result<u32> {
 /// Signal `Started` → `Revealing` (green day) or `Started` → `Cancelled` (red day).
 pub fn reveal_auction(
     storage: StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     is_green_day: bool,
 ) -> Result<()> {
-    require_nonzero_series_id(series_id)?;
+    require_nonzero_worldwide_day(worldwide_day)?;
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, series_id, AuctionStage::Started)?;
+    require_stage(&contract, worldwide_day, AuctionStage::Started)?;
     let next = if is_green_day {
         AuctionStage::Revealing
     } else {
         AuctionStage::Cancelled
     };
-    contract.write_stage(series_id, next)?;
+    contract.write_stage(worldwide_day, next)?;
     if !is_green_day {
         contract.emit(IDesis::AuctionCancelledRedDay {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
         })?;
     }
 
@@ -167,7 +167,7 @@ pub fn reveal_auction(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendAuctionStageRevealCall {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             isGreenDay: is_green_day,
         }
         .abi_encode()
@@ -181,33 +181,33 @@ pub fn reveal_auction(
 /// remainder (supply_promis % promis_load_minor) to be returned to PromisLimit.
 pub fn begin_clearing(
     storage: StorageHandle<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     supply_promis: u128,
 ) -> Result<u128> {
-    require_nonzero_series_id(series_id)?;
+    require_nonzero_worldwide_day(worldwide_day)?;
     let contract = storage.contract::<DesisContract>();
-    require_stage(&contract, series_id, AuctionStage::Revealing)?;
+    require_stage(&contract, worldwide_day, AuctionStage::Revealing)?;
 
-    let config = contract.read_auction_config(series_id)?;
+    let config = contract.read_auction_config(worldwide_day)?;
     if config.promis_load_minor == 0 {
-        return Err(DesisError::InvalidSeriesId(series_id).into());
+        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
 
     let supply_intex = supply_promis / config.promis_load_minor;
     let supply_intex32 =
-        u32::try_from(supply_intex).map_err(|_| DesisError::InvalidSeriesId(series_id))?;
+        u32::try_from(supply_intex).map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
     let rounding_remainder = supply_promis % config.promis_load_minor;
 
-    contract.clearing_initiated.write(&series_id, 1u8)?;
+    contract.clearing_initiated.write(&worldwide_day, 1u8)?;
     contract
         .pending_supply_intex
-        .write(&series_id, supply_intex32)?;
+        .write(&worldwide_day, supply_intex32)?;
 
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendAuctionStageClearingCall {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
         }
         .abi_encode()
         .into(),
@@ -230,7 +230,7 @@ pub fn begin_clearing(
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
-    series_id: u32,
+    worldwide_day: u32,
     src_chain_id: u32,
     generation: u32,
     batch_index: u16,
@@ -238,7 +238,7 @@ pub fn process_bids_batch(
     bids: Vec<BidData>,
 ) -> Result<()> {
     require_origin_router(caller)?;
-    require_nonzero_series_id(series_id)?;
+    require_nonzero_worldwide_day(worldwide_day)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
     if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
         return Err(PrecompileError::Revert(
@@ -249,7 +249,7 @@ pub fn process_bids_batch(
 
     // Intake is open only while Revealing. Past intake a late/re-flushed batch is redundant → no-op (else the
     // transport redelivers forever); before intake it's premature → revert so it redelivers after reveal.
-    let stage = contract.read_stage(series_id)?;
+    let stage = contract.read_stage(worldwide_day)?;
     if stage != AuctionStage::Revealing {
         return match stage {
             AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
@@ -257,7 +257,7 @@ pub fn process_bids_batch(
         };
     }
 
-    let last_gen = contract.read_last_generation(series_id)?;
+    let last_gen = contract.read_last_generation(worldwide_day)?;
     if generation < last_gen {
         return Err(DesisError::StaleBidsGeneration {
             incoming: generation,
@@ -268,17 +268,17 @@ pub fn process_bids_batch(
 
     if generation > last_gen {
         // New generation supersedes: drop prior bids and reset the completeness tracker.
-        contract.bid_count.write(&series_id, 0)?;
-        contract.write_bid_batch_meta(series_id, src_chain_id, generation)?;
+        contract.bid_count.write(&worldwide_day, 0)?;
+        contract.write_bid_batch_meta(worldwide_day, src_chain_id, generation)?;
         contract
             .bids_total_batches
-            .write(&series_id, u32::from(total_batches))?;
-        contract.bids_arrived_mask.write(&series_id, U256::ZERO)?;
+            .write(&worldwide_day, u32::from(total_batches))?;
+        contract.bids_arrived_mask.write(&worldwide_day, U256::ZERO)?;
     }
 
     // All batches of a generation must agree on total_batches and stay in range, else a bad peer could set an
     // out-of-range bit and false-complete the set with a real batch missing.
-    let stored_total = contract.bids_total_batches.read(&series_id)?;
+    let stored_total = contract.bids_total_batches.read(&worldwide_day)?;
     if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
         return Err(PrecompileError::Revert(
             "processBidsBatch: batch total/index mismatch for generation".into(),
@@ -286,27 +286,27 @@ pub fn process_bids_batch(
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);
-    let mask = contract.bids_arrived_mask.read(&series_id)?;
+    let mask = contract.bids_arrived_mask.read(&worldwide_day)?;
     if !(mask & bit).is_zero() {
         // This batch of the current generation was already applied; redelivery is idempotent.
         return Ok(());
     }
 
     for bid in &bids {
-        contract.append_bid(series_id, bid)?;
+        contract.append_bid(worldwide_day, bid)?;
     }
     let mask = mask | bit;
-    contract.bids_arrived_mask.write(&series_id, mask)?;
+    contract.bids_arrived_mask.write(&worldwide_day, mask)?;
 
     // Advance once every batch of the generation has arrived. A zero-bid flush completes here and
     // clears as a no-sale (0 issued, full supply returned to PromisLimit), still reporting the result
     // to the target chain; Cancelled is reserved for red days (see `reveal_auction`).
-    let expected = contract.bids_total_batches.read(&series_id)?;
+    let expected = contract.bids_total_batches.read(&worldwide_day)?;
     if mask.count_ones() as u32 == expected {
-        let count = contract.read_bid_count(series_id)?;
-        contract.write_stage(series_id, AuctionStage::BidsReceived)?;
+        let count = contract.read_bid_count(worldwide_day)?;
+        contract.write_stage(worldwide_day, AuctionStage::BidsReceived)?;
         contract.emit(IDesis::BidsReceived {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             srcChainId: src_chain_id,
             bidsCount: U256::from(count),
         })?;
@@ -319,7 +319,7 @@ pub fn process_bids_batch(
 // Clearing
 // ---------------------------------------------------------------------------
 
-/// Run the clearing algorithm for `series_id`, transition to `Cleared`, hand
+/// Run the clearing algorithm for `worldwide_day`, transition to `Cleared`, hand
 /// issuance to IntexFactory, and return unused supply to PromisLimit.
 ///
 /// Returns the `ClearingResult` so the caller (precompile) can dispatch
@@ -327,23 +327,23 @@ pub fn process_bids_batch(
 pub fn clear_auction(
     storage: StorageHandle<'_>,
     caller: Address,
-    series_id: u32,
+    worldwide_day: u32,
 ) -> Result<ClearingResult> {
     require_origin_router(caller)?;
-    require_nonzero_series_id(series_id)?;
+    require_nonzero_worldwide_day(worldwide_day)?;
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, series_id, AuctionStage::BidsReceived)?;
+    require_stage(&contract, worldwide_day, AuctionStage::BidsReceived)?;
 
-    let supply = contract.pending_supply_intex.read(&series_id)?;
-    if contract.clearing_initiated.read(&series_id)? == 0 {
-        return Err(DesisError::PendingClearingDataMissing(series_id).into());
+    let supply = contract.pending_supply_intex.read(&worldwide_day)?;
+    if contract.clearing_initiated.read(&worldwide_day)? == 0 {
+        return Err(DesisError::PendingClearingDataMissing(worldwide_day).into());
     }
 
-    let config = contract.read_auction_config(series_id)?;
-    let min_bid_qty = contract.config_min_bid_quantity.read(&series_id)? as u16;
+    let config = contract.read_auction_config(worldwide_day)?;
+    let min_bid_qty = contract.config_min_bid_quantity.read(&worldwide_day)? as u16;
     // A zero-bid batch is valid here: `calculate_clearing` yields 0 issued, the full supply returns
     // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to the target chain.
-    let bids = contract.read_all_bids(series_id)?;
+    let bids = contract.read_all_bids(worldwide_day)?;
 
     let total_demand: u64 = bids.iter().map(|b| u64::from(b.intex_quantity)).sum();
     let mut sorted = bids;
@@ -352,23 +352,23 @@ pub fn clear_auction(
     let result = calculate_clearing(&sorted, &config, supply, min_bid_qty);
 
     // Persist clearing outcome and transition.
-    contract.write_stage(series_id, AuctionStage::Cleared)?;
-    contract.write_last_cleared_series(series_id)?;
+    contract.write_stage(worldwide_day, AuctionStage::Cleared)?;
+    contract.write_last_cleared_worldwide_day(worldwide_day)?;
     contract.write_last_clearing_issued_count(result.issued_intex_count)?;
 
     // Clear bid working-set and pending inputs (CEI: state writes before external calls).
-    contract.bid_count.write(&series_id, 0)?;
-    contract.pending_supply_intex.write(&series_id, 0)?;
-    contract.clearing_initiated.write(&series_id, 0u8)?;
+    contract.bid_count.write(&worldwide_day, 0)?;
+    contract.pending_supply_intex.write(&worldwide_day, 0)?;
+    contract.clearing_initiated.write(&worldwide_day, 0u8)?;
 
     if result.issued_intex_count == 0 {
         contract.emit(IDesis::AuctionClearedEmpty {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             totalDemand: total_demand,
         })?;
     } else {
         contract.emit(IDesis::AuctionCleared {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             issuedIntexCount: result.issued_intex_count,
             clearingRate: result.clearing_rate,
             totalDemand: total_demand,
@@ -381,7 +381,7 @@ pub fn clear_auction(
         let unused_promis =
             U256::from(remaining_supply as u128) * U256::from(config.promis_load_minor);
         contract.emit(IDesis::UnusedSupplyReported {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             unusedPromis: unused_promis,
         })?;
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
@@ -391,7 +391,7 @@ pub fn clear_auction(
     // creates no series.
     if result.issued_intex_count > 0 {
         let params = outbe_intexfactory::schema::IssuanceParams {
-            series_id,
+            series_id: worldwide_day,
             issued_intex_count: result.issued_intex_count,
             promis_load_minor: config.promis_load_minor,
             entry_price_minor: config.entry_price_minor,
@@ -410,7 +410,7 @@ pub fn clear_auction(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendAuctionResultCall {
-            seriesId: series_id,
+            worldwideDay: worldwide_day,
             issuedIntexCount: result.issued_intex_count,
             auctionClearingRate: u64::from(result.clearing_rate),
             wonBidsCount: won_bids_count,
@@ -425,7 +425,7 @@ pub fn clear_auction(
             ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
             IOriginRouter::sendRefundInstructionsCall {
-                seriesId: series_id,
+                worldwideDay: worldwide_day,
                 bidders: result.all_bidders.clone(),
                 refundedAmounts: result.refunded_amounts.clone(),
                 paidAmounts: result.paid_amounts.clone(),
@@ -551,19 +551,19 @@ fn require_origin_router(caller: Address) -> Result<()> {
     Ok(())
 }
 
-fn require_nonzero_series_id(series_id: u32) -> Result<()> {
-    if series_id == 0 {
-        return Err(DesisError::InvalidSeriesId(0).into());
+fn require_nonzero_worldwide_day(worldwide_day: u32) -> Result<()> {
+    if worldwide_day == 0 {
+        return Err(DesisError::InvalidWorldwideDay(0).into());
     }
     Ok(())
 }
 
 fn require_stage(
     contract: &DesisContract<'_>,
-    series_id: u32,
+    worldwide_day: u32,
     expected: AuctionStage,
 ) -> Result<()> {
-    let actual = contract.read_stage(series_id)?;
+    let actual = contract.read_stage(worldwide_day)?;
     if actual != expected {
         return Err(DesisError::InvalidStageTransition.into());
     }

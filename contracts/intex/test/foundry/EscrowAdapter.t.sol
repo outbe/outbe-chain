@@ -256,10 +256,10 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(seriesId1, bidder1, 0);
     }
 
-    /// @notice cheap sanity floor on `seriesId`. The `AUCTION_ROLE` gate already guarantees
+    /// @notice cheap sanity floor on `worldwideDay`. The `AUCTION_ROLE` gate already guarantees
     ///         a real series, but a zero id is obviously bogus and is rejected before any state write.
     function test_LockFunds_ZeroSeriesId() public {
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "seriesId"));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         vm.prank(auction);
         escrow.lockFunds(0, bidder1, LOCK_AMOUNT);
     }

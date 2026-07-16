@@ -9,7 +9,7 @@ use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
 
 const CHAIN_ID: u64 = 1;
-const SERIES_ID: u32 = 20260101;
+const WORLDWIDE_DAY: u32 = 20260101;
 const AUCTION_TS: u64 = 1_767_261_600; // 2026-01-01 10:00 UTC
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 
@@ -50,14 +50,14 @@ fn default_config() -> AuctionConfig {
 #[test]
 fn start_auction_sets_started_stage() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Started
         );
         // Persisted config carries the commit bond folded in from the genesis profile.
-        let cfg = contract.read_auction_config(SERIES_ID).unwrap();
+        let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
         let iparams = outbe_intexfactory::read_params(&s).unwrap();
         assert!(iparams.commit_bond_minor > 0, "profile carries a bond");
         assert_eq!(cfg.commit_bond_minor, iparams.commit_bond_minor);
@@ -67,9 +67,9 @@ fn start_auction_sets_started_stage() {
 #[test]
 fn start_auction_duplicate_fails() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         assert!(
-            runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).is_err()
+            runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).is_err()
         );
     });
 }
@@ -77,10 +77,10 @@ fn start_auction_duplicate_fails() {
 #[test]
 fn start_auction_records_the_auction_timestamp() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.auction_at.read(&SERIES_ID).unwrap(),
+            contract.auction_at.read(&WORLDWIDE_DAY).unwrap(),
             AUCTION_TS as u32
         );
     });
@@ -99,11 +99,11 @@ fn auction_noon_is_derived_from_the_timestamp_not_the_id() {
 #[test]
 fn reveal_green_day_transitions_to_revealing() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Revealing
         );
     });
@@ -112,11 +112,11 @@ fn reveal_green_day_transitions_to_revealing() {
 #[test]
 fn reveal_red_day_transitions_to_cancelled() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, false).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, false).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Cancelled
         );
     });
@@ -125,13 +125,13 @@ fn reveal_red_day_transitions_to_cancelled() {
 #[test]
 fn begin_clearing_stores_pending() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply_promis = 10 * PROMIS_LOAD_MINOR;
-        let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, supply_promis).unwrap();
+        let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply_promis).unwrap();
         assert_eq!(remainder, 0); // no rounding with exact multiple
         let contract = s.contract::<DesisContract>();
-        let supply = contract.pending_supply_intex.read(&SERIES_ID).unwrap();
+        let supply = contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap();
         assert_eq!(supply, 10);
     });
 }
@@ -140,13 +140,13 @@ fn begin_clearing_stores_pending() {
 fn start_auction_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 100 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 100 * PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -161,12 +161,12 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
                 .collect(),
         )
         .unwrap();
-        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
-        // Second auction for a different series_id: min_bid_qty must be 4% of 100 = 4.
+        // Second auction for a different worldwide_day: min_bid_qty must be 4% of 100 = 4.
         runtime::start_auction(
             s.clone(),
-            SERIES_ID + 1,
+            WORLDWIDE_DAY + 1,
             AUCTION_TS + 86_400,
             default_config(),
         )
@@ -174,7 +174,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
             .config_min_bid_quantity
-            .read(&(SERIES_ID + 1))
+            .read(&(WORLDWIDE_DAY + 1))
             .unwrap();
         assert_eq!(min_qty, 4);
     });
@@ -183,12 +183,12 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
 #[test]
 fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         // Stage is Started, not Revealing — must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -204,14 +204,14 @@ fn process_bids_in_non_revealing_stage_fails() {
 #[test]
 fn process_bids_rejects_non_origin_caller() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         // Series is in Revealing, so the only admission gate left is the caller check.
         let attacker = bidder(99);
         assert!(runtime::process_bids_batch(
             s.clone(),
             attacker,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -220,19 +220,19 @@ fn process_bids_rejects_non_origin_caller() {
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.bid_count.read(&SERIES_ID).unwrap(), 0);
+        assert_eq!(contract.bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
     });
 }
 
 #[test]
 fn clear_auction_rejects_non_origin_caller() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -242,10 +242,10 @@ fn clear_auction_rejects_non_origin_caller() {
         .unwrap();
         // Series is in BidsReceived, so the only admission gate left is the caller check.
         let attacker = bidder(99);
-        assert!(runtime::clear_auction(s.clone(), attacker, SERIES_ID).is_err());
+        assert!(runtime::clear_auction(s.clone(), attacker, WORLDWIDE_DAY).is_err());
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::BidsReceived
         );
     });
@@ -267,15 +267,15 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 #[test]
 fn process_bids_accumulate_then_finalize() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
 
         // Two batches of generation 1 (total_batches=2); the stage advances only once
         // both batch_index 0 and 1 have arrived.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -286,7 +286,7 @@ fn process_bids_accumulate_then_finalize() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             1,
@@ -296,9 +296,9 @@ fn process_bids_accumulate_then_finalize() {
         .unwrap();
 
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 5);
+        assert_eq!(contract.read_bid_count(WORLDWIDE_DAY).unwrap(), 5);
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::BidsReceived
         );
     });
@@ -307,14 +307,14 @@ fn process_bids_accumulate_then_finalize() {
 #[test]
 fn higher_generation_replaces_bids() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
 
         // Gen 1 arrives incomplete (batch 0 of 2), so it never finalizes.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -326,7 +326,7 @@ fn higher_generation_replaces_bids() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             2,
             0,
@@ -336,20 +336,20 @@ fn higher_generation_replaces_bids() {
         .unwrap();
 
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.read_bid_count(SERIES_ID).unwrap(), 2);
+        assert_eq!(contract.read_bid_count(WORLDWIDE_DAY).unwrap(), 2);
     });
 }
 
 #[test]
 fn stale_generation_is_rejected() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
 
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             2,
             0,
@@ -360,7 +360,7 @@ fn stale_generation_is_rejected() {
         assert!(runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -374,15 +374,15 @@ fn stale_generation_is_rejected() {
 #[test]
 fn no_bids_last_batch_clears_as_no_sale() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 10 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 10 * PROMIS_LOAD_MINOR).unwrap();
         // A single empty batch (batch 0 of 1) completes the generation and advances to
         // BidsReceived (not Cancelled), so clearing auto-fires.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -391,17 +391,17 @@ fn no_bids_last_batch_clears_as_no_sale() {
         )
         .unwrap();
         assert_eq!(
-            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            s.contract::<DesisContract>().read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::BidsReceived
         );
 
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
         assert_eq!(
-            s.contract::<DesisContract>().read_stage(SERIES_ID).unwrap(),
+            s.contract::<DesisContract>().read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Cleared
         );
     });
@@ -413,14 +413,14 @@ fn no_bids_last_batch_clears_as_no_sale() {
 fn clear_auction_allocates_up_to_supply() {
     with_storage(|s| {
         let supply = 3u32;
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -428,7 +428,7 @@ fn clear_auction_allocates_up_to_supply() {
             bids(5, 200),
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
@@ -437,13 +437,13 @@ fn clear_auction_allocates_up_to_supply() {
 #[test]
 fn clear_auction_transitions_to_cleared() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -451,10 +451,10 @@ fn clear_auction_transitions_to_cleared() {
             bids(1, 200),
         )
         .unwrap();
-        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Cleared
         );
     });
@@ -463,26 +463,26 @@ fn clear_auction_transitions_to_cleared() {
 #[test]
 fn begin_clearing_accepts_zero_supply() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        let remainder = runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0).unwrap();
         assert_eq!(remainder, 0);
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.pending_supply_intex.read(&SERIES_ID).unwrap(), 0);
-        assert_eq!(contract.clearing_initiated.read(&SERIES_ID).unwrap(), 1);
+        assert_eq!(contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
     });
 }
 
 #[test]
 fn clear_auction_empty_supply_refunds_all_bidders() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 0).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -490,7 +490,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
             bids(3, 200),
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
@@ -500,7 +500,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Cleared
         );
     });
@@ -509,10 +509,10 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
 #[test]
 fn clear_auction_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         // Three bids at descending prices: 300, 200, 150.
         let three_bids = vec![
             BidData {
@@ -537,7 +537,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -545,7 +545,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
             three_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
@@ -555,9 +555,9 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
 #[test]
 fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap(); // min_bid_price=100
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
-        runtime::begin_clearing(s.clone(), SERIES_ID, 3 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap(); // min_bid_price=100
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 3 * PROMIS_LOAD_MINOR).unwrap();
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -575,7 +575,7 @@ fn clear_bids_below_min_price_skipped() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -583,7 +583,7 @@ fn clear_bids_below_min_price_skipped() {
             low_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -592,10 +592,10 @@ fn clear_bids_below_min_price_skipped() {
 #[test]
 fn clear_refunds_equal_locked_minus_paid() {
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 1u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR).unwrap();
         // Winner bids 300, clearing price will be 300 (only one slot).
         let two_bids = vec![
             BidData {
@@ -614,7 +614,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -622,7 +622,7 @@ fn clear_refunds_equal_locked_minus_paid() {
             two_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
@@ -662,10 +662,10 @@ fn clear_rate_escrow_scales_by_basis() {
             commit_bond_minor: 0,
             entry_price_minor: U256::from(20_000_000_000_000u128), // 2e13 (feeds floor/call; escrow basis = promis_load)
         };
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, cfg).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, cfg).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), SERIES_ID, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -689,7 +689,7 @@ fn clear_rate_escrow_scales_by_basis() {
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
-            SERIES_ID,
+            WORLDWIDE_DAY,
             1,
             1,
             0,
@@ -697,7 +697,7 @@ fn clear_rate_escrow_scales_by_basis() {
             rate_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, SERIES_ID).unwrap();
+        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.
@@ -769,7 +769,7 @@ fn dispatch_stage_start_success_returns_true() {
     with_storage(|s| {
         let accepted = crate::api::dispatch_stage_start(
             s.clone(),
-            SERIES_ID,
+            WORLDWIDE_DAY,
             AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
@@ -777,7 +777,7 @@ fn dispatch_stage_start_success_returns_true() {
         assert!(accepted, "valid start should be accepted");
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(SERIES_ID).unwrap(),
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Started
         );
     });
@@ -801,14 +801,14 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
     let (first, second) = StorageHandle::enter(&mut storage, |s| {
         let first = crate::api::dispatch_stage_start(
             s.clone(),
-            SERIES_ID,
+            WORLDWIDE_DAY,
             AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
         .unwrap();
         let second = crate::api::dispatch_stage_start(
             s.clone(),
-            SERIES_ID,
+            WORLDWIDE_DAY,
             AUCTION_TS,
             U256::from(ENTRY_PRICE),
         )
@@ -823,7 +823,7 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
     let found = storage.get_events(desis_addr).iter().any(|log| {
         log.topics().first() == Some(&fail_sig)
             && IDesis::AuctionDispatchFailed::decode_log_data(log)
-                .map(|ev| ev.seriesId == SERIES_ID && ev.stage == "auction_stage_start")
+                .map(|ev| ev.worldwideDay == WORLDWIDE_DAY && ev.stage == "auction_stage_start")
                 .unwrap_or(false)
     });
     assert!(
@@ -837,13 +837,13 @@ fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis(
     use outbe_promislimit::PromisLimitContract;
 
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), SERIES_ID, true).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
 
         // Supply = 3 whole PROMIS_LOAD_MINOR units + 7 dust; only whole units can
         // be auctioned, so the dust is the remainder the caller must keep.
         let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), SERIES_ID, supply).unwrap();
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
 
         // The dispatch returns the dust to the caller instead of writing it to
         // PromisLimit, so it cannot collide with the caller's own set/add. (The
@@ -865,10 +865,10 @@ fn dispatch_stage_clearing_failure_returns_whole_supply() {
     // stage. The best-effort wrapper must return the whole supply so the caller
     // routes the full budget back to PromisLimit and nothing is lost.
     with_storage(|s| {
-        runtime::start_auction(s.clone(), SERIES_ID, AUCTION_TS, default_config()).unwrap();
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
 
         let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), SERIES_ID, supply).unwrap();
+        let remainder = crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
         assert_eq!(remainder, supply);
     });
 }
