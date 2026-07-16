@@ -70,6 +70,29 @@ sol! {
             returns (address[] memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IGovernance {
+        struct Oip {
+            uint256 id;
+            uint8 status;
+            address author;
+            uint64 createdBlock;
+            uint64 updatedBlock;
+            bytes32 textHash;
+            string text;
+        }
+        struct Gip {
+            uint256 id;
+            uint8 status;
+            address author;
+            uint64 createdBlock;
+            uint64 updatedBlock;
+            bytes32 textHash;
+            string text;
+        }
+        function getOip(uint256 id) external view returns (Oip memory);
+        function getGip(uint256 id) external view returns (Gip memory);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITeeRegistry {
         function isBootstrapped() external view returns (bool);
     }

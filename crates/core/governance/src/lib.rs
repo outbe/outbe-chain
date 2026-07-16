@@ -15,6 +15,8 @@
 //! Writes to the normative texts and to proposal status are gated by the
 //! `authorities` set (seeded at genesis with the validator addresses) — PoC
 //! scaffolding standing in for the not-yet-built decision pipeline.
+//! Approved OIP/GIP records may also be materialized via the vote path
+//! ([`GovernanceVoteTarget`]) after validator quorum.
 
 pub mod diff;
 pub mod errors;
@@ -23,8 +25,10 @@ pub mod runtime;
 pub mod schema;
 pub mod state;
 pub mod status;
+pub mod vote_target;
 
 pub use schema::{Gip, GovernanceContract, Oip};
+pub use vote_target::{GovernanceVotePayload, GovernanceVoteTarget, ProposalKind};
 
 #[cfg(test)]
 mod tests;
