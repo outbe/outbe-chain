@@ -16,6 +16,7 @@ library BridgeMsgCodec {
 
     // Message types: BNB -> Outbe
     uint8 internal constant MSG_BIDS_BATCH = 1;
+    uint8 internal constant MSG_BIDS_DONE = 12;
 
     // Message types: Outbe -> BNB
     uint8 internal constant MSG_AUCTION_STAGE_START = 4;
@@ -53,6 +54,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     uint16 internal constant MIN_LEN_MARK_CALLED = 6;
     uint16 internal constant MIN_LEN_MARK_QUALIFIED = 6;
+    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
+    uint16 internal constant MIN_LEN_BIDS_DONE = 20;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -148,6 +151,24 @@ library BridgeMsgCodec {
     /// @param _max The configured upper bound.
     function requireMaxArrayLen(uint256 _actual, uint256 _max) internal pure {
         if (_actual > _max) revert PayloadArrayTooLong(_actual, _max);
+    }
+
+    /// @notice Encodes a BIDS_DONE marker: source chain `_srcChainId` has sent all `_totalBatches` batches
+    ///         of this flush generation for `_worldwideDay`.
+    /// @dev Fixed-length encodePacked. `_totalBids` is an integrity check: the receiver requires it to equal the
+    ///      sum of the arrived batch sizes before it treats the chain as complete. Redundant with the per-batch
+    ///      `totalBatches` field, kept as the explicit completeness marker + a cross-check.
+    /// @return The wire-encoded BIDS_DONE message.
+    function encodeBidsDone(
+        uint32 _worldwideDay,
+        uint32 _srcChainId,
+        uint32 _relayGeneration,
+        uint16 _totalBatches,
+        uint32 _totalBids
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _relayGeneration, _totalBatches, _totalBids
+        );
     }
 
     /// @notice Encodes BIDS_BATCH message.
@@ -409,7 +430,9 @@ library BridgeMsgCodec {
         }
         requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_REFUND_INSTRUCTIONS, abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
+            BODY_VERSION_V1,
+            MSG_REFUND_INSTRUCTIONS,
+            abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
         );
     }
 
@@ -432,6 +455,27 @@ library BridgeMsgCodec {
     }
 
     // --- Decoding ---
+
+    /// @notice Decodes a BIDS_DONE marker.
+    /// @param _msg The wire-encoded BIDS_DONE message.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return srcChainId The source chainId that finished sending its bids.
+    /// @return relayGeneration The flush generation this marker stamps.
+    /// @return totalBatches Total batches the source chain sent for this generation.
+    /// @return totalBids Total bids across those batches (integrity cross-check).
+    function decodeBidsDone(bytes calldata _msg)
+        internal
+        pure
+        returns (uint32 worldwideDay, uint32 srcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+    {
+        _assertExactLength(_msg, MSG_BIDS_DONE, MIN_LEN_BIDS_DONE);
+        _assertBodyVersion(_msg);
+        worldwideDay = uint32(bytes4(_msg[2:6]));
+        srcChainId = uint32(bytes4(_msg[6:10]));
+        relayGeneration = uint32(bytes4(_msg[10:14]));
+        totalBatches = uint16(bytes2(_msg[14:16]));
+        totalBids = uint32(bytes4(_msg[16:20]));
+    }
 
     /// @notice Returns the body version byte (offset 0).
     /// @param _msg The wire-encoded bridge message.
@@ -528,7 +572,11 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded AUCTION_STAGE_REVEAL message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return isGreenDay The decoded green-day flag.
-    function decodeAuctionStageReveal(bytes calldata _msg) internal pure returns (uint32 worldwideDay, bool isGreenDay) {
+    function decodeAuctionStageReveal(bytes calldata _msg)
+        internal
+        pure
+        returns (uint32 worldwideDay, bool isGreenDay)
+    {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_REVEAL, MIN_LEN_AUCTION_STAGE_REVEAL);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
@@ -678,6 +726,7 @@ library BridgeMsgCodec {
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
         if (_msgType == MSG_MARK_QUALIFIED) return MIN_LEN_MARK_QUALIFIED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
+        if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
         if (_msgType == MSG_REFUND_INSTRUCTIONS) return MIN_LEN_REFUND_INSTRUCTIONS;
         if (_msgType == MSG_ISSUANCE_INSTRUCTIONS) return MIN_LEN_ISSUANCE_INSTRUCTIONS;
         return 0;

@@ -59,6 +59,25 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(BridgeMsgCodec.encodeMarkQualified(0x11223344), hex"010b11223344");
     }
 
+    function test_Golden_BidsDone() public pure {
+        // [ver=01][type=0c][wwd=11223344][srcChain=00000061][gen=00000002][totalBatches=0003][totalBids=000000c8]
+        assertEq(
+            BridgeMsgCodec.encodeBidsDone(0x11223344, 0x61, 0x02, 0x0003, 0xC8),
+            hex"010c1122334400000061000000020003000000c8"
+        );
+    }
+
+    function test_RoundTrip_BidsDone_AllFields() public view {
+        (uint32 wwd, uint32 src, uint32 gen, uint16 batches, uint32 bids) = this.exposedDecodeBidsDone(
+            BridgeMsgCodec.encodeBidsDone(0x0A0B0C0D, 0x11121314, 0x21222324, 0x3132, 0x41424344)
+        );
+        assertEq(wwd, 0x0A0B0C0D, "worldwideDay");
+        assertEq(src, 0x11121314, "srcChainId");
+        assertEq(gen, 0x21222324, "relayGeneration");
+        assertEq(batches, 0x3132, "totalBatches");
+        assertEq(bids, 0x41424344, "totalBids");
+    }
+
     // Per-field round-trips: a distinct sentinel per field, so any offset or tuple
     // reorder lands a value in the wrong field and fails an assertion.
 
@@ -267,6 +286,10 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     function exposedDecodeMarkQualified(bytes calldata p) external pure returns (uint32) {
         return BridgeMsgCodec.decodeMarkQualified(p);
+    }
+
+    function exposedDecodeBidsDone(bytes calldata p) external pure returns (uint32, uint32, uint32, uint16, uint32) {
+        return BridgeMsgCodec.decodeBidsDone(p);
     }
 
     function exposedDecodeBidsBatch(bytes calldata p)

@@ -25,6 +25,9 @@ library IntexGas {
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     // --- Variable-size messages: base + per-item marginal ---
+    /// @notice Destination gas for a fixed-size BIDS_DONE completeness marker.
+    uint256 internal constant BIDS_DONE = 200_000;
+
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
     uint256 internal constant ISSUANCE_BASE = 300_000;
