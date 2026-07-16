@@ -289,6 +289,118 @@ fn typed_stored_body_and_wire_profile_reject_alternative_representations() {
 }
 
 #[test]
+fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
+    fn shorten_length_delimited(mut payload: Vec<u8>, marker: [u8; 2]) -> Vec<u8> {
+        let start = payload
+            .windows(marker.len())
+            .position(|window| window == marker)
+            .expect("canonical field marker must exist");
+        let original_len = usize::from(marker[1]);
+        payload[start + 1] = marker[1] - 1;
+        payload.remove(start + 2 + original_len - 1);
+        payload
+    }
+
+    let tribute = TributeBodyV1 {
+        tribute_id: EntityId36::new(WorldwideDay::from(1), [0x11; 32]),
+        owner: Address::repeat_byte(0x22),
+        worldwide_day: WorldwideDay::from(1),
+        issuance_amount_minor: U256::from(1),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(2),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(3),
+        exclude_from_intex_issuance: true,
+    };
+    let canonical_tribute = encode_tribute_v1(&tribute).unwrap();
+
+    // Move field 2 before field 1 while keeping both fields individually valid.
+    let mut out_of_order = Vec::with_capacity(canonical_tribute.len());
+    out_of_order.extend_from_slice(&canonical_tribute[38..60]);
+    out_of_order.extend_from_slice(&canonical_tribute[..38]);
+    out_of_order.extend_from_slice(&canonical_tribute[60..]);
+    assert!(matches!(
+        decode_tribute_v1(&out_of_order),
+        Err(CanonicalBodyError::MissingField { field: 1 })
+    ));
+
+    assert!(matches!(
+        decode_tribute_v1(&[0x0a, 0x80]),
+        Err(CanonicalBodyError::MalformedProtobuf)
+    ));
+    assert!(matches!(
+        decode_tribute_v1(&shorten_length_delimited(
+            canonical_tribute.clone(),
+            [0x0a, 0x24],
+        )),
+        Err(CanonicalBodyError::InvalidEntityId(_))
+    ));
+
+    let nod_item = NodItemBodyV1 {
+        nod_id: EntityId36::new(WorldwideDay::from(1), [0x11; 32]),
+        owner: Address::repeat_byte(0x22),
+        gratis_load_minor: U256::from(1),
+        worldwide_day: WorldwideDay::from(1),
+        league_id: 2,
+        floor_price_minor: U256::from(2),
+        bucket_key: B256::repeat_byte(0x33),
+        cost_amount_minor: U256::from(3),
+        issuance_currency: 3,
+        reference_currency: 4,
+        issued_at: 5,
+    };
+    assert!(matches!(
+        decode_nod_item_v1(&shorten_length_delimited(
+            encode_nod_item_v1(&nod_item).unwrap(),
+            [0x12, 0x14],
+        )),
+        Err(CanonicalBodyError::InvalidFixedWidth {
+            field: 2,
+            expected: 20,
+            actual: 19,
+        })
+    ));
+
+    let nod_bucket = NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(0x33),
+        worldwide_day: WorldwideDay::from(1),
+        floor_price_minor: U256::from(1),
+        is_qualified: true,
+        total_nods: 2,
+        entry_price_minor: U256::from(3),
+    };
+    assert!(matches!(
+        decode_nod_bucket_v1(&shorten_length_delimited(
+            encode_nod_bucket_v1(&nod_bucket).unwrap(),
+            [0x0a, 0x20],
+        )),
+        Err(CanonicalBodyError::InvalidFixedWidth {
+            field: 1,
+            expected: 32,
+            actual: 31,
+        })
+    ));
+
+    let mut wrong_wire_type = canonical_tribute.clone();
+    wrong_wire_type[0] = 0x08;
+    assert!(matches!(
+        decode_tribute_v1(&wrong_wire_type),
+        Err(CanonicalBodyError::WrongWireType { field: 1 })
+    ));
+
+    let currency = canonical_tribute
+        .windows(3)
+        .position(|window| window == [0x28, 0xc8, 0x06])
+        .unwrap();
+    let mut u16_overflow = canonical_tribute;
+    u16_overflow.splice(currency..currency + 3, [0x28, 0x80, 0x80, 0x04]);
+    assert!(matches!(
+        decode_tribute_v1(&u16_overflow),
+        Err(CanonicalBodyError::IntegerOutOfRange { field: 5 })
+    ));
+}
+
+#[test]
 fn schema_v2_has_one_root_and_keeps_reserved_slots_empty() {
     let mut provider = HashMapStorageProvider::new(1);
 

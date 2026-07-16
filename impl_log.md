@@ -87,6 +87,17 @@
 
 ### ADR-008 verification boundary
 
-- `cargo test -p outbe-compressed-entities --lib` passes 77 behavioral tests; the complete `outbe-evm` library suite passes 141 tests; 19 CE finalizer/recovery tests, node startup/config/candidate cleanup, consensus ACK ordering, offchain genesis replay, and production-scope integration tests pass.
+- `cargo test -p outbe-compressed-entities --lib` passes 80 behavioral tests; the complete `outbe-evm` library suite passes 141 tests; 19 CE finalizer/recovery tests, node startup/config/candidate cleanup, consensus ACK ordering, offchain genesis replay, and production-scope integration tests pass.
 - `cargo check --workspace --all-targets`, affected-package `cargo clippy --all-targets --no-deps -- -D warnings`, formatting, vendored-source checksums, `git diff --check`, and the ADR-008 criterion benchmark build pass.
 - ADR-008 is not a deployment activation and intentionally does not claim production numeric CE capacity. Sharding, collection roots/catalog topology, and the first deployed scheme-1 root remain ADR-009/010 work.
+
+## 2026-07-16 — ADR-006–008 completion audit
+
+- Re-audited the three committed ADRs independently against their normative text and closed verification gaps without rewriting their implementation commits.
+- Expanded the strict Protobuf rejection matrix across field ordering, malformed lengths, every fixed-width identity/body field, wrong wire types, and `u16` overflow.
+- Covered zero authenticated leaves with stale parent rows for Tribute, Nod item, and Nod bucket; covered a nonzero Nod bucket leaf with a missing parent body as deterministic corruption.
+- Added atomic malformed-input coverage for all typed Store and Delete projection events. Every rejected receipt leaves both domain data and checkpoint untouched.
+- Made first-touch ordering, list predicate mismatch, static-context mutation rejection, and every post-cleanup public lifecycle operation executable behavior assertions.
+- Replaced test-only fresh-tree-per-block fixtures in Tribute runtime reads and the combined WWD/Lysis/Nod/Gratis E2E path with persistent authenticated trees opened at the exact finalized parent and advanced through candidate publication/finality after every block.
+- Narrowed startup pruning rejection to the three recovery-critical surfaces: receipts, account history, and storage history. Unrelated Reth prune configuration no longer disables compressed storage.
+- Re-ran the complete behavioral gates for the touched ADR seams; no completion test inspects source files for implementation strings.

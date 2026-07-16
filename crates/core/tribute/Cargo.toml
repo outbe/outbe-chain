@@ -19,6 +19,7 @@ thiserror.workspace = true
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
 mongodb.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []

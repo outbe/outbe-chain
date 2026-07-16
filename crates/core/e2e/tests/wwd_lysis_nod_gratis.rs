@@ -47,7 +47,9 @@ use alloy_primitives::{address, keccak256, Address, Bytes, Log, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    begin_block, derive_poseidon_entity_id, end_block, EntityId36, ExecutionScope,
+    begin_block, derive_poseidon_entity_id, end_block, CandidateCacheLimits, CeMdbx, CeWorkConfig,
+    CompressedTreeService, EntityId36, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
+    FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_gratis::Gratis;
 use outbe_metadosis::{
@@ -105,28 +107,64 @@ struct BodyProjectionHarness {
     projector: OffchainDataProjection,
     projected_events: usize,
     next_block: u64,
+    _tree_directory: tempfile::TempDir,
+    tree_service: Arc<CompressedTreeService>,
 }
 
 impl BodyProjectionHarness {
     fn new() -> Self {
         let storage = Arc::new(MemoryStorage::new());
+        let genesis_hash = B256::repeat_byte(0x11);
         let reader: StorageReaderHandle = storage.clone();
         let writer: StorageWriterHandle = storage.clone();
         let projector = OffchainDataProjection::open(
             ProjectionConfig {
                 chain_id: CHAIN_ID,
-                genesis_hash: B256::repeat_byte(0x11),
+                genesis_hash,
                 start_block: 1,
             },
             reader,
             writer,
         )
         .unwrap();
+        let tree_directory = tempfile::tempdir().unwrap();
+        let tree_db = CeMdbx::open(
+            tree_directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: CHAIN_ID,
+                genesis_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: genesis_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: B256::ZERO,
+            },
+        )
+        .unwrap();
+        let tree_service = Arc::new(
+            CompressedTreeService::new(
+                tree_db,
+                CandidateCacheLimits {
+                    max_candidates: 4,
+                    max_encoded_bytes: 10_000_000,
+                },
+            )
+            .unwrap(),
+        );
         Self {
             storage,
             projector,
             projected_events: 0,
             next_block: 1,
+            _tree_directory: tree_directory,
+            tree_service,
         }
     }
 
@@ -208,17 +246,39 @@ fn with_storage<R>(
 
 fn with_body_lifecycle<R>(
     provider: &mut HashMapStorageProvider,
-    bodies: &BodyProjectionHarness,
+    bodies: &mut BodyProjectionHarness,
     operation: impl FnOnce(StorageHandle<'_>, &ExecutionScope, &RuntimeBodyReaders) -> R,
 ) -> R {
     let parent = bodies.runtime_readers();
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(provider, |storage| {
+    let marker = bodies.tree_service.finalized_marker().unwrap();
+    let block_number = marker.height + 1;
+    provider.set_block_number(block_number);
+    let parent_tree = bodies
+        .tree_service
+        .open_parent(ExactParentIdentity {
+            commitment_scheme_version: marker.commitment_scheme_version,
+            block_number: marker.height,
+            block_hash: marker.block_hash,
+            root: marker.new_root,
+        })
+        .unwrap();
+    let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let (result, seal) = StorageHandle::enter(provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         let result = operation(storage.clone(), &scope, &parent);
-        end_block(storage, &scope).unwrap();
-        result
-    })
+        let seal = end_block(storage, &scope).unwrap();
+        (result, seal)
+    });
+    let block_hash = keccak256([b"ce-test-block".as_slice(), &block_number.to_be_bytes()].concat());
+    bodies
+        .tree_service
+        .publish_candidate(block_hash, seal.staged_tree_batch)
+        .unwrap();
+    bodies
+        .tree_service
+        .apply_finalized(block_number, block_hash, seal.new_root)
+        .unwrap();
+    result
 }
 
 /// One begin-block tick running the full Outbe pre-execution hook chain, in
@@ -490,7 +550,7 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     tick(&mut provider, &mut bodies, 5, green.offering_entry, None);
     let green_tribute_id = derive_poseidon_entity_id(alice, green_wwd).unwrap();
     let green_nominal = U256::in_units(1_000_000u64);
-    with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+    with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
         TributeContract::new(storage)
             .issue(
                 scope,
@@ -517,7 +577,7 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     let red_large_tribute_id = derive_poseidon_entity_id(carol, red_wwd).unwrap();
     let red_small_nominal = U256::in_units(20u64);
     let red_large_nominal = U256::in_units(1_000u64);
-    with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+    with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
         let mut tribute = TributeContract::new(storage);
         tribute
             .issue(
@@ -571,14 +631,14 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
 
     // The canonical bodies are now available only through the projected repository.
     assert!(
-        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
             TributeContract::new(storage)
                 .get_tribute_ids_by_owner(scope, parent, alice)
                 .unwrap()
         })
         .is_empty()
     );
-    let alice_nods = with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+    let alice_nods = with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
         nod_api::list_by_owner(&storage, scope, parent, alice).unwrap()
     });
     assert_eq!(alice_nods.len(), 1);
@@ -587,7 +647,7 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     let alice_floor_price = alice_item.floor_price_minor;
     let alice_bucket_id = EntityId36::new(alice_item.worldwide_day, alice_item.bucket_key.0);
     assert!(
-        !with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+        !with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
             nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
         })
         .map(|bucket| bucket.is_qualified)
@@ -607,7 +667,7 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
         None,
     );
     assert!(
-        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
             nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
         })
         .map(|bucket| bucket.is_qualified)
@@ -650,21 +710,22 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     );
 
     for (owner, expected_qualified) in [(bob, true), (carol, false)] {
-        let owner_nods = with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
-            nod_api::list_by_owner(&storage, scope, parent, owner).unwrap()
-        });
+        let owner_nods =
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+                nod_api::list_by_owner(&storage, scope, parent, owner).unwrap()
+            });
         assert_eq!(owner_nods.len(), 1);
         let owner_bucket_id =
             EntityId36::new(owner_nods[0].worldwide_day, owner_nods[0].bucket_key.0);
         assert_eq!(
-            with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
                 nod_api::get_bucket(&storage, scope, parent, owner_bucket_id).unwrap()
             })
             .map(|bucket| bucket.is_qualified),
             Some(expected_qualified)
         );
         assert!(
-            with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
                 TributeContract::new(storage)
                     .get_tribute_ids_by_owner(scope, parent, owner)
                     .unwrap()
@@ -685,7 +746,7 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     // block. It therefore also proves that end_block removed every temporary
     // body/index overlay entry left by the dependent burn + Gratis mint.
     let (projected_carol_nod, projected_carol_bucket) =
-        with_body_lifecycle(&mut provider, &bodies, |storage, scope, parent| {
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
             assert!(nod_api::list_by_owner(&storage, scope, parent, bob)
                 .unwrap()
                 .is_empty());

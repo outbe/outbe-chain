@@ -421,15 +421,23 @@ fn run_node() -> eyre::Result<()> {
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
 
+        let prune_config = builder
+            .config()
+            .pruning
+            .prune_config(builder.config().chain.as_ref());
         validate_compressed_storage_runtime_config(CompressedStorageRuntimeConfig {
             persistence_threshold: builder.config().engine.persistence_threshold,
             memory_block_buffer_target: builder.config().engine.memory_block_buffer_target,
             max_pending_acks: outbe_consensus::config::MAX_PENDING_ACKS,
-            pruning_enabled: builder
-                .config()
-                .pruning
-                .prune_config(builder.config().chain.as_ref())
-                .is_some(),
+            receipts_pruning_enabled: prune_config
+                .as_ref()
+                .is_some_and(|config| config.has_receipts_pruning()),
+            account_history_pruning_enabled: prune_config
+                .as_ref()
+                .is_some_and(|config| config.segments.account_history.is_some()),
+            storage_history_pruning_enabled: prune_config
+                .as_ref()
+                .is_some_and(|config| config.segments.storage_history.is_some()),
         })?;
 
         // If a TEE enclave sidecar is configured, connect + attest it and install

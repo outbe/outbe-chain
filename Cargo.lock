@@ -7461,6 +7461,7 @@ dependencies = [
  "outbe-vaultprovider",
  "outbe-vote",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -8234,6 +8235,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-primitives",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

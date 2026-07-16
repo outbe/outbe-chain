@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, EntityId36, ExecutionScope,
-    StoredBody,
+    begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
+    CeMdbx, CeWorkConfig, CompressedTreeService, EntityId36, EnvironmentIdentity,
+    ExactParentIdentity, ExecutionScope, FinalizedMarker, StoredBody, ACTIVE_COMMITMENT_SCHEME,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
@@ -56,25 +58,102 @@ fn repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
     )
 }
 
-fn activate(provider: &mut HashMapStorageProvider) -> ExecutionScope {
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(provider, |storage| begin_block(storage, &scope).unwrap());
-    scope
+struct TreeHarness {
+    _directory: tempfile::TempDir,
+    service: Arc<CompressedTreeService>,
 }
 
-fn finish(provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
-    StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
+impl TreeHarness {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0xa0);
+        let db = CeMdbx::open(
+            directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: 1,
+                genesis_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: genesis_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: B256::ZERO,
+            },
+        )
+        .unwrap();
+        let service = Arc::new(
+            CompressedTreeService::new(
+                db,
+                CandidateCacheLimits {
+                    max_candidates: 4,
+                    max_encoded_bytes: 1_000_000,
+                },
+            )
+            .unwrap(),
+        );
+        Self {
+            _directory: directory,
+            service,
+        }
+    }
+
+    fn activate(&self, provider: &mut HashMapStorageProvider) -> ExecutionScope {
+        let marker = self.service.finalized_marker().unwrap();
+        provider.set_block_number(marker.height + 1);
+        let parent = self
+            .service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: marker.commitment_scheme_version,
+                block_number: marker.height,
+                block_hash: marker.block_hash,
+                root: marker.new_root,
+            })
+            .unwrap();
+        let scope = ExecutionScope::with_parent_tree(parent, CeWorkConfig::new(0, 0, u64::MAX));
+        StorageHandle::enter(provider, |storage| begin_block(storage, &scope).unwrap());
+        scope
+    }
+
+    fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
+        let output = StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
+        let block_number = output.staged_tree_batch.block_number;
+        let block_hash = keccak256(block_number.to_be_bytes());
+        self.service
+            .publish_candidate(block_hash, output.staged_tree_batch)
+            .unwrap();
+        self.service
+            .apply_finalized(block_number, block_hash, output.new_root)
+            .unwrap();
+    }
 }
 
-fn seed_parent_commitments(provider: &mut HashMapStorageProvider, bodies: &[&TributeData]) {
-    let scope = activate(provider);
+fn activate(provider: &mut HashMapStorageProvider, tree: &TreeHarness) -> ExecutionScope {
+    tree.activate(provider)
+}
+
+fn finish(provider: &mut HashMapStorageProvider, scope: &ExecutionScope, tree: &TreeHarness) {
+    tree.finish(provider, scope);
+}
+
+fn seed_parent_commitments(
+    provider: &mut HashMapStorageProvider,
+    tree: &TreeHarness,
+    bodies: &[&TributeData],
+) {
+    let scope = activate(provider, tree);
     StorageHandle::enter(provider, |storage| {
         for body in bodies {
             let canonical = outbe_tribute::canonical_body(body);
             mint(storage.clone(), &scope, BodyInput::Tribute(&canonical)).unwrap();
         }
     });
-    finish(provider, &scope);
+    finish(provider, &scope, tree);
 }
 
 #[test]
@@ -90,8 +169,9 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
     writer.put(&third).unwrap();
 
     let mut provider = HashMapStorageProvider::new(1);
-    seed_parent_commitments(&mut provider, &[&first, &second, &third]);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    seed_parent_commitments(&mut provider, &tree, &[&first, &second, &third]);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         let contract = TributeContract::new(storage);
         assert_eq!(
@@ -120,7 +200,7 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
             .unwrap()
             .contains("Outbe Tribute"));
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 #[test]
@@ -128,7 +208,8 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
     let (reader, _) = repository();
     let body = tribute(Address::repeat_byte(0x22), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    let scope = activate(&mut provider, &tree);
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage);
@@ -149,7 +230,7 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
         assert_eq!(contract.total_supply().unwrap(), 1);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 #[test]
@@ -157,7 +238,8 @@ fn burn_observes_same_block_mint_and_leaves_projection_to_the_projector() {
     let (reader, _) = repository();
     let body = tribute(Address::repeat_byte(0x33), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    let scope = activate(&mut provider, &tree);
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage);
@@ -174,7 +256,7 @@ fn burn_observes_same_block_mint_and_leaves_projection_to_the_projector() {
         assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 #[test]
@@ -182,7 +264,8 @@ fn absence_corruption_and_unavailability_remain_distinct() {
     let (reader, _) = repository();
     let body = tribute(Address::repeat_byte(0x44), 20_241_220);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         let error = TributeContract::new(storage)
             .owner_of(&scope, &reader, body.tribute_id)
@@ -191,9 +274,9 @@ fn absence_corruption_and_unavailability_remain_distinct() {
             matches!(error, PrecompileError::Revert(message) if message == "tribute not found")
         );
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 
-    seed_parent_commitments(&mut provider, &[&body]);
+    seed_parent_commitments(&mut provider, &tree, &[&body]);
 
     let corrupt = Arc::new(MemoryStorage::new());
     let corrupt_writer: StorageWriterHandle = corrupt.clone();
@@ -205,34 +288,34 @@ fn absence_corruption_and_unavailability_remain_distinct() {
         )
         .unwrap();
     let corrupt_reader = TributeRepositoryReader::new(corrupt);
-    let scope = activate(&mut provider);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(matches!(
             TributeContract::new(storage).get_tribute(&scope, &corrupt_reader, body.tribute_id),
             Err(PrecompileError::BodyReadCorruption(_))
         ));
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 
     let unavailable_reader = TributeRepositoryReader::new(Arc::new(UnavailableReader));
-    let scope = activate(&mut provider);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(matches!(
             TributeContract::new(storage).get_tribute(&scope, &unavailable_reader, body.tribute_id),
             Err(PrecompileError::BodyReadUnavailable(_))
         ));
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 
     let backend_reader = TributeRepositoryReader::new(Arc::new(BackendErrorReader));
-    let scope = activate(&mut provider);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(matches!(
             TributeContract::new(storage).get_tribute(&scope, &backend_reader, body.tribute_id),
             Err(PrecompileError::BodyReadCorruption(_))
         ));
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 #[test]
@@ -310,15 +393,16 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     writer.put(&updated).unwrap();
     let reader = TributeRepositoryReader::new(storage);
     let mut provider = HashMapStorageProvider::new(1);
-    seed_parent_commitments(&mut provider, &[&original]);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    seed_parent_commitments(&mut provider, &tree, &[&original]);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |evm| {
         assert!(matches!(
             TributeContract::new(evm).get_tribute(&scope, &reader, original.tribute_id),
             Err(PrecompileError::BodyReadCorruption(_))
         ));
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field: &str) {
@@ -332,8 +416,9 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
         .unwrap();
     let reader = TributeRepositoryReader::new(storage);
     let mut provider = HashMapStorageProvider::new(1);
-    seed_parent_commitments(&mut provider, &[original]);
-    let scope = activate(&mut provider);
+    let tree = TreeHarness::new();
+    seed_parent_commitments(&mut provider, &tree, &[original]);
+    let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |evm| {
         assert!(
             matches!(
@@ -343,7 +428,7 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
             "mutation of {field} must fail before domain use"
         );
     });
-    finish(&mut provider, &scope);
+    finish(&mut provider, &scope, &tree);
 }
 
 struct UnavailableReader;
