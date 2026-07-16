@@ -22,7 +22,8 @@ Use `script/usdt0/USDT0Deploy.s.sol:USDT0Deploy` for USDT0 and `script/wcoen/WCO
 Common required environment:
 
 - `PRIVATE_KEY`
-- `DEPLOYER_ADDRESS`
+- `DEPLOYER_ADDRESS` — broadcaster/signer address derived from `PRIVATE_KEY`
+- `OWNER_ADDRESS` — owner for the ERC-7802 token and token bridge; use a pre-deployed Safe/multisig on guarded testnet chains
 - `BRIDGE_ADDRESS` — local ERC-7786 bridge hub facade
 - `BSC_CHAIN_ID`
 - `OUTBE_CHAIN_ID`
@@ -66,7 +67,14 @@ set +a
 export PRIVATE_KEY="$DEPLOYER_PK"
 export DEPLOYER_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY")"
 export BSC_CHAIN_ID=97
+export OWNER_ADDRESS="$SAFE_ADDRESS"
 ```
+
+On BSC testnet (`BSC_CHAIN_ID=97`) and on the configured `OUTBE_CHAIN_ID`,
+`OWNER_ADDRESS` must already be a deployed contract. This keeps the mint-trust
+root behind a Safe/multisig while `PRIVATE_KEY` remains only the broadcaster.
+Set `OWNER_ADDRESS=$DEPLOYER_ADDRESS` only for local/dev chains that are not
+guarded by the deploy scripts.
 
 Deploy source-side BSC testnet contracts. If `BSC_USDT_TOKEN` is not set, this
 deploys the mintable mock `USDT`; it also deploys the source `ERC7786TokenBridge`
@@ -104,6 +112,12 @@ set +a
 Configure both remotes. The source bridge stores the Outbe remote under
 `OUTBE_CHAIN_ID`; the target bridge stores the BSC testnet remote under
 `BSC_CHAIN_ID`.
+
+If `OWNER_ADDRESS` is a Safe/multisig, these scripts will not broadcast the
+owner-only calls directly. They print the Safe transaction `to`, `value`, and
+`data`; submit those through the owner Safe, then re-run the verification calls.
+If the owner is still an EOA on a guarded testnet chain, the scripts revert
+before configuration.
 
 ```bash
 forge script script/usdt0/USDT0Deploy.s.sol:USDT0Deploy \
