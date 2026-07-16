@@ -23,6 +23,7 @@ futures.workspace = true
 tokio.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
+mongodb.workspace = true
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting"] }
 

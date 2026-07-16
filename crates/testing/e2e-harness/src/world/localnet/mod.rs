@@ -131,6 +131,8 @@ impl Localnet {
             self.cfg.authrpc_port(i),
             "--ipcpath",
             data.join("reth.ipc").display(),
+            "--engine.persistence-threshold",
+            0,
             "--log.file.directory",
             node_dir.join("logs").display(),
         ]

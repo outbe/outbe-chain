@@ -29,6 +29,21 @@ pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
             }
         }
     }
+    // Tribute uses the product-facing `offerTribute tx: 0x…` label.
+    for line in stdout
+        .lines()
+        .filter(|line| line.contains("offerTribute tx:"))
+    {
+        if let Some(start) = line.find("0x") {
+            let hex: String = line[start + 2..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            if hex.len() >= 64 {
+                return Some(format!("0x{}", &hex[..64]));
+            }
+        }
+    }
     None
 }
 
@@ -117,6 +132,12 @@ mod tests {
             Some("0xabc0000000000000000000000000000000000000000000000000000000000def")
         );
         assert_eq!(extract_tx_hash("nothing here"), None);
+        let offer =
+            "offerTribute tx: 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        assert_eq!(
+            extract_tx_hash(offer).as_deref(),
+            Some("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+        );
     }
 
     #[test]

@@ -2,13 +2,10 @@
 
 A Rust [cucumber](https://crates.io/crates/cucumber) harness for the outbe-chain
 e2e suite. Scenarios are Gherkin fixtures under [`features/`](./features); the
-step code behind them (`src/flows/`) drives typed handles (`src/world/`) that
-shell out — via `xshell` — to the **same** orchestration the bash suite uses.
+step code behind them (`src/features/`) drives typed handles (`src/world/`).
 
-This crate **replaces only the glue and assertions** that lived in
-`scripts/e2e/lib.sh` and the scenario scripts. It does **not** reimplement node
-launch, the docker/Gramine TEE enclave, or the DKG bootstrap — those stay in
-`scripts/bootstrap-testnet.sh` and `scripts/run-testnet.sh`, invoked as
+The harness owns validator processes, docker/Gramine TEE enclaves, and optional
+MongoDB containers. DKG bootstrap and genesis seeding remain one-shot
 subprocesses.
 
 ## Model: environment (CLI) vs. requirements (tags)
@@ -27,12 +24,12 @@ and `todo` (an unimplemented stub — always skipped).
 ## Layout
 
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
-  the `s*` features are `@todo` stubs.
+  `tribute_projection.feature` is the focused encrypted-offer/projection check.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
   requirement/skip logic.
 - `src/world/` — encapsulated handles with verb APIs: `localnet.start(opts)`,
   `rpc.send_propose(...)`, `rpc.wait_block(...)`, `validators.operator(...)`.
-- `src/flows/` — step definitions (the code behind the fixtures).
+- `src/features/` — step definitions (the code behind the fixtures).
 - `src/internal/` — private plumbing: `Config`, the `xshell` wrapper, precompile
   addresses, output parsers.
 
@@ -47,8 +44,9 @@ the harness reads no configuration from the environment.** Flags:
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
   off by default (that output is captured and shown only if a step fails).
-- `--projection-mongodb-uri <URI>` — required transaction-capable MongoDB replica set or sharded
-  cluster; the harness allocates a distinct logical database per run/scenario/node.
+- `--projection-mongodb-uri <URI>` — optional transaction-capable MongoDB replica set or sharded
+  cluster. When omitted, the harness starts and owns a temporary `mongo:7.0`
+  single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
 - plus cucumber's own `--tags`, `--name`, `--input`.
@@ -65,16 +63,16 @@ cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-encla
 Then, e.g.:
 
 ```sh
-MONGO_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
+# Omit --projection-mongodb-uri to use the harness-owned replica set.
 # tee-less run of the update flow
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee none --validators 4 --projection-mongodb-uri "$MONGO_URI"
+  --tee none --validators 4
 # through the mock enclave
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 4 --projection-mongodb-uri "$MONGO_URI"
+  --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 5 --all --projection-mongodb-uri "$MONGO_URI"
+  --tee mock --validators 5 --all
 ```
 
 The skip/fail *logic* is verifiable anywhere (no localnet needed): e.g.
@@ -84,11 +82,42 @@ while `--validators 2 --all` exits non-zero.
 `--debug` streams the localnet setup output live; without it, that output is
 captured and only printed if a setup step fails.
 
+## Focused Tribute projection check
+
+Run only the encrypted Tribute creation and offchain projection scenario:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock \
+  --validators 4 \
+  --name "A successful tribute is persisted by every validator"
+```
+
+The scenario performs the complete product flow:
+
+1. Starts an isolated four-validator localnet and mock TEE enclaves.
+2. Starts a temporary `mongo:7.0` single-node replica set. Pass
+   `--projection-mongodb-uri <URI>` to use an existing transaction-capable
+   deployment instead.
+3. Submits one encrypted `offerTribute` transaction through `outbe-cli`.
+4. Requires a successful receipt and `totalSupply == 1`.
+5. Waits for exactly one document in `tributes`, `tributes_by_owner`, and
+   `tributes_by_day` in every validator database.
+6. Requires `_projection.tx_hash` to match the successful transaction and the
+   complete BSON documents to be identical across all four validators.
+
+On normal completion or failure, the harness stops the nodes and removes its
+MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container
+cleanup backstop. Add `--no-cleanup` when a successful run's chain data should
+remain available for inspection; failed runs keep their data directory by
+default.
+
 ## Status
 
-Ported: `update_operator` (from `scripts/e2e/update_operator_flow.sh`).
-Stubbed (`@todo`, see `src/flows/{lifecycle,dkg}.rs`): `s1_s2_s6_s3`, `s4`, `s5`,
-`s7a`, `s7b`. Wiring this into `mise run e2e` is a follow-up once more flows land.
+The focused `tribute_projection` scenario owns MongoDB and verifies the full
+encrypted offer → successful receipt → four-validator projection path. The
+validator lifecycle, update, DKG, downtime, restart, stale-join, and follower
+flows are also wired under `features/`.
 
 ## Ide support
 

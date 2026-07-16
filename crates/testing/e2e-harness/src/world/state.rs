@@ -29,6 +29,8 @@ pub struct FixtureState {
     pub marker_count: Option<usize>,
     /// Worldwide-day status byte captured before a tribute offer (invariant check).
     pub wwd_status_before: Option<String>,
+    /// Hash of the encrypted tribute transaction under projection verification.
+    pub tribute_tx_hash: Option<String>,
 }
 
 impl Default for FixtureState {
@@ -44,6 +46,7 @@ impl Default for FixtureState {
             marker_height: None,
             marker_count: None,
             wwd_status_before: None,
+            tribute_tx_hash: None,
         }
     }
 }

@@ -380,6 +380,17 @@ impl Rpc {
         parse::extract_tx_hash(&out)
     }
 
+    /// Wait until the submitted transaction is mined and assert its receipt succeeded.
+    pub fn wait_successful_receipt(&self, tx_hash: &str, tries: u32) -> bool {
+        for _ in 0..tries {
+            match eth::receipt_success(&self.cfg.rpc0, tx_hash) {
+                Some(status) => return status,
+                None => sleep(Duration::from_millis(500)),
+            }
+        }
+        false
+    }
+
     /// Stake `amount` ether from `key` (REGISTERED/PENDING joiner).
     pub fn stake(&self, key: &str, amount: u64) -> Result<()> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;
