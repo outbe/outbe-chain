@@ -695,18 +695,18 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     `initialized == true && !is_sealed`, and a directly-seeded OFFERING worldwide
     day never ran the metadosis `unseal_day` that normally initializes it.
 
-    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 8
+    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 1
     (storage_schema cumulative offsets: `total_supply`@0 = 1 slot, then
-    `tributes: Map<_, TributeData>` reserves `TributeData::SLOTS` = 7 slots
-    (1..7), so `day_totals` lands at slot 8). Within the `DayTotals` record the
+    `day_totals` lands at slot 1; Tribute bodies no longer occupy EVM storage).
+    Within the `DayTotals` record the
     field offset is the cumulative slot index by `#[attribute(order)]`:
     `initialized`@0, `tribute_count`@1, `tribute_nominal_amount`@2,
     `is_sealed`@3 (its `order = 4` only sorts; the gap at 3 is not reserved).
-    So `day_totals[wwd].initialized` is `Mapping(base_slot=8).get(wwd)`; writing
+    So `day_totals[wwd].initialized` is `Mapping(base_slot=1).get(wwd)`; writing
     1 makes the record exist + initialized, with `is_sealed` left at its `false`
-    default (slot 11)."""
+    default."""
     for wwd in days:
-        storage.set_mapping(8, u32_bytes(wwd), 1)
+        storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
 def nod_id_gen(owner: str, worldwide_day: int, index: int) -> bytes:

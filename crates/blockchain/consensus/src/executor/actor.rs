@@ -663,6 +663,22 @@ where
             commonware_consensus::marshal::Update::Block(block, ack) => {
                 let height = Height::new(block.number());
                 let digest = Digest(block.block_hash());
+                if height == Height::zero() {
+                    let expected = self.state.forkchoice.finalized_block_hash;
+                    if self.state.finalized_height == Height::zero() && digest.0 == expected {
+                        info!(
+                            %digest,
+                            "marshal-delivered genesis already canonical; acknowledging anchor"
+                        );
+                        ack.acknowledge();
+                        return Ok(());
+                    }
+                    return Err(eyre::eyre!(
+                        "marshal delivered unexpected genesis anchor: digest {digest}, \
+                         canonical finalized height {}, canonical hash {expected}",
+                        self.state.finalized_height
+                    ));
+                }
                 info!(
                     %height,
                     %digest,
@@ -1323,6 +1339,95 @@ mod tests {
 
             actor.send_fcu_heartbeat().await;
             engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn canonical_genesis_anchor_is_acknowledged_without_execution() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let block = executor_test_block(0, 0x00);
+            let genesis = block.block_hash();
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: genesis,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                0,
+                genesis,
+                projection_readiness,
+                None,
+            );
+
+            let (ack, waiter) = Exact::handle();
+            actor
+                .handle_marshal_update(Update::Block(block, ack))
+                .await
+                .expect("canonical genesis anchor must be accepted");
+            waiter
+                .await
+                .expect("canonical genesis anchor must acknowledge marshal");
+
+            assert_eq!(actor.state.finalized_height, Height::zero());
+            assert_eq!(actor.state.forkchoice.finalized_block_hash, genesis);
+            assert!(
+                engine_rx.try_recv().is_err(),
+                "genesis is already canonical and must not be sent through new_payload"
+            );
+        });
+    }
+
+    #[test]
+    fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let canonical_genesis = B256::repeat_byte(0x01);
+            let conflicting = executor_test_block(0, 0xff);
+            assert_ne!(conflicting.block_hash(), canonical_genesis);
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                canonical_genesis,
+                ProjectionCheckpoint {
+                    block_number: 0,
+                    block_hash: canonical_genesis,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                canonical_genesis,
+                0,
+                canonical_genesis,
+                projection_readiness,
+                None,
+            );
+
+            let (ack, waiter) = Exact::handle();
+            let result = actor
+                .handle_marshal_update(Update::Block(conflicting, ack))
+                .await;
+
+            assert!(result.is_err(), "a conflicting genesis anchor must fail");
+            assert!(
+                waiter.await.is_err(),
+                "a conflicting genesis anchor must not acknowledge marshal"
+            );
+            assert_eq!(actor.state.finalized_height, Height::zero());
+            assert_eq!(
+                actor.state.forkchoice.finalized_block_hash,
+                canonical_genesis
+            );
+            assert!(
+                engine_rx.try_recv().is_err(),
+                "a conflicting genesis anchor must fail before execution"
+            );
         });
     }
 
