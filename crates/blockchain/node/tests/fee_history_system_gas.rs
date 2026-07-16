@@ -1,8 +1,8 @@
 //! RPC-level regression for Outbe system-tx gas visibility in `eth_feeHistory`.
 //!
-//! The executor has a separate 100M internal execution budget for Outbe system
+//! The executor has a separate internal execution budget for Outbe system
 //! calls. Public Ethereum RPC gas accounting must expose only the committed
-//! header gas used by the visible transaction envelopes.
+//! header gas actually used by the visible transaction envelopes.
 
 use std::{path::PathBuf, process::Command, sync::Arc};
 
@@ -289,15 +289,19 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     node.update_forkchoice(genesis_hash, genesis_hash).await?;
 
     let payload = node.advance_block().await?;
-    let visible_system_gas: u64 = payload
+    let system_transactions = payload
         .block()
         .body()
         .transactions()
-        .map(|tx| tx.gas_limit())
+        .map(|tx| (*tx.tx_hash(), tx.gas_limit()))
+        .collect::<Vec<_>>();
+    let visible_system_gas_limit: u64 = system_transactions
+        .iter()
+        .map(|(_, gas_limit)| gas_limit)
         .sum();
     assert!(
-        visible_system_gas > 0,
-        "system-only block must include system tx gas"
+        visible_system_gas_limit > 0,
+        "system-only block must include system transaction envelopes"
     );
 
     let rpc_url = node
@@ -318,13 +322,35 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .get_block_by_number(latest.into())
         .await?
         .expect("latest block should be available through RPC");
+    let mut receipt_gas_used = 0u64;
+    let mut final_cumulative_gas_used = 0u64;
+    for (tx_hash, gas_limit) in system_transactions {
+        let receipt = provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .expect("system transaction receipt should be available through RPC");
+        assert!(
+            receipt.gas_used <= gas_limit,
+            "system transaction gas used must not exceed its signed envelope limit"
+        );
+        receipt_gas_used = receipt_gas_used.saturating_add(receipt.gas_used);
+        final_cumulative_gas_used = receipt.inner.cumulative_gas_used();
+    }
+    assert_eq!(
+        final_cumulative_gas_used, receipt_gas_used,
+        "final system receipt cumulative gas must equal the sum of actual receipt gas"
+    );
     assert!(
         rpc_block.header.gas_limit < SYSTEM_TX_ARTIFACT_GAS_LIMIT,
-        "RPC block gasLimit must stay in the user/block lane, not the 100M system execution budget"
+        "RPC block gasLimit must stay in the user/block lane, not the internal system execution budget"
     );
     assert_eq!(
-        rpc_block.header.gas_used, visible_system_gas,
-        "RPC block gasUsed must expose visible system envelope gas"
+        rpc_block.header.gas_used, final_cumulative_gas_used,
+        "RPC block gasUsed must equal the final receipt cumulative gas"
+    );
+    assert!(
+        rpc_block.header.gas_used < visible_system_gas_limit,
+        "actual RPC block gasUsed must remain below the reserved system envelope limits"
     );
     assert!(
         rpc_block.header.gas_used < SYSTEM_TX_ARTIFACT_GAS_LIMIT,
