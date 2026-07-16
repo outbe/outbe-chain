@@ -440,7 +440,7 @@ contract EscrowAdapter is
     /// @notice Self-call helper for `finalizeAuction`'s per-bidder try/catch. Reverts on any
     ///         non-self call. Not part of the public surface — bundled here because Solidity
     ///         `try/catch` only works on external/public function calls.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id threaded into the emitted events.
     /// @param inst Finalization instruction for the single bidder being processed.
     function processFinalizationOne(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst)
@@ -559,7 +559,7 @@ contract EscrowAdapter is
     ///         Reverts on any non-self call. Bundled here because Solidity `try/catch` only works
     ///         on external/public calls; not nonReentrant so the self-call is not blocked by the
     ///         caller's reentrancy guard.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose parked vault portion is being settled.
     function settleVaultOwedSelf(uint32 worldwideDay, address bidder) external {
         if (msg.sender != address(this)) revert NotSelf();
@@ -618,7 +618,7 @@ contract EscrowAdapter is
     /// @notice Validate lock inputs before any state write.
     /// @dev Rejects a zero `worldwideDay`, zero `bidder`, zero `amount`, and a bidder that already
     ///      holds a non-`None` lock for the series.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     function _validateLockInputs(uint32 worldwideDay, address bidder, uint128 amount) internal view {
@@ -635,7 +635,7 @@ contract EscrowAdapter is
     /// @notice Execute the lock operation — transfer from the bidder and deposit to The Compact.
     /// @dev Bootstraps `lockId` and forced withdrawal on the first deposit, then records the
     ///      `BidLock` and bumps the per-series escrow stats.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealBid`,
@@ -670,7 +670,7 @@ contract EscrowAdapter is
     ///         `Finalized`, refund the bidder, and collect the paid portion for the caller to route.
     /// @dev Reverts `AmountMismatch` when `refundedAmount + paidAmount != lockedAmount`.
     /// @param receiveId Inbound bridge message id threaded into the emitted refund/payout events.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param refundedAmount Amount to refund to the bidder.
     /// @param paidAmount Auction proceeds left in this contract for the caller to route.

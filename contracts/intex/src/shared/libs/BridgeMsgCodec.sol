@@ -155,7 +155,7 @@ library BridgeMsgCodec {
     ///      `_relayGeneration`; the receiver collects all `_totalBatches` (in any order) before finalizing
     ///      and replaces a re-flushed generation rather than double-counting it. Reverts `PayloadArrayTooLong`
     ///      if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @param _batchIndex Index of this batch within the flush (0-based).
@@ -210,7 +210,7 @@ library BridgeMsgCodec {
     ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
     ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
     ///      [commitBondMinor(16)]
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
@@ -273,7 +273,7 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_STAGE_REVEAL message.
     /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)][isGreenDay(1)]
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _isGreenDay The green-day flag for the series.
     /// @return The wire-encoded AUCTION_STAGE_REVEAL message.
     function encodeAuctionStageReveal(uint32 _worldwideDay, bool _isGreenDay) internal pure returns (bytes memory) {
@@ -282,7 +282,7 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_STAGE_CLEARING message.
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @return The wire-encoded AUCTION_STAGE_CLEARING message.
     function encodeAuctionStageClearing(uint32 _worldwideDay) internal pure returns (bytes memory) {
         return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_CLEARING, _worldwideDay);
@@ -291,7 +291,7 @@ library BridgeMsgCodec {
     /// @notice Encodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _issuedIntexCount The number of intex issued by the cleared auction.
     /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @param _wonBidsCount The number of winning bids.
@@ -337,7 +337,7 @@ library BridgeMsgCodec {
     ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][intexCallPeriod(4)]
     ///         [callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)][commitBondMinor(16)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
@@ -393,7 +393,7 @@ library BridgeMsgCodec {
 
     /// @notice Encodes REFUND_INSTRUCTIONS message.
     /// @dev Reverts `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _worldwideDay The auction series identifier.
+    /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _bidders The bidder addresses (parallel with `_refundedAmounts` and `_paidAmounts`).
     /// @param _refundedAmounts The amount refunded to each bidder.
     /// @param _paidAmounts The amount paid by each bidder.
@@ -467,7 +467,7 @@ library BridgeMsgCodec {
     ///      `BidsArrayLengthMismatch` if the four parallel arrays differ in length, and
     ///      `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
     /// @param _msg The wire-encoded BIDS_BATCH message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @return batchIndex Index of this batch within the flush (0-based).
@@ -526,7 +526,7 @@ library BridgeMsgCodec {
     ///      Reverts `InvalidPayloadLength` unless exactly 7 bytes, `UnsupportedBodyVersion` on a
     ///      stale version byte, and `InvalidGreenDayFlag` if the flag byte is neither 0 nor 1.
     /// @param _msg The wire-encoded AUCTION_STAGE_REVEAL message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return isGreenDay The decoded green-day flag.
     function decodeAuctionStageReveal(bytes calldata _msg) internal pure returns (uint32 worldwideDay, bool isGreenDay) {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_REVEAL, MIN_LEN_AUCTION_STAGE_REVEAL);
@@ -541,7 +541,7 @@ library BridgeMsgCodec {
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_STAGE_CLEARING message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     function decodeAuctionStageClearing(bytes calldata _msg) internal pure returns (uint32 worldwideDay) {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_CLEARING, MIN_LEN_AUCTION_STAGE_CLEARING);
         _assertBodyVersion(_msg);
@@ -553,7 +553,7 @@ library BridgeMsgCodec {
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return issuedIntexCount The number of intex issued by the cleared auction.
     /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @return wonBidsCount The number of winning bids.
@@ -608,7 +608,7 @@ library BridgeMsgCodec {
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte and
     ///      `RefundArrayLengthMismatch` if the three parallel arrays differ in length.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
-    /// @return worldwideDay The auction series identifier.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return bidders The bidder addresses (parallel with `refundedAmounts` and `paidAmounts`).
     /// @return refundedAmounts The amount refunded to each bidder.
     /// @return paidAmounts The amount paid by each bidder.

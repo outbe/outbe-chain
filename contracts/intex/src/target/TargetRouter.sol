@@ -391,7 +391,7 @@ contract TargetRouter is
     /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself —
     ///         exposing it externally would let anyone trigger relayed bids without going through
     ///         the auction-stage handler.
-    /// @param worldwideDay Series identifier whose revealed bids are relayed to Outbe.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
     function relayBidsToOutbe(uint32 worldwideDay) external {
         if (msg.sender != address(this)) revert NotSelf();
         _doSendBidsToOutbe(worldwideDay);

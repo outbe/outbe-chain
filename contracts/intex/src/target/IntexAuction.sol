@@ -124,7 +124,7 @@ contract IntexAuction is
     }
 
     /// @notice Committed bid hash for a bidder.
-    /// @param worldwideDay Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @return The stored commit hash (zero when absent).
     function committedBidsByHash(uint32 worldwideDay, address bidder) external view returns (bytes32) {
@@ -132,7 +132,7 @@ contract IntexAuction is
     }
 
     /// @notice Whether a bidder has revealed for a series.
-    /// @param worldwideDay Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @return True when the bid was revealed.
     function revealedBidsByBidder(uint32 worldwideDay, address bidder) external view returns (bool) {
@@ -458,7 +458,7 @@ contract IntexAuction is
     /// @notice Verify the EIP-712 reveal signature and its binding to the prior commit.
     /// @dev Reverts `RevealHashMismatch` when the recovered signer is not `msg.sender` or when
     ///      `keccak256(signature)` does not equal the stored commit hash.
-    /// @param worldwideDay Auction series id (yyyymmdd as uint32).
+    /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param quantity Requested Intex quantity.
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param signature 65-byte ECDSA signature over the EIP-712 typed data.
@@ -513,7 +513,7 @@ contract IntexAuction is
     ///      `Cancelled`; a cleared auction short-circuits to `Completed` (the `cleared` flag, set by
     ///      `executeAuctionClearing` — covers a no-sale clearing whose rate is 0); an `Unknown`
     ///      worldwide-day state stays in `CommittingBids` regardless of `commitEnd`.
-    /// @param worldwideDay Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return Current auction stage.
     function _getAuctionStage(uint32 worldwideDay) internal view returns (IIntexAuction.AuctionStage) {
         IIntexAuction.AuctionData storage a = _s().auctions[worldwideDay];

@@ -12,19 +12,19 @@ interface IOriginRouter {
     // --- Events ---
     /// @notice Emitted when a BIDS_BATCH is received from BNB.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids received.
     event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 bidsCount);
 
     /// @notice Emitted when an auction stage message is sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param stageType Codec message type (start/reveal/clearing).
     event AuctionStageSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultSent(
@@ -39,7 +39,7 @@ interface IOriginRouter {
 
     /// @notice Emitted when refund instructions are sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param instructionsCount Number of finalization instructions.
     event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
@@ -54,11 +54,11 @@ interface IOriginRouter {
     event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);
 
     /// @notice Emitted when `_handleBidsBatch` auto-fires `Desis.clearAuction` for a `BidsReceived` series.
-    /// @param worldwideDay Series identifier whose auction was auto-cleared.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose auction was auto-cleared.
     event ClearingAutoDispatched(uint32 indexed worldwideDay);
 
     /// @notice Emitted when the auto-fired `Desis.clearAuction` reverts; the bid intake is kept.
-    /// @param worldwideDay Series identifier whose auto-clearing reverted.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose auto-clearing reverted.
     /// @param reason Raw revert bytes from the failed `clearAuction` call.
     event ClearingAutoDispatchFailed(uint32 indexed worldwideDay, bytes reason);
 

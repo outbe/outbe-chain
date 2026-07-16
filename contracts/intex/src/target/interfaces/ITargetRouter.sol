@@ -13,19 +13,19 @@ interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids sent.
     event BidsBatchSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 bidsCount);
 
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param stageType BridgeMsgCodec message type (4=AuctionStageStart, 5=AuctionStageReveal, 6=AuctionStageClearing).
     event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultReceived(
@@ -40,7 +40,7 @@ interface ITargetRouter {
 
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param instructionsCount Number of finalization instructions.
     event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
@@ -57,13 +57,13 @@ interface ITargetRouter {
     /// @notice Emitted when the outbound bids relay from `_handleAuctionStageClearing` reverts and
     ///         the worldwideDay is parked for later retry via `flushPendingBidsRelay`.
     /// @param idx Index of the parked relay slot.
-    /// @param worldwideDay Series identifier whose bids could not be forwarded.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose bids could not be forwarded.
     /// @param reason Raw revert bytes from the failed send (e.g. insufficient relay float).
     event BidsRelayDeferred(uint256 indexed idx, uint32 indexed worldwideDay, bytes reason);
 
     /// @notice Emitted when `flushPendingBidsRelay` successfully forwards a previously deferred relay.
     /// @param idx Index of the parked relay slot that was flushed.
-    /// @param worldwideDay Series identifier whose bids were forwarded.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose bids were forwarded.
     event BidsRelayFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
 
     /// @notice Emitted when the outbound holders bridge from `_handleMarkCalled` reverts and the
