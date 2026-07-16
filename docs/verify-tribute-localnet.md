@@ -25,6 +25,55 @@ MongoDB и обхода compressed-entity lifecycle здесь нет.
     'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
   ```
 
+## Поднять общий localnet stack через mise
+
+Общий порядок запуска и настройки описан в разделе `Managed localnet stack` в
+корневом [`README.md`](../README.md). Для этого сценария достаточно:
+
+Сначала поднимите полноценное локальное окружение:
+
+```sh
+mise run localnet-stack-start
+```
+
+Задача автоматически:
+
+- собирает `outbe-chain`, `outbe-cli` и mock TEE;
+- создаёт чистый `/tmp/outbe-localnet-stack`;
+- поднимает отдельный `mongo:7.0` replica set на порту `27027`;
+- запускает четыре валидатора с mock TEE и отдельными projection databases;
+- ждёт доступности RPC и появления первого блока;
+- проверяет MongoDB-транзакцию, четыре живых validator process и четыре
+  созданные projection databases;
+- печатает RPC URL, MongoDB URI, database prefix и data-dir.
+
+Для команд ниже установите напечатанные task значения (для defaults это):
+
+```sh
+export OUT_DIR=/tmp/outbe-localnet-stack
+export PORT_OFFSET=1000
+export MONGO_CONTAINER=outbe-localnet-stack-mongodb
+export MONGO_PORT=27027
+export DB_PREFIX=outbe_localnet_stack
+```
+
+Это общий localnet, не Tribute-specific demo. Создание offer и проверка MongoDB
+выполняются вручную по разделам 2 и 3; раздел 1 при mise-запуске пропустите.
+После работы:
+
+```sh
+# остановить сеть и MongoDB, сохранив chain data
+mise run localnet-stack-stop
+
+# либо остановить и удалить localnet data-dir
+mise run localnet-stack-clean
+```
+
+Для второго стенда задайте уникальные `LOCALNET_STACK_DIR`,
+`LOCALNET_STACK_MONGO_NAME`, `LOCALNET_STACK_MONGO_PORT`,
+`LOCALNET_STACK_PORT_OFFSET` и `LOCALNET_STACK_DATABASE_PREFIX` с
+непересекающимися портами. Следующие разделы описывают те же действия вручную.
+
 ## 1. Собрать genesis и запустить сеть
 
 Выберите свободный `PORT_OFFSET`. Он должен быть одинаковым при bootstrap,
@@ -36,6 +85,9 @@ export PORT_OFFSET=0
 export OUTBE_CHAIN_BINARY="$PWD/target/debug/outbe-chain"
 export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 export OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX=outbe_tribute_check
+export MONGO_CONTAINER=outbe-local-mongodb
+export MONGO_PORT=27017
+export DB_PREFIX=outbe_tribute_check
 export OUTBE_TEE_ENCLAVE=1
 export OUTBE_TEE_ENCLAVE_MOCK=1
 export OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/release/outbe-tee-enclave-mock"
@@ -104,15 +156,15 @@ body после финализации проверяется в projection DB.
 `<prefix>_validator_0` … `<prefix>_validator_3`.
 
 ```sh
-docker exec outbe-local-mongodb mongosh --quiet --eval '
+docker exec "$MONGO_CONTAINER" mongosh --quiet --port "$MONGO_PORT" --eval "
 for (let i = 0; i < 4; i++) {
-  const d = db.getSiblingDB("outbe_tribute_check_validator_" + i);
+  const d = db.getSiblingDB("${DB_PREFIX}_validator_" + i);
   print("DB=" + d.getName());
   print("tributes=" + d.tributes.countDocuments({})
     + " owner_index=" + d.tributes_by_owner.countDocuments({})
     + " day_index=" + d.tributes_by_day.countDocuments({}));
   print(EJSON.stringify(d.tributes.findOne(), {relaxed:false}));
-}'
+}"
 ```
 
 Для созданного Tribute ожидается:

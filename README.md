@@ -342,6 +342,40 @@ mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
 
+### Managed localnet stack
+
+For a ready-to-use local environment with four validators, mock TEE enclaves,
+and a transaction-capable MongoDB replica set, run:
+
+```bash
+mise run localnet-stack-start
+```
+
+This is general localnet infrastructure, not a Tribute-specific scenario. The
+task builds the required binaries, recreates a fresh chain under
+`/tmp/outbe-localnet-stack`, starts a persistent Docker volume for MongoDB,
+boots four validator nodes, and succeeds only after:
+
+- MongoDB elects a primary and completes a real transaction;
+- all four validator processes remain alive;
+- all four projection databases are initialized;
+- the primary RPC reaches block 1.
+
+The task prints RPC URLs, the MongoDB URI, database prefix, and data directory
+for use by any manual flow. Stop services while retaining chain and projection
+data, or remove everything, with:
+
+```bash
+mise run localnet-stack-stop
+mise run localnet-stack-clean
+```
+
+`localnet-stack-start` is intentionally fresh/destructive for its dedicated
+`/tmp/outbe-*` directory. To run another isolated stack, override all of
+`LOCALNET_STACK_DIR`, `LOCALNET_STACK_MONGO_NAME`,
+`LOCALNET_STACK_MONGO_PORT`, `LOCALNET_STACK_PORT_OFFSET`, and
+`LOCALNET_STACK_DATABASE_PREFIX`, using non-overlapping ports.
+
 ## CLI Tools
 
 ```bash

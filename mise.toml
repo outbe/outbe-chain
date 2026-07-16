@@ -200,6 +200,18 @@ run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
 description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
 run = './scripts/localnet-smoke.sh'
 
+[tasks.localnet-stack-start]
+description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
+run = "bash ./scripts/localnet-stack.sh start"
+
+[tasks.localnet-stack-stop]
+description = "Stop the managed localnet and MongoDB (keep chain data)"
+run = "bash ./scripts/localnet-stack.sh stop"
+
+[tasks.localnet-stack-clean]
+description = "Stop the managed localnet and MongoDB, then remove chain data"
+run = "bash ./scripts/localnet-stack.sh clean"
+
 # Full S1-S7 gramine-mock TEE e2e scenario suite plus update operator smoke.
 # Builds the node, CLI, and mock enclave, then runs all scenario scripts.
 # Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner
