@@ -301,7 +301,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        self.sub_call_log.push((input.target, input.calldata.clone()));
+        self.sub_call_log
+            .push((input.target, input.calldata.clone()));
         if let Some(returndata) = self.sub_call_stubs.get(&input.target).cloned() {
             return Ok(SubCallOutput {
                 status: SubCallStatus::Success,
