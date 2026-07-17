@@ -457,9 +457,14 @@ impl Rpc {
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.
     pub fn wait_successful_receipt(&self, tx_hash: &str, tries: u32) -> bool {
+        self.wait_receipt_status(tx_hash, true, tries)
+    }
+
+    /// Wait until a transaction receipt exists with the expected success bit.
+    pub fn wait_receipt_status(&self, tx_hash: &str, expected: bool, tries: u32) -> bool {
         for _ in 0..tries {
             match eth::receipt_success(&self.cfg.rpc0, tx_hash) {
-                Some(status) => return status,
+                Some(status) => return status == expected,
                 None => sleep(Duration::from_millis(500)),
             }
         }

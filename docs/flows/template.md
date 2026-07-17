@@ -11,6 +11,17 @@
 
 One sentence describing the externally meaningful completed result.
 
+## Acceptance contract
+
+- **Source:** Actor or external system that originates the stimulus.
+- **Trigger:** The single command, scheduled event or finalized condition that starts the flow.
+- **Environment:** Relevant network state, topology and available external services.
+- **Canonical inputs:** User inputs, chain context, identities, versions and authoritative external facts.
+- **System under test:** Architecture spaces and modules whose combined response is specified.
+- **Expected response:** Receipts, records, events, proofs, transfers or terminal statuses exposed through production interfaces.
+- **Response measures:** Exact observable values, conservation equations and time/finality bounds that prove success.
+- **Failure guarantee:** State that remains absent or unchanged after rejection, replay, rollback or restart.
+
 ## Preconditions and canonical inputs
 
 List chain state, identities, finalized height, external services, keys/proofs and
@@ -47,4 +58,3 @@ service and reorg behavior.
 
 - Every known missing behavior, test or decision; never an empty placeholder without
   a completion audit.
-

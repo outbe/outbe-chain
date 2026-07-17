@@ -17,6 +17,17 @@ One encrypted offer executes deterministically on every validator, produces one
 canonical Tribute, appears identically in each validator's Mongo projection, and is
 retrievable with a compressed-entity presence proof against a finalized header.
 
+## Acceptance contract
+
+- **Source:** Tribute creator using transaction-capable client or operator tooling.
+- **Trigger:** A creator submits one `offerTribute` transaction encrypted for the committee offer-key epoch.
+- **Environment:** Four-validator finalizing localnet with active committee offer key, open WorldwideDay, Oracle state, enclaves and validator-isolated Mongo projections.
+- **Canonical inputs:** Creator/sender identity and nonce, encrypted canonical offer bytes, chain id, WorldwideDay, currency, amount, issuance flag, finalized block time, Oracle state and enclave-held decryption key.
+- **System under test:** TributeFactory, Tribute/CE execution, consensus finality, projection pipeline and CE read/proof RPC.
+- **Expected response:** Finalized receipt and CE event, canonical Tribute identity/body, per-validator Mongo projection/checkpoint, and a presence proof anchored to a finalized header.
+- **Response measures:** Exactly one Tribute and one supply/totals increment exist; all validators agree on execution and authenticated body; every projection matches it within the scenario timeout; the proof verifies against the selected finalized header.
+- **Failure guarantee:** Rejected ciphertext or replay creates no Tribute, projection, totals change or CE intent; projection/restart retry never re-executes the transaction.
+
 ## Preconditions and canonical inputs
 
 - The four-validator committee has finalized blocks and completed the TEE offer-key
@@ -83,11 +94,11 @@ not produce validator-specific receipts.
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-001-01 | encrypted offer happy path | 4 validators, mock TEE, Mongo | all completion assertions above | `tribute_projection.feature` (partial tag mapping) |
-| PFS-001-02 | unknown identity in existing day | same | verified `EntityAbsentInCollection`; no document | `tribute_projection.feature` |
-| PFS-001-03 | unknown day | same | verified `CollectionAbsent`; no primary/secondary projection | `tribute_projection.feature` |
+| PFS-001-01 | encrypted offer happy path | 4 validators, mock TEE, Mongo | all completion assertions above | `@pfs-001-01` live-node |
+| PFS-001-02 | unknown identity in existing day | same | verified `EntityAbsentInCollection`; no document | `@pfs-001-02` live-node |
+| PFS-001-03 | unknown day | same | verified `CollectionAbsent`; no primary/secondary projection | `@pfs-001-03` live-node |
 | PFS-001-04 | invalid ciphertext/proof | same | reverted receipt; no totals/body/projection | GAP |
-| PFS-001-05 | duplicate/replayed offer | same | one identity/supply increment; deterministic second result | GAP |
+| PFS-001-05 | duplicate/replayed offer | same | reverted replay; one identity/supply increment and projection | `@pfs-001-05` live-node |
 | PFS-001-06 | Mongo unavailable through finality then restored | same | chain finalizes; projection catches up exactly once | GAP |
 | PFS-001-07 | validator restart before projection | same | checkpoint recovery and four-way equality | GAP |
 | PFS-001-08 | enclave unavailable on one proposer/executor | same | deterministic failure/retry policy; no receipt divergence | GAP |

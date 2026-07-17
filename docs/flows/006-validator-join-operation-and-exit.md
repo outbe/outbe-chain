@@ -19,6 +19,17 @@ cannot vote before syncing and receiving a DKG share; its finalized participatio
 is compensated once; voluntary exit or a unique offense removes it at a reshare;
 and bonded value becomes claimable only after the correct delay and slash effects.
 
+## Acceptance contract
+
+- **Source:** Validator operator, consensus accounting or authenticated offense reporter.
+- **Trigger:** An operator registers and self-stakes, or an active validator requests exit or accumulates canonical punishment evidence.
+- **Environment:** Multi-validator finalizing network with DKG, verified parent accounting, fee escrow and configured validator predeploys.
+- **Canonical inputs:** EOA/BLS/P2P identity and proof, stake/claims, readiness/finalized head, DKG target/artifact, committee/accounting snapshots, participation/fee metadata and unique offense identity.
+- **System under test:** ValidatorSet, Staking, consensus/DKG, Rewards, SlashIndicator, Cycle and claim settlement.
+- **Expected response:** Validator/staking statuses, committee/share snapshots, participation/reward receipts, unbonding payouts, or jail/slash/reporter-reward records.
+- **Response measures:** Only ready validators with valid shares become active; participation and offenses settle once; exit/punishment removes the validator at the next committee transition; bonded value, claims, fees and slash/reward deltas conserve.
+- **Failure guarantee:** Failed DKG or replay leaves no partial committee, membership, share, reward, claim, jail or slash effect; restart resumes solely from committed state.
+
 ## Preconditions and canonical inputs
 
 - The validator controls its EOA, BLS key and valid versioned P2P address.

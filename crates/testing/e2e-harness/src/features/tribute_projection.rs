@@ -27,6 +27,22 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
+#[when("the operator replays the encrypted tribute offer for the same day")]
+fn replay_offer(world: &mut World) {
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    let tx_hash = world
+        .rpc
+        .tribute_offer(&key, &wwd)
+        .expect("replayed offerTribute returned transaction hash");
+    world.state.replayed_tribute_tx_hash = Some(tx_hash);
+}
+
 #[then("the tribute transaction succeeds and supply becomes one")]
 fn successful_receipt_and_supply(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
@@ -51,6 +67,34 @@ fn projection_parity(world: &mut World) {
         .mongodb
         .wait_for_tribute_projection(tx_hash, 60)
         .expect("all validator projection databases contain the same tribute");
+}
+
+#[then("the replay is rejected without changing tribute state or projections")]
+fn replay_rejected_without_effects(world: &mut World) {
+    let replay = world
+        .state
+        .replayed_tribute_tx_hash
+        .as_deref()
+        .expect("replayed tribute tx");
+    assert!(
+        world.rpc.wait_receipt_status(replay, false, 60),
+        "replayed tribute transaction did not produce a reverted receipt: {replay}"
+    );
+    let primary = world.validators.primary_port();
+    assert_eq!(
+        world.rpc.supply(primary).as_deref(),
+        Some("1"),
+        "replayed offer changed Tribute total supply"
+    );
+    let original = world
+        .state
+        .tribute_tx_hash
+        .as_deref()
+        .expect("original tribute tx");
+    world
+        .mongodb
+        .wait_for_tribute_projection(original, 1)
+        .expect("replay changed or duplicated a validator projection");
 }
 
 #[then("every validator serves the same independently verified compressed tribute")]

@@ -31,6 +31,8 @@ pub struct FixtureState {
     pub wwd_status_before: Option<String>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
+    /// Hash of a replayed offer expected to be rejected without state changes.
+    pub replayed_tribute_tx_hash: Option<String>,
 }
 
 impl Default for FixtureState {
@@ -47,6 +49,7 @@ impl Default for FixtureState {
             marker_count: None,
             wwd_status_before: None,
             tribute_tx_hash: None,
+            replayed_tribute_tx_hash: None,
         }
     }
 }

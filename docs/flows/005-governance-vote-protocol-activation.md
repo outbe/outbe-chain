@@ -17,6 +17,17 @@ declared height, and leaves every continuing node compatible with the active
 on-chain version. An editorial OIP/GIP may link to the proposal, but never grants
 execution authority.
 
+## Acceptance contract
+
+- **Source:** Active validator proposer and eligible validator voters.
+- **Trigger:** An active validator submits an executable proposal targeting the registered Update handler.
+- **Environment:** Finalizing validator network with identical target/handler registries and no conflicting schedule at the activation height.
+- **Canonical inputs:** Canonical version/height/info payload, proposer/voter identities, active-set/quorum context, deadline, handler registry and current active/waiting versions.
+- **System under test:** Vote, Update, registered migration handlers, begin-block scheduling and node startup compatibility gate.
+- **Expected response:** Proposal and ballots, terminal Vote result, at most one scheduled Update, migration effects, activation/history events and node readiness result.
+- **Response measures:** One ballot per voter and one schedule per proposal; activation executes and publishes atomically once at the declared height; all version reads agree and incompatible nodes refuse startup.
+- **Failure guarantee:** Expiry, duplicate, invalid target or handler failure creates no partial schedule, migration or active-version publication; restart cannot execute a terminal activation twice.
+
 ## Preconditions and canonical inputs
 
 - All validators run identical target and upgrade-handler registries.

@@ -17,6 +17,17 @@ stablecoin liquidity reaches the borrower bundle, and each of ten repayments
 returns one independently spendable reclaim note without losing conservation or
 permitting replay.
 
+## Acceptance contract
+
+- **Source:** Gratis owner operating through its borrower bundle.
+- **Trigger:** A user pledges an eligible Gratis denomination, opens Credis with the shielded note, then submits ordered repayments.
+- **Environment:** Finalizing network with configured proof verifier, Oracle, reserve asset, vault liquidity and registered source/target modules.
+- **Canonical inputs:** Bundle-bound commitment/nullifier/proof, denomination and collateral, Fidelity eligibility, Credis terms, Oracle rates, exact reserve asset, vault shares, allowances and repayment amounts.
+- **System under test:** Gratisfactory, GratisPool, Gratis, CredisFactory/Credis, Oracle, VaultProvider and reserve token/vault adapters.
+- **Expected response:** Pledge/root evidence, one Credis position with ten installments, asset disbursement, spent nullifiers, repayment receipts and one reclaim commitment per installment.
+- **Response measures:** Debt, collateral, token and vault equations close; every nullifier, position and installment is consumed at most once; completed debt rejects payment and collateral is reclaimable once.
+- **Failure guarantee:** Failed proof, withdrawal or deposit leaves the transaction's prior root, nullifier, position, cursor, debt and token/vault balances intact.
+
 ## Preconditions and canonical inputs
 
 - User owns sufficient liquid Gratis and satisfies accepted Fidelity eligibility.

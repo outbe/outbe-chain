@@ -15,6 +15,17 @@ A sealed READY WorldwideDay consumes its exact Tribute population and economic
 budget once, creates one conserved Nod result per Tribute, commits contributor
 provenance and reaches a terminal day state with authenticated Tribute retirement.
 
+## Acceptance contract
+
+- **Source:** Cycle scheduler processing a due canonical slot.
+- **Trigger:** Cycle executes the due canonical slot for a sealed READY WorldwideDay.
+- **Environment:** Finalizing network at the due slot with parent accounting complete, CE persistence available and canonical Oracle/Fidelity observations.
+- **Canonical inputs:** READY Metadosis record, sealed Tribute partition and totals, canonical Cycle slot/parent accounting, Lysis budget/type/limit, Oracle and Fidelity values, and the ordered Tribute population.
+- **System under test:** Cycle, Metadosis, Lysis, Tribute/CE, NodFactory, contributor sink and end-block CE persistence.
+- **Expected response:** Terminal Metadosis/Cycle records, one Nod per Tribute, contributor records, remainder disposition, authenticated Nod proofs and Tribute-retirement evidence.
+- **Response measures:** The day and slot execute once; Nod count equals consumed Tribute count; Nod loads plus remainder equal the budget; nominal totals agree; every Nod proof verifies and the Tribute partition is retired.
+- **Failure guarantee:** Failure keeps day, cursor, Tributes, contributors and Nods unchanged and leaves the same READY slot retryable.
+
 ## Preconditions and canonical inputs
 
 - Cycle has a due canonical slot and parent-accounting prerequisite is satisfied.
@@ -87,4 +98,3 @@ reconstructs projections without rerunning Lysis.
   retirement.
 - Make Desis/Promis remainder conservation an enforced assertion, not a TODO.
 - Add independent proof verification for all created Nods and retired collection.
-

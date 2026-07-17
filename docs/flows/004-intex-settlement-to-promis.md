@@ -16,6 +16,17 @@ One issued Intex series is consistently represented locally and across the bridg
 qualifies/calls under canonical prices, accepts authorized settlement into reserves,
 and converts consumed soulbound Settled units into the exact Promis load once.
 
+## Acceptance contract
+
+- **Source:** Desis clearing for issuance, followed by the holder or authorized settler.
+- **Trigger:** Desis issues an Intex series; an eligible holder later settles Issued units and mines the resulting Settled units.
+- **Environment:** Finalizing validators with configured Oracle/vault/asset and a paired ERC-1155 bridge/router deployment.
+- **Canonical inputs:** Unique series/currencies/recipients/quantities/prices/Promis load, bridge replay identity, Oracle observations, holder/settler authorization, settlement balance/allowance and sequence-bound PoW.
+- **System under test:** Desis, IntexFactory/Intex, ERC-1155 ledger and bridge, VaultProvider, Oracle and PromisFactory.
+- **Expected response:** Matching Rust/ERC-1155 series, bridge evidence, qualification/call state, reserve deposit, Issued-to-Settled transition, mine sequence and minted Promis.
+- **Response measures:** Series/delivery are unique; Issued burned equals Settled minted; measured settlement equals reserved value; Settled burned times load equals Promis minted.
+- **Failure guarantee:** Failed or replayed issuance, delivery, settlement or mining changes no series count, reserve/token balance, ownership, sequence or Promis supply.
+
 ## Preconditions and canonical inputs
 
 - Desis provides a unique series id, issuance/reference currencies, recipients,
