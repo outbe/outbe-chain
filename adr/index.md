@@ -74,10 +74,12 @@ Every ADR produced from this index must contain these sections:
   -> 011 Partition retirement
   -> 012 Header root carrier
   -> 013 Proofs and verified point reads
-  -> 014 Persistent SMT storage
   -> 015 Crash and restart reconciliation
   -> 016 Snapshots and bootstrap
   -> 017 Gas, quotas, and performance closure
+
+Reserved number:
+  014 Persistence folded into ADR-008; no executable stage
 
 Future triggers:
   018 Versioned format evolution
@@ -601,9 +603,9 @@ Complete exhaustive cross-store crash-window reconciliation and recovery evidenc
 
 ---
 
-## ADR-014 — removed; folded into ADR-008
+## ADR-014 — Reserved; persistence folded into ADR-008
 
-The former `014-persistent-smt-storage.md` roadmap stage is removed. CE-owned MDBX, atomic finalized node/marker commit, Reth durability ordering, and baseline restart behavior are required by the selected CKB engine from ADR-008 onward; deferring them would create an unusable intermediate authority model.
+There is no executable ADR-014 stage and no `014-persistent-smt-storage.md` decision file. CE-owned MDBX, atomic finalized node/marker commit, Reth durability ordering, and baseline restart behavior are required by the selected CKB engine from ADR-008 onward; deferring them would create an unusable intermediate authority model.
 
 Number 014 remains reserved so later ADR references do not silently change. Exhaustive cross-store fault reconciliation remains ADR-015.
 
