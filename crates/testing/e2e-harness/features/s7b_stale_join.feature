@@ -4,6 +4,7 @@ Feature: Stale-join guard holds an unconfirmed joiner PENDING
   # excluded from the frozen reshare target, so it stays PENDING across a full
   # reshare cycle; only after confirm-ready does the next reshare activate it.
 
+  @pfs-006-02
   Scenario: Unconfirmed joiner does not activate until confirm-ready
     Given a fresh localnet with a 6-block voting window
     When a staked joiner has not confirmed readiness

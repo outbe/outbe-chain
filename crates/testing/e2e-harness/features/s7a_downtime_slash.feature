@@ -6,6 +6,7 @@ Feature: Liveness survives a downed validator
   # localnet), so only LIVENESS + the slashing-config read surface are asserted
   # here; the slash/evidence mechanism is covered by outbe-slashindicator tests.
 
+  @pfs-006-06
   Scenario: Chain stays live after a validator is killed
     Given a fresh localnet with a 6-block voting window
     And the slashing config is readable

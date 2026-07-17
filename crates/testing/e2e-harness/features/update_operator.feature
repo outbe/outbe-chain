@@ -11,6 +11,7 @@ Feature: Operator protocol-version update via governance vote
   # The vote step fires the ballots without blocking and the tally is polled, so a
   # 20-block (~20s) window leaves room.
 
+  @pfs-005-01
   Scenario: An update is proposed, approved, scheduled, and activated
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height

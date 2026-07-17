@@ -97,11 +97,11 @@ not produce validator-specific receipts.
 | PFS-001-01 | encrypted offer happy path | 4 validators, mock TEE, Mongo | all completion assertions above | `@pfs-001-01` live-node |
 | PFS-001-02 | unknown identity in existing day | same | verified `EntityAbsentInCollection`; no document | `@pfs-001-02` live-node |
 | PFS-001-03 | unknown day | same | verified `CollectionAbsent`; no primary/secondary projection | `@pfs-001-03` live-node |
-| PFS-001-04 | invalid ciphertext/proof | same | reverted receipt; no totals/body/projection | GAP |
+| PFS-001-04 | invalid ciphertext/proof | same | reverted receipt; no totals/body/projection | documentation-only until harness can submit a malformed envelope without CLI-side encryption validation |
 | PFS-001-05 | duplicate/replayed offer | same | reverted replay; one identity/supply increment and projection | `@pfs-001-05` live-node |
-| PFS-001-06 | Mongo unavailable through finality then restored | same | chain finalizes; projection catches up exactly once | GAP |
-| PFS-001-07 | validator restart before projection | same | checkpoint recovery and four-way equality | GAP |
-| PFS-001-08 | enclave unavailable on one proposer/executor | same | deterministic failure/retry policy; no receipt divergence | GAP |
+| PFS-001-06 | Mongo unavailable through finality then restored | same | chain finalizes; projection catches up exactly once | documentation-only until harness exposes pause/resume for its scenario-owned replica set |
+| PFS-001-07 | validator restart before projection | same | checkpoint recovery and four-way equality | documentation-only until projection checkpoint timing has a deterministic failpoint |
+| PFS-001-08 | enclave unavailable on one proposer/executor | same | deterministic failure/retry policy; no receipt divergence | documentation-only pending an explicit proposer retry/failure policy and enclave fault-control step |
 
 ## Open questions and technical debt
 

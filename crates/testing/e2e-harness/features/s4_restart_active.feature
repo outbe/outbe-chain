@@ -5,6 +5,7 @@ Feature: Active validator restarts without a new DKG ceremony
   # the enclave container stays up — and restarting it with the same keys-dir must
   # resume signing from the recovered share with NO fresh DKG ceremony.
 
+  @pfs-006-09
   Scenario: Restarted active node resumes signing from its persisted share
     Given a fresh localnet with a 6-block voting window
     When a joiner reaches active with a persisted share

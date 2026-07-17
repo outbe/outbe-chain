@@ -80,18 +80,19 @@ reconstructs projections without rerunning Lysis.
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-002-01 | GREEN day with several Tributes | 4 validators, CE, Oracle | all conservation and proof assertions | GAP |
-| PFS-002-02 | no-Tribute terminal branch | same | no Nod; exact remainder; retired empty partition | GAP |
+| PFS-002-01 | GREEN day with several Tributes | 4 validators, CE, Oracle | all conservation and proof assertions | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis` (state/conservation; live finality/proofs GAP) |
+| PFS-002-02 | no-Tribute terminal branch | same | no Nod; exact remainder; retired empty partition | documentation-only until the in-process fixture supports an empty sealed CE partition |
 | PFS-002-03 | zero limit | same | specified FAILED/auction outcome; no transform | GAP |
-| PFS-002-04 | totals/body mismatch | same | full rollback; cursor/day remain retryable | GAP |
+| PFS-002-04 | totals/body mismatch | same | full rollback; cursor/day remain retryable | documentation-only: production mismatch requires a corrupt parent-body adapter/fault injection seam |
 | PFS-002-05 | duplicate owner/day identity | same | admission prevents it or Lysis atomically rejects | GAP |
-| PFS-002-06 | injected Nod creation failure | same | no partial Nods/contributors/consumption | GAP |
-| PFS-002-07 | restart at CE persistence boundary | same | deterministic recovery and proofs | GAP |
+| PFS-002-06 | injected Nod creation failure | same | no partial Nods/contributors/consumption | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt`; full lifecycle fixture GAP |
+| PFS-002-07 | restart at CE persistence boundary | same | deterministic recovery and proofs | documentation-only until harness exposes a deterministic end-block persistence failpoint |
 | PFS-002-08 | long timestamp jump/backlog | same | canonical ordered processing per accepted policy | GAP |
 
 ## Open questions and technical debt
 
-- This entire flow lacks production-interface e2e automation.
+- This flow has in-process cross-module automation but lacks live-node finality,
+  persistence, projection and proof coverage.
 - READY selection/backlog order and Cycle long-gap policy are unresolved.
 - One-block Lysis capacity is not proven; a paginated FSM may be required.
 - Define durable historical queries after terminal FIFO eviction and Tribute

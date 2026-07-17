@@ -83,14 +83,14 @@ waiting schedules and active version; terminal records prevent repeated migratio
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-005-01 | approve, schedule and activate version-only update | 4 validators | every state/height/event boundary | partial update feature |
-| PFS-005-02 | migration handler succeeds once | 4 validators | migration plus active version atomic | GAP |
-| PFS-005-03 | below-quorum expiry | 4 validators | no Update record | GAP |
-| PFS-005-04 | duplicate ballot and duplicate proposal dispatch | 4 validators | no duplicate effects | GAP |
-| PFS-005-05 | membership changes during voting | 4+ validators | documented snapshot semantics | GAP |
-| PFS-005-06 | handler failure | 4 validators | fatal block/rollback and recovery | GAP |
-| PFS-005-07 | old binary after activation | mixed binaries | incompatible node refuses startup | GAP |
-| PFS-005-08 | restart with overdue schedules | 4 validators | deterministic order, exactly once | GAP |
+| PFS-005-01 | approve, schedule and activate version-only update | 4 validators | every state/height/event boundary | `@pfs-005-01` live-node + `full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates` |
+| PFS-005-02 | migration handler succeeds once | 4 validators | migration plus active version atomic | in-process activation covers version handler; stateful migration fixture GAP |
+| PFS-005-03 | below-quorum expiry | 4 validators | no Update record | in-process `full_vote_update_flow_2_of_4_yes_expires_without_update_state_change` |
+| PFS-005-04 | duplicate ballot and duplicate proposal dispatch | 4 validators | no duplicate effects | in-process duplicate-ballot coverage; duplicate dispatch GAP |
+| PFS-005-05 | membership changes during voting | 4+ validators | documented snapshot semantics | documentation-only pending the quorum snapshot decision |
+| PFS-005-06 | handler failure | 4 validators | fatal block/rollback and recovery | live-node unsupported-version fatal path covers rollback/stall; recovery policy GAP |
+| PFS-005-07 | old binary after activation | mixed binaries | incompatible node refuses startup | in-process `startup_binary_version_check_rejects_older_binary`; mixed-node GAP |
+| PFS-005-08 | restart with overdue schedules | 4 validators | deterministic order, exactly once | documentation-only pending overdue-order policy and restart fixture |
 
 ## Open questions and technical debt
 

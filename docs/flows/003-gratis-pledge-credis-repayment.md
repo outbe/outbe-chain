@@ -87,14 +87,14 @@ commitments and remains a blocking debt.
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-003-01 | pledge, request, ten payments, full reclaim | 4 validators, Oracle/vault/prover | every closure equation | GAP |
-| PFS-003-02 | replay/copy request proof | same | no redirect or duplicate position | GAP |
-| PFS-003-03 | overdue borrower requests again | same | revert; old position unchanged | GAP |
-| PFS-003-04 | insufficient vault shares | same | nullifier and position rollback | GAP |
-| PFS-003-05 | repayment token transfer/deposit fails | same | cursor/debt/root rollback | GAP |
-| PFS-003-06 | invalid reclaim denomination | same | rejected before commit | GAP/current behavior deficient |
-| PFS-003-07 | early repayment | same | matches accepted due-date policy | GAP/policy unresolved |
-| PFS-003-08 | restart after each transaction boundary | same | identical position/proof/token state | GAP |
+| PFS-003-01 | pledge, request, ten payments, full reclaim | 4 validators, Oracle/vault/prover | every closure equation | in-process `full_request_pay_reclaim_unpledge_flow`; verifier and Solidity vault/token effects are stubbed |
+| PFS-003-02 | replay/copy request proof | same | no redirect or duplicate position | pool/runtime module tests only; cross-module replay example not yet implemented |
+| PFS-003-03 | overdue borrower requests again | same | revert; old position unchanged | in-process `request_credis_rejects_overdue_anadosis` |
+| PFS-003-04 | insufficient vault shares | same | nullifier and position rollback | documentation-only until the fixture provides a stateful failing VaultProvider adapter |
+| PFS-003-05 | repayment token transfer/deposit fails | same | cursor/debt/root rollback | documentation-only until the fixture provides a stateful failing ERC-20/vault adapter |
+| PFS-003-06 | invalid reclaim denomination | same | rejected before commit | documentation-only; current interface cannot prove the denomination and behavior is deficient |
+| PFS-003-07 | early repayment | same | matches accepted due-date policy | documentation-only pending an explicit early-payment policy |
+| PFS-003-08 | restart after each transaction boundary | same | identical position/proof/token state | documentation-only: no live-node Credis fixture or persistent in-process adapter exists |
 
 ## Open questions and technical debt
 
@@ -105,5 +105,5 @@ commitments and remains a blocking debt.
 - Early-payment policy is undefined.
 - Multi-asset selection currently depends on `assetAt(0)` in related factories;
   Credis must bind the exact position asset/currency throughout.
-- No e2e scenario currently exercises the credit lifecycle through production ABI,
-  external ERC-20/vault and real proof verification.
+- The in-process lifecycle test covers the Rust module seam, but no scenario yet
+  exercises production ABI, real ERC-20/vault effects and real proof verification.

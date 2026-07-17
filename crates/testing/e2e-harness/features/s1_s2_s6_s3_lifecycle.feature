@@ -7,6 +7,7 @@ Feature: Validator lifecycle — cold sync, promote, in-flight offer, exit
   # S3 it deactivates, the committee reshares down, and the node demotes to a
   # verifier-follower that keeps following finality.
 
+  @pfs-006-01 @pfs-006-03
   Scenario: A full node syncs, is promoted, survives an in-flight offer, then exits
     Given a fresh localnet with a 6-block voting window
     When operator "validator-0" submits a tribute offer

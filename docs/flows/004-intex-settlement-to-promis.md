@@ -84,14 +84,14 @@ and bridge delivery without reissuing the series.
 
 | Id | Scenario | Minimum topology | Required assertions | Automated by |
 |---|---|---|---|---|
-| PFS-004-01 | issue, qualify, settle, mine | validators + Oracle/vault/bridge | all identities and equations | GAP |
-| PFS-004-02 | authorized dual-wallet settlement | same | payer/holder/token ownership semantics | GAP |
-| PFS-004-03 | settlement after Called deadline | same | revert; no token/reserve changes | GAP |
-| PFS-004-04 | fee-on-transfer settlement asset | same | measured delta and explicit economics | GAP |
-| PFS-004-05 | vault returns zero shares | same | complete settlement rollback | GAP |
-| PFS-004-06 | replay mining PoW/sequence | same | one burn/mint only | GAP |
-| PFS-004-07 | duplicate bridge delivery | paired networks | one series/supply | GAP |
-| PFS-004-08 | restart during qualification/distribution | same | deterministic scan/index state | GAP |
+| PFS-004-01 | issue, qualify, settle, mine | validators + Oracle/vault/bridge | all identities and equations | documentation-only: no fixture currently composes Rust precompiles with deployed ERC-1155/vault/bridge adapters |
+| PFS-004-02 | authorized dual-wallet settlement | same | payer/holder/token ownership semantics | runtime and Foundry module tests only; cross-module adapter missing |
+| PFS-004-03 | settlement after Called deadline | same | revert; no token/reserve changes | runtime/Foundry module tests only; reserve rollback not jointly observed |
+| PFS-004-04 | fee-on-transfer settlement asset | same | measured delta and explicit economics | documentation-only pending a stateful fee-on-transfer token plus vault fixture |
+| PFS-004-05 | vault returns zero shares | same | complete settlement rollback | documentation-only pending a stateful failing vault fixture |
+| PFS-004-06 | replay mining PoW/sequence | same | one burn/mint only | runtime module coverage only; ERC-1155/Promis joint state not composed |
+| PFS-004-07 | duplicate bridge delivery | paired networks | one series/supply | Foundry `DuplicateProtection.t.sol` partial; paired-chain Rust state is not composed |
+| PFS-004-08 | restart during qualification/distribution | same | deterministic scan/index state | documentation-only pending a live paired-network fixture and durable relay checkpoints |
 
 ## Open questions and technical debt
 

@@ -11,7 +11,7 @@ use outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers;
 use outbe_evm::handlers;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
-use outbe_primitives::addresses::UPDATE_ADDRESS;
+use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, UPDATE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
@@ -89,6 +89,20 @@ fn seed_oracle_for_pre_exec(storage: StorageHandle) {
         0,
         0,
     );
+}
+
+fn seed_compressed_entities_genesis(storage: StorageHandle) {
+    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(root.as_slice()),
+        )
+        .unwrap();
 }
 
 fn with_runtime_at<F: FnOnce(StorageHandle, u64)>(current: u64, f: F) {
@@ -368,6 +382,46 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
 }
 
 #[test]
+fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
+    with_vote_runtime_at(100, |storage, current| {
+        let activation = proposal_activation(current);
+        let mut vote = Vote::new(storage.clone());
+        let proposal_id = create_update_proposal(&mut vote, V1_2, activation, current);
+
+        vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
+            .unwrap();
+        let error = vote
+            .cast_vote_approve(proposal_id, VOTER_A, false, current + 2)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message) if message.contains("already voted")
+        ));
+        assert_eq!(
+            vote.read_proposal_voters(proposal_id).unwrap(),
+            vec![VOTER_A],
+            "duplicate ballot must not append or replace the accepted ballot"
+        );
+
+        vote.cast_vote_approve(proposal_id, VOTER_B, true, current + 3)
+            .unwrap();
+        vote.cast_vote_approve(proposal_id, VOTER_C, true, current + 4)
+            .unwrap();
+        run_vote_begin_block(storage.clone(), tally_block(current));
+
+        let record = vote.proposals.get(proposal_id).unwrap().unwrap();
+        assert_eq!(record.proposal_status().unwrap(), ProposalStatus::Approved);
+        let update = Update::new(storage.clone());
+        let scheduled = update.read_scheduled_update(proposal_id).unwrap().unwrap();
+        assert_eq!(scheduled.version, V1_2);
+        assert_eq!(scheduled.activation_height, activation);
+
+        run_update_begin_block(storage.clone(), activation);
+        assert_eq!(Update::new(storage).get_active_version().unwrap(), V1_2);
+    });
+}
+
+#[test]
 fn full_vote_update_flow_2_of_4_yes_expires_without_update_state_change() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100);
@@ -504,6 +558,7 @@ fn executor_runs_vote_before_update() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100_000);
     let storage = StorageHandle::new(&mut provider);
+    seed_compressed_entities_genesis(storage.clone());
     setup_four_validators(storage.clone());
     seed_oracle_for_pre_exec(storage.clone());
 
