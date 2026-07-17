@@ -1,6 +1,7 @@
 # ADR-011: Retire completed Tribute partitions through one Root Catalog delete
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-17
 - **Depends on:** ADR-010
 

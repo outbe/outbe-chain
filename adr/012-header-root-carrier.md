@@ -1,6 +1,7 @@
 # ADR-012: Carry the execution-sealed compressed-entity root in every block header
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-18
 - **Depends on:** ADR-011
 

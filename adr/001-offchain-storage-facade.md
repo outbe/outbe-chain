@@ -1,6 +1,7 @@
 # ADR-001: Introduce the off-chain storage facade
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-15
 
 ## Context

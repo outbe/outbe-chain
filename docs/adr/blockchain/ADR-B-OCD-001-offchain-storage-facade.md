@@ -1,6 +1,6 @@
-# ADR-001: Introduce the off-chain storage facade
+# ADR-B-OCD-001: Introduce the off-chain storage facade
 
-- **Status:** Proposed
+- **Status:** Proposed; migrated design, current implementation evidence requires reconciliation
 - **Date:** 2026-07-15
 
 ## Context
@@ -119,7 +119,7 @@ The storage facade treats both keys and values as opaque bytes.
 Namespace + Key -> Value
 ```
 
-`Key` is non-empty and bounded. `Value` is bounded but otherwise uninterpreted. Tribute/Nod serialization and semantic validation are introduced above this seam in ADR-002.
+`Key` is non-empty and bounded. `Value` is bounded but otherwise uninterpreted. Tribute/Nod serialization and semantic validation are introduced above this seam in ADR-B-OCD-002.
 
 Both adapters use identical provisional bounds for:
 
@@ -138,7 +138,7 @@ It is not a patch, merge, append, compare-and-swap, or domain `create/update` op
 
 `delete` is idempotent. Deleting an absent key succeeds.
 
-The facade guarantees atomicity only for one key. It does not provide cross-key transactions, block batches, projection checkpoints, or compare-and-swap. Those capabilities are introduced only with a concrete consumer in ADR-004.
+The facade guarantees atomicity only for one key. It does not provide cross-key transactions, block batches, projection checkpoints, or compare-and-swap. Those capabilities are introduced only with a concrete consumer in ADR-B-OCD-004.
 
 ### Read semantics
 
@@ -280,7 +280,7 @@ Deferred. It introduces queueing, shutdown, backpressure, and request-correlatio
 
 ### Structured generic entity documents
 
-Rejected because ADR-001 does not yet own Tribute/Nod schemas or indexes. The base storage stores opaque bytes; domain repositories add structure later.
+Rejected because ADR-B-OCD-001 does not yet own Tribute/Nod schemas or indexes. The base storage stores opaque bytes; domain repositories add structure later.
 
 ### Mongo `BinData` as the directly sorted key
 
@@ -288,7 +288,7 @@ Rejected because the interface requires explicit raw-byte lexicographic ordering
 
 ### Block batches and projection checkpoints
 
-Deferred to ADR-004. No real ExEx consumer exists in ADR-001, and introducing projection semantics now would make the first storage interface wider than its current use case.
+Deferred to ADR-B-OCD-004. No real ExEx consumer exists in ADR-B-OCD-001, and introducing projection semantics now would make the first storage interface wider than its current use case.
 
 ## Verification
 
@@ -317,8 +317,22 @@ Mongo integration tests use an isolated database and remove their collections af
 
 No chain reset or hard fork is required because Tribute/Nod execution remains unchanged.
 
-Test Mongo collections may be deleted at any time. ADR-001 data is non-authoritative and can be recreated by its tests or callers.
+Test Mongo collections may be deleted at any time. ADR-B-OCD-001 data is non-authoritative and can be recreated by its tests or callers.
 
 ## Next unlocked step
 
-ADR-002 can define complete typed Tribute and Nod bodies, repository interfaces, key encodings, namespaces, and the boundary between off-chain bodies and protocol-owned EVM state without changing the underlying adapters.
+ADR-B-OCD-002 can define complete typed Tribute and Nod bodies, repository interfaces, key encodings, namespaces, and the boundary between off-chain bodies and protocol-owned EVM state without changing the underlying adapters.
+
+## Open questions and technical debt
+
+- Reconcile every proposed interface and namespace with the current
+  `outbe-offchain-storage` production API; historical working-result claims do not
+  establish current implementation status.
+- **Critical:** enforce a single Mongo writer with a durable lease and fencing token;
+  deployment convention cannot prevent split-brain projection.
+- Provide one atomic batch capability shared by memory and Mongo adapters so record
+  plus index mutations cannot become partially visible.
+- Bound all scans and distinguish absence, backend failure, corruption and incompatible
+  schema as typed outcomes.
+- Run Mongo conformance tests by default in CI rather than leaving backend evidence
+  ignored or dependent on a developer environment.

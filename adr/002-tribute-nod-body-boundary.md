@@ -1,6 +1,7 @@
 # ADR-002: Define the Tribute and Nod off-chain body boundary
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-15
 - **Depends on:** ADR-001
 

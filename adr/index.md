@@ -1,5 +1,7 @@
 # Off-chain entity storage: evolutionary ADR index
 
+> **Historical only.** The canonical catalog is [`docs/adr/index.md`](../docs/adr/index.md); see the [legacy reconciliation ledger](../docs/adr/legacy-reconciliation.md). Do not add or revise decisions here.
+
 This index turns the final off-chain storage concept into a sequence of independently implementable ADRs.
 
 The concept describes the target system. This index describes how to reach it from the current node, one working increment at a time.

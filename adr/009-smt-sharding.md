@@ -1,6 +1,7 @@
 # ADR-009: Add provisional fixed sharding to the CKB SMT
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-16
 - **Depends on:** ADR-008
 

@@ -1,6 +1,7 @@
 # ADR-013: Serve independently verified point reads from one finalized CE snapshot
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-19
 - **Depends on:** ADR-012
 

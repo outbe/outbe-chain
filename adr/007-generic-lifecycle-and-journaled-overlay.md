@@ -1,6 +1,7 @@
 # ADR-007: Centralize compressed-body lifecycle with a journaled block overlay
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-15
 - **Depends on:** ADR-006
 

@@ -1,6 +1,7 @@
 # ADR-017: Close gas, work, concurrency, and local-capacity limits with measured evidence
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-16
 - **Depends on:** ADR-009, ADR-016
 

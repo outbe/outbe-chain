@@ -1,6 +1,7 @@
 # ADR-006: Commit to canonical Tribute and Nod bodies and verify MongoDB reads
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-15
 - **Depends on:** ADR-005
 

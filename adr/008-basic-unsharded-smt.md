@@ -1,6 +1,7 @@
 # ADR-008: Replace direct commitment mappings with a vendored unsharded CKB SMT
 
-- **Status:** Proposed
+- **Status:** Superseded; historical input only
+- **Canonical mapping:** [`docs/adr/legacy-reconciliation.md`](../docs/adr/legacy-reconciliation.md)
 - **Date:** 2026-07-15
 - **Depends on:** ADR-007
 
