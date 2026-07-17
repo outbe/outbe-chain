@@ -5,7 +5,7 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
 use crate::constants::{
@@ -460,6 +460,11 @@ fn setup_pair(oracle: &OracleContract) -> u32 {
         .write(&QUALIFIER_REFERENCE_ISO, pair_hash)
         .unwrap();
     oracle.pair_hash_to_id.write(&pair_hash, pair_id).unwrap();
+    // Full registry entry so the production VWAP paths (calculate_vwaps
+    // iterating registered vote-target pairs) see the pair too.
+    oracle.pair_count.write(pair_id).unwrap();
+    oracle.pair_id_to_hash.write(&pair_id, pair_hash).unwrap();
+    oracle.vote_target.write(&pair_hash, true).unwrap();
     pair_id
 }
 
@@ -475,6 +480,10 @@ fn set_vwap(oracle: &OracleContract, utc_day: u32, pair_id: u32, value: U256) {
         .get_nested(&utc_day)
         .write(&0, value)
         .unwrap();
+    // Mirror the begin-block hook: the watermark covers every seeded day.
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
+        oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
+    }
 }
 
 /// Set `days` consecutive closed UTC days ending at `latest` to `value`.
@@ -801,16 +810,38 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // Regression: the scan fires on the midnight Cycle tick, when yesterday's
     // WorldwideDay snapshot does not exist yet (metadosis writes it at noon of
     // the current day). The finalized per-UTC-day VWAP is already closed by
-    // then and must be the scan's price source.
+    // then and must be the scan's price source. Exactly `threshold` (21)
+    // breach days are seeded through the production finalization path and the
+    // scan day itself stays unfinalized, so reading any other day — or any
+    // other store — drops below the threshold and fails the call.
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
-        let oracle = OracleContract::new(s.clone());
+        let mut oracle = OracleContract::new(s.clone());
         let pair_id = setup_pair(&oracle);
         // Exact midnight UTC, well past maturity.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
-        fill_days(&oracle, last_closed_day, pair_id, 30, breach);
+
+        // Oldest-first: snapshot + finalize 21 closed days ending yesterday.
+        let mut days = [0u32; 21];
+        let mut d = last_closed_day;
+        for slot in days.iter_mut().rev() {
+            *slot = d;
+            d = previous_date_key(d);
+        }
+        for day in days {
+            let noon = date_key_to_utc_timestamp(day) + DAY / 2;
+            oracle
+                .write_snapshot(noon, &[(pair_id, breach, U256::from(1))])
+                .unwrap();
+            oracle.finalize_utc_day_vwap(day).unwrap();
+        }
+        // The begin-block hook advances the watermark after finalizing.
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
