@@ -47,6 +47,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
+        worldwide_day: params.worldwide_day,
         issued_intex_count: params.issued_intex_count,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
@@ -71,6 +72,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         IIntexNFT1155::createSeriesCall {
             params: CreateSeriesParams {
                 seriesId: params.series_id,
+                worldwideDay: params.worldwide_day,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
                 issuedIntexCount: params.issued_intex_count,
@@ -96,6 +98,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let router_params = IOriginRouter::IssuanceInstructionsParams {
         seriesId: params.series_id,
+        worldwideDay: params.worldwide_day,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
         entryPriceMinor: entry_price_minor_u64,

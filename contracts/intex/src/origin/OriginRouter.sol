@@ -557,8 +557,9 @@ contract OriginRouter is
         pure
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
-        // Member-wise assignment (rather than a struct literal) keeps the 14-field payload within the IR stack bound.
+        // Member-wise assignment (rather than a struct literal) keeps the payload within the IR stack bound.
         payload.seriesId = p.seriesId;
+        payload.worldwideDay = p.worldwideDay;
         payload.issuedIntexCount = p.issuedIntexCount;
         payload.promisLoadMinor = p.promisLoadMinor;
         payload.entryPriceMinor = p.entryPriceMinor;

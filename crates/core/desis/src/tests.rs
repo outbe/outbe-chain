@@ -391,17 +391,22 @@ fn no_bids_last_batch_clears_as_no_sale() {
         )
         .unwrap();
         assert_eq!(
-            s.contract::<DesisContract>().read_stage(WORLDWIDE_DAY).unwrap(),
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
             AuctionStage::BidsReceived
         );
 
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
         assert_eq!(
-            s.contract::<DesisContract>().read_stage(WORLDWIDE_DAY).unwrap(),
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
             AuctionStage::Cleared
         );
     });
@@ -415,7 +420,8 @@ fn clear_auction_allocates_up_to_supply() {
         let supply = 3u32;
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(
             s.clone(),
@@ -428,7 +434,8 @@ fn clear_auction_allocates_up_to_supply() {
             bids(5, 200),
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
@@ -468,7 +475,10 @@ fn begin_clearing_accepts_zero_supply() {
         let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0).unwrap();
         assert_eq!(remainder, 0);
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(
+            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            0
+        );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
     });
 }
@@ -490,7 +500,8 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
             bids(3, 200),
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
@@ -512,7 +523,8 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
         // Three bids at descending prices: 300, 200, 150.
         let three_bids = vec![
             BidData {
@@ -545,7 +557,8 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
             three_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
@@ -583,7 +596,8 @@ fn clear_bids_below_min_price_skipped() {
             low_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -622,7 +636,8 @@ fn clear_refunds_equal_locked_minus_paid() {
             two_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
@@ -665,7 +680,8 @@ fn clear_rate_escrow_scales_by_basis() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, cfg).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
+            .unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -697,7 +713,8 @@ fn clear_rate_escrow_scales_by_basis() {
             rate_bids,
         )
         .unwrap();
-        let result = runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.
@@ -843,7 +860,8 @@ fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis(
         // Supply = 3 whole PROMIS_LOAD_MINOR units + 7 dust; only whole units can
         // be auctioned, so the dust is the remainder the caller must keep.
         let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
+        let remainder =
+            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
 
         // The dispatch returns the dust to the caller instead of writing it to
         // PromisLimit, so it cannot collide with the caller's own set/add. (The
@@ -868,7 +886,8 @@ fn dispatch_stage_clearing_failure_returns_whole_supply() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
 
         let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
-        let remainder = crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
+        let remainder =
+            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
         assert_eq!(remainder, supply);
     });
 }

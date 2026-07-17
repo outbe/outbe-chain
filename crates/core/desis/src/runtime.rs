@@ -273,7 +273,9 @@ pub fn process_bids_batch(
         contract
             .bids_total_batches
             .write(&worldwide_day, u32::from(total_batches))?;
-        contract.bids_arrived_mask.write(&worldwide_day, U256::ZERO)?;
+        contract
+            .bids_arrived_mask
+            .write(&worldwide_day, U256::ZERO)?;
     }
 
     // All batches of a generation must agree on total_batches and stay in range, else a bad peer could set an
@@ -313,6 +315,20 @@ pub fn process_bids_batch(
     }
 
     Ok(())
+}
+
+/// Accept a per-chain BIDS_DONE completeness marker.
+pub fn process_bids_done(
+    _storage: StorageHandle<'_>,
+    caller: Address,
+    worldwide_day: u32,
+    _src_chain_id: u32,
+    _relay_generation: u32,
+    _total_batches: u16,
+    _total_bids: u32,
+) -> Result<()> {
+    require_origin_router(caller)?;
+    require_nonzero_worldwide_day(worldwide_day)
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +407,8 @@ pub fn clear_auction(
     // creates no series.
     if result.issued_intex_count > 0 {
         let params = outbe_intexfactory::schema::IssuanceParams {
-            series_id: worldwide_day,
+            series_id: derive_series_id(worldwide_day),
+            worldwide_day,
             issued_intex_count: result.issued_intex_count,
             promis_load_minor: config.promis_load_minor,
             entry_price_minor: config.entry_price_minor,
@@ -543,6 +560,11 @@ fn calculate_clearing(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// The single point where a series id is derived from the day; identity until multi-currency (then 1 -> N).
+fn derive_series_id(worldwide_day: u32) -> u32 {
+    worldwide_day
+}
 
 fn require_origin_router(caller: Address) -> Result<()> {
     if caller != ORIGIN_ROUTER_ADDRESS {

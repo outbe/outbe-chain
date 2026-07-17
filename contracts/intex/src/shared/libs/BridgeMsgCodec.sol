@@ -63,11 +63,11 @@ library BridgeMsgCodec {
     //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
     //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
     //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
-    //   ISSUANCE_INSTRUCTIONS(struct with 11 static + 2 dynamic, dynamic struct):
-    //     outer offset(32) + 11 static + 2 inner offsets + 2 empty length words = 16×32 = 512
+    //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
+    //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 416;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 512;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -335,6 +335,8 @@ library BridgeMsgCodec {
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
         uint32 seriesId;
+        /// @notice Worldwide day the series was derived from — carried so the destination records real provenance.
+        uint32 worldwideDay;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;

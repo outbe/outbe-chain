@@ -6,10 +6,12 @@
 //!
 //! - [`common`] holds the shared localnet setup + parity steps.
 //! - [`update`] backs `features/update_operator.feature`.
+//! - [`governance`] backs `features/governance_oip_gip.feature`.
 //! - [`downtime`] / [`stale_join`] / [`lifecycle`] / [`restart`] / [`dkg`] /
 //!   [`follower`] back the S1-S7 + follower validator-lifecycle scenarios.
 
 pub mod common;
+pub mod governance;
 pub mod update;
 
 pub mod dkg;

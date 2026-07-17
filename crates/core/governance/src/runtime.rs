@@ -35,8 +35,10 @@ fn validate_text(text: &str) -> Result<()> {
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
+        create_approved = $create_approved:ident,
         update = $update:ident,
         set_status = $set_status:ident,
+        apply_status = $apply_status:ident,
         record = $record:ident,
         map = $map:ident,
         counter = $counter:ident,
@@ -77,6 +79,19 @@ macro_rules! impl_proposal_ops {
                 author,
                 textHash: text_hash,
             })?;
+            Ok(id)
+        }
+
+        /// Creates a proposal already in `Approved`.
+        ///
+        /// Used by the vote path ([`crate::vote_target::GovernanceVoteTarget`])
+        /// after quorum; not exposed on the public ABI submit path.
+        ///
+        /// Implemented as submit (Draft) then Draft → Approved (same status
+        /// write as set-status, without the ABI authority gate).
+        pub fn $create_approved(&mut self, author: Address, text: &str) -> Result<U256> {
+            let id = self.$submit(author, text)?;
+            self.$apply_status(id, status::APPROVED)?;
             Ok(id)
         }
 
@@ -125,6 +140,19 @@ macro_rules! impl_proposal_ops {
             if !author_resubmit && !self.is_authority(caller)? {
                 return Err(GovernanceError::NotAuthorized.into());
             }
+
+            self.$apply_status(id, new_status)
+        }
+
+        /// Status write + index move + event. Caller must have already gated
+        /// authorization (or be the vote path).
+        fn $apply_status(&mut self, id: U256, new_status: u8) -> Result<()> {
+            let entry = self.$map.entry(id);
+            if !entry.exists()? {
+                return Err(GovernanceError::ProposalNotFound.into());
+            }
+            let current = entry.status().read()?;
+            status::validate_transition(current, new_status)?;
 
             let block = self.storage.block_number()?;
             let entry = self.$map.entry(id);
@@ -194,8 +222,10 @@ impl GovernanceContract<'_> {
 
     impl_proposal_ops!(
         submit = submit_oip,
+        create_approved = create_approved_oip,
         update = update_oip_text,
         set_status = set_oip_status,
+        apply_status = apply_oip_status,
         record = Oip,
         map = oips,
         counter = next_oip_id,
@@ -209,8 +239,10 @@ impl GovernanceContract<'_> {
 
     impl_proposal_ops!(
         submit = submit_gip,
+        create_approved = create_approved_gip,
         update = update_gip_text,
         set_status = set_gip_status,
+        apply_status = apply_gip_status,
         record = Gip,
         map = gips,
         counter = next_gip_id,

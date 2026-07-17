@@ -199,8 +199,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Writes ---
 
     /// @notice Identity inputs for a new series, set once at `createSeries`.
+    /// @dev `worldwideDay` is the day the series was derived from; it is the provenance key
+    ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
     struct CreateSeriesParams {
         uint32 seriesId;
+        uint32 worldwideDay;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 issuedIntexCount;

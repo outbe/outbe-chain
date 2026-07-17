@@ -17,7 +17,10 @@ use eyre::{eyre, Result};
 use crate::internal::{
     addresses,
     config::Config,
-    eth::{self, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet, IVote, IWorldwideDay},
+    eth::{
+        self, IGovernance, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet, IVote,
+        IWorldwideDay,
+    },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
 };
@@ -90,6 +93,26 @@ impl Rpc {
             activation: r.activationHeight,
             status: r.status as u64,
         })
+    }
+
+    /// OIP record (`IGovernance.getOip`) — `(status, author, text)`.
+    pub fn get_oip(&self, id: u64) -> Option<(u8, Address, String)> {
+        let r = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::GOVERNANCE_ADDR,
+            &IGovernance::getOipCall { id: U256::from(id) },
+        )?;
+        Some((r.status, r.author, r.text))
+    }
+
+    /// GIP record (`IGovernance.getGip`) — `(status, author, text)`.
+    pub fn get_gip(&self, id: u64) -> Option<(u8, Address, String)> {
+        let r = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::GOVERNANCE_ADDR,
+            &IGovernance::getGipCall { id: U256::from(id) },
+        )?;
+        Some((r.status, r.author, r.text))
     }
 
     /// `IVote.listProposals` on the node at `port` (pagination probe).

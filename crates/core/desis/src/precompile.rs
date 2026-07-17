@@ -48,6 +48,17 @@ pub fn dispatch(
                     bids,
                 )
             }),
+            processBidsDone(c) => mutate_void(c, caller, |sender, c| {
+                runtime::process_bids_done(
+                    storage.clone(),
+                    sender,
+                    c.worldwideDay,
+                    c.srcChainId,
+                    c.relayGeneration,
+                    c.totalBatches,
+                    c.totalBids,
+                )
+            }),
             clearAuction(c) => mutate_void_payable(c, caller, value, |sender, c, _val| {
                 runtime::clear_auction(storage.clone(), sender, c.worldwideDay).map(|_| ())
             }),

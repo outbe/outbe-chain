@@ -558,3 +558,5 @@ fn gip_diff_against_canon_shows_edits() {
         assert!(d.contains("+line B"));
     });
 }
+
+mod vote_dispatch;

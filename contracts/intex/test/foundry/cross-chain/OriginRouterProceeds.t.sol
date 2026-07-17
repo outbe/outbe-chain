@@ -21,7 +21,7 @@ contract MockWCOEN {
 /// @dev IntexFactory precompile stub: records the value/series/source of each `distribute`; can be toggled to revert.
 contract MockIntexFactory {
     bool public shouldRevert;
-    uint32 public lastSeriesId;
+    uint32 public lastWorldwideDay;
     uint32 public lastSrcChainId;
     uint256 public lastValue;
     uint256 public calls;
@@ -30,10 +30,10 @@ contract MockIntexFactory {
         shouldRevert = v;
     }
 
-    function distribute(uint32 seriesId, uint32 srcChainId) external payable {
+    function distribute(uint32 worldwideDay, uint32 srcChainId) external payable {
         require(!shouldRevert, "distribute failed");
         calls++;
-        lastSeriesId = seriesId;
+        lastWorldwideDay = worldwideDay;
         lastSrcChainId = srcChainId;
         lastValue = msg.value;
     }
@@ -41,7 +41,7 @@ contract MockIntexFactory {
 
 contract OriginRouterProceedsTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 2;
-    uint32 internal constant SERIES_ID = 20_260_713;
+    uint32 internal constant WORLDWIDE_DAY = 20_260_713;
     uint256 internal constant AMOUNT = 100e18;
 
     OriginRouter internal origin;
@@ -73,7 +73,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         // Register BNB and seed the day's target snapshot: proceeds authenticate the source against it.
         // No float needed — the mock bridge fee defaults to 0, so the seed STAGE_START costs nothing.
         origin.addTarget(BNB_CHAIN_ID);
-        _seedDaySnapshot(SERIES_ID);
+        _seedDaySnapshot(WORLDWIDE_DAY);
     }
 
     /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so `seriesTargets[day]` is populated.
@@ -84,17 +84,17 @@ contract OriginRouterProceedsTest is CrossChainTest {
         origin.sendAuctionStageStart(p);
     }
 
-    function _receive(uint32 sourceDomain, uint256 amount, uint32 seriesId) internal returns (bytes4) {
+    function _receive(uint32 sourceDomain, uint256 amount, uint32 worldwideDay) internal returns (bytes4) {
         vm.prank(tokenBridge);
-        return origin.onCrosschainTokensReceived(sourceDomain, from, amount, abi.encode(seriesId));
+        return origin.onCrosschainTokensReceived(sourceDomain, from, amount, abi.encode(worldwideDay));
     }
 
     function test_OnReceive_DistributesToFactory() public {
-        bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, SERIES_ID);
+        bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
 
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 1);
-        assertEq(factory.lastSeriesId(), SERIES_ID);
+        assertEq(factory.lastWorldwideDay(), WORLDWIDE_DAY);
         assertEq(factory.lastSrcChainId(), BNB_CHAIN_ID);
         assertEq(factory.lastValue(), AMOUNT);
         // Fully routed: nothing parked, no native stranded on the router.
@@ -106,14 +106,14 @@ contract OriginRouterProceedsTest is CrossChainTest {
         factory.setShouldRevert(true);
 
         vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.ProceedsParked(0, SERIES_ID, AMOUNT);
-        bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, SERIES_ID);
+        emit IOriginRouter.ProceedsParked(0, WORLDWIDE_DAY, AMOUNT);
+        bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
 
         // The transfer still settles (magic returned) and the native is held for retry.
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 0);
         IOriginRouter.ParkedProceeds memory p = origin.parkedProceeds(0);
-        assertEq(p.worldwideDay, SERIES_ID);
+        assertEq(p.worldwideDay, WORLDWIDE_DAY);
         assertEq(p.amount, AMOUNT);
         assertEq(p.settled, false);
         assertEq(address(origin).balance, AMOUNT);
@@ -121,11 +121,11 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
     function test_RetryProceeds_DistributesParked() public {
         factory.setShouldRevert(true);
-        _receive(BNB_CHAIN_ID, AMOUNT, SERIES_ID);
+        _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
 
         factory.setShouldRevert(false);
         vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.ProceedsRetried(0, SERIES_ID, AMOUNT);
+        emit IOriginRouter.ProceedsRetried(0, WORLDWIDE_DAY, AMOUNT);
         origin.retryProceeds(0);
 
         assertEq(factory.calls(), 1);
@@ -136,7 +136,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
     function test_RevertWhen_RetryAlreadySettled() public {
         factory.setShouldRevert(true);
-        _receive(BNB_CHAIN_ID, AMOUNT, SERIES_ID);
+        _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
         factory.setShouldRevert(false);
         origin.retryProceeds(0);
 
@@ -152,13 +152,13 @@ contract OriginRouterProceedsTest is CrossChainTest {
     function test_RevertWhen_CallerNotTokenBridge() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsCaller.selector, stranger));
-        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, from, AMOUNT, abi.encode(SERIES_ID));
+        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, from, AMOUNT, abi.encode(WORLDWIDE_DAY));
     }
 
     function test_RevertWhen_WrongSourceDomain() public {
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, uint32(999)));
-        origin.onCrosschainTokensReceived(999, from, AMOUNT, abi.encode(SERIES_ID));
+        origin.onCrosschainTokensReceived(999, from, AMOUNT, abi.encode(WORLDWIDE_DAY));
     }
 
     function test_RevertWhen_ProceedsSenderSpoofed() public {
@@ -166,6 +166,6 @@ contract OriginRouterProceedsTest is CrossChainTest {
         bytes memory spoofed = _interop(BNB_CHAIN_ID, stranger);
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, spoofed));
-        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, spoofed, AMOUNT, abi.encode(SERIES_ID));
+        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, spoofed, AMOUNT, abi.encode(WORLDWIDE_DAY));
     }
 }

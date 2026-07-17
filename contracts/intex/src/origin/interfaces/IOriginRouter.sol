@@ -167,6 +167,8 @@ interface IOriginRouter {
         /// @notice Destination chain for this issuance leg (must be in the series' STAGE_START snapshot).
         uint32 dstChainId;
         uint32 seriesId;
+        /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
+        uint32 worldwideDay;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
