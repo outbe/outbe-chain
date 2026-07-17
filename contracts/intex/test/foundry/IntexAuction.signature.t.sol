@@ -90,7 +90,8 @@ contract AuctionSignatureTest is Test {
         uint16 qty,
         uint32 rate
     ) internal pure returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, _digest(verifyingContract, chainid, worldwideDay, bidder, qty, rate));
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(pk, _digest(verifyingContract, chainid, worldwideDay, bidder, qty, rate));
         return abi.encodePacked(r, s, v);
     }
 
