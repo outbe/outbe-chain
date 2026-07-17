@@ -1,7 +1,9 @@
 use alloy_evm::{block::BlockExecutor, Evm, RecoveredTx};
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
-    reshare_artifact::{decode_outbe_block_artifacts, encode_outbe_block_artifacts},
+    reshare_artifact::{
+        decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
+    },
     OutbeHeader, OutbePrimitives,
 };
 use reth_ethereum::evm::revm::primitives::hardfork::SpecId;
@@ -23,6 +25,23 @@ use crate::{
     config::{OutbeBlockAssembler, OutbeBlockExecutionCtx},
     executor::OutbeBlockExecutor,
 };
+
+pub(crate) fn encode_final_header_artifacts(
+    prefinal_extra_data: &[u8],
+    execution_summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact,
+    timestamp_millis_part: u64,
+    compressed_root: alloy_primitives::B256,
+) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
+    let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
+        .map_err(|e| BlockExecutionError::msg(e.to_string()))?;
+    artifacts.execution_summary = Some(execution_summary);
+    artifacts.timestamp_millis_part = timestamp_millis_part;
+    artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
+        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+        r_sealed: compressed_root,
+    });
+    encode_outbe_block_artifacts(&artifacts).map_err(|e| BlockExecutionError::msg(e.to_string()))
+}
 
 pub struct OutbeBlockBuilder<'a, EVM>
 where
@@ -55,6 +74,25 @@ where
             parent,
             assembler,
         }
+    }
+
+    /// Encodes all execution-produced header artifacts from the single stored
+    /// CE seal. Payload building calls this before either state-root path; the
+    /// final `finish` call repeats it idempotently as a defensive invariant.
+    pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
+        let compressed_seal_output = self
+            .executor
+            .compressed_entities_seal_output()
+            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
+        self.ctx.inner.extra_data = encode_final_header_artifacts(
+            self.ctx.inner.extra_data.as_ref(),
+            self.executor.current_execution_summary(),
+            self.ctx.timestamp_millis_part,
+            compressed_seal_output.new_root,
+        )?;
+        self.executor
+            .set_final_extra_data(self.ctx.inner.extra_data.clone());
+        Ok(())
     }
 }
 
@@ -105,33 +143,31 @@ where
         state: impl StateProvider,
         state_root_precomputed: Option<(alloy_primitives::B256, TrieUpdates)>,
     ) -> Result<BlockBuilderOutcome<OutbePrimitives>, BlockExecutionError> {
+        // Seal CE exactly once before encoding any execution-produced header
+        // fields. This must happen while the parallel state hook is attached.
+        self.executor.finalize_compressed_entities()?;
         // finalized-parent metadata travels through payload
         // attributes into the begin-zone Phase 1 system transaction body.
         // Header `extra_data` here carries only execution summary,
         // timestamp millis, and DKG/header artifacts; the legacy header
         // attestation tag is not produced by the proposer path.
-        let mut artifacts = decode_outbe_block_artifacts(self.ctx.inner.extra_data.as_ref())
-            .map_err(|e| BlockExecutionError::msg(e.to_string()))?;
         let execution_summary = self.executor.current_execution_summary();
-        artifacts.execution_summary = Some(execution_summary);
         // Sub-second timestamp travels in `extra_data` under tag 0x05 so
         // the block hash stays Ethereum-spec-compliant
         // (`keccak256(rlp(standard_header))`). The execution-context
         // value is the canonical source for this block; whatever the
         // proposer placed in `extra_data` earlier is overwritten here.
-        artifacts.timestamp_millis_part = self.ctx.timestamp_millis_part;
-        self.ctx.inner.extra_data = encode_outbe_block_artifacts(&artifacts)
-            .map_err(|e| BlockExecutionError::msg(e.to_string()))?;
-        self.executor
-            .set_final_extra_data(self.ctx.inner.extra_data.clone());
+        self.finalize_header_artifacts()?;
+        let compressed_seal_output = self
+            .executor
+            .compressed_entities_seal_output()
+            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
 
         // Proposer execution does not know the block hash until assembly. Seal
         // first, retain the immutable provisional batch across assembly, then
         // publish it under the exact computed hash. Validator execution uses
         // the known hash path in `OutbeBlockExecutor::finish`.
-        self.executor.finalize_compressed_entities()?;
         let compressed_tree_service = self.executor.compressed_tree_service();
-        let compressed_seal_output = self.executor.take_compressed_entities_seal_output();
 
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
@@ -167,9 +203,9 @@ where
         ))?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
-        if let (Some(output), Some(service)) = (compressed_seal_output, compressed_tree_service) {
+        if let Some(service) = compressed_tree_service {
             service
-                .publish_candidate(block.hash(), output.staged_tree_batch)
+                .publish_candidate(block.hash(), compressed_seal_output.staged_tree_batch)
                 .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
         }
         if let Some(bridge) = &self.bridge {
@@ -216,6 +252,10 @@ mod tests {
     use outbe_primitives::block::BlockContext;
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
+    use outbe_primitives::reshare_artifact::{
+        decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
+        ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
+    };
     use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::chainspec::ChainSpec;
@@ -250,6 +290,73 @@ mod tests {
     };
 
     const GENESIS_OWNER: Address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
+
+    #[test]
+    fn final_artifact_adapter_overwrites_untrusted_root_and_preserves_consensus_fields() {
+        let prefinal = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            execution_summary: Some(ExecutionSummaryArtifact {
+                validator_fee_sum: U256::from(999),
+            }),
+            consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(
+                Bytes::from_static(b"dealer"),
+            )),
+            timestamp_millis_part: 999,
+            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: 77,
+                r_sealed: B256::repeat_byte(0xDD),
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        let local_root = B256::repeat_byte(0xAB);
+        let encoded = super::encode_final_header_artifacts(
+            &prefinal,
+            ExecutionSummaryArtifact {
+                validator_fee_sum: U256::from(7),
+            },
+            321,
+            local_root,
+        )
+        .unwrap();
+        let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
+        assert_eq!(
+            decoded.consensus_header_artifact,
+            Some(ConsensusHeaderArtifact::DealerLog(Bytes::from_static(
+                b"dealer"
+            )))
+        );
+        assert_eq!(
+            decoded.execution_summary.unwrap().validator_fee_sum,
+            U256::from(7)
+        );
+        assert_eq!(decoded.timestamp_millis_part, 321);
+        assert_eq!(
+            decoded.compressed_entities_root,
+            Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                r_sealed: local_root,
+            })
+        );
+
+        let other = super::encode_final_header_artifacts(
+            &prefinal,
+            ExecutionSummaryArtifact {
+                validator_fee_sum: U256::from(7),
+            },
+            321,
+            B256::repeat_byte(0xAC),
+        )
+        .unwrap();
+        let first = SealedHeader::seal_slow(OutbeHeader::new(Header {
+            extra_data: encoded,
+            ..Default::default()
+        }));
+        let second = SealedHeader::seal_slow(OutbeHeader::new(Header {
+            extra_data: other,
+            ..Default::default()
+        }));
+        assert_ne!(first.hash(), second.hash());
+    }
 
     #[derive(Debug, Default, Clone)]
     struct DeterministicEmptyStateProvider;
@@ -495,6 +602,21 @@ mod tests {
         );
         let mut provider = DirectStorageProvider::new(db, ctx);
         StorageHandle::enter(&mut provider, |storage| {
+            let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::ZERO,
+                    U256::from(3),
+                )
+                .unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1),
+                    U256::from_be_slice(root.as_slice()),
+                )
+                .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.config_max_validators.write(128).unwrap();
@@ -540,6 +662,14 @@ mod tests {
             outbe_primitives::addresses::ORACLE_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
                 ..Default::default()
             },
@@ -571,11 +701,21 @@ mod tests {
     #[test]
     fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         let bridge = test_bridge();
-        let config = test_config(bridge);
         let parent = test_parent_at(1);
+        bridge.record_execution_summary(
+            1,
+            parent.hash(),
+            ExecutionSummaryArtifact {
+                validator_fee_sum: U256::ZERO,
+            },
+            parent.header().inner.timestamp,
+        );
+        let config = test_config(bridge);
         let provider = DeterministicEmptyStateProvider;
+        let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        seed_active_validators(&mut proposer_db, &[GENESIS_OWNER]);
         let mut proposer_state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
+            .with_database(proposer_db)
             .with_bundle_update()
             .build();
 
@@ -607,6 +747,8 @@ mod tests {
             .expect("next block context must build");
         let evm = config.evm_with_env(&mut proposer_state, evm_env);
         let mut builder = config.create_block_builder(evm, &parent, ctx);
+        crate::executor::with_phase1_verify_disabled(|| builder.apply_pre_execution_changes())
+            .expect("Phase 1 must be pre-executed before witness validation");
         builder
             .executor_mut()
             .force_preexecuted_phase1_witness_for_test(phase1_hash);

@@ -6,9 +6,10 @@ use alloy_rlp::Encodable as _;
 use either::Either;
 use outbe_evm::{AccountedParentArtifact, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
 use outbe_primitives::{
-    consensus::OUTBE_MAX_BLOCK_SIZE, error::PrecompileError,
-    reshare_artifact::decode_outbe_block_artifacts, OutbeBuiltPayload, OutbeHeader,
-    OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
+    consensus::OUTBE_MAX_BLOCK_SIZE,
+    error::PrecompileError,
+    reshare_artifact::{decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts},
+    OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
@@ -141,6 +142,8 @@ where
         let chain_spec = self.provider.chain_spec();
         let inner = attributes.inner();
         let block_number = parent_header.number().saturating_add(1);
+        let prefinal_extra_data = sanitize_prefinal_outbe_block_artifacts(attributes.extra_data())
+            .map_err(PayloadBuilderError::other)?;
 
         // / / prebuild and sign the Phase 1
         // (CertifiedParentAccounting) body[0] tx BEFORE the executor enters
@@ -214,7 +217,7 @@ where
                         gas_limit: self.builder_config.gas_limit(parent_header.gas_limit()),
                         parent_beacon_block_root: inner.parent_beacon_block_root,
                         withdrawals: inner.withdrawals.clone().map(Into::into),
-                        extra_data: attributes.extra_data().clone(),
+                        extra_data: prefinal_extra_data.clone(),
                         slot_number: inner.slot_number,
                     },
                     timestamp_millis_part: attributes.timestamp_millis_part(),
@@ -294,7 +297,7 @@ where
                 chain_spec.chain().id(),
                 block_gas_limit,
                 parent_header.hash(),
-                attributes.extra_data(),
+                &prefinal_extra_data,
                 attributes.parent_consensus_metadata().cloned(),
                 attributes.proposer_evm_address(),
                 // reuse the prebuilt body[0] tx
@@ -505,6 +508,10 @@ where
             builder
                 .executor_mut()
                 .finalize_compressed_entities()
+                .map_err(PayloadBuilderError::evm)?;
+            builder
+                .executor_mut()
+                .prepare_final_header_artifacts(attributes.timestamp_millis_part())
                 .map_err(PayloadBuilderError::evm)?;
             builder.executor_mut().set_state_hook(None);
             match handle.state_root() {

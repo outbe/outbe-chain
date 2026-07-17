@@ -41,8 +41,8 @@ use outbe_primitives::{
     consensus_metadata::CertifiedParentAccountingMetadata,
     projection::ExecutionReadBudget,
     reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
-        OutbeBlockArtifacts,
+        decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts,
+        ConsensusHeaderArtifact,
     },
     OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives,
 };
@@ -891,30 +891,7 @@ impl OutbeEvmConfig {
     }
 
     fn sanitize_next_block_extra_data(extra_data: Bytes) -> Bytes {
-        if extra_data.is_empty() {
-            return extra_data;
-        }
-
-        match decode_outbe_block_artifacts(extra_data.as_ref()) {
-            // `execution_summary` is recomputed by the executor
-            // on the next block and must be `None` here. Exact-parent
-            // finalization metadata now travels through payload attributes
-            // into the CertifiedParentAccounting system tx body, so header
-            // attestation tags are dropped. `timestamp_millis_part` is
-            // overwritten downstream by `context_for_next_block` from the
-            // next-block attributes, so we drop it here (default = 0).
-            Ok(artifacts) => encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                execution_summary: None,
-                consensus_header_artifact: artifacts.consensus_header_artifact,
-                timestamp_millis_part: 0,
-                // Preserve the proposer's gathered late-finalize credits across
-                // the next-block seed sanitize (like consensus_header_artifact);
-                // dropping them here would lose them on re-proposal/validation.
-                late_finalize_credits: artifacts.late_finalize_credits,
-            })
-            .unwrap_or_default(),
-            Err(_) => Bytes::new(),
-        }
+        sanitize_prefinal_outbe_block_artifacts(extra_data.as_ref()).unwrap_or_default()
     }
 }
 
@@ -1737,6 +1714,7 @@ mod tests {
             consensus_header_artifact: None,
             timestamp_millis_part: 777,
             late_finalize_credits: Some(credits.clone()),
+            compressed_entities_root: None,
         })
         .expect("encode");
 

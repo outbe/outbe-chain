@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::TxReceipt;
+use alloy_consensus::{BlockHeader as _, TxReceipt};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -17,9 +17,15 @@ use outbe_compressed_entities::{
     ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
-use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
+use outbe_primitives::{
+    addresses::COMPRESSED_ENTITIES_ADDRESS,
+    reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
+    OutbeHeader,
+};
 use reth_chain_state::PersistedBlockSubscriptions;
-use reth_provider::{BlockHashReader, DatabaseProviderFactory, ProviderError, ReceiptProvider};
+use reth_provider::{
+    BlockHashReader, DatabaseProviderFactory, HeaderProvider, ProviderError, ReceiptProvider,
+};
 use reth_storage_api::TryIntoHistoricalStateProvider;
 
 use crate::ce_recovery::{CanonicalCeReplayBlock, CanonicalCeReplaySource};
@@ -34,13 +40,55 @@ fn is_pending_executed_state(error: &ProviderError, height: u64) -> bool {
     )
 }
 
+fn validate_durable_header_evidence(
+    height: u64,
+    evidence: DurableCeEvidence,
+) -> eyre::Result<B256> {
+    if height == 0 {
+        if evidence.header_root.is_some() {
+            eyre::bail!("genesis durable header unexpectedly carries a CE root artifact");
+        }
+        return Ok(evidence.evm_root);
+    }
+    let header_root = evidence.header_root.ok_or_else(|| {
+        eyre::eyre!(
+            "durable canonical header is missing CE root artifact at {height}/{}",
+            evidence.block_hash
+        )
+    })?;
+    if header_root.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME {
+        eyre::bail!(
+            "durable canonical header CE scheme mismatch at {height}/{}: header={}, active={}",
+            evidence.block_hash,
+            header_root.commitment_scheme_version,
+            ACTIVE_COMMITMENT_SCHEME
+        );
+    }
+    if header_root.r_sealed != evidence.evm_root {
+        eyre::bail!(
+            "durable canonical header/EVM CE root mismatch at {height}/{}: header={}, evm={}",
+            evidence.block_hash,
+            header_root.r_sealed,
+            evidence.evm_root
+        );
+    }
+    Ok(header_root.r_sealed)
+}
+
 /// Narrow, behavior-testable view of Reth's durable storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DurableCeEvidence {
+    pub block_hash: B256,
+    pub evm_root: B256,
+    pub header_root: Option<CompressedEntitiesRootArtifact>,
+}
+
 pub trait DurableCeState: Send + Sync {
     /// Subscribe before finalized processing starts so no persistence edge is missed.
     fn persisted_blocks(&self) -> BoxStream<'static, BlockNumHash>;
 
     /// Reads only durable canonical data. `None` means this height is not yet on disk.
-    fn block_and_root(&self, height: u64) -> eyre::Result<Option<(B256, B256)>>;
+    fn block_and_root(&self, height: u64) -> eyre::Result<Option<DurableCeEvidence>>;
 
     /// Reads and authenticates the canonical receipt history needed to
     /// reconstruct one exact finalized tree batch.
@@ -64,13 +112,16 @@ impl<P> RethDurableCeState<P> {
 impl<P> DurableCeState for RethDurableCeState<P>
 where
     P: PersistedBlockSubscriptions + DatabaseProviderFactory + Clone + Send + Sync + 'static,
-    P::Provider: BlockHashReader + ReceiptProvider + TryIntoHistoricalStateProvider,
+    P::Provider: BlockHashReader
+        + HeaderProvider<Header = OutbeHeader>
+        + ReceiptProvider
+        + TryIntoHistoricalStateProvider,
 {
     fn persisted_blocks(&self) -> BoxStream<'static, BlockNumHash> {
         self.provider.persisted_block_stream().boxed()
     }
 
-    fn block_and_root(&self, height: u64) -> eyre::Result<Option<(B256, B256)>> {
+    fn block_and_root(&self, height: u64) -> eyre::Result<Option<DurableCeEvidence>> {
         let durable = self
             .provider
             .database_provider_ro()
@@ -81,6 +132,23 @@ where
         else {
             return Ok(None);
         };
+        let header = durable
+            .sealed_header(height)
+            .map_err(|error| eyre::eyre!("failed to read durable header {height}: {error}"))?
+            .ok_or_else(|| eyre::eyre!("durable header {height}/{block_hash} is missing"))?;
+        if header.hash() != block_hash {
+            eyre::bail!(
+                "durable header/hash index conflict at height {height}: index={block_hash}, header={}",
+                header.hash()
+            );
+        }
+        let header_root = decode_outbe_block_artifacts(header.extra_data().as_ref())
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to decode durable header artifacts for {height}/{block_hash}: {error}"
+                )
+            })?
+            .compressed_entities_root;
         // Consume this exact read-only transaction into the historical state
         // view. No in-memory blockchain-tree provider participates.
         let state = match durable.try_into_history_at_block(height) {
@@ -103,7 +171,11 @@ where
                 eyre::eyre!("failed to read durable CE root for {height}/{block_hash}: {error}")
             })?
             .map_or(B256::ZERO, |value| B256::from(value.to_be_bytes::<32>()));
-        Ok(Some((block_hash, root)))
+        Ok(Some(DurableCeEvidence {
+            block_hash,
+            evm_root: root,
+            header_root,
+        }))
     }
 
     fn replay_block(&self, height: u64) -> eyre::Result<Option<CanonicalCeReplayBlock>> {
@@ -114,30 +186,39 @@ where
 impl<P> CanonicalCeReplaySource for RethDurableCeState<P>
 where
     P: PersistedBlockSubscriptions + DatabaseProviderFactory + Clone + Send + Sync + 'static,
-    P::Provider: BlockHashReader + ReceiptProvider + TryIntoHistoricalStateProvider,
+    P::Provider: BlockHashReader
+        + HeaderProvider<Header = OutbeHeader>
+        + ReceiptProvider
+        + TryIntoHistoricalStateProvider,
 {
     fn durable_checkpoint(
         &self,
         consensus_finalized_height: u64,
     ) -> eyre::Result<Option<DurableFinalizedCheckpoint>> {
-        let Some((block_hash, root)) = self.block_and_root(consensus_finalized_height)? else {
+        let Some(evidence) = self.block_and_root(consensus_finalized_height)? else {
             return Ok(None);
         };
+        let root = validate_durable_header_evidence(consensus_finalized_height, evidence)?;
         let (parent_block_hash, parent_root) = if consensus_finalized_height == 0 {
             (B256::ZERO, B256::ZERO)
         } else {
-            self.block_and_root(consensus_finalized_height - 1)?
+            let parent = self
+                .block_and_root(consensus_finalized_height - 1)?
                 .ok_or_else(|| {
                     eyre::eyre!(
                         "durable parent checkpoint {} is missing",
                         consensus_finalized_height - 1
                     )
-                })?
+                })?;
+            (
+                parent.block_hash,
+                validate_durable_header_evidence(consensus_finalized_height - 1, parent)?,
+            )
         };
         Ok(Some(DurableFinalizedCheckpoint {
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
             height: consensus_finalized_height,
-            block_hash,
+            block_hash: evidence.block_hash,
             root,
             parent_block_hash,
             parent_root,
@@ -149,15 +230,20 @@ where
         if height == 0 {
             eyre::bail!("height 0 is the CE replay baseline, not a replay block");
         }
-        let Some((hash, new_root)) = self.block_and_root(height)? else {
+        let Some(evidence) = self.block_and_root(height)? else {
             return Ok(None);
         };
-        let Some((parent_hash, parent_root)) = self.block_and_root(height - 1)? else {
+        let Some(parent) = self.block_and_root(height - 1)? else {
             eyre::bail!(
-                "durable canonical parent {} is unavailable while replaying {height}/{hash}",
-                height - 1
+                "durable canonical parent {} is unavailable while replaying {height}/{}",
+                height - 1,
+                evidence.block_hash
             );
         };
+        let hash = evidence.block_hash;
+        let new_root = validate_durable_header_evidence(height, evidence)?;
+        let parent_hash = parent.block_hash;
+        let parent_root = validate_durable_header_evidence(height - 1, parent)?;
 
         // Receipts are read from a fresh DB-only provider. Blockchain-tree or
         // ExEx memory cannot fill a pruned/missing replay row.
@@ -306,7 +392,7 @@ impl RethCeFinalizer {
                     current.new_root
                 );
             }
-            let (durable_parent_hash, durable_parent_root) = self
+            let durable_parent = self
                 .state
                 .block_and_root(block.height.saturating_sub(1))?
                 .ok_or_else(|| {
@@ -316,13 +402,17 @@ impl RethCeFinalizer {
                         block.block_hash
                     )
                 })?;
-            if current.parent_block_hash != durable_parent_hash
+            let durable_parent_root =
+                validate_durable_header_evidence(block.height.saturating_sub(1), durable_parent)?;
+            if current.parent_block_hash != durable_parent.block_hash
                 || current.parent_root != durable_parent_root
             {
                 eyre::bail!(
-                    "redelivered finalized CE block parent identity conflicts with the durable marker at {}/{}: Reth=({durable_parent_hash}, {durable_parent_root}), marker=({}, {})",
+                    "redelivered finalized CE block parent identity conflicts with the durable marker at {}/{}: Reth=({}, {}), marker=({}, {})",
                     block.height,
                     block.block_hash,
+                    durable_parent.block_hash,
+                    durable_parent_root,
                     current.parent_block_hash,
                     current.parent_root
                 );
@@ -349,6 +439,32 @@ impl RethCeFinalizer {
                 })?
             }
         };
+        let durable_parent = self
+            .state
+            .block_and_root(block.height.saturating_sub(1))?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "durable parent is absent for finalized CE block {}/{}",
+                    block.height,
+                    block.block_hash
+                )
+            })?;
+        let durable_parent_root =
+            validate_durable_header_evidence(block.height.saturating_sub(1), durable_parent)?;
+        if durable_parent.block_hash != block.parent_block_hash
+            || durable_parent.block_hash != current.block_hash
+            || durable_parent_root != current.new_root
+        {
+            eyre::bail!(
+                "durable parent/header conflicts with finalized CE parent at {}/{}: actor=({}, {}), marker=({}, {})",
+                block.height,
+                block.block_hash,
+                block.parent_block_hash,
+                durable_parent_root,
+                current.block_hash,
+                current.new_root
+            );
+        }
 
         let marker = if let Some(candidate) = self.tree.candidate(block.height, block.block_hash)? {
             if candidate.parent_block_hash() != block.parent_block_hash {
@@ -415,18 +531,21 @@ impl RethCeFinalizer {
     }
 
     fn verify_durable(&self, block: FinalizedCeBlock) -> eyre::Result<Option<B256>> {
-        let Some((durable_hash, root)) = self.state.block_and_root(block.height)? else {
+        let Some(evidence) = self.state.block_and_root(block.height)? else {
             return Ok(None);
         };
-        if durable_hash != block.block_hash {
+        if evidence.block_hash != block.block_hash {
             eyre::bail!(
                 "durable canonical conflict at height {}: finalized={}, Reth={}",
                 block.height,
                 block.block_hash,
-                durable_hash
+                evidence.block_hash
             );
         }
-        Ok(Some(root))
+        Ok(Some(validate_durable_header_evidence(
+            block.height,
+            evidence,
+        )?))
     }
 
     async fn wait_for_exact_persistence(&self, block: FinalizedCeBlock) -> eyre::Result<()> {
@@ -565,7 +684,7 @@ mod tests {
 
     struct FakeDurableState {
         stream: Mutex<Option<mpsc::UnboundedReceiver<BlockNumHash>>>,
-        blocks: Mutex<BTreeMap<u64, (B256, B256)>>,
+        blocks: Mutex<BTreeMap<u64, DurableCeEvidence>>,
         replay: Mutex<BTreeMap<u64, CanonicalCeReplayBlock>>,
     }
 
@@ -575,10 +694,11 @@ mod tests {
             let mut blocks = BTreeMap::new();
             blocks.insert(
                 0,
-                (
-                    hash(1),
-                    outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-                ),
+                DurableCeEvidence {
+                    block_hash: hash(1),
+                    evm_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                    header_root: None,
+                },
             );
             (
                 Arc::new(Self {
@@ -591,10 +711,30 @@ mod tests {
         }
 
         fn set(&self, height: u64, block_hash: B256, root: B256) {
+            self.blocks.lock().unwrap().insert(
+                height,
+                DurableCeEvidence {
+                    block_hash,
+                    evm_root: root,
+                    header_root: (height > 0).then_some(CompressedEntitiesRootArtifact {
+                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                        r_sealed: root,
+                    }),
+                },
+            );
+        }
+
+        fn set_header_root(
+            &self,
+            height: u64,
+            header_root: Option<CompressedEntitiesRootArtifact>,
+        ) {
             self.blocks
                 .lock()
                 .unwrap()
-                .insert(height, (block_hash, root));
+                .get_mut(&height)
+                .expect("fake durable block must exist")
+                .header_root = header_root;
         }
 
         fn set_replay(&self, block: CanonicalCeReplayBlock) {
@@ -607,7 +747,7 @@ mod tests {
             self.stream.lock().unwrap().take().unwrap().boxed()
         }
 
-        fn block_and_root(&self, height: u64) -> eyre::Result<Option<(B256, B256)>> {
+        fn block_and_root(&self, height: u64) -> eyre::Result<Option<DurableCeEvidence>> {
             Ok(self.blocks.lock().unwrap().get(&height).copied())
         }
 
@@ -793,6 +933,60 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("root conflict"));
+        assert_eq!(tree.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_durable_header_root_fails_before_tree_apply() {
+        let (state, _tx) = FakeDurableState::new();
+        state.set(1, hash(2), hash(7));
+        state.set_header_root(1, None);
+        let tree = FakeTree::new(Some(candidate()));
+        let error = finalizer(state, tree.clone())
+            .commit(finalized_block())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("missing CE root artifact"));
+        assert_eq!(tree.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn wrong_durable_header_scheme_fails_before_tree_apply() {
+        let (state, _tx) = FakeDurableState::new();
+        state.set(1, hash(2), hash(7));
+        state.set_header_root(
+            1,
+            Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME + 1,
+                r_sealed: hash(7),
+            }),
+        );
+        let tree = FakeTree::new(Some(candidate()));
+        let error = finalizer(state, tree.clone())
+            .commit(finalized_block())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("scheme mismatch"));
+        assert_eq!(tree.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn durable_header_evm_root_mismatch_fails_before_tree_apply() {
+        let (state, _tx) = FakeDurableState::new();
+        state.set(1, hash(2), hash(7));
+        state.set_header_root(
+            1,
+            Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                r_sealed: hash(8),
+            }),
+        );
+        let tree = FakeTree::new(Some(candidate()));
+        let error = finalizer(state, tree.clone())
+            .commit(finalized_block())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("header/EVM CE root mismatch"));
         assert_eq!(tree.attempts(), 0);
     }
 

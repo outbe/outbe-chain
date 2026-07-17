@@ -24,7 +24,8 @@ use outbe_primitives::{
     error::{PrecompileError, Result as OutbeResult},
     hook_events::partition_hook_events,
     reshare_artifact::{
-        decode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
+        decode_outbe_block_artifacts, CompressedEntitiesRootArtifact, ConsensusHeaderArtifact,
+        ExecutionSummaryArtifact,
     },
     storage::{direct::DirectStorageProvider, StorageHandle},
     OutbeHeader,
@@ -71,6 +72,58 @@ struct SystemFailureReceiptInput {
     compressed_entities_gas: u64,
     signed_gas_limit: u64,
     internal_gas_used: u64,
+}
+
+fn validate_compressed_entities_root_scheme(
+    artifact: Option<CompressedEntitiesRootArtifact>,
+) -> Result<CompressedEntitiesRootArtifact, BlockExecutionError> {
+    let artifact = artifact.ok_or_else(|| {
+        BlockExecutionError::msg("missing compressed-entities root artifact in block extra_data")
+    })?;
+    if artifact.commitment_scheme_version != outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME {
+        return Err(BlockExecutionError::msg(format!(
+            "compressed-entities root artifact scheme mismatch: header={}, active={}",
+            artifact.commitment_scheme_version,
+            outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME
+        )));
+    }
+    Ok(artifact)
+}
+
+fn validate_compressed_entities_root_after_seal(
+    artifact: Option<CompressedEntitiesRootArtifact>,
+    sealed_root: B256,
+) -> Result<CompressedEntitiesRootArtifact, BlockExecutionError> {
+    let artifact = validate_compressed_entities_root_scheme(artifact)?;
+    if artifact.r_sealed != sealed_root {
+        return Err(BlockExecutionError::msg(format!(
+            "compressed-entities header/SealOutput root mismatch: header={}, seal={sealed_root}",
+            artifact.r_sealed
+        )));
+    }
+    Ok(artifact)
+}
+
+fn validate_execution_summary_artifact(
+    enabled: bool,
+    block_number: u64,
+    header_summary: Option<ExecutionSummaryArtifact>,
+    current_summary: ExecutionSummaryArtifact,
+) -> Result<(), BlockExecutionError> {
+    if !enabled || block_number == 0 {
+        return Ok(());
+    }
+    let Some(header_summary) = header_summary else {
+        return Err(BlockExecutionError::msg(
+            "missing execution summary artifact in block extra_data",
+        ));
+    };
+    if header_summary != current_summary {
+        return Err(BlockExecutionError::msg(format!(
+            "execution summary artifact mismatch: header={header_summary:?}, local={current_summary:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// Outbe runtime addresses that receive `0xEF` EIP-161 marker bytecode in every
@@ -905,10 +958,19 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         self
     }
 
-    pub(crate) fn take_compressed_entities_seal_output(
-        &mut self,
+    pub(crate) fn compressed_entities_seal_output(
+        &self,
     ) -> Option<outbe_compressed_entities::SealOutput> {
-        self.compressed_entities_seal_output.take()
+        self.compressed_entities_seal_output.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn force_preexecuted_phase1_witness_for_test(&mut self, tx_hash: B256) {
+        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::Phase1Preexecuted {
+            body_index: 0,
+            tx_hash,
+            receipt_index: 0,
+        };
     }
 
     pub(crate) fn with_compressed_tree_service(
@@ -967,15 +1029,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         };
 
         !cached_hash.is_zero() && is_reserved_system_tx(tx) && tx.signature_hash() == cached_hash
-    }
-
-    #[cfg(test)]
-    pub(crate) fn force_preexecuted_phase1_witness_for_test(&mut self, tx_hash: B256) {
-        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::Phase1Preexecuted {
-            body_index: 0,
-            tx_hash,
-            receipt_index: 0,
-        };
     }
 
     /// Intrinsic gas accounted on the synthetic receipt that replaces a
@@ -1232,6 +1285,29 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         self.final_extra_data = bytes;
     }
 
+    /// Pre-encodes the final execution-produced artifact fields after CE seal.
+    /// The block-builder adapter owns the encoding; this executor entry point
+    /// lets the opaque Reth builder path invoke it before parallel root freeze.
+    pub fn prepare_final_header_artifacts(
+        &mut self,
+        timestamp_millis_part: u64,
+    ) -> Result<(), BlockExecutionError>
+    where
+        Evm: reth_ethereum::evm::primitives::Evm,
+    {
+        let seal = self
+            .compressed_entities_seal_output
+            .as_ref()
+            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
+        self.final_extra_data = crate::builder::encode_final_header_artifacts(
+            self.final_extra_data.as_ref(),
+            self.current_execution_summary(),
+            timestamp_millis_part,
+            seal.new_root,
+        )?;
+        Ok(())
+    }
+
     // Half C-parlia step 11: `set_pending_consensus_metadata` and
     // `ingest_consensus_metadata_tx` are deleted. Finalized-parent
     // metadata now lives in the begin-zone Phase 1 system transaction input;
@@ -1273,9 +1349,25 @@ where
                     hook_ctx.clone(),
                     scope.as_ref(),
                 );
-                <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+                let output = <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
                     &lifecycle,
-                )
+                )?;
+                let evm_root = B256::from(
+                    hook_ctx
+                        .storage
+                        .sload(
+                            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                            U256::from(1),
+                        )?
+                        .to_be_bytes::<32>(),
+                );
+                if evm_root != output.new_root {
+                    return Err(PrecompileError::Fatal(format!(
+                        "compressed-entities SealOutput/EVM root mismatch: seal={}, evm={}",
+                        output.new_root, evm_root
+                    )));
+                }
+                Ok(output)
             })?
         };
         if !events.is_empty() {
@@ -2483,6 +2575,11 @@ where
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
+        if self.block_hash.is_some() && block_number > 0 {
+            let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+                .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            validate_compressed_entities_root_scheme(artifacts.compressed_entities_root)?;
+        }
         // initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
         // (genesis bootstrap) skips Phase 1 and starts at CycleTick; block
@@ -2568,6 +2665,13 @@ where
             }
         }
 
+        // Local pending-block RPC construction is outside a sealed/proposed
+        // block lifecycle. Keep standard Ethereum pre-execution and marker
+        // preservation above, but do not open the compressed-entity overlay.
+        if !self.execute_outbe_block_hooks {
+            return Ok(());
+        }
+
         // 3. Open the block-scoped compressed-body overlay before any system
         // or user transaction can perform a body read or mutation. The scope
         // is the exact Arc already captured by top-level and nested precompile
@@ -2606,15 +2710,6 @@ where
                 );
             }
             self.compressed_entities_started = true;
-        }
-
-        // Local pending-block RPC construction does not have consensus-only
-        // parent certificate or proposer context. Keep the standard Ethereum
-        // pre-execution + account-preservation marker updates above, but skip
-        // consensus-critical Outbe hooks and synthetic system phases. This path
-        // is never used for sealed consensus payload validation or proposal.
-        if !self.execute_outbe_block_hooks {
-            return Ok(());
         }
 
         // 3. Extract block context before taking a mutable DB borrow.
@@ -3442,18 +3537,24 @@ where
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.final_extra_data().as_ref())
             .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
-        if self.validate_execution_summary && block_number > 0 {
-            let Some(header_summary) = block_artifacts.execution_summary else {
-                return Err(BlockExecutionError::msg(
-                    "missing execution summary artifact in block extra_data",
-                ));
-            };
-            if header_summary != current_summary {
-                return Err(BlockExecutionError::msg(format!(
-                    "execution summary artifact mismatch: header={header_summary:?}, local={current_summary:?}"
-                )));
-            }
+        if block_number > 0 {
+            let seal_output = self
+                .compressed_entities_seal_output
+                .as_ref()
+                .ok_or_else(|| {
+                    BlockExecutionError::msg("missing compressed-entities SealOutput")
+                })?;
+            validate_compressed_entities_root_after_seal(
+                block_artifacts.compressed_entities_root,
+                seal_output.new_root,
+            )?;
         }
+        validate_execution_summary_artifact(
+            self.validate_execution_summary,
+            block_number,
+            block_artifacts.execution_summary,
+            current_summary,
+        )?;
 
         // proposer recording, finalized-parent settlement,
         // slashing, Cycle, and BoundaryOutcome now execute as receipt-visible
@@ -3526,8 +3627,8 @@ mod tests {
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::hook_events::partition_hook_events;
     use outbe_primitives::reshare_artifact::{
-        encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
-        OutbeBlockArtifacts,
+        encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, ConsensusHeaderArtifact,
+        ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
@@ -3547,6 +3648,7 @@ mod tests {
     };
 
     use super::{
+        validate_compressed_entities_root_after_seal, validate_compressed_entities_root_scheme,
         AccountedParentArtifact, AccountedParentArtifactProvider, OutbeBlockExecutor,
         SystemFailureReceiptInput,
     };
@@ -3561,6 +3663,64 @@ mod tests {
 
     const CHAIN_ID: u64 = 1;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+    fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
+        let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::ZERO,
+                U256::from(3),
+            )
+            .unwrap();
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(root.as_slice()),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn compressed_entities_header_semantics_reject_missing_wrong_scheme_and_wrong_root() {
+        let root = B256::repeat_byte(0xA1);
+        assert!(validate_compressed_entities_root_scheme(None)
+            .unwrap_err()
+            .to_string()
+            .contains("missing compressed-entities root artifact"));
+        assert!(
+            validate_compressed_entities_root_scheme(Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME + 1,
+                r_sealed: root,
+            }))
+            .unwrap_err()
+            .to_string()
+            .contains("scheme mismatch")
+        );
+        assert!(validate_compressed_entities_root_after_seal(
+            Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                r_sealed: B256::ZERO,
+            }),
+            root,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("header/SealOutput root mismatch"));
+        assert_eq!(
+            validate_compressed_entities_root_after_seal(
+                Some(CompressedEntitiesRootArtifact {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    r_sealed: root,
+                }),
+                root,
+            )
+            .unwrap()
+            .r_sealed,
+            root
+        );
+    }
 
     fn persistent_test_tree(genesis_hash: B256) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
         let directory = tempfile::tempdir().expect("CE test directory must be created");
@@ -3676,6 +3836,7 @@ mod tests {
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
         let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
         });
 
@@ -3691,6 +3852,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::ORACLE_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -3709,6 +3878,7 @@ mod tests {
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
         let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
         });
 
@@ -3724,6 +3894,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::ORACLE_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -3759,6 +3937,7 @@ mod tests {
         let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
         seed_storage.set_block_number(block_number);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(128).unwrap();
@@ -3846,6 +4025,7 @@ mod tests {
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
         let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
         StorageHandle::enter(&mut seed_storage, |storage| {
+            seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(128).unwrap();
@@ -3887,6 +4067,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::ORACLE_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -4593,6 +4781,12 @@ mod tests {
             "receipt cumulative gas must include visible system envelope gas plus user gas"
         );
 
+        executor
+            .finalize_compressed_entities()
+            .expect("compressed entities should finalize");
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("final extra_data should encode");
         let (_evm, block_result) = executor.finish().expect("executor finish should succeed");
         assert_eq!(
             block_result.gas_used,
@@ -5085,14 +5279,12 @@ mod tests {
             "GAS-09: OOG soft failure must charge only visible system envelope gas"
         );
 
-        let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            execution_summary: Some(executor.current_execution_summary()),
-            consensus_header_artifact: None,
-            timestamp_millis_part: 0,
-            late_finalize_credits: None,
-        })
-        .expect("final extra_data should encode");
-        executor.set_final_extra_data(final_extra_data);
+        executor
+            .finalize_compressed_entities()
+            .expect("compressed entities should finalize");
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("final extra_data should encode");
         let (_evm, result) = executor.finish().expect("finish should succeed");
         assert_eq!(
             result.gas_used,
@@ -5536,14 +5728,12 @@ mod tests {
             .collect();
         assert_eq!(receipt_deltas, expected_system_deltas);
 
-        let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            execution_summary: Some(executor.current_execution_summary()),
-            consensus_header_artifact: None,
-            timestamp_millis_part: 0,
-            late_finalize_credits: None,
-        })
-        .expect("final extra_data should encode");
-        executor.set_final_extra_data(final_extra_data);
+        executor
+            .finalize_compressed_entities()
+            .expect("compressed entities should finalize");
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("final extra_data should encode");
         let (_evm, result) = executor.finish().expect("finish should succeed");
         assert_eq!(
             result.gas_used, visible_system_gas,
@@ -5609,14 +5799,12 @@ mod tests {
             .expect("funded regular user tx should execute")
             .tx_gas_used();
 
-        let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            execution_summary: Some(executor.current_execution_summary()),
-            consensus_header_artifact: None,
-            timestamp_millis_part: 0,
-            late_finalize_credits: None,
-        })
-        .expect("final extra_data should encode");
-        executor.set_final_extra_data(final_extra_data);
+        executor
+            .finalize_compressed_entities()
+            .expect("compressed entities should finalize");
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("final extra_data should encode");
         let (_evm, result) = executor.finish().expect("finish should succeed");
         assert_eq!(result.gas_used, visible_system_gas + user_gas);
         assert_eq!(result.receipts.len(), 4);
@@ -5774,6 +5962,7 @@ mod tests {
                     aggregate_signature: [0u8; 96],
                 }],
             }),
+            compressed_entities_root: None,
         };
         let extra_data = encode_outbe_block_artifacts(&artifact).unwrap();
 
@@ -5935,6 +6124,7 @@ mod tests {
                     aggregate_signature,
                 }],
             }),
+            compressed_entities_root: None,
         };
 
         // Proposer encodes; validator decodes the same bytes and re-encodes.
@@ -6147,6 +6337,7 @@ mod tests {
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         })
         .expect("extra_data encodes");
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
@@ -6216,6 +6407,7 @@ mod tests {
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         })
         .expect("extra_data encodes");
         let config = OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
@@ -6621,23 +6813,17 @@ mod tests {
                     .expect("begin-zone transaction must execute");
             }
             let receipts = executor.receipts().to_vec();
-            let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                execution_summary: Some(executor.current_execution_summary()),
-                consensus_header_artifact: None,
-                timestamp_millis_part: 0,
-                late_finalize_credits: None,
-            })
-            .expect("final extra_data should encode");
-            executor.set_final_extra_data(final_extra_data);
-
             // Match the production payload-builder ordering: finalize CE while
             // the parallel-root hook is attached, prove the zeroing diff was
             // observed, then detach the hook and freeze/finalize the root.
             executor
                 .finalize_compressed_entities()
                 .expect("pre-root compressed-entity cleanup must succeed");
+            executor
+                .prepare_final_header_artifacts(0)
+                .expect("final extra_data should encode");
             let sealed = executor
-                .take_compressed_entities_seal_output()
+                .compressed_entities_seal_output()
                 .expect("block cleanup must produce a CE tree batch");
             let block_hash = B256::repeat_byte(0x42);
             let block_root = sealed.new_root;
@@ -6914,12 +7100,17 @@ mod tests {
         let mut read_provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut failed_state, ctx);
         StorageHandle::enter(&mut read_provider, |storage| {
-            assert!(storage
-                .sload(
-                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                    U256::from(1),
-                )?
-                .is_zero());
+            assert_eq!(
+                B256::from(
+                    storage
+                        .sload(
+                            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                            U256::from(1),
+                        )?
+                        .to_be_bytes::<32>(),
+                ),
+                outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+            );
             assert_eq!(TributeContract::new(storage.clone()).total_supply()?, 0);
             assert_eq!(NodContract::new(storage).total_supply()?, 0);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
@@ -6990,6 +7181,7 @@ mod tests {
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         })
         .expect("extra_data encodes");
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
@@ -7216,6 +7408,7 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         })
         .expect("extra_data encodes");
 
@@ -7821,14 +8014,22 @@ mod tests {
             consensus_header_artifact: None,
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         })
         .expect("final extra_data must encode");
 
         executor.set_final_extra_data(final_extra_data);
-
-        executor
-            .finish()
-            .expect("executor finish must validate against final extra_data");
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            executor.final_extra_data().as_ref(),
+        )
+        .unwrap();
+        super::validate_execution_summary_artifact(
+            true,
+            1,
+            artifacts.execution_summary,
+            executor.current_execution_summary(),
+        )
+        .expect("final extra_data summary must validate");
     }
 
     #[test]
@@ -7875,10 +8076,17 @@ mod tests {
             ctx.parent_artifact_hint,
         );
 
-        let err = match executor.finish() {
-            Ok(_) => panic!("stale pre-summary extra_data must not validate"),
-            Err(err) => err,
-        };
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            executor.final_extra_data().as_ref(),
+        )
+        .unwrap();
+        let err = super::validate_execution_summary_artifact(
+            true,
+            1,
+            artifacts.execution_summary,
+            executor.current_execution_summary(),
+        )
+        .expect_err("stale pre-summary extra_data must not validate");
 
         assert!(err
             .to_string()
