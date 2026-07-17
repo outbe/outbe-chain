@@ -395,6 +395,7 @@ pub struct ExecutionScope {
     parent_tree_factory: Mutex<Option<Arc<dyn AuthenticatedParentTreeFactory>>>,
     parent_identity_without_root: Mutex<Option<(u32, u64, B256)>>,
     parent_binding_configured: AtomicBool,
+    rpc_read_only: AtomicBool,
     ce_work_config: CeWorkConfig,
     ce_work: Mutex<CeWorkState>,
     ce_work_failure: AtomicU8,
@@ -442,6 +443,7 @@ impl ExecutionScope {
             parent_tree_factory: Mutex::new(None),
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(false),
+            rpc_read_only: AtomicBool::new(false),
             ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -467,6 +469,7 @@ impl ExecutionScope {
             parent_tree_factory: Mutex::new(None),
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(true),
+            rpc_read_only: AtomicBool::new(false),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -499,6 +502,7 @@ impl ExecutionScope {
                 parent_block_hash,
             ))),
             parent_binding_configured: AtomicBool::new(true),
+            rpc_read_only: AtomicBool::new(false),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -507,6 +511,28 @@ impl ExecutionScope {
             }),
             ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
         }
+    }
+
+    /// Creates a finalized-state read scope for EVM instances used by RPC
+    /// simulation. A real block executor replaces this fallback binding before
+    /// begin-block and activates the normal mutation lifecycle.
+    #[must_use]
+    pub fn for_finalized_rpc(
+        factory: Arc<dyn AuthenticatedParentTreeFactory>,
+        commitment_scheme_version: u32,
+        block_number: u64,
+        block_hash: B256,
+    ) -> Self {
+        let mut scope = Self::with_parent_tree_factory(
+            factory,
+            commitment_scheme_version,
+            block_number,
+            block_hash,
+            CeWorkConfig::new(0, 0, u64::MAX),
+        );
+        scope.parent_binding_configured = AtomicBool::new(false);
+        scope.rpc_read_only = AtomicBool::new(true);
+        scope
     }
 
     /// Binds the factory/identity to the scope already captured by this EVM's
@@ -528,6 +554,7 @@ impl ExecutionScope {
         self.parent_binding_configured
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| fatal_scope("exact-parent tree factory configured more than once"))?;
+        self.rpc_read_only.store(false, Ordering::Release);
 
         let mut tree = self
             .parent_tree
@@ -611,7 +638,10 @@ impl ExecutionScope {
         entity: EntityRef,
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>> {
-        self.require_active()?;
+        self.require_readable()?;
+        if self.phase.load(Ordering::Acquire) != PHASE_ACTIVE {
+            self.open_exact_parent(expected_parent_root)?;
+        }
         let parent_tree = self.opened_parent_tree()?;
         if parent_tree.parent_root() != expected_parent_root {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -805,7 +835,7 @@ impl ExecutionScope {
     }
 
     pub(crate) fn deduct_explicit_gas(&self, storage: &StorageHandle<'_>, gas: u64) -> Result<()> {
-        self.require_active()?;
+        self.require_readable()?;
         if self.explicit_gas_window_active.load(Ordering::Acquire) {
             let charged = self.explicit_gas_charged.load(Ordering::Acquire);
             let start = self.explicit_gas_window_start.load(Ordering::Acquire);
@@ -841,7 +871,23 @@ impl ExecutionScope {
         ))
     }
 
+    fn require_readable(&self) -> Result<()> {
+        if self.phase.load(Ordering::Acquire) == PHASE_ACTIVE
+            || self.rpc_read_only.load(Ordering::Acquire)
+        {
+            return Ok(());
+        }
+        Err(outbe_primitives::error::PrecompileError::Fatal(
+            "compressed-entity execution attempted outside active block lifecycle".into(),
+        ))
+    }
+
     pub(crate) fn activate(&self) -> Result<()> {
+        if self.rpc_read_only.load(Ordering::Acquire) {
+            return Err(fatal_scope(
+                "finalized RPC read scope cannot enter block mutation lifecycle",
+            ));
+        }
         self.phase
             .compare_exchange(
                 PHASE_BEFORE_BEGIN,
@@ -911,7 +957,7 @@ pub fn read(
     parent: &impl ParentBodySource,
     entity: EntityRef,
 ) -> Result<Option<VerifiedBody>> {
-    scope.require_active()?;
+    scope.require_readable()?;
     runtime::read(storage, scope, parent, entity)
 }
 
@@ -922,7 +968,7 @@ pub fn list(
     query: QueryRef,
     request: IdPageRequest,
 ) -> Result<VerifiedBodyPage> {
-    scope.require_active()?;
+    scope.require_readable()?;
     runtime::list(storage, scope, parent, query, request)
 }
 

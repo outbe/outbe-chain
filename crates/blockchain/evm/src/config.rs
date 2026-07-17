@@ -580,6 +580,10 @@ impl OutbeEvmConfig {
     /// before ADR-009/010 benchmarking, so work accounting stays in the named
     /// prebenchmark mode below rather than inventing network limits here.
     pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_compressed_tree_service(service.clone());
         self.compressed_tree_service = Some(service);
         self
     }

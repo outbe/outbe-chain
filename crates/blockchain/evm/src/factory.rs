@@ -321,6 +321,8 @@ where
 #[derive(Clone, Default)]
 pub struct OutbeEvmFactory {
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    compressed_tree_service:
+        Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
 }
 
 impl core::fmt::Debug for OutbeEvmFactory {
@@ -328,6 +330,13 @@ impl core::fmt::Debug for OutbeEvmFactory {
         formatter
             .debug_struct("OutbeEvmFactory")
             .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .field(
+                "compressed_tree_service",
+                &self
+                    .compressed_tree_service
+                    .read()
+                    .is_ok_and(|v| v.is_some()),
+            )
             .finish()
     }
 }
@@ -347,6 +356,7 @@ impl OutbeEvmFactory {
     pub fn with_runtime_body_readers(runtime_body_readers: RuntimeBodyReaders) -> Self {
         Self {
             runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: Arc::default(),
         }
     }
 
@@ -354,6 +364,16 @@ impl OutbeEvmFactory {
     #[must_use]
     pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
         self.runtime_body_readers.as_ref()
+    }
+
+    pub fn install_compressed_tree_service(
+        &self,
+        service: Arc<outbe_compressed_entities::CompressedTreeService>,
+    ) {
+        *self
+            .compressed_tree_service
+            .write()
+            .expect("compressed tree service lock") = Some(service);
     }
 }
 
@@ -375,7 +395,23 @@ impl EvmFactory for OutbeEvmFactory {
             .runtime_body_readers
             .as_ref()
             .map(RuntimeBodyReaders::fork_execution);
-        let execution_scope = Arc::new(ExecutionScope::new());
+        let rpc_tree_service = self
+            .compressed_tree_service
+            .read()
+            .ok()
+            .and_then(|service| service.clone());
+        let execution_scope = rpc_tree_service
+            .and_then(|service| {
+                service.finalized_marker().ok().map(|marker| {
+                    Arc::new(ExecutionScope::for_finalized_rpc(
+                        service,
+                        marker.commitment_scheme_version,
+                        marker.height,
+                        marker.block_hash,
+                    ))
+                })
+            })
+            .unwrap_or_else(|| Arc::new(ExecutionScope::new()));
 
         // Register Outbe stateful precompiles via dynamic lookup.
         extend_outbe_precompiles::<DB>(

@@ -97,6 +97,7 @@ pub(crate) fn mint(
     scope: &ExecutionScope,
     new_body: BodyInput<'_>,
 ) -> Result<()> {
+    scope.require_active()?;
     let prepared = prepare_input(new_body)?;
     let state = State::new(storage.clone());
     if current_commitment(scope, &state, prepared.collection, prepared.entity_id)?.is_some() {
@@ -117,6 +118,7 @@ pub(crate) fn update(
     current: VerifiedBody,
     new_body: BodyInput<'_>,
 ) -> Result<()> {
+    scope.require_active()?;
     let prepared = prepare_input(new_body)?;
     if current.entity != prepared.entity_ref() {
         return Err(revert(
@@ -146,6 +148,7 @@ pub(crate) fn delete(
     scope: &ExecutionScope,
     current: VerifiedBody,
 ) -> Result<()> {
+    scope.require_active()?;
     let state = State::new(storage.clone());
     require_capability_current(scope, &state, &current)?;
     let (collection, entity_id) = entity_parts(current.entity);

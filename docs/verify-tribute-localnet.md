@@ -158,14 +158,17 @@ python3 scripts/tributefactory/offer_tribute.py \
 
 ```sh
 TX_HASH=<hash из вывода скрипта>
+OWNER=$(cast wallet address --private-key "$V0")
 cast receipt "$TX_HASH" --rpc-url "$RPC_URL"
 cast call 0x0000000000000000000000000000000000001101 \
   'totalSupply()(uint256)' --rpc-url "$RPC_URL"
+cast call 0x0000000000000000000000000000000000001101 \
+  'getTributesByOwner(address)(bytes[])' "$OWNER" --rpc-url "$RPC_URL"
 ```
 
-Не используйте `getTributesByOwner` через обычный `eth_call` как post-check:
-compressed body reads требуют active block lifecycle. Каноническое persistent
-body после финализации проверяется в projection DB.
+Последний вызов читает finalized compressed bodies через обычный `eth_call`.
+MongoDB ниже остаётся независимой проверкой persistent projection на каждом
+валидаторе.
 
 ## 3. Проверить MongoDB
 

@@ -99,6 +99,63 @@ fn configuring_factory_is_observed_by_an_existing_scope_clone() {
 }
 
 #[test]
+fn finalized_rpc_scope_reads_without_opening_mutation_lifecycle() {
+    let factory = Arc::new(RecordingFactory::new());
+    let block_hash = B256::repeat_byte(0x42);
+    let root = B256::repeat_byte(0x92);
+    let scope = ExecutionScope::for_finalized_rpc(
+        factory.clone(),
+        ACTIVE_COMMITMENT_SCHEME,
+        42,
+        block_hash,
+    );
+
+    assert_eq!(
+        scope
+            .read_parent_leaf_verified(
+                EntityRef::Tribute(crate::EntityId36::try_from([7_u8; 36].as_slice()).unwrap()),
+                root,
+            )
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        *factory.opened.lock().unwrap(),
+        Some(ExactParentIdentity {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            block_number: 42,
+            block_hash,
+            root,
+        })
+    );
+    assert!(matches!(scope.activate(), Err(PrecompileError::Fatal(_))));
+}
+
+#[test]
+fn block_configuration_replaces_finalized_rpc_fallback() {
+    let fallback = Arc::new(RecordingFactory::new());
+    let execution = Arc::new(RecordingFactory::new());
+    let scope = ExecutionScope::for_finalized_rpc(
+        fallback,
+        ACTIVE_COMMITMENT_SCHEME,
+        10,
+        B256::repeat_byte(0x10),
+    );
+
+    scope
+        .configure_parent_tree_factory(
+            execution,
+            ACTIVE_COMMITMENT_SCHEME,
+            11,
+            B256::repeat_byte(0x11),
+        )
+        .unwrap();
+    scope.activate().unwrap();
+    scope.open_exact_parent(B256::repeat_byte(0x91)).unwrap();
+    scope.finish().unwrap();
+}
+
+#[test]
 fn factory_tree_identity_mismatch_is_corruption_not_readiness() {
     let requested_hash = B256::repeat_byte(0x51);
     let requested_root = B256::repeat_byte(0x61);
