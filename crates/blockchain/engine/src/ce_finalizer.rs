@@ -18,13 +18,20 @@ use outbe_compressed_entities::{
 use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
 use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use reth_chain_state::PersistedBlockSubscriptions;
-use reth_provider::{BlockHashReader, DatabaseProviderFactory, ReceiptProvider};
+use reth_provider::{BlockHashReader, DatabaseProviderFactory, ProviderError, ReceiptProvider};
 use reth_storage_api::TryIntoHistoricalStateProvider;
 
 use crate::ce_recovery::{CanonicalCeReplayBlock, CanonicalCeReplaySource};
 
 /// The authoritative compressed-entity root is storage slot 1 at `0xEE0D`.
 const CE_ROOT_SLOT: B256 = B256::new(U256::from_limbs([1, 0, 0, 0]).to_be_bytes::<32>());
+
+fn is_pending_executed_state(error: &ProviderError, height: u64) -> bool {
+    matches!(
+        error,
+        ProviderError::BlockNotExecuted { requested, .. } if *requested == height
+    )
+}
 
 /// Narrow, behavior-testable view of Reth's durable storage.
 pub trait DurableCeState: Send + Sync {
@@ -75,11 +82,20 @@ where
         };
         // Consume this exact read-only transaction into the historical state
         // view. No in-memory blockchain-tree provider participates.
-        let state = durable.try_into_history_at_block(height).map_err(|error| {
-            eyre::eyre!(
-                "failed to open durable historical state for {height}/{block_hash}: {error}"
-            )
-        })?;
+        let state = match durable.try_into_history_at_block(height) {
+            Ok(state) => state,
+            Err(error) if is_pending_executed_state(&error, height) => {
+                // The block row can become visible just before Reth advances its
+                // durable executed-state tip. Treat that narrow window exactly
+                // like an absent block and wait for the persistence notification.
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(eyre::eyre!(
+                    "failed to open durable historical state for {height}/{block_hash}: {error}"
+                ));
+            }
+        };
         let root = state
             .storage(COMPRESSED_ENTITIES_ADDRESS, CE_ROOT_SLOT)
             .map_err(|error| {
@@ -459,6 +475,28 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn block_row_visible_before_executed_state_is_transient() {
+        assert!(is_pending_executed_state(
+            &ProviderError::BlockNotExecuted {
+                requested: 159,
+                executed: 158,
+            },
+            159,
+        ));
+        assert!(!is_pending_executed_state(
+            &ProviderError::BlockNotExecuted {
+                requested: 160,
+                executed: 158,
+            },
+            159,
+        ));
+        assert!(!is_pending_executed_state(
+            &ProviderError::StateAtBlockPruned(159),
+            159,
+        ));
+    }
 
     fn hash(last: u8) -> B256 {
         let mut value = [0_u8; 32];
