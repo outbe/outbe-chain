@@ -78,16 +78,16 @@ reconstructs projections without rerunning Lysis.
 
 ## E2E scenario matrix
 
-| Id | Scenario | Minimum topology | Required assertions | Automated by |
-|---|---|---|---|---|
-| PFS-002-01 | GREEN day with several Tributes | 4 validators, CE, Oracle | all conservation and proof assertions | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis` (state/conservation; live finality/proofs GAP) |
-| PFS-002-02 | no-Tribute terminal branch | same | no Nod; exact remainder; retired empty partition | documentation-only until the in-process fixture supports an empty sealed CE partition |
-| PFS-002-03 | zero limit | same | specified FAILED/auction outcome; no transform | documentation-only pending the normative zero-limit terminal branch |
-| PFS-002-04 | totals/body mismatch | same | full rollback; cursor/day remain retryable | documentation-only: production mismatch requires a corrupt parent-body adapter/fault injection seam |
-| PFS-002-05 | duplicate owner/day identity | same | admission prevents it or Lysis atomically rejects | live `@pfs-001-05` proves admission rejection; corrupt sealed-population injection into Lysis is not exposed |
-| PFS-002-06 | injected Nod creation failure | same | no partial Nods/contributors/consumption | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt`; full lifecycle fixture GAP |
-| PFS-002-07 | restart at CE persistence boundary | same | deterministic recovery and proofs | documentation-only until harness exposes a deterministic end-block persistence failpoint |
-| PFS-002-08 | long timestamp jump/backlog | same | canonical ordered processing per accepted policy | documentation-only pending the canonical backlog-order and long-gap policy |
+| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
+|---|---|---|---|---|---|
+| PFS-002-01 | populated day transformation | READY sealed day, canonical Tributes/budget/Oracle | Cycle executes due slot | day completes; one Nod per Tribute; budget/totals conserve | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis`; live proof gap |
+| PFS-002-02 | empty Tribute branch | READY day with sealed empty partition and full remainder | Cycle executes due slot | no Nod; exact remainder; terminal day and defined retirement result | documentation-only: fixture cannot form empty sealed CE partition |
+| PFS-002-03 | zero limit | READY day with zero Lysis limit | Cycle executes due slot | normative FAILED/auction branch; no Tribute/Nod mutation | documentation-only pending branch decision |
+| PFS-002-04 | totals/body mismatch | READY record totals disagree with authenticated bodies | Cycle executes due slot | complete rollback; cursor/day/Tributes unchanged and retryable | documentation-only: corrupt parent-body injection seam absent |
+| PFS-002-05 | duplicate owner/day identity | duplicate is attempted before sealing or appears in corrupt population | admit offer or execute Lysis | admission rejects duplicate; corrupt sealed population must atomically fail | `@pfs-001-05` covers admission only; Lysis fault injection absent |
+| PFS-002-06 | Nod creation failure | valid READY population with injected later Nod failure | Lysis transforms population | no partial Nods/contributors/consumption; day stays READY | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt` |
+| PFS-002-07 | CE persistence restart | EVM outcome prepared but CE end-block persistence interrupted | restart/reconcile node | either semantic pre-state or full roots/proofs; never partial population | documentation-only: persistence failpoint absent |
+| PFS-002-08 | long timestamp backlog | multiple overdue canonical Cycle slots | process a large timestamp jump | slots execute in defined order once; no skip/duplicate | documentation-only pending backlog policy |
 
 ## Open questions and technical debt
 

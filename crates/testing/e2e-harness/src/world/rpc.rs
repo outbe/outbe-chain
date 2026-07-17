@@ -18,10 +18,14 @@ use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedH
 use crate::internal::{
     addresses,
     config::Config,
-    eth::{self, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet, IVote, IWorldwideDay},
+    eth::{
+        self, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet, IVote, IWorldwideDay,
+        IZeroFee,
+    },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
 };
+use crate::world::state::FixtureState;
 use crate::world::validators::{Operator, Validator};
 
 #[derive(Debug, Clone)]
@@ -566,4 +570,252 @@ impl Rpc {
         }
         self.supply(primary).as_deref() == Some(want)
     }
+
+    // ---- ZeroFee EIP-7702 vertical slice ----------------------------------
+
+    pub fn assert_zerofee_readiness(&self) {
+        let code = eth::code(&self.cfg.rpc0, addresses::ZEROFEE_ADDR).expect("read ZeroFee code");
+        assert_eq!(code.as_ref(), &[0xef], "ZeroFee marker must be 0xef");
+        assert_eq!(
+            eth::storage(&self.cfg.rpc0, addresses::ZEROFEE_ADDR, U256::ZERO),
+            Some(U256::from(1)),
+            "ZeroFee schema slot 0 must be version 1"
+        );
+    }
+
+    pub fn prepare_zerofee_account(
+        &self,
+        funder: &Operator,
+        state: &mut FixtureState,
+    ) -> Result<()> {
+        // Deterministic non-validator fixture key. Each scenario owns a fresh
+        // genesis/datadir, so reuse cannot leak nonce or quota between runs.
+        let key = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let address =
+            eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
+        let funder_key = funder.evm_key()?;
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::ether(1))?;
+
+        let auth = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::ZEROFEE_ADDR,
+            &IZeroFee::authorizeSponsorshipCall { signer: address },
+        )
+        .ok_or_else(|| eyre!("read authorizeSponsorship"))?;
+        if !auth {
+            return Err(eyre!("fresh funded signer is not eligible for sponsorship"));
+        }
+        let counter = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read ZeroFee counter"))?;
+        if counter.1 != 0 || counter.0 == 0 {
+            return Err(eyre!("fresh counter must be (today, 0), got {counter:?}"));
+        }
+
+        state.zerofee_delegation_receipt = Some(eth::install_delegation(
+            &self.cfg.rpc0,
+            key,
+            addresses::ZEROFEE_ADDR,
+        )?);
+        state.zerofee_key = Some(key.to_string());
+        state.zerofee_address = Some(format!("{address:#x}"));
+        state.zerofee_balance_before = eth::balance(&self.cfg.rpc0, address);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_delegation(&self, state: &FixtureState) {
+        let address = zerofee_address(state);
+        let code = eth::code(&self.cfg.rpc0, address).expect("read delegated account code");
+        let expected = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        assert_eq!(code.as_ref(), expected, "wrong EIP-7702 designator");
+    }
+
+    pub fn submit_zerofee_quota(&self, state: &mut FixtureState) -> Result<()> {
+        let key = zerofee_key(state).to_string();
+        for _ in 0..8 {
+            state.zerofee_sponsored_receipts.push(eth::send_reward_call(
+                &self.cfg.rpc0,
+                &key,
+                addresses::AGENT_REWARD_ADDR,
+                0,
+            )?);
+        }
+        state.zerofee_balance_after_quota = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        Ok(())
+    }
+
+    pub fn assert_zerofee_quota(&self, state: &FixtureState) {
+        assert_eq!(state.zerofee_sponsored_receipts.len(), 8);
+        for (index, receipt) in state.zerofee_sponsored_receipts.iter().enumerate() {
+            assert!(
+                receipt_status(receipt),
+                "sponsored receipt #{} failed",
+                index + 1
+            );
+            assert!(
+                receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+                "sponsored receipt #{} has no authorization event",
+                index + 1
+            );
+        }
+        assert_eq!(
+            state.zerofee_balance_after_quota, state.zerofee_balance_before,
+            "sponsored calls charged the signer"
+        );
+        assert_eq!(
+            self.zerofee_counter(zerofee_address(state)).map(|v| v.1),
+            Some(8)
+        );
+    }
+
+    pub fn submit_zerofee_ninth(&self, state: &mut FixtureState) -> Result<()> {
+        let before = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_balance_after_quota = before;
+        state.zerofee_ninth_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            zerofee_key(state),
+            addresses::AGENT_REWARD_ADDR,
+            0,
+        )?);
+        state.zerofee_balance_after_ninth = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        Ok(())
+    }
+
+    pub fn assert_zerofee_ninth(&self, state: &FixtureState) {
+        let receipt = state.zerofee_ninth_receipt.as_ref().expect("ninth receipt");
+        assert!(
+            !receipt_status(receipt),
+            "ninth sponsored call unexpectedly succeeded"
+        );
+        assert!(
+            receipt_has_failure_code(receipt, 110),
+            "ninth receipt has no OutbeFailure(110)"
+        );
+        assert_eq!(
+            state.zerofee_balance_after_ninth,
+            state.zerofee_balance_after_quota
+        );
+        assert_eq!(
+            self.zerofee_counter(zerofee_address(state)).map(|v| v.1),
+            Some(8)
+        );
+    }
+
+    pub fn submit_zerofee_paid(&self, state: &mut FixtureState) -> Result<()> {
+        state.zerofee_balance_after_ninth = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_paid_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            zerofee_key(state),
+            addresses::AGENT_REWARD_ADDR,
+            1_000_000_000,
+        )?);
+        state.zerofee_balance_after_paid = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        Ok(())
+    }
+
+    pub fn assert_zerofee_paid(&self, state: &FixtureState) {
+        let receipt = state.zerofee_paid_receipt.as_ref().expect("paid receipt");
+        assert!(receipt_status(receipt), "paid fallback failed");
+        assert!(
+            state.zerofee_balance_after_paid < state.zerofee_balance_after_ninth,
+            "paid fallback did not charge a fee"
+        );
+        assert!(!receipt_has_log(
+            receipt,
+            addresses::ZEROFEE_ADDR,
+            Some(SPONSORSHIP_TOPIC)
+        ));
+        assert_eq!(
+            self.zerofee_counter(zerofee_address(state)).map(|v| v.1),
+            Some(8)
+        );
+    }
+
+    pub fn assert_zerofee_cli_authorization(&self, state: &FixtureState) {
+        let output = self
+            .sh()
+            .cli([
+                "--private-key",
+                zerofee_key(state),
+                "--rpc-url",
+                self.cfg.rpc0.as_str(),
+                "zero-fee",
+                "eip7702-authorize",
+            ])
+            .expect("run product CLI authorization");
+        let json: serde_json::Value = serde_json::from_str(&output).expect("authorization JSON");
+        assert_eq!(
+            json["address"].as_str().map(str::to_ascii_lowercase),
+            Some(format!("{:#x}", addresses::ZEROFEE_ADDR))
+        );
+        let chain = eth::raw_json(&self.cfg.rpc0, "eth_chainId")
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+            })
+            .expect("RPC chain id");
+        let cli_chain = json["chainId"]
+            .as_str()
+            .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok());
+        assert_eq!(cli_chain, Some(chain));
+    }
+
+    fn zerofee_counter(&self, signer: Address) -> Option<(u32, u32)> {
+        let value = eth::read_call(
+            &self.cfg.rpc0,
+            addresses::ZEROFEE_ADDR,
+            &IZeroFee::getCounterCall { signer },
+        )?;
+        Some((value.day, value.count))
+    }
+}
+
+const SPONSORSHIP_TOPIC: &str =
+    "0x82fb9fccc7b9033227aa1f5b18f6140ac5a8216361e4e7496146c804bd6e8cc8";
+
+fn zerofee_key(state: &FixtureState) -> &str {
+    state.zerofee_key.as_deref().expect("ZeroFee fixture key")
+}
+
+fn zerofee_address(state: &FixtureState) -> Address {
+    state
+        .zerofee_address
+        .as_deref()
+        .expect("ZeroFee fixture address")
+        .parse()
+        .expect("valid ZeroFee fixture address")
+}
+
+fn receipt_status(receipt: &serde_json::Value) -> bool {
+    matches!(receipt.get("status"), Some(serde_json::Value::Bool(true)))
+        || receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x1")
+}
+
+fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {
+    receipt["logs"].as_array().is_some_and(|logs| {
+        logs.iter().any(|log| {
+            log["address"]
+                .as_str()
+                .is_some_and(|v| v.eq_ignore_ascii_case(&format!("{address:#x}")))
+                && topic0.is_none_or(|topic| {
+                    log["topics"][0]
+                        .as_str()
+                        .is_some_and(|v| v.eq_ignore_ascii_case(topic))
+                })
+        })
+    })
+}
+
+fn receipt_has_failure_code(receipt: &serde_json::Value, code: u16) -> bool {
+    receipt["logs"].as_array().is_some_and(|logs| {
+        logs.iter().any(|log| {
+            log["address"].as_str().is_some_and(|v| {
+                v.eq_ignore_ascii_case(&format!("{:#x}", addresses::ZEROFEE_LOG_ADDR))
+            }) && log["topics"][1].as_str().is_some_and(|topic| {
+                u16::from_str_radix(topic.trim_start_matches("0x").get(60..).unwrap_or(""), 16)
+                    == Ok(code)
+            })
+        })
+    })
 }

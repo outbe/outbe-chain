@@ -31,8 +31,20 @@ pub struct FixtureState {
     pub wwd_status_before: Option<String>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
-    /// Hash of a replayed offer expected to be rejected without state changes.
-    pub replayed_tribute_tx_hash: Option<String>,
+    /// Hash of a duplicate logical offer expected to be rejected without state changes.
+    pub duplicate_tribute_tx_hash: Option<String>,
+
+    // ---- ZeroFee live scenario ----
+    pub zerofee_key: Option<String>,
+    pub zerofee_address: Option<String>,
+    pub zerofee_delegation_receipt: Option<serde_json::Value>,
+    pub zerofee_sponsored_receipts: Vec<serde_json::Value>,
+    pub zerofee_balance_before: Option<alloy_primitives::U256>,
+    pub zerofee_balance_after_quota: Option<alloy_primitives::U256>,
+    pub zerofee_ninth_receipt: Option<serde_json::Value>,
+    pub zerofee_balance_after_ninth: Option<alloy_primitives::U256>,
+    pub zerofee_paid_receipt: Option<serde_json::Value>,
+    pub zerofee_balance_after_paid: Option<alloy_primitives::U256>,
 }
 
 impl Default for FixtureState {
@@ -49,7 +61,17 @@ impl Default for FixtureState {
             marker_count: None,
             wwd_status_before: None,
             tribute_tx_hash: None,
-            replayed_tribute_tx_hash: None,
+            duplicate_tribute_tx_hash: None,
+            zerofee_key: None,
+            zerofee_address: None,
+            zerofee_delegation_receipt: None,
+            zerofee_sponsored_receipts: Vec::new(),
+            zerofee_balance_before: None,
+            zerofee_balance_after_quota: None,
+            zerofee_ninth_receipt: None,
+            zerofee_balance_after_ninth: None,
+            zerofee_paid_receipt: None,
+            zerofee_balance_after_paid: None,
         }
     }
 }

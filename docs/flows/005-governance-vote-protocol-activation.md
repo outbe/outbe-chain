@@ -81,16 +81,20 @@ waiting schedules and active version; terminal records prevent repeated migratio
 
 ## E2E scenario matrix
 
-| Id | Scenario | Minimum topology | Required assertions | Automated by |
-|---|---|---|---|---|
-| PFS-005-01 | approve, schedule and activate version-only update | 4 validators | every state/height/event boundary | `@pfs-005-01` live-node + `full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates` |
-| PFS-005-02 | migration handler succeeds once | 4 validators | migration plus active version atomic | in-process activation covers version handler; stateful migration fixture GAP |
-| PFS-005-03 | below-quorum expiry | 4 validators | no Update record | in-process `full_vote_update_flow_2_of_4_yes_expires_without_update_state_change` |
-| PFS-005-04 | duplicate ballot and duplicate proposal dispatch | 4 validators | no duplicate effects | in-process duplicate-ballot coverage; duplicate dispatch GAP |
-| PFS-005-05 | membership changes during voting | 4+ validators | documented snapshot semantics | documentation-only pending the quorum snapshot decision |
-| PFS-005-06 | handler failure | 4 validators | fatal block/rollback and recovery | live-node unsupported-version fatal path covers rollback/stall; recovery policy GAP |
-| PFS-005-07 | old binary after activation | mixed binaries | incompatible node refuses startup | in-process `startup_binary_version_check_rejects_older_binary`; mixed-node GAP |
-| PFS-005-08 | restart with overdue schedules | 4 validators | deterministic order, exactly once | documentation-only pending overdue-order policy and restart fixture |
+| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
+|---|---|---|---|---|---|
+| PFS-005-01 | approve/schedule/activate | 4 active validators and supported next version/height | propose, cast 3 yes, cross deadline/height | Approved→Scheduled→Activated; version reads and committee roots agree | `@pfs-005-01` live + in-process full flow |
+| PFS-005-02 | migration succeeds once | scheduled version with stateful registered handler | activation height executes | migration and active-version publication commit atomically once | version handler covered; stateful migration fixture absent |
+| PFS-005-03 | below-quorum expiry | four validators with only two yes votes | tally after deadline | Expired; no schedule/event/version mutation | in-process `full_vote_update_flow_2_of_4_yes_expires_without_update_state_change` |
+| PFS-005-04 | duplicate ballot/dispatch | pending proposal and voter already recorded | repeat ballot or target dispatch | rejection/idempotency; one ballot and at most one schedule | in-process duplicate ballot; duplicate dispatch absent |
+| PFS-005-05 | membership changes during vote | pending proposal and changing active set | join/exit crosses tally deadline | quorum follows the normative snapshot rule; no node divergence | documentation-only pending snapshot decision |
+| PFS-005-06 | migration handler failure | scheduled update with deliberately failing registered handler | activation height executes | fatal rollback; schedule/version/migration pre-state retained; recovery defined | documentation-only: failing handler/recovery absent |
+| PFS-005-07 | old binary startup | chain active version newer than binary | node starts/restarts | readiness/startup refuses before participation | in-process compatibility check; mixed-node live gap |
+| PFS-005-08 | restart with overdue schedules | durable waiting updates now overdue | restart node | deterministic ordered execution exactly once | documentation-only pending order policy/restart fixture |
+| PFS-005-09 | unsupported version activation | approved schedule above binary ceiling | committee reaches activation height | block is fatal/stalls; version unchanged and schedule waiting | `@pfs-005-09` live-node |
+| PFS-005-10 | downgrade proposal | active version newer than payload | approve/tally downgrade | Rejected; no schedule or active-version change | in-process downgrade flow |
+| PFS-005-11 | conflicting activation height | one waiting update at height | approve another version for same height | second Rejected; first schedule unchanged | in-process conflicting update flow |
+| PFS-005-12 | stale activation | newer version already active with older schedule retained | execute older activation | no downgrade; deterministic terminal result | in-process stale activation flow |
 
 ## Open questions and technical debt
 
@@ -99,7 +103,7 @@ waiting schedules and active version; terminal records prevent repeated migratio
 - Decide whether membership/quorum snapshots occur at creation or tally.
 - Decide whether zero-buffer same-block scheduling/activation is a supported
   localnet contract or merely a test shortcut.
-- Add stable PFS scenario tags to the update e2e feature and close the seven gaps.
+- Keep the oversized-pagination RPC regression intentionally outside PFS; close the remaining migration, membership and restart gaps.
 - Define operator recovery when a scheduled handler is permanently fatal.
 - Add a registry fingerprint/readiness check so mixed handler tables fail before
   consensus execution.

@@ -19,3 +19,10 @@ pub(crate) const WWD_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");
 /// Vote precompile (generic proposal/voting).
 pub(crate) const VOTE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0C");
+/// EIP-7702 ZeroFee delegation target and view precompile.
+pub(crate) const ZEROFEE_ADDR: Address = address!("0x000000000000000000000000000000000000EE09");
+/// AgentReward target used by the canonical ZeroFee sponsored call.
+pub(crate) const AGENT_REWARD_ADDR: Address =
+    address!("0x000000000000000000000000000000000000100B");
+/// Protocol log emitter for `OutbeFailure` soft failures.
+pub(crate) const ZEROFEE_LOG_ADDR: Address = address!("0x000000000000000000000000000000000000EE06");

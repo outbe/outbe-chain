@@ -19,3 +19,4 @@ pub mod lifecycle;
 pub mod restart;
 pub mod stale_join;
 pub mod tribute_projection;
+pub mod zerofee;

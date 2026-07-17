@@ -85,16 +85,20 @@ commitments and remains a blocking debt.
 
 ## E2E scenario matrix
 
-| Id | Scenario | Minimum topology | Required assertions | Automated by |
-|---|---|---|---|---|
-| PFS-003-01 | pledge, request, ten payments, full reclaim | 4 validators, Oracle/vault/prover | every closure equation | in-process `full_request_pay_reclaim_unpledge_flow`; verifier and Solidity vault/token effects are stubbed |
-| PFS-003-02 | replay/copy request proof | same | no redirect or duplicate position | pool/runtime module tests only; cross-module replay example not yet implemented |
-| PFS-003-03 | overdue borrower requests again | same | revert; old position unchanged | in-process `request_credis_rejects_overdue_anadosis` |
-| PFS-003-04 | insufficient vault shares | same | nullifier and position rollback | documentation-only until the fixture provides a stateful failing VaultProvider adapter |
-| PFS-003-05 | repayment token transfer/deposit fails | same | cursor/debt/root rollback | documentation-only until the fixture provides a stateful failing ERC-20/vault adapter |
-| PFS-003-06 | invalid reclaim denomination | same | rejected before commit | documentation-only; current interface cannot prove the denomination and behavior is deficient |
-| PFS-003-07 | early repayment | same | matches accepted due-date policy | documentation-only pending an explicit early-payment policy |
-| PFS-003-08 | restart after each transaction boundary | same | identical position/proof/token state | documentation-only: no live-node Credis fixture or persistent in-process adapter exists |
+| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
+|---|---|---|---|---|---|
+| PFS-003-01 | full credit lifecycle | eligible owner, valid note/proof, Oracle and liquid vault | pledge, request, pay ten installments and reclaim each | one position; debt/collateral close; ten unique notes; full collateral returned once | in-process `full_request_pay_reclaim_unpledge_flow`; proof/vault effects stubbed |
+| PFS-003-02 | copied request proof | valid proof bound to original bundle and unspent note | another bundle or replay submits it | no redirect/second position; nullifier consumed at most once | pool/runtime tests only; cross-module example missing |
+| PFS-003-03 | overdue second request | bundle owns overdue live position | request another Credis | revert; existing position/nullifier/vault state unchanged | in-process `request_credis_rejects_overdue_anadosis` |
+| PFS-003-04 | insufficient vault shares | valid proof but vault cannot withdraw required liquidity | request Credis | revert; proof nullifier and position creation roll back | documentation-only: stateful failing VaultProvider absent |
+| PFS-003-05 | repayment deposit failure | live due position but token/vault deposit fails | owner pays installment | revert; cursor/debt/root/token state unchanged | documentation-only: failing ERC-20/vault adapter absent |
+| PFS-003-06 | invalid reclaim denomination | due installment with commitment for wrong denomination | owner pays installment | reject before cursor/value commit | documentation-only: current interface cannot authenticate denomination |
+| PFS-003-07 | early repayment | live position before due timestamp | owner pays next installment | result follows explicit early-payment policy with no ambiguous cursor | documentation-only pending policy |
+| PFS-003-08 | restart at transaction boundaries | committed pledge/request/payment/reclaim checkpoints | restart after each boundary | reads, roots, nullifiers, balances and cursor reconstruct identically | documentation-only: persistent fixture absent |
+| PFS-003-09 | zero settlement asset | valid proof/bundle but zero asset | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_asset` |
+| PFS-003-10 | zero bundle account | valid proof/asset but zero bundle | request Credis | revert; no nullifier/position mutation | in-process `request_credis_rejects_zero_bundle_account` |
+| PFS-003-11 | unauthorized installment payer | live position owned by another bundle | non-owner pays installment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_non_owner_caller` |
+| PFS-003-12 | zero reclaim commitment | due installment and owner caller | pay with zero commitment | revert; cursor/debt/root unchanged | in-process `pay_anadosis_rejects_zero_reclaim_commitment` |
 
 ## Open questions and technical debt
 

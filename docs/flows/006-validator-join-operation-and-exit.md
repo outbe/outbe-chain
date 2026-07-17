@@ -113,18 +113,18 @@ committed state. A partial cross-module result is never accepted.
 
 ## E2E scenario matrix
 
-| Id | Scenario | Minimum topology | Required assertions | Automated by |
-|---|---|---|---|---|
-| PFS-006-01 | register, stake, sync-ready, reshare, active | 4 validators + joiner | all identity/status/share boundaries | `@pfs-006-01` live-node |
-| PFS-006-02 | stale joiner withheld from reshare | 4 validators + stale joiner | remains pending/no share | `@pfs-006-02` live-node |
-| PFS-006-03 | voluntary exit and complete claim | 4 validators | committee exclusion and value conservation | `@pfs-006-03` committee exclusion; claim/value GAP |
-| PFS-006-04 | DKG failure and restart | 4 validators + joiner | no partial activation; retry succeeds | `@pfs-006-04` live-node |
-| PFS-006-05 | fee escrow and late voter payout | 4 validators | exact payout/residue equation | documentation-only until harness supports a fee-enabled genesis and controllable late-vote metadata |
-| PFS-006-06 | threshold liveness felony | 4 validators | one jail/slash; next committee excludes | `@pfs-006-06` liveness only; slash disabled/GAP |
-| PFS-006-07 | duplicate cryptographic evidence | 4 validators | one punishment/reward only | documentation-only until harness exposes canonical signed evidence construction/submission |
-| PFS-006-08 | unjail and second reshare | 4 validators | cooldown/readiness/share reset | documentation-only until fee/slashing is enabled and scenario time can cross the cooldown deterministically |
-| PFS-006-09 | crash at every boundary checkpoint | 4 validators | semantic pre-state or full outcome | `@pfs-006-09` active-share restart only; remaining checkpoints GAP |
-| PFS-006-10 | inactive cleanup and re-registration | 4 validators | index/pubkey/cooldown closure | documentation-only until the lifecycle fixture drives claim maturity, cleanup and identity reuse |
+| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
+|---|---|---|---|---|---|
+| PFS-006-01 | join and activate | 4 validators plus registered/staked/synced joiner | confirm readiness and complete reshare | ACTIVE with canonical share/set hash; committee agrees | `@pfs-006-01` live-node |
+| PFS-006-02 | stale join guard | staked joiner not readiness-confirmed | reshare boundary passes, then confirm and retry | stays PENDING/no share first; activates only on later reshare | `@pfs-006-02` live-node |
+| PFS-006-03 | voluntary exit and claim | active validator with bonded stake | deactivate, reshare, mature and claim | excluded, UNBONDING→INACTIVE; exact value claimed once | `@pfs-006-03` covers exclusion only; claim/value gap |
+| PFS-006-04 | DKG failure/recovery | frozen 4→5 target with ceremony quorum removed | stall then restore validator | old committee remains live; no partial activation; retry reaches 5 | `@pfs-006-04` live-node |
+| PFS-006-05 | fee and late-voter settlement | finalized participation/escrow with delayed vote evidence | close settlement window | payouts plus burned residue equal escrow exactly once | documentation-only: fee-enabled genesis/metadata control absent |
+| PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash and next committee exclusion while chain remains live | `@pfs-006-06` covers liveness only; slash disabled |
+| PFS-006-07 | duplicate evidence | one authenticated offense already processed | resubmit same canonical evidence | no second punishment/reporter reward | documentation-only: evidence construction/submission absent |
+| PFS-006-08 | unjail and rejoin | jailed validator topped up and cooldown elapsed | unjail, confirm and reshare | PENDING then ACTIVE with fresh share; no stale share reuse | documentation-only: slashing/time control absent |
+| PFS-006-09 | crash boundaries | operation poised at each registration/DKG/reward/exit checkpoint | crash and restart | semantic pre-state or complete outcome at every boundary | `@pfs-006-09` covers active-share restart only |
+| PFS-006-10 | cleanup and re-registration | inactive validator with no bonded/live claims | clean indexes then register identity again | no stale pubkey/cooldown/index; exactly one live record | documentation-only: maturity/cleanup fixture absent |
 
 ## Open questions and technical debt
 
@@ -132,8 +132,8 @@ committed state. A partial cross-module result is never accepted.
   treating this flow as Accepted.
 - Define one durable intent identity for DKG activation and every punishment.
 - Define exact restart ownership for in-flight DKG and overdue Rewards/unbonding work.
-- Add stable PFS tags to existing lifecycle/DKG/stale-join/downtime features and
-  prove which rows they actually cover instead of inferring from filenames.
+- Add narrower scenarios for the claim, slash, committee-exclusion and crash-boundary
+  assertions that existing tagged composite features cover only partially.
 - Implement the missing voluntary exit/value conservation, Rewards settlement,
   duplicate evidence, unjail, fault-injection and re-registration scenarios.
 - Add a mixed-version topology proving storage/evidence/committee-format activation.

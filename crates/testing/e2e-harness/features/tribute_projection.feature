@@ -23,10 +23,10 @@ Feature: Encrypted tribute projection
     And no validator projects a tribute
 
   @pfs-001-05
-  Scenario: Replaying an offer for the same owner and day creates no duplicate
+  Scenario: A duplicate logical offer for the same owner and day is rejected
     Given a fresh localnet with a 6-block voting window
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
-    When the operator replays the encrypted tribute offer for the same day
-    Then the replay is rejected without changing tribute state or projections
+    When the operator submits a duplicate logical tribute offer for the same day
+    Then the duplicate is rejected without changing tribute state or projections

@@ -73,8 +73,14 @@ seam or unresolved policy named explicitly.
 | [PFS-004](004-intex-settlement-to-promis.md) | Intex issuance/qualification/settlement is mined into Promis | ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-XCH-001; ADR-S-ORC-001; ADR-C-PRM-001 through ADR-C-PRM-003, ADR-C-VLT-001, ADR-C-TOK-001 through ADR-C-TOK-002, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-DES-001 | Draft | Documentation-only full flow; module/Foundry fragments |
 | [PFS-005](005-governance-vote-protocol-activation.md) | Validator vote schedules and activates a supported protocol version | ADR-B-CNS-003; ADR-S-VAL-001, ADR-S-GOV-001 through ADR-S-GOV-003 | Draft | Partial: live update + in-process edges |
 | [PFS-006](006-validator-join-operation-and-exit.md) | Validator joins, earns, exits or is punished without partial cross-module state | ADR-B-NOD-001, ADR-B-GEN-001, ADR-B-CNS-001 through ADR-B-CNS-003; ADR-S-CYC-001, ADR-S-VAL-001, ADR-S-STK-001, ADR-S-RWD-001, ADR-S-SLS-001, ADR-S-KEY-001, ADR-S-ACC-001 | Draft | Partial: lifecycle/DKG/stale-join/downtime features |
+| [PFS-007](007-zerofee-sponsorship-and-paid-fallback.md) | EIP-7702 delegation receives bounded sponsorship and retains paid fallback | ADR-B-GEN-001, ADR-B-EVM-001, ADR-B-TXP-001, ADR-B-CLI-001; ADR-S-FEE-001; ADR-C-AGR-001 | Draft | Live Rust/Cucumber feature; replay/restart gaps |
+| [PFS-008](008-follower-sync-recovery-and-warm-promotion.md) | Followers synchronize, validators recover and warm data is promoted safely | ADR-B-NOD-001, ADR-B-CNS-001 through ADR-B-CNS-003, ADR-B-OPS-001; ADR-S-VAL-001, ADR-S-STK-001 | Draft | Live composite follower feature |
 
 ## Relationship to test documentation
+
+The repository-wide [E2E evidence inventory](e2e-inventory.md) lists live
+multi-node runners, in-process module compositions and Foundry suites without
+conflating their verification boundaries.
 
 `crates/testing/e2e-harness/README.md` explains how to run the harness. Feature
 files implement scenarios. This directory specifies what outcomes those features

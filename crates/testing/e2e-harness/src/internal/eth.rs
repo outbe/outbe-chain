@@ -17,11 +17,12 @@ use std::future::Future;
 use std::sync::mpsc::sync_channel;
 use std::sync::OnceLock;
 
-use alloy_eips::BlockNumberOrTag;
-use alloy_network::EthereumWallet;
+use alloy_eips::{eip7702::Authorization, BlockNumberOrTag};
+use alloy_network::{EthereumWallet, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
@@ -86,6 +87,13 @@ sol! {
         function getWorldwideDay(uint32 day) external view returns (
             uint8 f0, uint8 f1, uint64 f2, uint64 f3, uint64 f4,
             uint64 f5, uint64 f6, uint256 f7, uint256 f8);
+    }
+    interface IZeroFee {
+        function authorizeSponsorship(address signer) external view returns (bool);
+        function getCounter(address signer) external view returns (uint32 day, uint32 count);
+    }
+    interface IAgentReward {
+        function claimReward(uint256 agentId) external;
     }
 }
 
@@ -251,6 +259,140 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
         let pending = provider.send_transaction(tx).await?;
         let receipt = pending.get_receipt().await?;
         Ok(format!("{:#x}", receipt.transaction_hash))
+    })
+}
+
+/// Current account balance.
+pub(crate) fn balance(url: &str, address: Address) -> Option<U256> {
+    let url = url.to_string();
+    block_on(async move {
+        ProviderBuilder::new()
+            .connect_http(url.parse().ok()?)
+            .get_balance(address)
+            .await
+            .ok()
+    })
+}
+
+/// Current account bytecode.
+pub(crate) fn code(url: &str, address: Address) -> Option<Bytes> {
+    let url = url.to_string();
+    block_on(async move {
+        ProviderBuilder::new()
+            .connect_http(url.parse().ok()?)
+            .get_code_at(address)
+            .await
+            .ok()
+    })
+}
+
+/// Current account nonce.
+pub(crate) fn nonce(url: &str, address: Address) -> Option<u64> {
+    let url = url.to_string();
+    block_on(async move {
+        ProviderBuilder::new()
+            .connect_http(url.parse().ok()?)
+            .get_transaction_count(address)
+            .await
+            .ok()
+    })
+}
+
+/// Storage slot read used for the ZeroFee schema marker.
+pub(crate) fn storage(url: &str, address: Address, slot: U256) -> Option<U256> {
+    let url = url.to_string();
+    block_on(async move {
+        ProviderBuilder::new()
+            .connect_http(url.parse().ok()?)
+            .get_storage_at(address, slot)
+            .await
+            .ok()
+    })
+}
+
+/// Install a self-authorization EIP-7702 delegation and return its receipt as
+/// JSON so scenario assertions can inspect the public RPC representation.
+pub(crate) fn install_delegation(
+    url: &str,
+    key: &str,
+    target: Address,
+) -> Result<serde_json::Value> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let authority = signer.address();
+    let chain_id = raw_json(url, "eth_chainId")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        })
+        .ok_or_else(|| eyre!("read chain id"))?;
+    let tx_nonce = nonce(url, authority).ok_or_else(|| eyre!("read authority nonce"))?;
+    let authorization = Authorization {
+        chain_id: U256::from(chain_id),
+        address: target,
+        nonce: tx_nonce + 1,
+    };
+    let signature = signer.sign_hash_sync(&authorization.signature_hash())?;
+    let signed = authorization.into_signed(signature);
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(authority)
+            .nonce(tx_nonce)
+            .gas_limit(100_000)
+            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_priority_fee_per_gas(0)
+            .with_authorization_list(vec![signed]);
+        let pending = provider.send_transaction(tx).await?;
+        let hash = *pending.tx_hash();
+        for _ in 0..20 {
+            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                return Ok(serde_json::to_value(receipt)?);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        Err(eyre!("EIP-7702 transaction was not mined: {hash:#x}"))
+    })
+}
+
+/// Send the canonical reward call with either the sponsored envelope or a paid
+/// priority fee, returning the mined receipt's public JSON representation.
+pub(crate) fn send_reward_call(
+    url: &str,
+    key: &str,
+    to: Address,
+    priority_fee: u128,
+) -> Result<serde_json::Value> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    let data = IAgentReward::claimRewardCall {
+        agentId: U256::ZERO,
+    }
+    .abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let max_fee = GAS_PRICE_WEI;
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into())
+            .gas_limit(200_000)
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(priority_fee);
+        let pending = provider.send_transaction(tx).await?;
+        let hash = *pending.tx_hash();
+        for _ in 0..60 {
+            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                return Ok(serde_json::to_value(receipt)?);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        Err(eyre!("reward transaction was not mined: {hash:#x}"))
     })
 }
 

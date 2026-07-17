@@ -27,8 +27,8 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("the operator replays the encrypted tribute offer for the same day")]
-fn replay_offer(world: &mut World) {
+#[when("the operator submits a duplicate logical tribute offer for the same day")]
+fn submit_duplicate_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let key = world
         .validators
@@ -40,7 +40,7 @@ fn replay_offer(world: &mut World) {
         .rpc
         .tribute_offer(&key, &wwd)
         .expect("replayed offerTribute returned transaction hash");
-    world.state.replayed_tribute_tx_hash = Some(tx_hash);
+    world.state.duplicate_tribute_tx_hash = Some(tx_hash);
 }
 
 #[then("the tribute transaction succeeds and supply becomes one")]
@@ -69,22 +69,22 @@ fn projection_parity(world: &mut World) {
         .expect("all validator projection databases contain the same tribute");
 }
 
-#[then("the replay is rejected without changing tribute state or projections")]
-fn replay_rejected_without_effects(world: &mut World) {
-    let replay = world
+#[then("the duplicate is rejected without changing tribute state or projections")]
+fn duplicate_rejected_without_effects(world: &mut World) {
+    let duplicate = world
         .state
-        .replayed_tribute_tx_hash
+        .duplicate_tribute_tx_hash
         .as_deref()
-        .expect("replayed tribute tx");
+        .expect("duplicate tribute tx");
     assert!(
-        world.rpc.wait_receipt_status(replay, false, 60),
-        "replayed tribute transaction did not produce a reverted receipt: {replay}"
+        world.rpc.wait_receipt_status(duplicate, false, 60),
+        "duplicate tribute transaction did not produce a reverted receipt: {duplicate}"
     );
     let primary = world.validators.primary_port();
     assert_eq!(
         world.rpc.supply(primary).as_deref(),
         Some("1"),
-        "replayed offer changed Tribute total supply"
+        "duplicate offer changed Tribute total supply"
     );
     let original = world
         .state
@@ -94,7 +94,7 @@ fn replay_rejected_without_effects(world: &mut World) {
     world
         .mongodb
         .wait_for_tribute_projection(original, 1)
-        .expect("replay changed or duplicated a validator projection");
+        .expect("duplicate offer changed or duplicated a validator projection");
 }
 
 #[then("every validator serves the same independently verified compressed tribute")]

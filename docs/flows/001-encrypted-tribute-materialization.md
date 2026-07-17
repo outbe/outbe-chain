@@ -92,25 +92,26 @@ not produce validator-specific receipts.
 
 ## E2E scenario matrix
 
-| Id | Scenario | Minimum topology | Required assertions | Automated by |
-|---|---|---|---|---|
-| PFS-001-01 | encrypted offer happy path | 4 validators, mock TEE, Mongo | all completion assertions above | `@pfs-001-01` live-node |
-| PFS-001-02 | unknown identity in existing day | same | verified `EntityAbsentInCollection`; no document | `@pfs-001-02` live-node |
-| PFS-001-03 | unknown day | same | verified `CollectionAbsent`; no primary/secondary projection | `@pfs-001-03` live-node |
-| PFS-001-04 | invalid ciphertext/proof | same | reverted receipt; no totals/body/projection | documentation-only until harness can submit a malformed envelope without CLI-side encryption validation |
-| PFS-001-05 | duplicate/replayed offer | same | reverted replay; one identity/supply increment and projection | `@pfs-001-05` live-node |
-| PFS-001-06 | Mongo unavailable through finality then restored | same | chain finalizes; projection catches up exactly once | documentation-only until harness exposes pause/resume for its scenario-owned replica set |
-| PFS-001-07 | validator restart before projection | same | checkpoint recovery and four-way equality | documentation-only until projection checkpoint timing has a deterministic failpoint |
-| PFS-001-08 | enclave unavailable on one proposer/executor | same | deterministic failure/retry policy; no receipt divergence | documentation-only pending an explicit proposer retry/failure policy and enclave fault-control step |
+| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
+|---|---|---|---|---|---|
+| PFS-001-01 | encrypted offer happy path | 4 validators, active mock TEE key, open day, valid Oracle and canonical offer | creator submits `offerTribute` | finalized success; one authenticated Tribute; equal projections/proofs on committee | `@pfs-001-01` live-node |
+| PFS-001-02 | unknown identity in existing day | finalized existing Tribute collection and synthetic absent id | query point proof on every validator | verified `EntityAbsentInCollection`; no matching projection | `@pfs-001-02` live-node |
+| PFS-001-03 | unknown day | finalized chain and synthetic never-created day/id | query point proof on every validator | verified `CollectionAbsent`; no primary/secondary projection | `@pfs-001-03` live-node |
+| PFS-001-04 | invalid ciphertext/proof | open day and byte-invalid encrypted envelope | submit malformed offer | reverted receipt; totals/body/projection unchanged | documentation-only: CLI blocks malformed envelope construction |
+| PFS-001-05 | duplicate logical owner/day offer | one finalized offer for owner/day | owner submits newly encrypted offer for same identity | reverted duplicate; supply and all projections remain exactly one | `@pfs-001-05` live-node |
+| PFS-001-06 | Mongo outage and recovery | healthy finalizing chain; projection replica set paused | finalize a valid offer, then restore Mongo | chain progresses; projector catches up once with matching checkpoint/body | documentation-only: no Mongo pause/resume seam |
+| PFS-001-07 | restart before projection | finalized offer and projector stopped before checkpoint | restart validator/projector | checkpoint recovery converges to four-way equality without resubmission | documentation-only: no deterministic projection failpoint |
+| PFS-001-08 | enclave unavailable | one executor/proposer enclave unavailable, otherwise valid offer | submit while affected node handles execution | deterministic failure/retry; no validator receipt/root divergence or projection | documentation-only pending retry policy and enclave fault control |
+| PFS-001-09 | identical encrypted-envelope replay | retained exact envelope and fresh valid transaction nonce | resubmit byte-identical encrypted envelope | replay rejected; identity/totals/projection unchanged | documentation-only: harness cannot retain raw envelope |
 
 ## Open questions and technical debt
 
-- Add stable PFS scenario tags to the existing Tribute feature and report them in CI.
+- Report the existing PFS tags in CI and add tags for future outage/restart/enclave scenarios.
 - Current encrypted creator semantics and public sender/AAD binding remain open in
   ADR-C-TRB-002.
 - Production attestation remains weaker than the intended trust claim in ADR-S-TEE-001.
 - Define projection service-level completion timeout without making wall time part of
   consensus correctness.
-- Add restart, Mongo outage, malformed ciphertext and replay scenarios.
+- Add restart, Mongo outage, malformed ciphertext and byte-identical encrypted-envelope replay scenarios.
 - Reconcile which BSON bytes are canonical proof body versus projection-only
   metadata with a versioned codec test.
