@@ -39,7 +39,11 @@ impl DesisContract<'_> {
         })
     }
 
-    pub(crate) fn write_auction_config(&self, worldwide_day: u32, cfg: &AuctionConfig) -> Result<()> {
+    pub(crate) fn write_auction_config(
+        &self,
+        worldwide_day: u32,
+        cfg: &AuctionConfig,
+    ) -> Result<()> {
         self.config_issuance_currency
             .write(&worldwide_day, u32::from(cfg.issuance_currency))?;
         self.config_reference_currency
@@ -102,7 +106,9 @@ impl DesisContract<'_> {
     /// Load all bids for a series into memory.
     pub(crate) fn read_all_bids(&self, worldwide_day: u32) -> Result<Vec<BidData>> {
         let count = self.bid_count.read(&worldwide_day)?;
-        (0..count).map(|i| self.read_bid_at(worldwide_day, i)).collect()
+        (0..count)
+            .map(|i| self.read_bid_at(worldwide_day, i))
+            .collect()
     }
 
     // --- bid-batch metadata ---
