@@ -140,6 +140,8 @@ interface IOriginRouter {
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         uint32 seriesId;
+        /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
+        uint32 worldwideDay;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;

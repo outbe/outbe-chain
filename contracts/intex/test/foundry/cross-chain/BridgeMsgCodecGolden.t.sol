@@ -63,7 +63,11 @@ contract BridgeMsgCodecGoldenTest is Test {
     // reorder lands a value in the wrong field and fails an assertion.
 
     function test_RoundTrip_AuctionStageStart_AllFields() public view {
-        (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) = BridgeMsgCodec.decodeAuctionParams(
+        (
+            uint32 worldwideDay,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params
+        ) = BridgeMsgCodec.decodeAuctionParams(
             BridgeMsgCodec.encodeAuctionStageStart(
                 0x11223344,
                 0x55667788,
@@ -83,7 +87,7 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0xF1F2F3F4F5F6F7F8F9FAFBFCFDFEFF01
             )
         );
-        assertEq(seriesId, 0x11223344, "seriesId");
+        assertEq(worldwideDay, 0x11223344, "worldwideDay");
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
@@ -102,10 +106,10 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_AuctionResult_AllFields() public view {
-        (uint32 seriesId, uint32 issuedIntexCount, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
+        (uint32 worldwideDay, uint32 issuedIntexCount, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
             BridgeMsgCodec.encodeAuctionResult(0x11223344, 0x55667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4)
         );
-        assertEq(seriesId, 0x11223344, "seriesId");
+        assertEq(worldwideDay, 0x11223344, "worldwideDay");
         assertEq(issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(clearingPrice, 0x99AABBCCDDEEFF00, "clearingPrice");
         assertEq(wonBidsCount, 0xA1B2C3D4, "wonBidsCount");
@@ -126,7 +130,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         timestamps[1] = 0x66666666;
 
         (
-            uint32 seriesId,
+            uint32 worldwideDay,
             uint32 srcChainId,
             uint32 relayGeneration,
             uint16 batchIndex,
@@ -141,7 +145,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             )
         );
 
-        assertEq(seriesId, 0x11223344, "seriesId");
+        assertEq(worldwideDay, 0x11223344, "worldwideDay");
         assertEq(srcChainId, 0x0000ABCD, "srcChainId");
         assertEq(batchIndex, 0x0000, "batchIndex");
         assertEq(totalBatches, 0x0001, "totalBatches");
@@ -179,11 +183,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         paid[0] = 0x3333333333333333;
         paid[1] = 0x4444444444444444;
 
-        (uint32 seriesId, address[] memory dBidders, uint128[] memory dRefunded, uint128[] memory dPaid) = this.exposedDecodeRefundInstructions(
+        (uint32 worldwideDay, address[] memory dBidders, uint128[] memory dRefunded, uint128[] memory dPaid) = this.exposedDecodeRefundInstructions(
             BridgeMsgCodec.encodeRefundInstructions(0x77665544, bidders, refunded, paid)
         );
 
-        assertEq(seriesId, 0x77665544, "seriesId");
+        assertEq(worldwideDay, 0x77665544, "worldwideDay");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
         assertEq(dBidders[1], address(0xB0B), "bidders[1]");
         assertEq(dRefunded[0], 0x1111111111111111, "refunded[0]");
@@ -202,6 +206,7 @@ contract BridgeMsgCodecGoldenTest is Test {
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
         p.seriesId = 0x11223344;
+        p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
@@ -219,6 +224,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             this.exposedDecodeIssuanceInstructions(BridgeMsgCodec.encodeIssuanceInstructions(p));
 
         assertEq(d.seriesId, 0x11223344, "seriesId");
+        assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");

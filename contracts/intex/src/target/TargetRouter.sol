@@ -508,6 +508,7 @@ contract TargetRouter is
             .createSeries(
                 IIntexNFT1155.CreateSeriesParams({
                     seriesId: payload.seriesId,
+                    worldwideDay: payload.worldwideDay,
                     issuanceCurrency: payload.issuanceCurrency,
                     referenceCurrency: payload.referenceCurrency,
                     issuedIntexCount: payload.issuedIntexCount,

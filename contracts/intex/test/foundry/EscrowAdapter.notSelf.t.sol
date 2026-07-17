@@ -24,7 +24,7 @@ contract EscrowAdapterNotSelfTest is Test {
     address internal auction = address(3);
     address internal bidder = address(0xB1);
 
-    uint32 internal constant SERIES_ID = 1;
+    uint32 internal constant WORLDWIDE_DAY = 1;
     bytes32 internal constant RECEIVE_ID = bytes32(uint256(0xCAFE));
 
     function setUp() public {
@@ -43,11 +43,11 @@ contract EscrowAdapterNotSelfTest is Test {
         IEscrowAdapter.FinalizationInstruction memory inst =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder, refundedAmount: 1, paidAmount: 0});
         vm.expectRevert(IEscrowAdapter.NotSelf.selector);
-        escrow.processFinalizationOne(SERIES_ID, RECEIVE_ID, inst);
+        escrow.processFinalizationOne(WORLDWIDE_DAY, RECEIVE_ID, inst);
     }
 
     function test_settleVaultOwedSelf_externalCallerRevertsNotSelf() public {
         vm.expectRevert(IEscrowAdapter.NotSelf.selector);
-        escrow.settleVaultOwedSelf(SERIES_ID, bidder);
+        escrow.settleVaultOwedSelf(WORLDWIDE_DAY, bidder);
     }
 }

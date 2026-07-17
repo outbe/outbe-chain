@@ -27,7 +27,7 @@ contract EscrowAdapterBondTest is Test {
     address bidder1 = address(5);
     address outsider = address(7);
 
-    uint32 seriesId1 = 1;
+    uint32 worldwideDay1 = 1;
 
     uint128 constant BOND_AMOUNT = 100e18;
 
@@ -56,7 +56,7 @@ contract EscrowAdapterBondTest is Test {
 
     function _lockBond() internal {
         vm.prank(auction);
-        escrow.lockCommitBond(seriesId1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
     }
 
     // --- lockCommitBond ---
@@ -65,10 +65,10 @@ contract EscrowAdapterBondTest is Test {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.CommitBondLocked(seriesId1, bidder1, BOND_AMOUNT);
+        emit IEscrowAdapter.CommitBondLocked(worldwideDay1, bidder1, BOND_AMOUNT);
         _lockBond();
 
-        IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(seriesId1, bidder1);
+        IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(worldwideDay1, bidder1);
         assertEq(bond.amount, BOND_AMOUNT, "bond amount");
         assertEq(bond.lockedAt, uint32(block.timestamp), "bond lockedAt");
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore - BOND_AMOUNT, "bidder debited");
@@ -80,9 +80,9 @@ contract EscrowAdapterBondTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         escrow.lockCommitBond(0, bidder1, BOND_AMOUNT);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
-        escrow.lockCommitBond(seriesId1, address(0), BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, address(0), BOND_AMOUNT);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "amount"));
-        escrow.lockCommitBond(seriesId1, bidder1, 0);
+        escrow.lockCommitBond(worldwideDay1, bidder1, 0);
         vm.stopPrank();
     }
 
@@ -90,13 +90,13 @@ contract EscrowAdapterBondTest is Test {
         _lockBond();
         vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.CommitBondAlreadyLocked.selector);
-        escrow.lockCommitBond(seriesId1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
     }
 
     function test_LockCommitBond_OnlyAuctionRole() public {
         vm.prank(outsider);
         vm.expectRevert();
-        escrow.lockCommitBond(seriesId1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
     }
 
     // --- releaseCommitBond ---
@@ -106,11 +106,11 @@ contract EscrowAdapterBondTest is Test {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.CommitBondReleased(seriesId1, bidder1, BOND_AMOUNT);
+        emit IEscrowAdapter.CommitBondReleased(worldwideDay1, bidder1, BOND_AMOUNT);
         vm.prank(auction);
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
 
-        assertEq(escrow.getCommitBond(seriesId1, bidder1).amount, 0, "bond deleted");
+        assertEq(escrow.getCommitBond(worldwideDay1, bidder1).amount, 0, "bond deleted");
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + BOND_AMOUNT, "bidder repaid");
         assertEq(_liveCompactBalance(), 0, "Compact drained");
     }
@@ -118,24 +118,24 @@ contract EscrowAdapterBondTest is Test {
     function test_ReleaseCommitBond_RevertsWhenMissing() public {
         vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
     }
 
     function test_ReleaseCommitBond_OnlyAuctionRole() public {
         _lockBond();
         vm.prank(outsider);
         vm.expectRevert();
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
     }
 
     /// @dev commit -> cancel -> commit again within the same series must re-lock cleanly.
     function test_RelockAfterRelease() public {
         _lockBond();
         vm.prank(auction);
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
 
         _lockBond();
-        assertEq(escrow.getCommitBond(seriesId1, bidder1).amount, BOND_AMOUNT, "re-locked");
+        assertEq(escrow.getCommitBond(worldwideDay1, bidder1).amount, BOND_AMOUNT, "re-locked");
     }
 
     // --- claimAbandonedCommitBond ---
@@ -149,12 +149,12 @@ contract EscrowAdapterBondTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IEscrowAdapter.CommitBondNotYetAbandoned.selector, claimableAt, claimableAt - 1)
         );
-        escrow.claimAbandonedCommitBond(seriesId1, bidder1);
+        escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
     }
 
     function test_ClaimAbandonedCommitBond_RevertsWhenMissing() public {
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        escrow.claimAbandonedCommitBond(seriesId1, bidder1);
+        escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
     }
 
     /// @dev Permissionless and pays the stored bidder, never the caller.
@@ -165,15 +165,15 @@ contract EscrowAdapterBondTest is Test {
 
         vm.warp(block.timestamp + escrow.COMMIT_BOND_ABANDON_DELAY());
         vm.prank(outsider);
-        escrow.claimAbandonedCommitBond(seriesId1, bidder1);
+        escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), bidderBefore + BOND_AMOUNT, "bidder repaid");
         assertEq(paymentToken.balanceOf(outsider), outsiderBefore, "caller gets nothing");
-        assertEq(escrow.getCommitBond(seriesId1, bidder1).amount, 0, "bond deleted");
+        assertEq(escrow.getCommitBond(worldwideDay1, bidder1).amount, 0, "bond deleted");
 
         // Terminal: a second claim has nothing to pay.
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        escrow.claimAbandonedCommitBond(seriesId1, bidder1);
+        escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
     }
 
     /// @dev The valve is auction-independent by design: a bond locked before the auction
@@ -189,11 +189,11 @@ contract EscrowAdapterBondTest is Test {
         // The old auction lost AUCTION_ROLE; the new one has no knowledge of the bond.
         vm.prank(auction);
         vm.expectRevert();
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
 
         vm.warp(block.timestamp + escrow.COMMIT_BOND_ABANDON_DELAY());
         vm.prank(outsider);
-        escrow.claimAbandonedCommitBond(seriesId1, bidder1);
+        escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
     }
 
@@ -202,11 +202,11 @@ contract EscrowAdapterBondTest is Test {
         amount = uint128(bound(amount, 1, 1000e18));
 
         vm.prank(auction);
-        escrow.lockCommitBond(seriesId1, bidder1, amount);
+        escrow.lockCommitBond(worldwideDay1, bidder1, amount);
         assertEq(_liveCompactBalance(), amount, "custodied");
 
         vm.prank(auction);
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
         assertEq(_liveCompactBalance(), 0, "no residue");
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "principal intact");
     }
@@ -226,7 +226,7 @@ contract EscrowAdapterBondTest is Test {
         escrow.wire(auction, address(compact), address(provider), otherToken);
 
         vm.prank(auction);
-        escrow.releaseCommitBond(seriesId1, bidder1);
+        escrow.releaseCommitBond(worldwideDay1, bidder1);
         assertFalse(escrow.hasOutstandingLocks(), "released bond clears the guard");
     }
 }

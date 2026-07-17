@@ -20,7 +20,7 @@ contract EscrowAdapterOptionDTest is Test {
     address vault = address(4);
     address bidder1 = address(5);
 
-    uint32 seriesId1 = 1;
+    uint32 worldwideDay1 = 1;
     uint64 constant LOCK_AMOUNT = 1000 * 10 ** 6;
 
     function setUp() public {
@@ -42,7 +42,7 @@ contract EscrowAdapterOptionDTest is Test {
     ///      by the escrow in The Compact, not from a local mirror slot.
     function test_Wire_Rotation_RevertsOnLiveERC6909Balance() public {
         vm.prank(auction);
-        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         uint256 liveBalance = IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
         assertEq(liveBalance, LOCK_AMOUNT, "precondition: ERC6909 balance equals locked amount");
@@ -72,7 +72,7 @@ contract EscrowAdapterOptionDTest is Test {
     ///      live locks exist. Cross-checks the second branch of the `rotatingCompact` predicate.
     function test_Wire_RotateCompact_RevertsOnLiveBalance() public {
         vm.prank(auction);
-        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         MockTheCompact compact2 = new MockTheCompact();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
