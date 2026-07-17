@@ -104,6 +104,9 @@ contract TargetRouter is
         mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
         /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
         uint256 nextPendingProceedsRouteIdx;
+        /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
+        ///      re-relays under a fresh generation.
+        mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
     }
 
     /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
@@ -353,8 +356,11 @@ contract TargetRouter is
 
     /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.
     function _handleAuctionStageStart(uint32 _srcChainId, bytes calldata _message) internal {
-        (uint32 worldwideDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
-            BridgeMsgCodec.decodeAuctionParams(_message);
+        (
+            uint32 worldwideDay,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params
+        ) = BridgeMsgCodec.decodeAuctionParams(_message);
         _ts().auction.auctionStart(worldwideDay, schedule, params);
 
         emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
@@ -374,15 +380,19 @@ contract TargetRouter is
     function _handleAuctionStageClearing(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
         uint32 worldwideDay = BridgeMsgCodec.decodeAuctionStageClearing(_message);
-        $.auction.startClearingStage(worldwideDay);
+        $.auction.startClearingStage(worldwideDay); // idempotent; a failing transition propagates for redelivery
 
-        try this.relayBidsToOutbe(worldwideDay) {
-        // ok — bids forwarded
-        }
-        catch (bytes memory reason) {
-            uint256 idx = $.nextPendingBidsRelayIdx++;
-            $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
-            emit BidsRelayDeferred(idx, worldwideDay, reason);
+        // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
+        if (!$.clearingRelayed[worldwideDay]) {
+            $.clearingRelayed[worldwideDay] = true;
+            try this.relayBidsToOutbe(worldwideDay) {
+            // ok — bids forwarded
+            }
+            catch (bytes memory reason) {
+                uint256 idx = $.nextPendingBidsRelayIdx++;
+                $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
+                emit BidsRelayDeferred(idx, worldwideDay, reason);
+            }
         }
 
         emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
@@ -424,7 +434,10 @@ contract TargetRouter is
         uint32 gen = ++$.bidsRelayGeneration[worldwideDay];
 
         if (bidsCount == 0) {
-            _sendOneBidsBatch(worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0));
+            _sendOneBidsBatch(
+                worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+            );
+            _sendBidsDone(worldwideDay, gen, 1, 0);
             return;
         }
 
@@ -454,6 +467,21 @@ contract TargetRouter is
             );
             batchIndex++;
         }
+
+        // Completeness marker in the same tx/generation as the chunks, so it can never outrun a lost sibling.
+        _sendBidsDone(worldwideDay, gen, totalBatches, SafeCast.toUint32(bidsCount));
+    }
+
+    /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day/generation. Carries this chain's chainId
+    ///      as its source, cross-checked by the receiver against the authenticated source.
+    function _sendBidsDone(uint32 worldwideDay, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+        internal
+    {
+        bytes memory message = BridgeMsgCodec.encodeBidsDone(
+            worldwideDay, uint32(block.chainid), relayGeneration, totalBatches, totalBids
+        );
+        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_DONE);
+        emit BidsDoneSent(sendId, worldwideDay, totalBatches, totalBids);
     }
 
     /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId as its source
@@ -555,8 +583,12 @@ contract TargetRouter is
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag; escrow dedups on the series' own `finalized` flag.
     function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
-        (uint32 worldwideDay, address[] memory bidders, uint128[] memory refundedAmounts, uint128[] memory paidAmounts) =
-            BridgeMsgCodec.decodeRefundInstructions(_message);
+        (
+            uint32 worldwideDay,
+            address[] memory bidders,
+            uint128[] memory refundedAmounts,
+            uint128[] memory paidAmounts
+        ) = BridgeMsgCodec.decodeRefundInstructions(_message);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions =
             new IEscrowAdapter.FinalizationInstruction[](bidders.length);
@@ -584,35 +616,39 @@ contract TargetRouter is
 
         $.intex.markCalled(seriesId);
 
-        uint256 tokenId = $.intex.issuedTokenId(seriesId);
-        (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
+        // On the origin-as-target the holders already sit on the canonical (shared) NFT, so there is nothing to
+        // migrate — only the remote targets bridge their holders back.
+        if (OUTBE_CHAIN_ID != uint32(block.chainid)) {
+            uint256 tokenId = $.intex.issuedTokenId(seriesId);
+            (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
 
-        // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
-        // series with more holders than the cap spans several sends. Each chunk is tried and parked independently, so
-        // one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the cap for
-        // `flushPendingHoldersRelay` to retry.
-        uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
-        for (uint256 start = 0; start < holders.length; start += maxChunk) {
-            uint256 end = start + maxChunk;
-            if (end > holders.length) end = holders.length;
-            uint256 chunkLen = end - start;
+            // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
+            // series with more holders than the cap spans several sends. Each chunk is tried and parked independently,
+            // so one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the
+            // cap for `flushPendingHoldersRelay` to retry.
+            uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+            for (uint256 start = 0; start < holders.length; start += maxChunk) {
+                uint256 end = start + maxChunk;
+                if (end > holders.length) end = holders.length;
+                uint256 chunkLen = end - start;
 
-            address[] memory chunkHolders = new address[](chunkLen);
-            uint256[] memory chunkAmounts = new uint256[](chunkLen);
-            for (uint256 i = 0; i < chunkLen; i++) {
-                chunkHolders[i] = holders[start + i];
-                chunkAmounts[i] = amounts[start + i];
-            }
+                address[] memory chunkHolders = new address[](chunkLen);
+                uint256[] memory chunkAmounts = new uint256[](chunkLen);
+                for (uint256 i = 0; i < chunkLen; i++) {
+                    chunkHolders[i] = holders[start + i];
+                    chunkAmounts[i] = amounts[start + i];
+                }
 
-            try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
-            // ok — chunk forwarded
-            }
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingHoldersRelayIdx++;
-                $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                    tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
-                });
-                emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
+                try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
+                // ok — chunk forwarded
+                }
+                catch (bytes memory reason) {
+                    uint256 idx = $.nextPendingHoldersRelayIdx++;
+                    $.pendingHoldersRelays[idx] = PendingHoldersRelay({
+                        tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
+                    });
+                    emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
+                }
             }
         }
 
