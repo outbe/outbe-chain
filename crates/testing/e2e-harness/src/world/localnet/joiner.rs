@@ -8,6 +8,7 @@ use std::process::Command;
 use alloy_primitives::{hex, Bytes};
 use eyre::{eyre, Result};
 
+use crate::env::TeeMode;
 use crate::internal::{
     addresses,
     eth::{self, IValidatorSet},
@@ -76,13 +77,19 @@ impl Localnet {
         // socket is up.
         let port = self.cfg.tee_port(index);
         proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo)?;
+        let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
+        let enclave_bin = if mock {
+            self.cfg.bin_mock.clone()
+        } else {
+            self.real_enclave_bin()?
+        };
         let guard = proc::spawn_enclave(proc::EnclaveSpec {
             name: self.cfg.tee_container(index),
             tee_port: port,
-            enclave_bin: self.cfg.bin_mock.clone(),
+            enclave_bin,
             sudo: self.cfg.sudo,
-            mock: true,
-            dkg_seed: Some((index + 1).to_string()),
+            mock,
+            dkg_seed: mock.then(|| format!("{:064x}", index + 1)),
             seal: None,
             log_path: vd.join("enclave.log"),
             debug: self.cfg.debug,

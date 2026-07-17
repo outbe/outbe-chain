@@ -182,7 +182,7 @@ impl Localnet {
     }
 
     /// Resolve the real (non-mock) enclave binary from the build tree.
-    fn real_enclave_bin(&self) -> Result<PathBuf> {
+    pub(super) fn real_enclave_bin(&self) -> Result<PathBuf> {
         for rel in [
             "target/debug/outbe-tee-enclave",
             "target/release/outbe-tee-enclave",

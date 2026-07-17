@@ -68,7 +68,7 @@ jobs:
   e2e-tee:
     name: real-SGX Rust/Cucumber e2e suite
     runs-on: [self-hosted, sgx]
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v2
