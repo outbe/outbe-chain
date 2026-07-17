@@ -20,10 +20,12 @@ use std::{
 
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
+use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
-    EntityId36, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    EntityId36, IdPageRequest, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    MAX_ID_PAGE_LIMIT,
 };
 use outbe_nod::{
     precompile::INod, projection::NOD_PROJECTION_NAMESPACES, NodBucketState, NodItemState,
@@ -355,14 +357,32 @@ impl OffchainDataProjection {
         for (_, events) in &decoded_receipts {
             for event in events {
                 match event.identity() {
-                    EntityIdentity::Tribute(id) => {
+                    None => {}
+                    Some(EntityIdentity::Tribute(id)) => {
                         tribute_ids.insert(id);
                     }
-                    EntityIdentity::Nod(id) => {
+                    Some(EntityIdentity::Nod(id)) => {
                         nod_ids.insert(id);
                     }
-                    EntityIdentity::Bucket(key) => {
+                    Some(EntityIdentity::Bucket(key)) => {
                         bucket_ids.insert(key);
+                    }
+                }
+                if let ProjectionEvent::TributePartitionRetired { worldwide_day } = event {
+                    let mut after = None;
+                    loop {
+                        let page = tribute_reader.list_ids_by_day(
+                            *worldwide_day,
+                            IdPageRequest {
+                                after,
+                                limit: MAX_ID_PAGE_LIMIT,
+                            },
+                        )?;
+                        tribute_ids.extend(page.ids);
+                        let Some(next) = page.next_after else {
+                            break;
+                        };
+                        after = Some(next);
                     }
                 }
             }
@@ -424,6 +444,17 @@ impl OffchainDataProjection {
                         )?;
                         let planned = tributes.delete(tribute_id)?;
                         batch.extend(planned.operations().iter().cloned());
+                    }
+                    ProjectionEvent::TributePartitionRetired { worldwide_day } => {
+                        for tribute_id in &tribute_ids {
+                            let belongs_to_partition = tributes
+                                .current(*tribute_id)?
+                                .is_some_and(|tribute| tribute.worldwide_day == worldwide_day);
+                            if belongs_to_partition {
+                                let planned = tributes.delete(*tribute_id)?;
+                                batch.extend(planned.operations().iter().cloned());
+                            }
+                        }
                     }
                     ProjectionEvent::NodStored {
                         source,
@@ -514,7 +545,7 @@ impl OffchainDataProjection {
         })
     }
 
-    /// Applies receipt batches sequentially and writes the checkpoint last.
+    /// Applies every receipt mutation and the checkpoint in one backend transaction.
     pub fn apply_prepared(
         &mut self,
         prepared: PreparedBlock,
@@ -528,14 +559,17 @@ impl OffchainDataProjection {
             }
             NextBlock::Apply => {}
         }
-        for receipt in &prepared.receipts {
-            self.writer.apply_atomic(&receipt.batch)?;
-        }
         let next_state = ProjectionState {
             checkpoint: Some(prepared.checkpoint),
             ..self.state.clone()
         };
-        self.writer.apply_atomic(&state_batch(&next_state)?)?;
+        let mut block_batch = AtomicWriteBatch::new();
+        for receipt in &prepared.receipts {
+            block_batch.extend(receipt.batch.operations().iter().cloned());
+        }
+        block_batch.extend(state_batch(&next_state)?.operations().iter().cloned());
+        block_batch.validate()?;
+        self.writer.apply_atomic(&block_batch)?;
         self.state = next_state;
         Ok(ProjectionOutcome::Applied {
             checkpoint: prepared.checkpoint,
@@ -716,6 +750,9 @@ enum ProjectionEvent {
         tribute_id: EntityId36,
         previous_commitment: B256,
     },
+    TributePartitionRetired {
+        worldwide_day: WorldwideDay,
+    },
     NodStored {
         source: ProjectionSource,
         nod_id: EntityId36,
@@ -739,14 +776,15 @@ enum ProjectionEvent {
 }
 
 impl ProjectionEvent {
-    fn identity(&self) -> EntityIdentity {
+    fn identity(&self) -> Option<EntityIdentity> {
         match self {
-            Self::TributeStored { tribute_id, .. } => EntityIdentity::Tribute(*tribute_id),
-            Self::TributeDeleted { tribute_id, .. } => EntityIdentity::Tribute(*tribute_id),
-            Self::NodStored { nod_id, .. } => EntityIdentity::Nod(*nod_id),
-            Self::NodDeleted { nod_id, .. } => EntityIdentity::Nod(*nod_id),
+            Self::TributeStored { tribute_id, .. } => Some(EntityIdentity::Tribute(*tribute_id)),
+            Self::TributeDeleted { tribute_id, .. } => Some(EntityIdentity::Tribute(*tribute_id)),
+            Self::TributePartitionRetired { .. } => None,
+            Self::NodStored { nod_id, .. } => Some(EntityIdentity::Nod(*nod_id)),
+            Self::NodDeleted { nod_id, .. } => Some(EntityIdentity::Nod(*nod_id)),
             Self::BucketStored { bucket_id, .. } | Self::BucketDeleted { bucket_id, .. } => {
-                EntityIdentity::Bucket(*bucket_id)
+                Some(EntityIdentity::Bucket(*bucket_id))
             }
         }
     }
@@ -755,7 +793,8 @@ impl ProjectionEvent {
 fn is_projection_pair(emitter: Address, signature: B256) -> bool {
     (emitter == TRIBUTE_ADDRESS
         && (signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-            || signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH))
+            || signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
+            || signature == ITribute::TributePartitionRetired::SIGNATURE_HASH))
         || (emitter == NOD_ADDRESS
             && (signature == INod::NodBodyStored::SIGNATURE_HASH
                 || signature == INod::NodBodyDeleted::SIGNATURE_HASH
@@ -811,6 +850,14 @@ fn decode_event(
         Some(ProjectionEvent::TributeDeleted {
             tribute_id: decode_entity_id(source, &event.tributeId)?,
             previous_commitment: event.previousCommitment,
+        })
+    } else if source.emitter == TRIBUTE_ADDRESS
+        && source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH
+    {
+        let event = ITribute::TributePartitionRetired::decode_log_data(data)
+            .map_err(|error| malformed_event(source, error))?;
+        Some(ProjectionEvent::TributePartitionRetired {
+            worldwide_day: event.worldwideDay.into(),
         })
     } else if source.emitter == NOD_ADDRESS
         && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH

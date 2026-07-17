@@ -26,6 +26,19 @@ pub enum EntityRef {
     NodBucket(EntityId36),
 }
 
+/// Closed collection-level lifecycle authority. ADR-011 intentionally exposes
+/// only Tribute WWD retirement; singleton domains have no representable request.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PartitionRef {
+    TributeWwd(WorldwideDay),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetirementOutcome {
+    NotPresent,
+    Requested,
+}
+
 /// Exact-parent authenticated leaf reader owned by one block execution.
 /// Implementations may cache only successfully verified evidence for the
 /// immutable `(parent_root, entity)` pair.
@@ -40,6 +53,15 @@ pub trait AuthenticatedParentTree: Send + Sync + core::fmt::Debug {
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>>;
 
+    /// Verifies collection membership through the exact-parent Root Catalog.
+    /// Absence means never populated (or already retired) and is a no-op for
+    /// the ADR-011 trusted request path.
+    fn partition_present_verified(
+        &self,
+        partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<bool>;
+
     /// Prepare an immutable, side-effect-free candidate batch against this
     /// exact parent. Implementations must authenticate the complete unique
     /// touched set and eliminate parent-equal final leaves.
@@ -47,6 +69,7 @@ pub trait AuthenticatedParentTree: Send + Sync + core::fmt::Debug {
         &self,
         block_number: u64,
         mutations: &[FinalLeafMutation],
+        retirements: &[PartitionRef],
     ) -> Result<crate::ProvisionalTreeBatch>;
 }
 
@@ -129,11 +152,28 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         Ok(None)
     }
 
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<bool> {
+        if expected_parent_root != self.parent_root() {
+            return Err(fatal_scope(
+                "empty reference parent does not match the EVM root",
+            ));
+        }
+        Ok(false)
+    }
+
     fn prepare_seal(
         &self,
         block_number: u64,
         mutations: &[FinalLeafMutation],
+        retirements: &[PartitionRef],
     ) -> Result<crate::ProvisionalTreeBatch> {
+        if !retirements.is_empty() {
+            return Err(fatal_scope("empty parent cannot retire a collection"));
+        }
         use crate::{
             schema::Collection,
             sharding::shard_index,
@@ -231,8 +271,16 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
             .map_err(|error| fatal_scope(error.to_string()))?;
             changed_collections.insert(
                 collection_key,
-                CollectionBatch::new(domain, collection_key, None, new_collection_root, shard_set)
+                crate::CollectionOperation::Mutate(
+                    CollectionBatch::new(
+                        domain,
+                        collection_key,
+                        None,
+                        new_collection_root,
+                        shard_set,
+                    )
                     .map_err(|error| fatal_scope(error.to_string()))?,
+                ),
             );
             let catalog_key = crate::smt::TreeKey::from_be_bytes(*collection_key.as_bytes())
                 .map_err(|error| fatal_scope(error.to_string()))?;
@@ -745,10 +793,17 @@ impl ExecutionScope {
         &self,
         block_number: u64,
         mutations: &[FinalLeafMutation],
+        retirements: &[PartitionRef],
     ) -> Result<crate::ProvisionalTreeBatch> {
         self.require_active()?;
         self.opened_parent_tree()?
-            .prepare_seal(block_number, mutations)
+            .prepare_seal(block_number, mutations, retirements)
+    }
+
+    pub(crate) fn partition_present_verified(&self, partition: PartitionRef) -> Result<bool> {
+        self.require_active()?;
+        let parent = self.opened_parent_tree()?;
+        parent.partition_present_verified(partition, parent.parent_root())
     }
 
     pub fn ce_work_checkpoint(&self) -> Result<CeWorkCheckpoint> {
@@ -1045,6 +1100,17 @@ pub fn read(
 ) -> Result<Option<VerifiedBody>> {
     scope.require_readable()?;
     runtime::read(storage, scope, parent, entity)
+}
+
+/// Trusted, closed ADR-011 partition retirement request. The caller supplies
+/// only the typed partition identity; collection/domain derivation stays here.
+pub fn retire_partition(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+    partition: PartitionRef,
+) -> Result<RetirementOutcome> {
+    scope.require_active()?;
+    crate::state::State::new(storage).request_retirement(scope, partition)
 }
 
 pub fn list(

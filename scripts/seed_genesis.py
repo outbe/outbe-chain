@@ -191,10 +191,10 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
-# Compressed-entity EVM schema V2. ADR-010 seals the structurally empty Root
+# Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
 # Catalog, so slot 1 is non-zero even though no collection exists at genesis.
 COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
-COMPRESSED_ENTITIES_SCHEMA_VERSION = 2
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 3
 COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
     "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
 )
@@ -1610,7 +1610,7 @@ def main():
         compressed_entities_storage.entries
     )
     print(
-        "  CompressedEntities: slot 0 = 2, "
+        "  CompressedEntities: slot 0 = 3, "
         "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
 

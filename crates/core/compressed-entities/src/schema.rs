@@ -7,7 +7,7 @@ use outbe_primitives::{
 
 use crate::{Commitment, EntityId36};
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 2;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 3;
 const BODY_RECORD_VERSION: u8 = 1;
 const INDEX_RECORD_VERSION: u8 = 1;
 const BODY_LOCATOR_PREFIX: &[u8] = b"OUTBE_CE_OVERLAY_V1";
@@ -263,7 +263,7 @@ fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError
 /// Consensus storage schema at `0xEE0D`.
 ///
 /// Field order is protocol-critical: the declaration order below is exactly
-/// slots 0 through 10 from ADR-008. Slot 1 is the sole EVM authority for the
+/// slots 0 through 12 through ADR-011. Slot 1 is the sole EVM authority for the
 /// compressed-entity tree. Slots 2 and 3 deliberately remain reserved; they
 /// must not be reused as direct commitment mappings.
 #[contract(addr = COMPRESSED_ENTITIES_ADDRESS)]
@@ -290,4 +290,8 @@ pub(crate) struct CompressedEntitiesSchema {
     pub touched_index_deltas: StorageVec<B256>,
     /// Slot 10.
     pub body_identity_record: Mapping<B256, StorageBytes>,
+    /// Slot 11. Marker `1` means one trusted Tribute WWD retirement request.
+    pub pending_retirement: Mapping<B256, U256>,
+    /// Slot 12. Canonical WWD identities for unique first-touch cleanup/sealing.
+    pub retirement_touched: StorageVec<u32>,
 }

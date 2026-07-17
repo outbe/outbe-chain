@@ -8,11 +8,12 @@ use outbe_primitives::{
 
 use crate::{
     api::{EntityRef, ExecutionScope},
+    collection_key, partition_collection_key,
     schema::{
         body_identity_record, body_locator, decode_body_identity_record, Collection,
         CompressedEntitiesSchema, DeltaStatus, IndexRecord, PendingWord, STORAGE_SCHEMA_VERSION,
     },
-    Commitment, EntityId36,
+    CeDomain, Commitment, EntityId36, PartitionRef, RetirementOutcome,
 };
 
 // Cleanup is prepaid on the first touch. The provider separately meters the
@@ -35,6 +36,8 @@ pub(crate) const FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 =
     SSTORE_RESET_GAS * (1 + dynamic_storage_slots(MAX_INDEX_RECORD_BYTES) + 1);
 pub(crate) const BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
 pub(crate) const INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
+pub(crate) const FIRST_RETIREMENT_TOUCH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS * 2;
+pub(crate) const RETIREMENT_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
 
 pub(crate) struct State<'storage> {
     storage: StorageHandle<'storage>,
@@ -79,6 +82,17 @@ impl<'storage> State<'storage> {
                 }
             }
             STORAGE_SCHEMA_VERSION => Ok(()),
+            2 => {
+                if !schema.touched.is_empty()?
+                    || !schema.touched_index_deltas.is_empty()?
+                    || !schema.retirement_touched.is_empty()?
+                {
+                    return Err(fatal(
+                        "compressed-entity schema migration requires an empty overlay",
+                    ));
+                }
+                schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION)
+            }
             _ => Err(fatal(format!(
                 "unsupported compressed-entity storage schema {actual}"
             ))),
@@ -193,6 +207,23 @@ impl<'storage> State<'storage> {
             Collection::NodItem => EntityRef::NodItem(entity_id),
             Collection::NodBucket => EntityRef::NodBucket(entity_id),
         };
+        let domain = match collection {
+            Collection::Tribute => CeDomain::Tribute,
+            Collection::NodItem => CeDomain::NodItem,
+            Collection::NodBucket => CeDomain::NodBucket,
+        };
+        let collection_key =
+            collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))?;
+        if !self
+            .schema()
+            .pending_retirement
+            .read(&B256::from(*collection_key.as_bytes()))?
+            .is_zero()
+        {
+            return Err(fatal(
+                "compressed-entity mutation conflicts with pending collection retirement",
+            ));
+        }
         // The transaction footprint includes keys already touched by an
         // earlier transaction in this block, even though they need no second
         // block-level sealing reservation.
@@ -216,6 +247,75 @@ impl<'storage> State<'storage> {
             schema.touched.push(locator)?;
         }
         Ok(locator)
+    }
+
+    pub(crate) fn request_retirement(
+        &self,
+        scope: &ExecutionScope,
+        partition: PartitionRef,
+    ) -> Result<RetirementOutcome> {
+        self.ensure_schema()?;
+        let (_, key) =
+            partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+        let storage_key = B256::from(*key.as_bytes());
+        if !self
+            .schema()
+            .pending_retirement
+            .read(&storage_key)?
+            .is_zero()
+        {
+            return Err(fatal("duplicate compressed-entity retirement request"));
+        }
+        for (collection, entity_id, _) in self.final_body_mutations()? {
+            let domain = match collection {
+                Collection::Tribute => CeDomain::Tribute,
+                Collection::NodItem => CeDomain::NodItem,
+                Collection::NodBucket => CeDomain::NodBucket,
+            };
+            if collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))? == key {
+                return Err(fatal(
+                    "collection retirement conflicts with an earlier entity mutation",
+                ));
+            }
+        }
+        if !scope.partition_present_verified(partition)? {
+            return Ok(RetirementOutcome::NotPresent);
+        }
+        let schema = self.schema();
+        let cleanup_gas = FIRST_RETIREMENT_TOUCH_CLEANUP_GAS
+            + if schema.retirement_touched.is_empty()? {
+                RETIREMENT_TOUCHED_LENGTH_CLEANUP_GAS
+            } else {
+                0
+            };
+        scope.deduct_explicit_gas(&self.storage, cleanup_gas)?;
+        schema
+            .pending_retirement
+            .write(&storage_key, U256::from(1))?;
+        let PartitionRef::TributeWwd(day) = partition;
+        schema.retirement_touched.push(day.value())?;
+        Ok(RetirementOutcome::Requested)
+    }
+
+    pub(crate) fn retirements(&self) -> Result<Vec<PartitionRef>> {
+        self.validate_schema_for_read()?;
+        let schema = self.schema();
+        let days = schema.retirement_touched.read_all()?;
+        let mut unique = BTreeSet::new();
+        let mut retirements = Vec::with_capacity(days.len());
+        for day in days {
+            let partition = PartitionRef::TributeWwd(outbe_common::WorldwideDay::new(day));
+            let (_, key) =
+                partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+            let storage_key = B256::from(*key.as_bytes());
+            if !unique.insert(storage_key)
+                || self.schema().pending_retirement.read(&storage_key)? != U256::from(1)
+            {
+                return Err(fatal("malformed compressed-entity retirement journal"));
+            }
+            retirements.push(partition);
+        }
+        Ok(retirements)
     }
 
     pub(crate) fn set_pending_prepared(
@@ -351,7 +451,10 @@ impl<'storage> State<'storage> {
                 "compressed-entity reserved schema slots are non-zero",
             ));
         }
-        if !schema.touched.is_empty()? || !schema.touched_index_deltas.is_empty()? {
+        if !schema.touched.is_empty()?
+            || !schema.touched_index_deltas.is_empty()?
+            || !schema.retirement_touched.is_empty()?
+        {
             return Err(fatal(
                 "compressed-entity block overlay is dirty at begin_block",
             ));
@@ -445,14 +548,35 @@ impl<'storage> State<'storage> {
             schema.index_delta_word.write(key, U256::ZERO)?;
         }
 
+        let retirement_days = schema.retirement_touched.read_all()?;
+        let mut unique_retirements = BTreeSet::new();
+        for day in &retirement_days {
+            let partition = PartitionRef::TributeWwd(outbe_common::WorldwideDay::new(*day));
+            let (_, key) =
+                partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+            let storage_key = B256::from(*key.as_bytes());
+            if !unique_retirements.insert(storage_key)
+                || schema.pending_retirement.read(&storage_key)? != U256::from(1)
+            {
+                return Err(fatal("malformed retirement journal during cleanup"));
+            }
+            schema.pending_retirement.write(&storage_key, U256::ZERO)?;
+        }
+
         if !body_keys.is_empty() {
             schema.touched.clear()?;
         }
         if !index_keys.is_empty() {
             schema.touched_index_deltas.clear()?;
         }
+        if !retirement_days.is_empty() {
+            schema.retirement_touched.clear()?;
+        }
 
-        if !schema.touched.is_empty()? || !schema.touched_index_deltas.is_empty()? {
+        if !schema.touched.is_empty()?
+            || !schema.touched_index_deltas.is_empty()?
+            || !schema.retirement_touched.is_empty()?
+        {
             return Err(fatal(
                 "compressed-entity cleanup left non-empty touched lists",
             ));
@@ -473,6 +597,13 @@ impl<'storage> State<'storage> {
             {
                 return Err(fatal(
                     "compressed-entity index cleanup post-condition failed",
+                ));
+            }
+        }
+        for storage_key in unique_retirements {
+            if !schema.pending_retirement.read(&storage_key)?.is_zero() {
+                return Err(fatal(
+                    "compressed-entity retirement cleanup post-condition failed",
                 ));
             }
         }

@@ -648,6 +648,24 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
     with_storage(|storage| {
         let parent = TestParent::empty();
         let scope = ExecutionScope::new();
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::ZERO,
+                U256::from(3),
+            )
+            .unwrap();
+        storage
+            .sstore(
+                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(alloy_primitives::B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
         begin_block(storage.clone(), &scope).unwrap();
         let wwd_raw = 20260313u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);

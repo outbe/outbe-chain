@@ -7,7 +7,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, LogData, B256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{sol, SolEvent};
+use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use thiserror::Error;
 
@@ -15,8 +16,14 @@ use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     runtime::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored},
     runtime::{TributeBodyDeleted, TributeBodyStored},
-    Commitment, EntityId36, EntityRef, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    Commitment, EntityId36, EntityRef, FinalLeafMutation, PartitionRef, ACTIVE_COMMITMENT_SCHEME,
+    BODY_SCHEMA_V1,
 };
+
+sol! {
+    /// Exact ADR-011 receipt event emitted by the Tribute precompile.
+    event TributePartitionRetired(uint32 indexed worldwideDay);
+}
 
 /// One canonical receipt-visible body transition in execution order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +31,25 @@ pub struct CanonicalBodyEvent {
     pub entity: EntityRef,
     pub previous: Option<Commitment>,
     pub next: Option<Commitment>,
+}
+
+/// Decode and authenticate an ADR-011 Tribute partition-retirement event.
+pub fn decode_partition_retirement(
+    emitter: Address,
+    data: &LogData,
+) -> Result<Option<PartitionRef>, ReplayEventError> {
+    let Some(signature) = data.topics().first().copied() else {
+        return Ok(None);
+    };
+    if emitter != TRIBUTE_ADDRESS || signature != TributePartitionRetired::SIGNATURE_HASH {
+        return Ok(None);
+    }
+
+    let event = TributePartitionRetired::decode_log_data(data)
+        .map_err(|error| ReplayEventError::MalformedRetirement(error.to_string()))?;
+    Ok(Some(PartitionRef::TributeWwd(WorldwideDay::new(
+        event.worldwideDay,
+    ))))
 }
 
 /// Decode and authenticate an ADR-007 body event.
@@ -233,6 +259,8 @@ fn required_commitment(value: B256) -> Result<Commitment, ReplayEventError> {
 pub enum ReplayEventError {
     #[error("malformed canonical compressed-entity body event: {0}")]
     Malformed(String),
+    #[error("malformed canonical partition-retirement event: {0}")]
+    MalformedRetirement(String),
     #[error("unsupported body-event commitment scheme {0}")]
     UnsupportedCommitmentScheme(u32),
     #[error("unsupported body-event schema {0}")]
@@ -267,6 +295,32 @@ mod tests {
 
     fn commitment(byte: u8) -> Commitment {
         Commitment::try_from([byte; 32]).unwrap()
+    }
+
+    #[test]
+    fn retirement_requires_the_exact_tribute_emitter_and_signature() {
+        let day = WorldwideDay::new(20_260_717);
+        let data = TributePartitionRetired {
+            worldwideDay: day.value(),
+        }
+        .encode_log_data();
+
+        assert_eq!(
+            decode_partition_retirement(TRIBUTE_ADDRESS, &data).unwrap(),
+            Some(PartitionRef::TributeWwd(day))
+        );
+        assert_eq!(
+            decode_partition_retirement(NOD_ADDRESS, &data).unwrap(),
+            None
+        );
+        assert_eq!(
+            decode_partition_retirement(
+                TRIBUTE_ADDRESS,
+                &LogData::new_unchecked(vec![], Bytes::new())
+            )
+            .unwrap(),
+            None
+        );
     }
 
     #[test]

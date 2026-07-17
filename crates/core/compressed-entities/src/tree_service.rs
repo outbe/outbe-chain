@@ -265,10 +265,35 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         Ok(commitment)
     }
 
+    fn partition_present_verified(
+        &self,
+        partition: crate::PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<bool> {
+        if expected_parent_root != self.identity.root {
+            return Err(tree_corruption(
+                "requested EVM root does not match exact catalog view",
+            ));
+        }
+        let (domain, key) = crate::partition_collection_key(partition)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+        self.ensure_collection(&mut state, domain, key)?;
+        Ok(state
+            .collections
+            .get(&key)
+            .and_then(|collection| collection.parent_collection_root)
+            .is_some())
+    }
+
     fn prepare_seal(
         &self,
         block_number: u64,
         mutations: &[FinalLeafMutation],
+        retirements: &[crate::PartitionRef],
     ) -> Result<ProvisionalTreeBatch> {
         if block_number != self.identity.block_number.saturating_add(1) {
             return Err(tree_corruption(
@@ -417,7 +442,46 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                 let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
                     .map_err(|error| tree_corruption(error.to_string()))?;
                 catalog_updates.push((catalog_key, catalog_leaf));
-                changed_collections.insert(collection_key, collection_batch);
+                changed_collections.insert(
+                    collection_key,
+                    crate::CollectionOperation::Mutate(collection_batch),
+                );
+            }
+
+            let mut unique_retirements = BTreeSet::new();
+            for partition in retirements {
+                let (domain, collection_key) = crate::partition_collection_key(*partition)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                if !unique_retirements.insert(collection_key) {
+                    return Err(tree_corruption("duplicate collection retirement at seal"));
+                }
+                if changed_collections.contains_key(&collection_key) {
+                    return Err(tree_corruption(
+                        "collection mutation and retirement coexist in one block",
+                    ));
+                }
+                self.ensure_collection(&mut state, domain, collection_key)?;
+                let session = state
+                    .collections
+                    .get(&collection_key)
+                    .ok_or_else(|| tree_corruption("retirement collection session is missing"))?;
+                let parent_collection_root = session.parent_collection_root.ok_or_else(|| {
+                    tree_corruption("retirement collection is absent from the parent catalog")
+                })?;
+                let retirement = crate::RetirementBatch::new(
+                    domain,
+                    collection_key,
+                    parent_collection_root,
+                    session.parent_shard_roots.clone(),
+                )
+                .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                catalog_updates.push((catalog_key, TreeLeaf::ZERO));
+                changed_collections.insert(
+                    collection_key,
+                    crate::CollectionOperation::Retire(retirement),
+                );
             }
 
             let mut catalog_tree = state

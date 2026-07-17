@@ -15,7 +15,7 @@ use alloy_primitives::B256;
 use outbe_compressed_entities::{
     classify_restart, reconstruct_effective_final_mutations, CanonicalBodyEvent,
     CompressedTreeService, DurableFinalizedCheckpoint, ExactParentIdentity, FinalizedMarker,
-    RestartClassification, ACTIVE_COMMITMENT_SCHEME,
+    PartitionRef, RestartClassification, ACTIVE_COMMITMENT_SCHEME,
 };
 use thiserror::Error;
 
@@ -28,6 +28,7 @@ pub struct CanonicalCeReplayBlock {
     pub parent_root: B256,
     pub new_root: B256,
     pub events: Vec<CanonicalBodyEvent>,
+    pub retirements: Vec<PartitionRef>,
 }
 
 /// DB-only canonical history needed before consensus participation.
@@ -85,7 +86,7 @@ pub(crate) fn apply_replayed_block(
         parent_leaves.insert(event.entity, leaf);
     }
     let mutations = reconstruct_effective_final_mutations(&block.events, &parent_leaves)?;
-    let provisional = parent.prepare_seal(block.number, &mutations)?;
+    let provisional = parent.prepare_seal(block.number, &mutations, &block.retirements)?;
     if provisional.block_number() != block.number
         || provisional.parent_block_hash() != block.parent_hash
         || provisional.parent_root() != block.parent_root
@@ -320,6 +321,7 @@ mod tests {
             parent_root: next.parent_root,
             new_root: next.new_root,
             events: Vec::new(),
+            retirements: Vec::new(),
         }
     }
 

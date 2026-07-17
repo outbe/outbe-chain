@@ -17,9 +17,9 @@ use crate::{
     begin_block, body_commitment, delete, encode_nod_bucket_v1, encode_nod_item_v1,
     encode_tribute_v1, end_block, list, mint, read, update, AuthenticatedParentTree, BodyInput,
     CeWorkConfig, EntityId36, EntityRef, ExecutionScope, FinalLeafMutation, IdPage, IdPageRequest,
-    NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, ProvisionalTreeBatch,
-    QueryRef, StoredBody, TributeBodyV1, VerifiedBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-    MAX_ID_PAGE_LIMIT,
+    NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, PartitionRef,
+    ProvisionalTreeBatch, QueryRef, StoredBody, TributeBodyV1, VerifiedBody,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, MAX_ID_PAGE_LIMIT,
 };
 use crate::{
     runtime::{
@@ -71,10 +71,19 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
         Ok(self.0.lock().unwrap().get(&entity).copied())
     }
 
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        _expected_parent_root: B256,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
     fn prepare_seal(
         &self,
         block_number: u64,
         _mutations: &[FinalLeafMutation],
+        _retirements: &[PartitionRef],
     ) -> Result<ProvisionalTreeBatch> {
         ProvisionalTreeBatch::new_fixture_single_collection(
             block_number,
@@ -1766,7 +1775,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
 }
 
 #[test]
-fn storage_layout_uses_exact_slots_zero_through_ten() {
+fn storage_layout_uses_exact_slots_zero_through_twelve() {
     let owner = address!("9000000000000000000000000000000000000009");
     let body = tribute(entity(15, 9), owner, 100);
     let scope = ExecutionScope::new();
@@ -1783,7 +1792,7 @@ fn storage_layout_uses_exact_slots_zero_through_ten() {
     let identity_record_slot = locator.mapping_slot(U256::from(10));
     assert_eq!(
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)],
-        U256::from(2)
+        U256::from(3)
     );
     assert_eq!(
         provider
@@ -1815,10 +1824,10 @@ fn storage_layout_uses_exact_slots_zero_through_ten() {
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, identity_record_slot)],
         U256::ZERO
     );
-    // The fixed schema occupies no base slot beyond 10.
+    // ADR-011 reserves slots 11-12 for retirement; no base slot exists beyond 12.
     assert!(!provider
         .storage
-        .contains_key(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(11))));
+        .contains_key(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(13))));
 }
 
 #[test]

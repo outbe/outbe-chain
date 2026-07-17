@@ -12,8 +12,9 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use outbe_compressed_entities::{
-    decode_canonical_body_event, CompressedTreeService, DurableFinalizedCheckpoint,
-    FinalizedCandidateOutcome, FinalizedMarker, StagedTreeBatch, ACTIVE_COMMITMENT_SCHEME,
+    decode_canonical_body_event, decode_partition_retirement, CompressedTreeService,
+    DurableFinalizedCheckpoint, FinalizedCandidateOutcome, FinalizedMarker, StagedTreeBatch,
+    ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
 use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
@@ -171,10 +172,17 @@ where
             })?
             .ok_or_else(|| eyre::eyre!("durable receipts missing for {height}/{hash}"))?;
         let mut events = Vec::new();
+        let mut retirements = Vec::new();
         for receipt in receipts {
+            if !receipt.status() {
+                continue;
+            }
             for log in receipt.logs() {
                 if let Some(event) = decode_canonical_body_event(log.address, &log.data)? {
                     events.push(event);
+                }
+                if let Some(retirement) = decode_partition_retirement(log.address, &log.data)? {
+                    retirements.push(retirement);
                 }
             }
         }
@@ -186,6 +194,7 @@ where
             parent_root,
             new_root,
             events,
+            retirements,
         }))
     }
 }
@@ -799,6 +808,7 @@ mod tests {
             parent_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             new_root: root,
             events: Vec::new(),
+            retirements: Vec::new(),
         });
         let tree = FakeTree::new(None);
         finalizer(state, tree.clone())
@@ -830,6 +840,7 @@ mod tests {
                     entity,
                     final_leaf: Some(commitment),
                 }],
+                &[],
             )
             .unwrap()
             .new_root();
@@ -847,6 +858,7 @@ mod tests {
                 previous: None,
                 next: Some(commitment),
             }],
+            retirements: Vec::new(),
         });
         let tree: Arc<dyn FinalizedCeTree> = service.clone();
         RethCeFinalizer::new(state, tree)
@@ -866,6 +878,97 @@ mod tests {
         assert_eq!(
             reopened.read_leaf_verified(entity, expected_root).unwrap(),
             Some(commitment)
+        );
+    }
+
+    #[test]
+    fn durable_replay_reconstructs_partition_retirement_through_smt_and_mdbx() {
+        let (_directory, service) = real_tree_service();
+        let mut id_bytes = [7_u8; 36];
+        id_bytes[..4].copy_from_slice(&20_260_717_u32.to_be_bytes());
+        let id = EntityId36::try_from(id_bytes.as_slice()).unwrap();
+        let day = id.worldwide_day();
+        let entity = EntityRef::Tribute(id);
+        let commitment = Commitment::try_from([3_u8; 32]).unwrap();
+        let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+
+        let block_one_root = service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: hash(1),
+                root: genesis_root,
+            })
+            .unwrap()
+            .prepare_seal(
+                1,
+                &[FinalLeafMutation {
+                    entity,
+                    final_leaf: Some(commitment),
+                }],
+                &[],
+            )
+            .unwrap()
+            .new_root();
+        crate::ce_recovery::apply_replayed_block(
+            &service,
+            &CanonicalCeReplayBlock {
+                number: 1,
+                hash: hash(2),
+                parent_hash: hash(1),
+                parent_root: genesis_root,
+                new_root: block_one_root,
+                events: vec![outbe_compressed_entities::CanonicalBodyEvent {
+                    entity,
+                    previous: None,
+                    next: Some(commitment),
+                }],
+                retirements: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let block_two_root = service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 1,
+                block_hash: hash(2),
+                root: block_one_root,
+            })
+            .unwrap()
+            .prepare_seal(
+                2,
+                &[],
+                &[outbe_compressed_entities::PartitionRef::TributeWwd(day)],
+            )
+            .unwrap()
+            .new_root();
+        crate::ce_recovery::apply_replayed_block(
+            &service,
+            &CanonicalCeReplayBlock {
+                number: 2,
+                hash: hash(3),
+                parent_hash: hash(2),
+                parent_root: block_one_root,
+                new_root: block_two_root,
+                events: Vec::new(),
+                retirements: vec![outbe_compressed_entities::PartitionRef::TributeWwd(day)],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(service.finalized_marker().unwrap().new_root, block_two_root);
+        let reopened = service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 2,
+                block_hash: hash(3),
+                root: block_two_root,
+            })
+            .unwrap();
+        assert_eq!(
+            reopened.read_leaf_verified(entity, block_two_root).unwrap(),
+            None
         );
     }
 

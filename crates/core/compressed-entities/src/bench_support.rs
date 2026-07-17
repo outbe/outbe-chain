@@ -45,7 +45,7 @@ pub fn candidate_shard_roots(batch: &ProvisionalTreeBatch) -> Vec<B256> {
     batch
         .changed_collections
         .values()
-        .next()
+        .find_map(crate::CollectionOperation::mutation)
         .map_or_else(Vec::new, |collection| {
             collection.shard_set.new_shard_roots.clone()
         })

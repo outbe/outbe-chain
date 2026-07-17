@@ -689,7 +689,7 @@ mod ce_work_tests {
                 root: genesis_root,
             })
             .unwrap()
-            .prepare_seal(1, &[])
+            .prepare_seal(1, &[], &[])
             .unwrap();
         service.publish_candidate(block_hash, provisional).unwrap();
 

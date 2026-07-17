@@ -19,6 +19,8 @@ use crate::{schema::CompressedEntitiesSchema, state::State};
 mod adr007;
 #[path = "tests/adr008_scope.rs"]
 mod adr008_scope;
+#[path = "tests/adr011.rs"]
+mod adr011;
 
 fn commitment_vectors() -> serde_json::Value {
     serde_json::from_str(include_str!("../vectors/ces1-noble-poseidon.json")).unwrap()
@@ -401,7 +403,7 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
 }
 
 #[test]
-fn schema_v2_has_one_root_and_keeps_reserved_slots_empty() {
+fn schema_v3_has_one_root_retirement_journal_and_keeps_reserved_slots_empty() {
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -412,9 +414,38 @@ fn schema_v2_has_one_root_and_keeps_reserved_slots_empty() {
             crate::sealed_root(B256::ZERO).unwrap()
         );
         let schema = CompressedEntitiesSchema::new(storage);
-        assert_eq!(schema.storage_schema_version.read().unwrap(), 2);
+        assert_eq!(schema.storage_schema_version.read().unwrap(), 3);
         assert_eq!(schema.reserved_2.read().unwrap(), U256::ZERO);
         assert_eq!(schema.reserved_3.read().unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn schema_v2_to_v3_migration_requires_every_overlay_list_to_be_empty() {
+    let root = crate::sealed_root(B256::ZERO).unwrap();
+    let mut clean = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut clean, |storage| {
+        let schema = CompressedEntitiesSchema::new(storage.clone());
+        schema.storage_schema_version.write(2).unwrap();
+        schema
+            .last_smt_root
+            .write(U256::from_be_slice(root.as_slice()))
+            .unwrap();
+        State::new(storage).ensure_schema().unwrap();
+        assert_eq!(schema.storage_schema_version.read().unwrap(), 3);
+    });
+
+    let mut dirty = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut dirty, |storage| {
+        let schema = CompressedEntitiesSchema::new(storage.clone());
+        schema.storage_schema_version.write(2).unwrap();
+        schema
+            .last_smt_root
+            .write(U256::from_be_slice(root.as_slice()))
+            .unwrap();
+        schema.retirement_touched.push(20_260_717).unwrap();
+        assert!(State::new(storage).ensure_schema().is_err());
+        assert_eq!(schema.storage_schema_version.read().unwrap(), 2);
     });
 }
 

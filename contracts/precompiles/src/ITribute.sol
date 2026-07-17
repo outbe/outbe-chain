@@ -26,6 +26,8 @@ interface ITribute {
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
 
+    event TributePartitionRetired(uint32 indexed worldwideDay);
+
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
     function totalSupply() external view returns (uint256);

@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    delete, mint, read, BodyInput, EntityId36, EntityRef, ExecutionScope, ParentBodySource,
-    VerifiedBody,
+    delete, mint, read, retire_partition, BodyInput, EntityId36, EntityRef, ExecutionScope,
+    ParentBodySource, PartitionRef, RetirementOutcome, VerifiedBody,
 };
 use outbe_primitives::error::Result;
 
@@ -31,6 +31,79 @@ impl LoadedTribute {
 }
 
 impl TributeContract<'_> {
+    /// Applies ADR-011's one bulk accounting transition after every verified
+    /// Tribute in the sealed WWD has produced exactly one Nod.
+    pub fn consume_lysis_partition(
+        &mut self,
+        day: WorldwideDay,
+        verified_count: u32,
+        verified_nominal: alloy_primitives::U256,
+    ) -> Result<()> {
+        let mut totals = self.get_day_totals(day)?;
+        if !totals.initialized
+            || !totals.is_sealed
+            || totals.tribute_count != verified_count
+            || totals.tribute_nominal_amount != verified_nominal
+        {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Lysis input count/nominal does not match sealed Tribute DayTotals".into(),
+                ),
+            );
+        }
+        let supply = self
+            .total_supply
+            .read()?
+            .checked_sub(u64::from(verified_count))
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute total supply underflow during Lysis".into(),
+                )
+            })?;
+        self.total_supply.write(supply)?;
+        totals.tribute_count = 0;
+        totals.tribute_nominal_amount = alloy_primitives::U256::ZERO;
+        self.store_day_totals(&totals)
+    }
+
+    /// Requests the one authenticated Catalog delete only after Metadosis has
+    /// committed COMPLETED and the sealed DayTotals are zero.
+    pub fn retire_completed_partition(
+        &mut self,
+        scope: &ExecutionScope,
+        day: WorldwideDay,
+    ) -> Result<RetirementOutcome> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
+    }
+
+    fn retire_completed_partition_inner(
+        &mut self,
+        scope: &ExecutionScope,
+        day: WorldwideDay,
+    ) -> Result<RetirementOutcome> {
+        let outcome =
+            retire_partition(self.storage_handle(), scope, PartitionRef::TributeWwd(day))?;
+        if outcome == RetirementOutcome::NotPresent {
+            return Ok(outcome);
+        }
+
+        let totals = self.get_day_totals(day)?;
+        if !totals.initialized
+            || !totals.is_sealed
+            || totals.tribute_count != 0
+            || !totals.tribute_nominal_amount.is_zero()
+        {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "Tribute WWD is not completed and empty".into(),
+            ));
+        }
+        self.emit(ITribute::TributePartitionRetired {
+            worldwideDay: day.into(),
+        })?;
+        Ok(outcome)
+    }
+
     pub fn get_tributes_by_owner(
         &self,
         scope: &ExecutionScope,

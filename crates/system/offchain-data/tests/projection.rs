@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -178,6 +178,10 @@ fn tribute_stored_body_after(body: &TributeData, previous: B256) -> LogData {
     .encode_log_data()
 }
 
+fn tribute_partition_retired(day: u32) -> LogData {
+    ITribute::TributePartitionRetired { worldwideDay: day }.encode_log_data()
+}
+
 fn nod_body(nod_id: EntityId36, owner: Address, bucket_key: B256) -> NodItemState {
     NodItemState {
         nod_id,
@@ -327,11 +331,87 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     );
 
     let batches = storage.batches();
-    assert_eq!(batches.len(), 3); // initial state, receipt, checkpoint
+    assert_eq!(batches.len(), 2); // initial state, then one block+checkpoint transaction
     assert!(batches[1].contains(&"tributes".to_owned()));
     assert!(batches[1].contains(&"tributes_by_owner".to_owned()));
     assert!(batches[1].contains(&"tributes_by_day".to_owned()));
-    assert_eq!(batches[2], vec![PROJECTION_STATE_NAMESPACE.to_owned()]);
+    assert!(batches[1].contains(&PROJECTION_STATE_NAMESPACE.to_owned()));
+}
+
+#[test]
+fn tribute_partition_retirement_atomically_deletes_only_the_selected_day() {
+    assert_eq!(
+        ITribute::TributePartitionRetired::SIGNATURE_HASH,
+        keccak256("TributePartitionRetired(uint32)")
+    );
+    let storage = Arc::new(RecordingStorage::default());
+    let mut projection = open(&storage, 10);
+    let owner = Address::repeat_byte(0x71);
+    let retired_day = 20260715;
+    let retained_day = 20260716;
+    let retired_id = poseidon_entity(owner, retired_day);
+    let retained_id = poseidon_entity(owner, retained_day);
+
+    projection
+        .project_block(&FinalizedBlock {
+            number: 10,
+            hash: B256::repeat_byte(0x70),
+            receipts: vec![receipt(
+                0,
+                0x71,
+                vec![
+                    log(
+                        0,
+                        TRIBUTE_ADDRESS,
+                        tribute_stored(retired_id, owner, retired_day),
+                    ),
+                    log(
+                        1,
+                        TRIBUTE_ADDRESS,
+                        tribute_stored(retained_id, owner, retained_day),
+                    ),
+                ],
+            )],
+        })
+        .unwrap();
+
+    let retirement = FinalizedBlock {
+        number: 11,
+        hash: B256::repeat_byte(0x72),
+        receipts: vec![receipt(
+            0,
+            0x73,
+            vec![log(
+                0,
+                TRIBUTE_ADDRESS,
+                tribute_partition_retired(retired_day),
+            )],
+        )],
+    };
+    projection.project_block(&retirement).unwrap();
+
+    let repository = TributeRepositoryReader::new(storage.clone());
+    assert!(repository.get(retired_id).unwrap().is_none());
+    assert!(repository.get(retained_id).unwrap().is_some());
+    assert!(repository
+        .list_by_day(
+            WorldwideDay::new(retired_day),
+            TributePageRequest {
+                after: None,
+                limit: 10
+            },
+        )
+        .unwrap()
+        .records
+        .is_empty());
+    assert_eq!(
+        projection.state().checkpoint.unwrap().block_hash,
+        retirement.hash
+    );
+    assert!(matches!(
+        projection.project_block(&retirement).unwrap(),
+        ProjectionOutcome::AlreadyApplied(_)
+    ));
 }
 
 #[test]
@@ -405,11 +485,14 @@ fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data(
         receipts: vec![receipt(
             0,
             3,
-            vec![log(
-                0,
-                NOD_ADDRESS,
-                tribute_stored(ignored_id, Address::ZERO, 20260715),
-            )],
+            vec![
+                log(
+                    0,
+                    NOD_ADDRESS,
+                    tribute_stored(ignored_id, Address::ZERO, 20260715),
+                ),
+                log(1, NOD_ADDRESS, tribute_partition_retired(20260715)),
+            ],
         )],
     };
     projection.project_block(&ignored).unwrap();
@@ -1109,7 +1192,7 @@ impl StorageWriter for FailOnceStorage {
 }
 
 #[test]
-fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
+fn replay_after_atomic_block_boundary_converges() {
     let owner = Address::repeat_byte(0x51);
     let token_id = poseidon_entity(owner, 20260715);
     let mut bodies: [TributeData; 4] =
@@ -1160,7 +1243,7 @@ fn replay_after_each_receipt_and_checkpoint_boundary_converges() {
         ],
     };
 
-    for fail_on in 1..=5 {
+    for fail_on in 1..=1 {
         let storage = Arc::new(FailOnceStorage::default());
         let mut projection =
             OffchainDataProjection::open(config(60), storage.clone(), storage.clone()).unwrap();

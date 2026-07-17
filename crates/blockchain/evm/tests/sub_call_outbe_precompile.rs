@@ -19,7 +19,7 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
-    Commitment, EntityRef, ExecutionScope, FinalLeafMutation, ProvisionalTreeBatch,
+    Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_evm::sub_call;
@@ -69,10 +69,19 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         Ok((entity == self.entity).then_some(self.commitment))
     }
 
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        _expected_parent_root: B256,
+    ) -> outbe_primitives::error::Result<bool> {
+        Ok(false)
+    }
+
     fn prepare_seal(
         &self,
         block_number: u64,
         _mutations: &[FinalLeafMutation],
+        _retirements: &[PartitionRef],
     ) -> outbe_primitives::error::Result<ProvisionalTreeBatch> {
         ProvisionalTreeBatch::new_identity(block_number, B256::ZERO, B256::ZERO)
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
@@ -181,7 +190,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(2_u64))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3_u64))
             .unwrap();
         storage
             .sstore(

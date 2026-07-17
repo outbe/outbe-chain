@@ -1,6 +1,6 @@
 use crate::algorithm::*;
 use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -11,7 +11,7 @@ use outbe_compressed_entities::{
 use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::NOD_ADDRESS;
+use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
@@ -20,6 +20,23 @@ use std::sync::Arc;
 struct TestBodyRepository {
     tribute_reader: TributeRepositoryReader,
     nod_reader: NodRepositoryReader,
+}
+
+fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
 }
 
 impl TestBodyRepository {
@@ -107,6 +124,101 @@ fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
 }
 
 #[test]
+fn zero_or_over_budget_gratis_load_is_a_hard_failure_without_consumption() {
+    let mut remaining = U256::from(10);
+    assert!(crate::runtime::consume_required_gratis(&mut remaining, U256::ZERO).is_err());
+    assert_eq!(remaining, U256::from(10));
+    assert!(crate::runtime::consume_required_gratis(&mut remaining, U256::from(11)).is_err());
+    assert_eq!(remaining, U256::from(10));
+    crate::runtime::consume_required_gratis(&mut remaining, U256::from(4)).unwrap();
+    assert_eq!(remaining, U256::from(6));
+}
+
+#[test]
+fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20_260_717);
+    let owner = Address::repeat_byte(0x31);
+    let nominal = U256::in_units(100_u64);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+    let bodies = TestBodyRepository::new();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .settlement_iso_to_pair
+            .write(&840_u16, OracleContract::pair_hash("COEN", "0xUSD"))
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1_u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0_u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0_u32, U256::from(500_000_000_000_000_000_u128))
+            .unwrap();
+
+        let first = gas_audit_tribute(1, owner, wwd, nominal);
+        let mut second = gas_audit_tribute(2, Address::repeat_byte(0x32), wwd, nominal);
+        // The first Nod is staged through ISO 840. The second Tribute reaches
+        // its Nod preparation and then fails because ISO 978 has no oracle pair.
+        second.reference_currency = 978;
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        bodies.issue(&mut tribute, &scope, &first);
+        bodies.issue(&mut tribute, &scope, &second);
+        tribute.seal_day(wwd).unwrap();
+
+        let before = tribute.get_day_totals(wwd).unwrap();
+        let error = match crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            T_NOW,
+            nominal / U256::from(5_u64),
+        ) {
+            Ok(_) => panic!("the second Tribute must fail without an ISO 978 oracle pair"),
+            Err(error) => error,
+        };
+        assert!(!error.to_string().is_empty());
+
+        let after = TributeContract::new(storage.clone())
+            .get_day_totals(wwd)
+            .unwrap();
+        assert_eq!(after.tribute_count, before.tribute_count);
+        assert_eq!(after.tribute_nominal_amount, before.tribute_nominal_amount);
+        assert_eq!(
+            TributeContract::new(storage.clone())
+                .total_supply()
+                .unwrap(),
+            2
+        );
+        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+        assert!(outbe_intex::api::read_contributors(
+            &storage,
+            outbe_primitives::time::timestamp_to_date_key(T_NOW)
+        )
+        .unwrap()
+        .is_empty());
+    });
+    assert!(storage.get_events(NOD_ADDRESS).is_empty());
+}
+
+#[test]
 fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     const DENSE_TRIBUTE_COUNT: u64 = 512;
     const T_NOW: u64 = 1_700_000_000;
@@ -121,6 +233,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
 
     let result = StorageHandle::enter(&mut storage, |storage| {
         let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
@@ -165,6 +278,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             DENSE_TRIBUTE_COUNT as usize,
             "GAS-08 fixture must seed a dense but valid Lysis day"
         );
+        tribute.seal_day(wwd).unwrap();
 
         let result = crate::runtime::lysis(
             storage.clone(),
@@ -554,6 +668,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     let bodies = TestBodyRepository::new();
     let result = StorageHandle::enter(&mut storage, |s| {
         let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         // 1. Register COEN/0xUSD pair and seed its WorldwideDay VWAP. We
         //    write directly into the oracle schema (no real vote tally),
@@ -599,6 +714,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         let mut tribute_contract = TributeContract::new(s.clone());
         tribute_contract.unseal_day(wwd).unwrap();
         bodies.issue(&mut tribute_contract, &scope, &tribute);
+        tribute_contract.seal_day(wwd).unwrap();
 
         // 3. Pick a gratis allocation that produces a positive gratis_load.
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
@@ -843,6 +959,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     let bodies = TestBodyRepository::new();
     let result = StorageHandle::enter(&mut storage, |s| {
         let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
@@ -885,6 +1002,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
                 tribute_price_minor: U256::ZERO,
             },
         );
+        tribute.seal_day(wwd).unwrap();
 
         let result = lysis(s.clone(), &scope, &bodies, wwd, T_NOW, gratis_allocation).unwrap();
 
@@ -930,6 +1048,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
 
     StorageHandle::enter(&mut storage, |storage| {
         let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         // Oracle: register ISO 840 -> COEN/0xUSD and seed a day VWAP snapshot.
         let mut oracle = OracleContract::new(storage.clone());
@@ -978,6 +1097,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
             &scope,
             &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
         );
+        tribute.seal_day(wwd).unwrap();
 
         let total_nominal = U256::in_units(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);

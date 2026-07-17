@@ -19,18 +19,6 @@ pub struct LysisResult {
     pub remaining_gratis: U256,
 }
 
-/// Executes lysis for a given worldwide day with the specified gratis allocation.
-/// `auction_timestamp` is the day's scheduled auction time (weeks after `wwd`);
-/// its date key is the auction series id that keys the contributor map.
-///
-/// All arithmetic uses integer fixed-point math (no f32/f64).
-///
-/// 1. Loads all tributes for the day
-/// 2. Groups by fidelity index
-/// 3. Runs the distribution algorithm (fixed-point)
-/// 4. Creates NODs for each tribute
-/// 5. Leaves gratis unminted until a later NOD mine step
-/// 6. Emits deletion receipts for processed tributes; projection removes bodies and indexes
 pub fn lysis(
     storage: StorageHandle,
     scope: &ExecutionScope,
@@ -39,9 +27,27 @@ pub fn lysis(
     auction_timestamp: u64,
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
-    let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
+    storage.clone().with_checkpoint(|| {
+        lysis_inner(
+            storage,
+            scope,
+            parent,
+            wwd,
+            auction_timestamp,
+            gratis_allocation,
+        )
+    })
+}
 
-    // 1. Load all tributes for the day
+fn lysis_inner(
+    storage: StorageHandle,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    wwd: WorldwideDay,
+    auction_timestamp: u64,
+    gratis_allocation: U256,
+) -> Result<LysisResult> {
+    let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
     let tributes = load_day_tributes(storage.clone(), scope, parent, wwd)?;
     if tributes.is_empty() {
         return Ok(LysisResult {
@@ -51,30 +57,25 @@ pub fn lysis(
         });
     }
 
-    // 2. Collect each owner's RCFI (the fidelity index) and total nominal interest
-    let mut tribute_fis: Vec<u16> = Vec::with_capacity(tributes.len());
+    let mut tribute_fis = Vec::with_capacity(tributes.len());
     let mut total_interest = U256::ZERO;
-
     for loaded in &tributes {
         let tribute = loaded.body();
-        let fi = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
-        tribute_fis.push(fi);
-        total_interest += tribute.nominal_amount_minor;
+        tribute_fis.push(outbe_fidelity::api::league(storage.clone(), tribute.owner)?);
+        total_interest = total_interest
+            .checked_add(tribute.nominal_amount_minor)
+            .ok_or_else(|| {
+                PrecompileError::BodyReadCorruption(
+                    "Tribute nominal total overflow during Lysis".into(),
+                )
+            })?;
     }
-
     if total_interest.is_zero() {
-        let tribute_ids = tributes
-            .iter()
-            .map(|loaded| loaded.body().tribute_id)
-            .collect();
-        return Ok(LysisResult {
-            nod_ids: vec![],
-            tribute_ids,
-            remaining_gratis: gratis_allocation,
-        });
+        return Err(PrecompileError::BodyReadCorruption(
+            "non-empty Tribute partition has zero nominal total".into(),
+        ));
     }
 
-    // 3-7. Compute the FI → gratis-fraction map from the tribute amounts.
     let nominal_amounts: Vec<U256> = tributes
         .iter()
         .map(|loaded| loaded.body().nominal_amount_minor)
@@ -85,55 +86,31 @@ pub fn lysis(
         total_interest,
         gratis_allocation,
     )?;
-
-    // 8. Resolve entry_price_minor for default currency
     let entry_price_minor_840 = resolve_entry_price_minor(storage.clone(), wwd, 840)?;
 
-    // 9. Issue NODs for each tribute
     let mut nod_ids = Vec::with_capacity(tributes.len());
     let mut tribute_ids = Vec::with_capacity(tributes.len());
-    // Track which tribute token_ids were successfully processed.
-    let mut processed_tribute_ids: Vec<EntityId36> = Vec::with_capacity(tributes.len());
     let mut remaining = gratis_allocation;
-    // Per-owner nominal accumulator for the day's creator-reward split. BTreeMap
-    // keeps the contributor order deterministic (sorted by address) across nodes.
-    let mut contributors: std::collections::BTreeMap<Address, U256> =
-        std::collections::BTreeMap::new();
+    let mut contributors = std::collections::BTreeMap::<Address, U256>::new();
 
     for (i, loaded) in tributes.iter().enumerate() {
         let tribute = loaded.body();
         tribute_ids.push(tribute.tribute_id);
 
-        let fi = tribute_fis[i];
-        let fraction_fp = fi_fraction_map.get(&fi).copied().unwrap_or(U256::ZERO);
-
-        // gratis_load = fraction * nominal / SCALE (integer math)
+        let fraction_fp = fi_fraction_map
+            .get(&tribute_fis[i])
+            .copied()
+            .unwrap_or(U256::ZERO);
         let gratis_load = tribute.nominal_amount_minor * fraction_fp / SCALE_1E18;
-
-        if gratis_load.is_zero() || gratis_load > remaining {
-            // Cannot cover this tribute — skip NOD issuance
-            continue;
-        }
-
-        remaining -= gratis_load;
+        consume_required_gratis(&mut remaining, gratis_load)?;
 
         let entry_price_minor = match tribute.reference_currency {
             840 => entry_price_minor_840,
-            _ => resolve_entry_price_minor(storage.clone(), wwd, tribute.reference_currency)?,
+            currency => resolve_entry_price_minor(storage.clone(), wwd, currency)?,
         };
-
-        // floor_price = max(tribute_price, entry_price) * (1 + floor_rate 8%)
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
-
-        // League tier (in `[minLeague, maxLeague]`) from the Fidelity module:
-        // the owner's RCFI bucketed against the global synthetic-max ceiling at
-        // the current block time. Replaces the former floor(RCFI-in-days) value.
         let league_id = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
-
-        // cost_amount = cost_of_gratis * gratis_load / SCALE — both inputs are
-        // 10^18-scaled (oracle price × minor units); divide once to land in
-        // minor units.
         let cost_amount_minor = entry_price_minor * gratis_load / SCALE_1E18;
         let nod_id = outbe_nodfactory::api::issue_nod(
             &storage,
@@ -152,40 +129,51 @@ pub fn lysis(
             },
         )?;
         nod_ids.push(nod_id);
-        processed_tribute_ids.push(tribute.tribute_id);
-        // Credit this owner's nominal toward the creator-reward split.
-        *contributors.entry(tribute.owner).or_insert(U256::ZERO) += tribute.nominal_amount_minor;
+        let entry = contributors.entry(tribute.owner).or_insert(U256::ZERO);
+        *entry = entry
+            .checked_add(tribute.nominal_amount_minor)
+            .ok_or_else(|| {
+                PrecompileError::BodyReadCorruption(
+                    "Tribute contributor nominal overflow during Lysis".into(),
+                )
+            })?;
     }
 
-    // Capture the contributor map (owner -> Σ nominal of processed tributes)
-    // for this day's auction series BEFORE the tributes are burned, so
-    // IntexFactory can later pay creators proportional to nominal. The series
-    // id mirrors desis: date key of the auction timestamp.
-    if !contributors.is_empty() {
-        let list: Vec<(Address, U256)> = contributors.into_iter().collect();
-        let series_id = timestamp_to_date_key(auction_timestamp);
-        outbe_intex::api::record_contributors(&storage, series_id, &list)?;
+    if nod_ids.len() != tributes.len() {
+        return Err(PrecompileError::BodyReadCorruption(
+            "Lysis Nod count does not match Tribute count".into(),
+        ));
     }
 
-    // Bucket qualification is NOT written here. Buckets become qualified when
-    // the COEN/0xUSD oracle exchange rate reaches bucket.floor_price_minor —
-    // see `outbe_nod::runtime::NodContract::mine_gratis` for the price check
-    // and `outbe_nod::hooks::NodLifecycle` (if present) for eager bulk scan.
-
-    // Only delete tributes that were successfully processed (NOD issued).
-    // Skipped tributes are preserved for potential reprocessing.
-    let processed: std::collections::BTreeSet<_> = processed_tribute_ids.into_iter().collect();
-    for loaded in tributes {
-        if processed.contains(&loaded.body().tribute_id) {
-            tribute_contract.burn_loaded(scope, loaded)?;
-        }
-    }
+    let list: Vec<(Address, U256)> = contributors.into_iter().collect();
+    outbe_intex::api::record_contributors(
+        &storage,
+        timestamp_to_date_key(auction_timestamp),
+        &list,
+    )?;
+    tribute_contract.consume_lysis_partition(
+        wwd,
+        u32::try_from(tributes.len()).map_err(|_| {
+            PrecompileError::BodyReadCorruption("Tribute count exceeds u32 during Lysis".into())
+        })?,
+        total_interest,
+    )?;
 
     Ok(LysisResult {
         nod_ids,
         tribute_ids,
         remaining_gratis: remaining,
     })
+}
+
+pub(crate) fn consume_required_gratis(remaining: &mut U256, gratis_load: U256) -> Result<()> {
+    if gratis_load.is_zero() || gratis_load > *remaining {
+        return Err(PrecompileError::BodyReadCorruption(
+            "Lysis must issue exactly one non-zero Nod per Tribute".into(),
+        ));
+    }
+    *remaining -= gratis_load;
+    Ok(())
 }
 
 fn load_day_tributes(

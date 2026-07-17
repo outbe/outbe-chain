@@ -26,16 +26,17 @@ mod tree_service;
 pub mod bench_support;
 
 pub use api::{
-    begin_block, delete, end_block, list, mint, read, update, AuthenticatedParentTree,
-    AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint, CeWorkConfig, EntityRef,
-    ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow, FinalLeafMutation, IdPage,
-    IdPageRequest, ParentBodySource, ParentBodySourceRef, QueryRef, VerifiedBody, VerifiedBodyPage,
-    VerifiedPayload, MAX_ID_PAGE_LIMIT,
+    begin_block, delete, end_block, list, mint, read, retire_partition, update,
+    AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
+    CeWorkConfig, EntityRef, ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow,
+    FinalLeafMutation, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceRef, PartitionRef,
+    QueryRef, RetirementOutcome, VerifiedBody, VerifiedBodyPage, VerifiedPayload,
+    MAX_ID_PAGE_LIMIT,
 };
 
 pub use collection::{
-    collection_key, collection_root, sealed_root, CeDomain, CeTopologyV1, CollectionKey,
-    K_PROVISIONAL,
+    collection_key, collection_root, partition_collection_key, sealed_root, CeDomain, CeTopologyV1,
+    CollectionKey, K_PROVISIONAL,
 };
 pub use commitment::{
     body_commitment, derive_poseidon_entity_id, identity_field, pbytes, Commitment,
@@ -58,14 +59,14 @@ pub use protobuf::{
     StoredBody, TributeBodyV1, BODY_SCHEMA_V1,
 };
 pub use replay::{
-    decode_canonical_body_event, reconstruct_effective_final_mutations, CanonicalBodyEvent,
-    ReplayEventError,
+    decode_canonical_body_event, decode_partition_retirement,
+    reconstruct_effective_final_mutations, CanonicalBodyEvent, ReplayEventError,
 };
 pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES};
 pub use staging::{
-    CandidateCache, CandidateCacheLimits, CollectionBatch, ProvisionalCatalogBatch,
-    ProvisionalShardBatch, ProvisionalShardSetBatch, ProvisionalTreeBatch, PublicationOutcome,
-    StagedTreeBatch, StagingError, TreeChange,
+    CandidateCache, CandidateCacheLimits, CollectionBatch, CollectionOperation,
+    ProvisionalCatalogBatch, ProvisionalShardBatch, ProvisionalShardSetBatch, ProvisionalTreeBatch,
+    PublicationOutcome, RetirementBatch, StagedTreeBatch, StagingError, TreeChange,
 };
 pub use tree_manager::{CompressedTreeService, FinalizedCandidateOutcome, TreeServiceError};
 pub use tree_service::MdbxAuthenticatedTree;

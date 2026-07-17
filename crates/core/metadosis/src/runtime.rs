@@ -443,7 +443,7 @@ fn process_metadosis(
         return Ok(());
     }
 
-    let tribute = TributeContract::new(metadosis.storage.clone());
+    let mut tribute = TributeContract::new(metadosis.storage.clone());
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
@@ -458,6 +458,7 @@ fn process_metadosis(
             .read()?;
         let to_promis = dispatch_auction_clearing(ctx, wwd_type, auction_ts, limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
+        tribute.retire_completed_partition(scope, wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
             worldwideDay: wwd.into(),
             dayMetadosisLimit: limit_amount,
@@ -515,6 +516,7 @@ fn process_metadosis(
             promis_limit.set_total_unallocated(clearing_reminder)?;
 
             metadosis.mark_wwd_completed(wwd)?;
+            tribute.retire_completed_partition(scope, wwd)?;
 
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),

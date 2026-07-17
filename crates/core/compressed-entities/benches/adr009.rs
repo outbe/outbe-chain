@@ -330,7 +330,7 @@ fn build_fixture(
         })
         .expect("genesis parent");
     let provisional = parent
-        .prepare_seal(1, &workload.seed_mutations)
+        .prepare_seal(1, &workload.seed_mutations, &[])
         .expect("seed seal");
     let seed_root = provisional.new_root();
     let seed_hash = B256::from(field_word(90_010));
@@ -384,7 +384,7 @@ fn measured_full_path(
     let started = Instant::now();
     let parent = service.open_parent(parent).expect("exact parent open");
     let provisional = parent
-        .prepare_seal(2, black_box(&mutations))
+        .prepare_seal(2, black_box(&mutations), &[])
         .expect("sharded proof and seal");
     let root = provisional.new_root();
     service
@@ -426,7 +426,7 @@ fn measured_proof_seal(fixture: Fixture) -> Duration {
         .open_parent(fixture.parent)
         .expect("exact parent open");
     let provisional = parent
-        .prepare_seal(2, black_box(&fixture.mutations))
+        .prepare_seal(2, black_box(&fixture.mutations), &[])
         .expect("sharded proof and seal");
     black_box(provisional.new_root());
     started.elapsed()
@@ -438,7 +438,7 @@ fn measured_aggregation(fixture: Fixture) -> Duration {
         .open_parent(fixture.parent)
         .expect("exact parent open");
     let provisional = parent
-        .prepare_seal(2, &fixture.mutations)
+        .prepare_seal(2, &fixture.mutations, &[])
         .expect("sharded proof and seal");
     let roots = outbe_compressed_entities::bench_support::candidate_shard_roots(&provisional);
     let started = Instant::now();
@@ -452,7 +452,7 @@ fn measured_finalized_apply(fixture: Fixture) -> Duration {
         .open_parent(fixture.parent)
         .expect("exact parent open");
     let provisional = parent
-        .prepare_seal(2, &fixture.mutations)
+        .prepare_seal(2, &fixture.mutations, &[])
         .expect("sharded proof and seal");
     let root = provisional.new_root();
     fixture
@@ -683,7 +683,7 @@ fn cold_run(arguments: &[String]) -> Result<(), String> {
         .open_parent(parent)
         .map_err(|error| format!("open cold exact parent: {error}"))?;
     let provisional = parent_tree
-        .prepare_seal(2, &workload.mutations)
+        .prepare_seal(2, &workload.mutations, &[])
         .map_err(|error| format!("cold proof and seal: {error}"))?;
     let root = provisional.new_root();
     service

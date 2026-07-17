@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
     begin_block, end_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
@@ -6,6 +6,7 @@ use outbe_compressed_entities::{
 };
 use outbe_nod::NodRepositoryReader;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -81,6 +82,26 @@ fn with_active_scope<R>(
 ) -> R {
     let parent = TestParent::empty();
     let scope = ExecutionScope::new();
+    if storage
+        .sload(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)
+        .unwrap()
+        .is_zero()
+    {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
+    }
     begin_block(storage.clone(), &scope).unwrap();
     let result = f(&scope, &parent);
     end_block(storage, &scope).unwrap();

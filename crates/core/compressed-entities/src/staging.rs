@@ -145,6 +145,59 @@ pub struct CollectionBatch {
     pub(crate) shard_set: ProvisionalShardSetBatch,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetirementBatch {
+    pub(crate) domain_id: u16,
+    pub(crate) parent_collection_root: B256,
+    pub(crate) parent_shard_roots: Vec<B256>,
+}
+
+impl RetirementBatch {
+    pub(crate) fn new(
+        domain: CeDomain,
+        key: CollectionKey,
+        parent_collection_root: B256,
+        parent_shard_roots: Vec<B256>,
+    ) -> Result<Self, StagingError> {
+        if domain != CeDomain::Tribute || parent_shard_roots.len() != domain.shard_count() as usize
+        {
+            return Err(StagingError::InvalidCatalogEnvelope(
+                "only a complete Tribute collection may retire",
+            ));
+        }
+        let top = aggregate_b256_shard_roots(&parent_shard_roots)
+            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement shard roots"))?;
+        if collection_root(domain, key, top)
+            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement collection"))?
+            != parent_collection_root
+        {
+            return Err(StagingError::InvalidCatalogEnvelope(
+                "retirement parent collection root mismatch",
+            ));
+        }
+        Ok(Self {
+            domain_id: domain.id(),
+            parent_collection_root,
+            parent_shard_roots,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CollectionOperation {
+    Mutate(CollectionBatch),
+    Retire(RetirementBatch),
+}
+
+impl CollectionOperation {
+    pub(crate) fn mutation(&self) -> Option<&CollectionBatch> {
+        match self {
+            Self::Mutate(batch) => Some(batch),
+            Self::Retire(_) => None,
+        }
+    }
+}
+
 impl CollectionBatch {
     pub(crate) fn new(
         domain: CeDomain,
@@ -221,6 +274,7 @@ macro_rules! tree_batch_accessors {
         pub fn changed_shard_count(&self) -> usize {
             self.changed_collections
                 .values()
+                .filter_map(CollectionOperation::mutation)
                 .map(|batch| batch.shard_set.changed_shards.len())
                 .sum()
         }
@@ -228,6 +282,7 @@ macro_rules! tree_batch_accessors {
         pub fn branch_change_count(&self) -> usize {
             self.changed_collections
                 .values()
+                .filter_map(CollectionOperation::mutation)
                 .flat_map(|batch| batch.shard_set.changed_shards.values())
                 .map(ProvisionalShardBatch::branch_change_count)
                 .sum::<usize>()
@@ -240,6 +295,7 @@ macro_rules! tree_batch_accessors {
         pub fn leaf_change_count(&self) -> usize {
             self.changed_collections
                 .values()
+                .filter_map(CollectionOperation::mutation)
                 .flat_map(|batch| batch.shard_set.changed_shards.values())
                 .map(ProvisionalShardBatch::leaf_change_count)
                 .sum::<usize>()
@@ -263,7 +319,7 @@ pub struct ProvisionalTreeBatch {
     pub(crate) new_r_sealed: B256,
     pub(crate) parent_catalog_root: B256,
     pub(crate) new_catalog_root: B256,
-    pub(crate) changed_collections: BTreeMap<CollectionKey, CollectionBatch>,
+    pub(crate) changed_collections: BTreeMap<CollectionKey, CollectionOperation>,
     pub(crate) catalog_batch: Option<ProvisionalCatalogBatch>,
     pub(crate) encoded_size: usize,
 }
@@ -329,8 +385,13 @@ impl ProvisionalTreeBatch {
             .map_err(|_| {
                 StagingError::InvalidCatalogEnvelope("invalid benchmark collection root")
             })?;
-        let collection =
-            CollectionBatch::new(domain, collection_key, None, new_collection_root, shard_set)?;
+        let collection = CollectionOperation::Mutate(CollectionBatch::new(
+            domain,
+            collection_key,
+            None,
+            new_collection_root,
+            shard_set,
+        )?);
         let catalog_key = TreeKey::try_from(B256::from(*collection_key.as_bytes()))?;
         let catalog_value = LeafValue::try_from(new_collection_root)?;
         let new_catalog_root = new_root;
@@ -362,7 +423,7 @@ impl ProvisionalTreeBatch {
         new_r_sealed: B256,
         parent_catalog_root: B256,
         new_catalog_root: B256,
-        changed_collections: BTreeMap<CollectionKey, CollectionBatch>,
+        changed_collections: BTreeMap<CollectionKey, CollectionOperation>,
         catalog_batch: Option<ProvisionalCatalogBatch>,
     ) -> Result<Self, StagingError> {
         validate_catalog_envelope(
@@ -416,7 +477,7 @@ pub struct StagedTreeBatch {
     pub(crate) new_r_sealed: B256,
     pub(crate) parent_catalog_root: B256,
     pub(crate) new_catalog_root: B256,
-    pub(crate) changed_collections: BTreeMap<CollectionKey, CollectionBatch>,
+    pub(crate) changed_collections: BTreeMap<CollectionKey, CollectionOperation>,
     pub(crate) catalog_batch: Option<ProvisionalCatalogBatch>,
     pub(crate) encoded_size: usize,
 }
@@ -543,7 +604,7 @@ fn validate_catalog_envelope(
     new_r_sealed: B256,
     parent_catalog_root: B256,
     new_catalog_root: B256,
-    changed_collections: &BTreeMap<CollectionKey, CollectionBatch>,
+    changed_collections: &BTreeMap<CollectionKey, CollectionOperation>,
     catalog_batch: Option<&ProvisionalCatalogBatch>,
 ) -> Result<(), StagingError> {
     if sealed_root(parent_catalog_root)
@@ -583,55 +644,82 @@ fn validate_catalog_envelope(
                     "catalog leaf changes do not cover changed collections",
                 ));
             }
-            for (key, collection) in changed_collections {
-                let domain = CeDomain::try_from(collection.domain_id).map_err(|_| {
-                    StagingError::InvalidCatalogEnvelope("unknown collection domain")
-                })?;
-                if collection.shard_set.shard_count != domain.shard_count() {
-                    return Err(StagingError::InvalidCatalogEnvelope(
-                        "collection shard count does not match domain topology",
-                    ));
-                }
-                validate_shard_envelope(
-                    collection.shard_set.shard_count,
-                    collection.shard_set.parent_shard_top_root,
-                    collection.shard_set.new_shard_top_root,
-                    &collection.shard_set.parent_shard_roots,
-                    &collection.shard_set.new_shard_roots,
-                    &collection.shard_set.changed_shards,
-                )?;
-                let expected_parent = collection
-                    .parent_collection_root
-                    .map(|_| {
-                        collection_root(domain, *key, collection.shard_set.parent_shard_top_root)
-                    })
-                    .transpose()
-                    .map_err(|_| {
-                        StagingError::InvalidCatalogEnvelope("invalid parent collection")
-                    })?;
-                if expected_parent != collection.parent_collection_root
-                    || (collection.parent_collection_root.is_none()
-                        && collection
-                            .shard_set
-                            .parent_shard_roots
-                            .iter()
-                            .any(|root| *root != B256::ZERO))
-                    || collection_root(domain, *key, collection.shard_set.new_shard_top_root)
-                        .map_err(|_| {
-                            StagingError::InvalidCatalogEnvelope("invalid new collection")
-                        })?
-                        != collection.new_collection_root
-                {
-                    return Err(StagingError::InvalidCatalogEnvelope(
-                        "collection root mismatch",
-                    ));
-                }
+            for (key, operation) in changed_collections {
                 let tree_key = TreeKey::try_from(B256::from(*key.as_bytes()))?;
-                let expected = LeafValue::try_from(collection.new_collection_root)?;
-                if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Set(expected)) {
-                    return Err(StagingError::InvalidCatalogEnvelope(
-                        "catalog leaf is not the changed collection root",
-                    ));
+                match operation {
+                    CollectionOperation::Mutate(collection) => {
+                        let domain = CeDomain::try_from(collection.domain_id).map_err(|_| {
+                            StagingError::InvalidCatalogEnvelope("unknown collection domain")
+                        })?;
+                        if collection.shard_set.shard_count != domain.shard_count() {
+                            return Err(StagingError::InvalidCatalogEnvelope(
+                                "collection shard count does not match domain topology",
+                            ));
+                        }
+                        validate_shard_envelope(
+                            collection.shard_set.shard_count,
+                            collection.shard_set.parent_shard_top_root,
+                            collection.shard_set.new_shard_top_root,
+                            &collection.shard_set.parent_shard_roots,
+                            &collection.shard_set.new_shard_roots,
+                            &collection.shard_set.changed_shards,
+                        )?;
+                        let expected_parent = collection
+                            .parent_collection_root
+                            .map(|_| {
+                                collection_root(
+                                    domain,
+                                    *key,
+                                    collection.shard_set.parent_shard_top_root,
+                                )
+                            })
+                            .transpose()
+                            .map_err(|_| {
+                                StagingError::InvalidCatalogEnvelope("invalid parent collection")
+                            })?;
+                        if expected_parent != collection.parent_collection_root
+                            || (collection.parent_collection_root.is_none()
+                                && collection
+                                    .shard_set
+                                    .parent_shard_roots
+                                    .iter()
+                                    .any(|root| *root != B256::ZERO))
+                            || collection_root(
+                                domain,
+                                *key,
+                                collection.shard_set.new_shard_top_root,
+                            )
+                            .map_err(|_| {
+                                StagingError::InvalidCatalogEnvelope("invalid new collection")
+                            })? != collection.new_collection_root
+                        {
+                            return Err(StagingError::InvalidCatalogEnvelope(
+                                "collection root mismatch",
+                            ));
+                        }
+                        let expected = LeafValue::try_from(collection.new_collection_root)?;
+                        if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Set(expected)) {
+                            return Err(StagingError::InvalidCatalogEnvelope(
+                                "catalog leaf is not the changed collection root",
+                            ));
+                        }
+                    }
+                    CollectionOperation::Retire(retirement) => {
+                        let domain = CeDomain::try_from(retirement.domain_id).map_err(|_| {
+                            StagingError::InvalidCatalogEnvelope("unknown retirement domain")
+                        })?;
+                        RetirementBatch::new(
+                            domain,
+                            *key,
+                            retirement.parent_collection_root,
+                            retirement.parent_shard_roots.clone(),
+                        )?;
+                        if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Delete) {
+                            return Err(StagingError::InvalidCatalogEnvelope(
+                                "retired catalog leaf is not deleted",
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -718,18 +806,32 @@ fn canonical_tree_bytes(
     bytes.extend_from_slice(batch.parent_catalog_root.as_slice());
     bytes.extend_from_slice(batch.new_catalog_root.as_slice());
     bytes.extend_from_slice(&be4_len(batch.changed_collections.len())?);
-    for (key, collection) in &batch.changed_collections {
+    for (key, operation) in &batch.changed_collections {
         bytes.extend_from_slice(key.as_bytes());
-        bytes.extend_from_slice(&collection.domain_id.to_be_bytes());
-        match collection.parent_collection_root {
-            Some(root) => {
-                bytes.push(1);
-                bytes.extend_from_slice(root.as_slice());
+        match operation {
+            CollectionOperation::Mutate(collection) => {
+                bytes.push(0);
+                bytes.extend_from_slice(&collection.domain_id.to_be_bytes());
+                match collection.parent_collection_root {
+                    Some(root) => {
+                        bytes.push(1);
+                        bytes.extend_from_slice(root.as_slice());
+                    }
+                    None => bytes.push(0),
+                }
+                bytes.extend_from_slice(collection.new_collection_root.as_slice());
+                append_shard_set(&mut bytes, &collection.shard_set)?;
             }
-            None => bytes.push(0),
+            CollectionOperation::Retire(retirement) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&retirement.domain_id.to_be_bytes());
+                bytes.extend_from_slice(retirement.parent_collection_root.as_slice());
+                bytes.extend_from_slice(&be4_len(retirement.parent_shard_roots.len())?);
+                for root in &retirement.parent_shard_roots {
+                    bytes.extend_from_slice(root.as_slice());
+                }
+            }
         }
-        bytes.extend_from_slice(collection.new_collection_root.as_slice());
-        append_shard_set(&mut bytes, &collection.shard_set)?;
     }
     match &batch.catalog_batch {
         Some(catalog) => {
@@ -1491,7 +1593,7 @@ mod tests {
             sealed_root(new_catalog_root).unwrap(),
             parent_catalog_root,
             new_catalog_root,
-            BTreeMap::from([(collection_key, collection)]),
+            BTreeMap::from([(collection_key, CollectionOperation::Mutate(collection))]),
             Some(catalog_batch),
         )
         .unwrap();
@@ -1549,6 +1651,52 @@ mod tests {
             BTreeMap::from([(1, misderived)]),
         )
         .is_err());
+    }
+
+    #[test]
+    fn adr011_retirement_operation_has_pinned_discriminant_size_and_checksum() {
+        let domain = CeDomain::Tribute;
+        let collection_key = CollectionKey::try_from(B256::ZERO).unwrap();
+        let parent_shard_roots = vec![B256::ZERO; 16];
+        let parent_top = aggregate_b256_roots(&parent_shard_roots).unwrap();
+        let parent_collection_root = collection_root(domain, collection_key, parent_top).unwrap();
+        let retirement = RetirementBatch::new(
+            domain,
+            collection_key,
+            parent_collection_root,
+            parent_shard_roots,
+        )
+        .unwrap();
+        let parent_catalog_root = b256(30);
+        let new_catalog_root = b256(31);
+        let catalog_key = TreeKey::try_from(B256::from(*collection_key.as_bytes())).unwrap();
+        let provisional = ProvisionalTreeBatch::new(
+            8,
+            b256(7),
+            sealed_root(parent_catalog_root).unwrap(),
+            sealed_root(new_catalog_root).unwrap(),
+            parent_catalog_root,
+            new_catalog_root,
+            BTreeMap::from([(collection_key, CollectionOperation::Retire(retirement))]),
+            Some(ProvisionalCatalogBatch {
+                parent_catalog_root,
+                new_catalog_root,
+                branch_changes: BTreeMap::new(),
+                leaf_changes: BTreeMap::from([(catalog_key, TreeChange::Delete)]),
+            }),
+        )
+        .unwrap();
+        let staged = provisional.freeze(b256(8));
+        let canonical = staged.canonical_bytes().unwrap();
+
+        assert_eq!(canonical.len(), 901);
+        assert_eq!(canonical[236], 1, "Retire discriminant must remain one");
+        assert_eq!(
+            alloy_primitives::keccak256(&canonical),
+            alloy_primitives::b256!(
+                "a8f190e2fd539aa5dad1fe39a615792a0bcde0e658faf5d2849d2df8fb3d52e7"
+            )
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ use reth_db::{
     cursor::DbCursorRO,
     database::Database,
     mdbx::{create_db, tx::Tx, DatabaseArguments, RO},
+    table::Table,
     transaction::{DbTx, DbTxMut},
     ClientVersion, DatabaseEnv,
 };
@@ -91,7 +92,7 @@ mod adr010_tests {
     }
 
     #[test]
-    fn v3_genesis_materializes_only_catalog_and_first_mint_creates_exact_domain_roots() {
+    fn v3_retirement_reclaims_all_prefixes_alongside_other_wwd_and_both_nod_mutations() {
         let directory = tempfile::tempdir().unwrap();
         let genesis_hash = B256::repeat_byte(0x10);
         let db = Arc::new(
@@ -153,6 +154,7 @@ mod adr010_tests {
                     entity: EntityRef::Tribute(id),
                     final_leaf: Some(commitment),
                 }],
+                &[],
             )
             .unwrap();
         let staged = provisional.freeze(B256::repeat_byte(0x11));
@@ -193,29 +195,89 @@ mod adr010_tests {
             },
         )
         .unwrap();
-        let staged_delete = parent
+        let emptied = parent
             .prepare_seal(
                 2,
                 &[FinalLeafMutation {
                     entity: EntityRef::Tribute(id),
                     final_leaf: None,
                 }],
+                &[],
             )
             .unwrap()
             .freeze(B256::repeat_byte(0x12));
-        db.apply_finalized(&staged_delete).unwrap();
+        db.apply_finalized(&emptied).unwrap();
         let snapshot = db.open_snapshot().unwrap();
-        let catalog_key = TreeKey::try_from(B256::from(*collection.as_bytes())).unwrap();
-        assert!(snapshot
-            .read_leaf(TreeNamespace::Catalog, catalog_key)
-            .unwrap()
-            .is_some());
+        assert!(snapshot.collection_has_records(collection).unwrap());
         for shard in 0..K_PROVISIONAL {
             assert_eq!(
                 snapshot
                     .tree_root(TreeNamespace::CollectionShard(collection, shard))
                     .unwrap(),
                 Some(B256::ZERO)
+            );
+        }
+        let emptied_root = emptied.new_root();
+        let emptied_hash = emptied.block_hash();
+        drop(snapshot);
+
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 2,
+                block_hash: emptied_hash,
+                root: emptied_root,
+            },
+        )
+        .unwrap();
+        let nod_id = tribute_id(20_260_718, 2);
+        let other_tribute_id = tribute_id(20_260_719, 3);
+        let nod_collection = collection_key(CeDomain::NodItem, nod_id).unwrap();
+        let bucket_collection = collection_key(CeDomain::NodBucket, nod_id).unwrap();
+        let other_tribute_collection = collection_key(CeDomain::Tribute, other_tribute_id).unwrap();
+        let staged_delete = parent
+            .prepare_seal(
+                3,
+                &[
+                    FinalLeafMutation {
+                        entity: EntityRef::NodItem(nod_id),
+                        final_leaf: Some(Commitment::try_from(B256::with_last_byte(2).0).unwrap()),
+                    },
+                    FinalLeafMutation {
+                        entity: EntityRef::NodBucket(nod_id),
+                        final_leaf: Some(Commitment::try_from(B256::with_last_byte(3).0).unwrap()),
+                    },
+                    FinalLeafMutation {
+                        entity: EntityRef::Tribute(other_tribute_id),
+                        final_leaf: Some(Commitment::try_from(B256::with_last_byte(4).0).unwrap()),
+                    },
+                ],
+                &[crate::PartitionRef::TributeWwd(
+                    outbe_common::WorldwideDay::new(20_260_717),
+                )],
+            )
+            .unwrap()
+            .freeze(B256::repeat_byte(0x13));
+        db.apply_finalized(&staged_delete).unwrap();
+        let snapshot = db.open_snapshot().unwrap();
+        let catalog_key = TreeKey::try_from(B256::from(*collection.as_bytes())).unwrap();
+        assert!(snapshot
+            .read_leaf(TreeNamespace::Catalog, catalog_key)
+            .unwrap()
+            .is_none());
+        assert!(!snapshot.collection_has_records(collection).unwrap());
+        assert!(snapshot.collection_has_records(nod_collection).unwrap());
+        assert!(snapshot.collection_has_records(bucket_collection).unwrap());
+        assert!(snapshot
+            .collection_has_records(other_tribute_collection)
+            .unwrap());
+        for shard in 0..K_PROVISIONAL {
+            assert_eq!(
+                snapshot
+                    .tree_root(TreeNamespace::CollectionShard(collection, shard))
+                    .unwrap(),
+                None
             );
         }
     }
@@ -270,7 +332,7 @@ mod adr010_tests {
             ),
         });
         let staged = parent
-            .prepare_seal(1, &mutations)
+            .prepare_seal(1, &mutations, &[])
             .unwrap()
             .freeze(B256::repeat_byte(0x31));
         assert_eq!(staged.changed_collections.len(), 3);
@@ -359,6 +421,7 @@ mod adr010_tests {
                         entity: EntityRef::Tribute(id),
                         final_leaf: Some(Commitment::try_from(B256::with_last_byte(1).0).unwrap()),
                     }],
+                    &[],
                 )
                 .unwrap()
                 .freeze(B256::repeat_byte(0x42));
@@ -456,7 +519,7 @@ mod adr010_tests {
         )
         .unwrap();
         let staged = parent
-            .prepare_seal(1, &[])
+            .prepare_seal(1, &[], &[])
             .unwrap()
             .freeze(B256::repeat_byte(0x61));
         assert!(staged.changed_collections.is_empty());
@@ -1306,54 +1369,88 @@ impl CeMdbx {
             return Err(PersistenceError::ParentCatalogRootMismatch);
         }
 
-        for (collection_key, collection) in &batch.changed_collections {
-            let domain = crate::CeDomain::try_from(collection.domain_id)
-                .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
-            let shard_count = domain.shard_count();
+        for (collection_key, operation) in &batch.changed_collections {
             let catalog_key = TreeKey::try_from(B256::from(*collection_key.as_bytes()))?;
             let catalog_leaf =
                 read_tree_leaf(&tx, &self.path, TreeNamespace::Catalog, catalog_key)?
                     .map(LeafValue::into_inner);
-            if catalog_leaf != collection.parent_collection_root {
-                return Err(PersistenceError::ParentCatalogRootMismatch);
-            }
-            let persisted = read_collection_roots(&tx, &self.path, *collection_key, shard_count)?;
-            match (&persisted, collection.parent_collection_root) {
-                (None, None) => {
-                    if collection_has_records(&tx, &self.path, *collection_key)? {
-                        return Err(PersistenceError::OrphanCollectionRecords {
-                            collection: *collection_key,
-                        });
+            match operation {
+                crate::CollectionOperation::Mutate(collection) => {
+                    let domain = crate::CeDomain::try_from(collection.domain_id)
+                        .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+                    let shard_count = domain.shard_count();
+                    if catalog_leaf != collection.parent_collection_root {
+                        return Err(PersistenceError::ParentCatalogRootMismatch);
                     }
-                }
-                (Some(roots), Some(_)) if roots == &collection.shard_set.parent_shard_roots => {}
-                _ => return Err(PersistenceError::ParentShardRootsMismatch),
-            }
+                    let persisted =
+                        read_collection_roots(&tx, &self.path, *collection_key, shard_count)?;
+                    match (&persisted, collection.parent_collection_root) {
+                        (None, None) => {
+                            if collection_has_records(&tx, &self.path, *collection_key)? {
+                                return Err(PersistenceError::OrphanCollectionRecords {
+                                    collection: *collection_key,
+                                });
+                            }
+                        }
+                        (Some(roots), Some(_))
+                            if roots == &collection.shard_set.parent_shard_roots => {}
+                        _ => return Err(PersistenceError::ParentShardRootsMismatch),
+                    }
 
-            for shard_index in 0..shard_count {
-                let namespace = TreeNamespace::CollectionShard(*collection_key, shard_index);
-                let position = usize::try_from(shard_index).map_err(|_| {
-                    PersistenceError::InvalidShardCount {
-                        actual: shard_index,
+                    for shard_index in 0..shard_count {
+                        let namespace =
+                            TreeNamespace::CollectionShard(*collection_key, shard_index);
+                        let position = usize::try_from(shard_index).map_err(|_| {
+                            PersistenceError::InvalidShardCount {
+                                actual: shard_index,
+                            }
+                        })?;
+                        if let Some(shard) = collection.shard_set.changed_shards.get(&shard_index) {
+                            apply_tree_changes(&tx, self, namespace, shard)?;
+                        }
+                        tx.put::<tables::CeTreeRoots>(
+                            namespace.encode(),
+                            collection.shard_set.new_shard_roots[position]
+                                .as_slice()
+                                .to_vec(),
+                        )
+                        .map_err(|error| self.db_error(error))?;
                     }
-                })?;
-                if let Some(shard) = collection.shard_set.changed_shards.get(&shard_index) {
-                    apply_tree_changes(&tx, self, namespace, shard)?;
+                    let top = aggregate_b256_shard_roots(&collection.shard_set.new_shard_roots)
+                        .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+                    let recomputed = crate::collection_root(domain, *collection_key, top)
+                        .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+                    if recomputed != collection.new_collection_root {
+                        return Err(PersistenceError::NewCollectionRootMismatch);
+                    }
                 }
-                tx.put::<tables::CeTreeRoots>(
-                    namespace.encode(),
-                    collection.shard_set.new_shard_roots[position]
-                        .as_slice()
-                        .to_vec(),
-                )
-                .map_err(|error| self.db_error(error))?;
-            }
-            let top = aggregate_b256_shard_roots(&collection.shard_set.new_shard_roots)
-                .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-            let recomputed = crate::collection_root(domain, *collection_key, top)
-                .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-            if recomputed != collection.new_collection_root {
-                return Err(PersistenceError::NewCollectionRootMismatch);
+                crate::CollectionOperation::Retire(retirement) => {
+                    let domain = crate::CeDomain::try_from(retirement.domain_id)
+                        .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+                    if domain != crate::CeDomain::Tribute
+                        || catalog_leaf != Some(retirement.parent_collection_root)
+                    {
+                        return Err(PersistenceError::ParentCatalogRootMismatch);
+                    }
+                    let persisted = read_collection_roots(
+                        &tx,
+                        &self.path,
+                        *collection_key,
+                        domain.shard_count(),
+                    )?;
+                    if persisted.as_ref() != Some(&retirement.parent_shard_roots) {
+                        return Err(PersistenceError::ParentShardRootsMismatch);
+                    }
+                    let top = aggregate_b256_shard_roots(&retirement.parent_shard_roots)
+                        .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+                    if crate::collection_root(domain, *collection_key, top)
+                        .map_err(|error| PersistenceError::Staging(error.to_string()))?
+                        != retirement.parent_collection_root
+                    {
+                        return Err(PersistenceError::ParentCatalogRootMismatch);
+                    }
+                    delete_collection_records(&tx, self, *collection_key)?;
+                }
             }
         }
 
@@ -1773,6 +1870,70 @@ fn collection_has_records<T: DbTx>(
         .is_some_and(|(key, _)| key.starts_with(&prefix)))
 }
 
+fn delete_collection_records(
+    tx: &(impl DbTxMut + DbTx),
+    store: &CeMdbx,
+    collection: CollectionKey,
+) -> Result<(), PersistenceError> {
+    let prefix = collection_prefix(collection);
+
+    let root_keys = {
+        let mut cursor = tx
+            .cursor_read::<tables::CeTreeRoots>()
+            .map_err(|error| store.db_error(error))?;
+        collect_prefixed_keys::<tables::CeTreeRoots, _>(&mut cursor, &prefix, store)?
+    };
+    let branch_keys = {
+        let mut cursor = tx
+            .cursor_read::<tables::CeBranches>()
+            .map_err(|error| store.db_error(error))?;
+        collect_prefixed_keys::<tables::CeBranches, _>(&mut cursor, &prefix, store)?
+    };
+    let leaf_keys = {
+        let mut cursor = tx
+            .cursor_read::<tables::CeLeaves>()
+            .map_err(|error| store.db_error(error))?;
+        collect_prefixed_keys::<tables::CeLeaves, _>(&mut cursor, &prefix, store)?
+    };
+
+    for key in root_keys {
+        tx.delete::<tables::CeTreeRoots>(key, None)
+            .map_err(|error| store.db_error(error))?;
+    }
+    for key in branch_keys {
+        tx.delete::<tables::CeBranches>(key, None)
+            .map_err(|error| store.db_error(error))?;
+    }
+    for key in leaf_keys {
+        tx.delete::<tables::CeLeaves>(key, None)
+            .map_err(|error| store.db_error(error))?;
+    }
+    Ok(())
+}
+
+fn collect_prefixed_keys<T, C>(
+    cursor: &mut C,
+    prefix: &[u8],
+    store: &CeMdbx,
+) -> Result<Vec<Vec<u8>>, PersistenceError>
+where
+    T: Table<Key = Vec<u8>, Value = Vec<u8>>,
+    C: DbCursorRO<T>,
+{
+    let mut keys = Vec::new();
+    let mut row = cursor
+        .seek(prefix.to_vec())
+        .map_err(|error| store.db_error(error))?;
+    while let Some((key, _)) = row {
+        if !key.starts_with(prefix) {
+            break;
+        }
+        keys.push(key);
+        row = cursor.next().map_err(|error| store.db_error(error))?;
+    }
+    Ok(keys)
+}
+
 fn read_marker<T: DbTx>(tx: &T, path: &Path) -> Result<FinalizedMarker, PersistenceError> {
     let bytes = tx
         .get::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec())
@@ -2030,7 +2191,7 @@ mod tests {
     use crate::{
         collection_root, sealed_root,
         staging::{
-            CollectionBatch, ProvisionalCatalogBatch, ProvisionalShardBatch,
+            CollectionBatch, CollectionOperation, ProvisionalCatalogBatch, ProvisionalShardBatch,
             ProvisionalShardSetBatch, ProvisionalTreeBatch,
         },
         CeDomain, CeTopologyV1, K_PROVISIONAL,
@@ -2590,7 +2751,7 @@ mod tests {
             sealed_root(new_catalog_root).unwrap(),
             parent_catalog_root,
             new_catalog_root,
-            BTreeMap::from([(collection_key, collection)]),
+            BTreeMap::from([(collection_key, CollectionOperation::Mutate(collection))]),
             Some(ProvisionalCatalogBatch {
                 parent_catalog_root,
                 new_catalog_root,

@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::{
     commitment::{field_to_be32, poseidon},
-    pbytes, EntityId36, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT, TAG_KEY, TAG_SEALED_ROOT,
+    pbytes, EntityId36, PartitionRef, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT, TAG_KEY,
+    TAG_SEALED_ROOT,
 };
 
 pub const K_PROVISIONAL: u32 = 16;
@@ -114,6 +115,8 @@ pub enum CollectionError {
     NonCanonicalCollectionKey,
     #[error("unknown compressed-entity domain {0}")]
     UnknownDomain(u16),
+    #[error("invalid canonical Tribute WWD partition {0}")]
+    InvalidTributeWwd(u32),
 }
 
 pub fn collection_key(
@@ -136,6 +139,20 @@ pub fn collection_key(
     pbytes(TAG_COLLECTION_KEY, &input)
         .map(CollectionKey)
         .map_err(|error| CollectionError::Hash(error.to_string()))
+}
+
+pub fn partition_collection_key(
+    partition: PartitionRef,
+) -> Result<(CeDomain, CollectionKey), CollectionError> {
+    match partition {
+        PartitionRef::TributeWwd(day) => {
+            if !day.is_valid() {
+                return Err(CollectionError::InvalidTributeWwd(day.value()));
+            }
+            let id = EntityId36::new(day, [0_u8; 32]);
+            collection_key(CeDomain::Tribute, id).map(|key| (CeDomain::Tribute, key))
+        }
+    }
 }
 
 pub(crate) fn tree_key_bytes(

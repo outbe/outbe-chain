@@ -5,7 +5,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, Commitment, EntityRef,
-    ExactParentIdentity, ExecutionScope, FinalLeafMutation, ProvisionalTreeBatch,
+    ExactParentIdentity, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
     ACTIVE_COMMITMENT_SCHEME,
 };
 
@@ -59,10 +59,24 @@ impl AuthenticatedParentTree for RecordingTree {
         Ok(None)
     }
 
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<bool> {
+        if expected_parent_root != self.identity.root {
+            return Err(PrecompileError::TreeUnavailable(
+                "test parent root mismatch".into(),
+            ));
+        }
+        Ok(false)
+    }
+
     fn prepare_seal(
         &self,
         _block_number: u64,
         _mutations: &[FinalLeafMutation],
+        _retirements: &[PartitionRef],
     ) -> Result<ProvisionalTreeBatch> {
         Err(PrecompileError::Fatal(
             "test tree does not prepare candidates".into(),

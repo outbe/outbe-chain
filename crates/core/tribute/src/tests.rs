@@ -1,14 +1,14 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use alloy_primitives::{address, U256};
+use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
     begin_block, decode_tribute_v1, derive_poseidon_entity_id, end_block, EntityId36,
     ExecutionScope,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
-use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -105,11 +105,29 @@ fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
     )
 }
 
+fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
+}
+
 fn with_tribute<R>(f: impl FnOnce(&mut TestTribute<'_, '_>) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     let (reader, _writer) = body_repository();
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut storage, |storage| {
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let mut tc = TestTribute {
             contract: TributeContract::new(storage.clone()),
@@ -129,6 +147,7 @@ fn with_provider<R>(
     let (reader, _writer) = body_repository();
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut storage, |storage| {
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage, &scope).unwrap()
     });
     let result = f(&mut storage, &reader, &scope);
@@ -268,6 +287,43 @@ fn test_seal_day() {
         tc.unseal_day(20241220u32.into()).unwrap();
         assert!(!tc.is_day_sealed(20241220u32.into()).unwrap());
         tc.issue(&tribute).unwrap();
+    });
+}
+
+#[test]
+fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
+    with_tribute(|tc| {
+        let tribute = sample_tribute();
+        open_sample_day(tc);
+        tc.issue(&tribute).unwrap();
+        tc.seal_day(tribute.worldwide_day).unwrap();
+
+        assert!(tc
+            .consume_lysis_partition(tribute.worldwide_day, 2, tribute.nominal_amount_minor,)
+            .is_err());
+        assert!(tc
+            .consume_lysis_partition(
+                tribute.worldwide_day,
+                1,
+                tribute.nominal_amount_minor + U256::from(1),
+            )
+            .is_err());
+        let unchanged = tc.get_day_totals(tribute.worldwide_day).unwrap();
+        assert_eq!(unchanged.tribute_count, 1);
+        assert_eq!(
+            unchanged.tribute_nominal_amount,
+            tribute.nominal_amount_minor
+        );
+        assert_eq!(tc.total_supply().unwrap(), 1);
+
+        tc.consume_lysis_partition(tribute.worldwide_day, 1, tribute.nominal_amount_minor)
+            .unwrap();
+        let completed = tc.get_day_totals(tribute.worldwide_day).unwrap();
+        assert!(completed.initialized);
+        assert!(completed.is_sealed);
+        assert_eq!(completed.tribute_count, 0);
+        assert_eq!(completed.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(tc.total_supply().unwrap(), 0);
     });
 }
 

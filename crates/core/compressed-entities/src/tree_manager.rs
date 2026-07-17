@@ -448,6 +448,7 @@ mod tests {
                     entity,
                     final_leaf: Some(commitment),
                 }],
+                &[],
             )
             .unwrap();
         let block_hash = b256(2);
@@ -515,11 +516,13 @@ mod tests {
                         final_leaf: Some(bucket_leaf),
                     },
                 ],
+                &[],
             )
             .unwrap();
         assert_eq!(provisional.changed_shard_count(), 2);
         assert_eq!(provisional.changed_collections.len(), 2);
         assert!(provisional.changed_collections.values().all(|collection| {
+            let collection = collection.mutation().expect("mutation operation");
             collection.shard_set.parent_shard_roots.len() == K_PROVISIONAL as usize
                 && collection.shard_set.new_shard_roots.len() == K_PROVISIONAL as usize
         }));
@@ -552,7 +555,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
         let parent = service.open_parent(genesis_identity()).unwrap();
-        let provisional = parent.prepare_seal(1, &[]).unwrap();
+        let provisional = parent.prepare_seal(1, &[], &[]).unwrap();
         let block_hash = b256(2);
         service.publish_candidate(block_hash, provisional).unwrap();
 
@@ -582,7 +585,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
         let parent = service.open_parent(genesis_identity()).unwrap();
-        let provisional = parent.prepare_seal(1, &[]).unwrap();
+        let provisional = parent.prepare_seal(1, &[], &[]).unwrap();
         let block_hash = b256(2);
         service.publish_candidate(block_hash, provisional).unwrap();
 
@@ -605,7 +608,7 @@ mod tests {
             let provisional = service
                 .open_parent(genesis_identity())
                 .unwrap()
-                .prepare_seal(1, &[])
+                .prepare_seal(1, &[], &[])
                 .unwrap();
             service.publish_candidate(hash, provisional).unwrap();
         }
@@ -623,7 +626,7 @@ mod tests {
         let mut wrong_parent = service
             .open_parent(genesis_identity())
             .unwrap()
-            .prepare_seal(1, &[])
+            .prepare_seal(1, &[], &[])
             .unwrap();
         wrong_parent.parent_block_hash = b256(44);
         assert!(matches!(

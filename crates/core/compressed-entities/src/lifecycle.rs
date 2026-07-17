@@ -67,10 +67,13 @@ impl BlockLifecycle for CompressedEntitiesLifecycle {
                 final_leaf,
             })
             .collect::<Vec<_>>();
+        let retirements = state.retirements()?;
         let parent_root = state.root()?;
-        let staged_tree_batch = ctx
-            .scope
-            .prepare_tree_seal(ctx.runtime.block.block_number, &mutations)?;
+        let staged_tree_batch = ctx.scope.prepare_tree_seal(
+            ctx.runtime.block.block_number,
+            &mutations,
+            &retirements,
+        )?;
         if staged_tree_batch.parent_root() != parent_root {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "prepared compressed-entity tree batch has the wrong parent root".into(),
