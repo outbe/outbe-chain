@@ -18,9 +18,10 @@ fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
-fn sample_params(series_id: u32) -> CreateSeriesParams {
+fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
-        series_id,
+        series_id: worldwide_day,
+        worldwide_day,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(2_000u64),
@@ -44,7 +45,9 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
 #[test]
 fn create_then_read_round_trip() {
     with_registry(|s| {
-        api::create_series(&s, sample_params(7)).unwrap();
+        let mut p = sample_params(7);
+        p.worldwide_day = 20260101;
+        api::create_series(&s, p).unwrap();
 
         let r = api::read_series(&s, 7).unwrap();
         assert_eq!(r.series_id, 7);
@@ -64,7 +67,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
-        assert_eq!(r.worldwide_day, 7);
+        assert_eq!(r.worldwide_day, 20260101);
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
         assert_eq!(r.intex_call_period, CALL_PERIOD);

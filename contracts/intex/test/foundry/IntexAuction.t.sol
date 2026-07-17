@@ -25,7 +25,7 @@ contract AuctionTest is Test {
 
     // EIP-712 typehash mirrors `IntexAuction.REVEAL_BID_TYPEHASH`.
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
 
     uint32 internal constant RATE_SCALE = 1_000_000;
     // wCOEN escrow: the per-Intex escrow basis is PROMIS_LOAD_MINOR (constant COEN), so the lock is
@@ -95,27 +95,27 @@ contract AuctionTest is Test {
 
     /// @dev Create and start an auction as the relayer. The schedule is anchored to the
     ///      current `block.timestamp` via `_schedule()`.
-    function _start(uint32 seriesId, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
+    function _start(uint32 worldwideDay, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(minIntexBidRate, minIntexBidQuantity));
+        auction.auctionStart(worldwideDay, _schedule(), _params(minIntexBidRate, minIntexBidQuantity));
     }
 
     /// @dev Send the green-day signal and warp past `commitEnd` so the computed stage is
     ///      actually `RevealingBids` (stage is derived from the schedule + worldwide-day state).
-    function _enterRevealStage(uint32 seriesId, uint256 startTs) internal {
+    function _enterRevealStage(uint32 worldwideDay, uint256 startTs) internal {
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
         vm.warp(startTs + COMMIT_OFFSET + 1);
     }
 
     /// @dev Build an EIP-712 reveal signature against the deployed `auction` instance and the
     ///      current `block.chainid`.
-    function _createSignature(uint32 seriesId, address sender, uint16 qty, uint32 rate, uint256 privateKey)
+    function _createSignature(uint32 worldwideDay, address sender, uint16 qty, uint32 rate, uint256 privateKey)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, sender, qty, rate));
+        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, sender, qty, rate));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -130,66 +130,66 @@ contract AuctionTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _commit(uint32 seriesId, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
-        bytes memory signature = _createSignature(seriesId, bidder, qty, rate, privateKey);
+    function _commit(uint32 worldwideDay, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
+        bytes memory signature = _createSignature(worldwideDay, bidder, qty, rate, privateKey);
         bytes32 commitHash = keccak256(signature);
         vm.prank(bidder);
-        auction.commitBid(seriesId, commitHash);
+        auction.commitBid(worldwideDay, commitHash);
     }
 
-    function _reveal(uint32 seriesId, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
-        bytes memory signature = _createSignature(seriesId, bidder, qty, rate, privateKey);
+    function _reveal(uint32 worldwideDay, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
+        bytes memory signature = _createSignature(worldwideDay, bidder, qty, rate, privateKey);
         vm.prank(bidder);
-        auction.revealBid(seriesId, qty, rate, uint64(block.chainid), signature);
+        auction.revealBid(worldwideDay, qty, rate, uint64(block.chainid), signature);
     }
 
     function test_Lifecycle_FullFlow() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250115; // yyyymmdd format
+        uint32 worldwideDay = 20250115; // yyyymmdd format
         uint32 floor = 50;
         uint16 bidMinimumQuantity = 1;
-        _start(seriesId, floor, bidMinimumQuantity);
+        _start(worldwideDay, floor, bidMinimumQuantity);
 
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
-        IIntexAuction.AuctionData memory info = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory info = auction.getAuctionInfo(worldwideDay);
         assertEq(info.params.minIntexBidRate, floor);
         assertEq(info.params.promisLoadMinor, PROMIS_LOAD_MINOR);
 
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _commit(worldwideDay, iba2, 40, 70, iba2PrivateKey);
 
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
-        assertTrue(auction.committedBidsByHash(seriesId, iba2) != bytes32(0));
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba2) != bytes32(0));
 
-        _enterRevealStage(seriesId, startTs);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        _enterRevealStage(worldwideDay, startTs);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
 
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
 
         // Lock = qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE (wCOEN escrow basis).
-        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / RATE_SCALE);
-        assertEq(uint256(escrow.lockedFunds(seriesId, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / RATE_SCALE);
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / RATE_SCALE);
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / RATE_SCALE);
 
-        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
-        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
+        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(worldwideDay);
+        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(worldwideDay);
         assertEq(revealedBidsCount, 2);
         assertEq(bids.length, 2);
 
         // Past-revealEnd clearing signal: schedule already closed reveal, signal only advances stage.
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Issuance));
+        auction.startClearingStage(worldwideDay);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
 
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(seriesId, 75, 100);
+        emit IIntexAuction.AuctionClearingExecuted(worldwideDay, 75, 100);
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 100, 75, 2);
+        auction.executeAuctionClearing(worldwideDay, 100, 75, 2);
 
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
-        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.auctionClearingRate, 75);
         assertEq(fin.result.issuedIntexCount, 100);
         assertEq(fin.result.wonBidsCount, 2);
@@ -199,56 +199,56 @@ contract AuctionTest is Test {
     }
 
     function test_CommitCancel_And_Reverts() public {
-        uint32 seriesId = 20250116;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250116;
+        _start(worldwideDay, 10, 1);
 
         // commit + cancel
-        _commit(seriesId, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+        _commit(worldwideDay, iba1, 5, 11, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
-        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+        auction.cancelCommit(worldwideDay);
+        assertEq(auction.committedBidsByHash(worldwideDay, iba1), bytes32(0));
 
         // cancel when no commit
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
     }
 
     function test_CommitBid_RevertsZeroCommitHash() public {
         // B5.8: a degenerate zero commitHash must not occupy a bid slot.
-        uint32 seriesId = 20250117;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250117;
+        _start(worldwideDay, 10, 1);
 
         vm.expectRevert(IIntexAuction.InvalidCommitHash.selector);
         vm.prank(iba1);
-        auction.commitBid(seriesId, bytes32(0));
+        auction.commitBid(worldwideDay, bytes32(0));
     }
 
     function test_CommitBid_RevertsAfterCommitEnd_WhileUnknown() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250120;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250120;
+        _start(worldwideDay, 10, 1);
 
         // No green-day signal: worldwideDayState stays Unknown, so the derived stage stays
         // CommittingBids even past commitEnd. The explicit deadline gate must still reject.
         uint32 commitEnd = uint32(startTs + COMMIT_OFFSET);
         vm.warp(uint256(commitEnd)); // window is [start, commitEnd) → commitEnd itself is closed
 
-        bytes memory signature = _createSignature(seriesId, iba1, 5, 11, iba1PrivateKey);
+        bytes memory signature = _createSignature(worldwideDay, iba1, 5, 11, iba1PrivateKey);
         bytes32 commitHash = keccak256(signature);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.CommitWindowClosed.selector, commitEnd, commitEnd));
         vm.prank(iba1);
-        auction.commitBid(seriesId, commitHash);
+        auction.commitBid(worldwideDay, commitHash);
     }
 
     function test_CancelCommit_RevertsAfterCommitEnd_WhileUnknown() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250121;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250121;
+        _start(worldwideDay, 10, 1);
 
-        _commit(seriesId, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+        _commit(worldwideDay, iba1, 5, 11, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
 
         // Past commitEnd, signal still Unknown: a sealed commit must not be withdrawable.
         uint32 commitEnd = uint32(startTs + COMMIT_OFFSET);
@@ -256,175 +256,175 @@ contract AuctionTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.CommitWindowClosed.selector, commitEnd, commitEnd));
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
 
         // The commit survives the rejected cancel.
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
     }
 
     function test_CommitBid_AllowedAtLastSecondBeforeCommitEnd() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250122;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250122;
+        _start(worldwideDay, 10, 1);
 
         // commitEnd - 1 is the last valid second of the window.
         vm.warp(uint256(startTs + COMMIT_OFFSET) - 1);
-        _commit(seriesId, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+        _commit(worldwideDay, iba1, 5, 11, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
     }
 
     function test_Reveal_Reverts() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250117;
-        _start(seriesId, 100, 1);
+        uint32 worldwideDay = 20250117;
+        _start(worldwideDay, 100, 1);
 
-        _commit(seriesId, iba1, 10, 120, iba1PrivateKey);
+        _commit(worldwideDay, iba1, 10, 120, iba1PrivateKey);
 
-        _enterRevealStage(seriesId, startTs);
+        _enterRevealStage(worldwideDay, startTs);
 
         // wrong rate -> hash mismatch
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
-        _reveal(seriesId, iba1, 10, 999, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 10, 999, iba1PrivateKey);
 
         // ok reveal
-        _reveal(seriesId, iba1, 10, 120, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 10, 120, iba1PrivateKey);
 
         // double reveal
         vm.expectRevert(IIntexAuction.BidAlreadyRevealed.selector);
-        _reveal(seriesId, iba1, 10, 120, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 10, 120, iba1PrivateKey);
     }
 
     function test_Reveal_BelowFloor() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250118;
-        _start(seriesId, 100, 1);
+        uint32 worldwideDay = 20250118;
+        _start(worldwideDay, 100, 1);
 
         // Commit a below-floor bid during commit stage
-        _commit(seriesId, iba1, 10, 90, iba1PrivateKey);
+        _commit(worldwideDay, iba1, 10, 90, iba1PrivateKey);
 
-        _enterRevealStage(seriesId, startTs);
+        _enterRevealStage(worldwideDay, startTs);
 
         // below floor - try to reveal the below-floor bid
         vm.expectRevert(IIntexAuction.BidBelowMinIntexBidRate.selector);
-        _reveal(seriesId, iba1, 10, 90, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 10, 90, iba1PrivateKey);
     }
 
     function test_Reveal_BelowMinQuantity() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250140;
+        uint32 worldwideDay = 20250140;
         // minIntexBidRate = 100, minIntexBidQuantity = 5
-        _start(seriesId, 100, 5);
+        _start(worldwideDay, 100, 5);
 
         // Commit a below-minimum-quantity bid (qty 4 < 5) at an above-floor rate.
-        _commit(seriesId, iba1, 4, 120, iba1PrivateKey);
+        _commit(worldwideDay, iba1, 4, 120, iba1PrivateKey);
 
-        _enterRevealStage(seriesId, startTs);
+        _enterRevealStage(worldwideDay, startTs);
 
         // Quantity below the published minimum is rejected at reveal.
         vm.expectRevert(IIntexAuction.BidBelowMinIntexBidQuantity.selector);
-        _reveal(seriesId, iba1, 4, 120, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 4, 120, iba1PrivateKey);
     }
 
     function test_Reveal_AtMinQuantity_Succeeds() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250141;
-        _start(seriesId, 100, 5);
+        uint32 worldwideDay = 20250141;
+        _start(worldwideDay, 100, 5);
 
         // Quantity exactly at the minimum is accepted (boundary is inclusive).
-        _commit(seriesId, iba1, 5, 120, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 5, 120, iba1PrivateKey);
+        _commit(worldwideDay, iba1, 5, 120, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 5, 120, iba1PrivateKey);
 
-        assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
+        assertTrue(auction.revealedBidsByBidder(worldwideDay, iba1));
     }
 
     function test_Reveal_AboveMaxRate() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250142;
-        _start(seriesId, 1, 1);
+        uint32 worldwideDay = 20250142;
+        _start(worldwideDay, 1, 1);
 
         uint32 rate = RATE_SCALE + 1;
-        _commit(seriesId, iba1, 10, rate, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
+        _commit(worldwideDay, iba1, 10, rate, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
-        _reveal(seriesId, iba1, 10, rate, iba1PrivateKey);
+        _reveal(worldwideDay, iba1, 10, rate, iba1PrivateKey);
     }
 
     function test_Reveal_AtMaxRate_Succeeds() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250143;
-        _start(seriesId, 1, 1);
+        uint32 worldwideDay = 20250143;
+        _start(worldwideDay, 1, 1);
 
         uint16 qty = 3;
         uint32 rate = RATE_SCALE;
-        _commit(seriesId, iba1, qty, rate, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, qty, rate, iba1PrivateKey);
+        _commit(worldwideDay, iba1, qty, rate, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, qty, rate, iba1PrivateKey);
 
-        assertTrue(auction.revealedBidsByBidder(seriesId, iba1));
-        assertEq(uint256(escrow.lockedFunds(seriesId, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / RATE_SCALE);
+        assertTrue(auction.revealedBidsByBidder(worldwideDay, iba1));
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / RATE_SCALE);
     }
 
     function test_Reveal_WithoutCommit() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250119;
-        _start(seriesId, 100, 1);
+        uint32 worldwideDay = 20250119;
+        _start(worldwideDay, 100, 1);
 
-        _enterRevealStage(seriesId, startTs);
+        _enterRevealStage(worldwideDay, startTs);
 
         // reveal without commit
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
-        _reveal(seriesId, iba2, 5, 120, iba2PrivateKey);
+        _reveal(worldwideDay, iba2, 5, 120, iba2PrivateKey);
     }
 
     function test_RedDay_CancelsAuction() public {
-        uint32 seriesId = 20250120;
-        _start(seriesId, 1, 1);
+        uint32 worldwideDay = 20250120;
+        _start(worldwideDay, 1, 1);
 
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, false);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Cancelled));
+        auction.startRevealingBidsStage(worldwideDay, false);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
 
         // any action should fail stage requirement
-        bytes memory signature = _createSignature(seriesId, iba1, 1, 1, iba1PrivateKey);
+        bytes memory signature = _createSignature(worldwideDay, iba1, 1, 1, iba1PrivateKey);
         bytes32 commitHash = keccak256(signature);
         vm.expectRevert();
         vm.prank(iba1);
-        auction.commitBid(seriesId, commitHash);
+        auction.commitBid(worldwideDay, commitHash);
     }
 
     function test_Views_BySeriesId() public {
-        uint32 seriesId = 20250121;
-        _start(seriesId, 5, 1);
+        uint32 worldwideDay = 20250121;
+        _start(worldwideDay, 5, 1);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.params.minIntexBidRate, 5);
         assertEq(uint8(a.worldwideDayState), uint8(IIntexAuction.WorldwideDayState.Unknown));
 
         (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedBidData[] memory bids) =
-            auction.getAuctionDetails(seriesId);
+            auction.getAuctionDetails(worldwideDay);
         assertEq(b.params.promisLoadMinor, PROMIS_LOAD_MINOR);
         assertEq(bids.length, 0);
     }
 
     function test_Stage_TimingTransitions() public {
-        uint32 seriesId = 20250122;
-        _start(seriesId, 1, 1);
+        uint32 worldwideDay = 20250122;
+        _start(worldwideDay, 1, 1);
 
-        IIntexAuction.AuctionData memory d = auction.getAuctionInfo(seriesId);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        IIntexAuction.AuctionData memory d = auction.getAuctionInfo(worldwideDay);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         // Late green-day signal: schedule already closed commit window, signal only flips state.
         vm.warp(d.schedule.commitEnd - 1);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
         vm.warp(d.schedule.commitEnd + 1);
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        auction.startRevealingBidsStage(worldwideDay, true);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
 
         vm.warp(d.schedule.revealEnd + 1);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
     }
 
     // --- Access Control Tests ---
@@ -440,11 +440,11 @@ contract AuctionTest is Test {
 
     function test_Wire_RevertsWhileLocksOutstanding() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250201;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        uint32 worldwideDay = 20250201;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
 
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
@@ -454,11 +454,11 @@ contract AuctionTest is Test {
 
     function test_Wire_SucceedsAfterLocksCleared() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250202;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        uint32 worldwideDay = 20250202;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
 
         escrow.releaseAllLocks();
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
@@ -468,69 +468,69 @@ contract AuctionTest is Test {
     }
 
     function test_CancelCommit_AllowedWhenSignalNeverArrives() public {
-        uint32 seriesId = 20250210;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        uint32 worldwideDay = 20250210;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
 
         // No green-day signal ever arrives; past issuanceEnd the stranded commit is reclaimable.
-        vm.warp(auction.getAuctionInfo(seriesId).schedule.issuanceEnd + 1);
+        vm.warp(auction.getAuctionInfo(worldwideDay).schedule.issuanceEnd + 1);
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
 
-        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+        assertEq(auction.committedBidsByHash(worldwideDay, iba1), bytes32(0));
     }
 
     function test_CancelCommit_BlockedAfterCommitEndBeforeIssuanceEnd() public {
-        uint32 seriesId = 20250211;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
+        uint32 worldwideDay = 20250211;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
 
         // Past commitEnd but before issuanceEnd, signal still pending: cancel stays blocked.
-        uint32 commitEnd = auction.getAuctionInfo(seriesId).schedule.commitEnd;
+        uint32 commitEnd = auction.getAuctionInfo(worldwideDay).schedule.commitEnd;
         vm.warp(commitEnd + 1);
         vm.prank(iba1);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.CommitWindowClosed.selector, commitEnd, commitEnd + 1));
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
     }
 
     function test_ReapAuction_ClearsRevealedBidsInPages() public {
-        uint32 seriesId = 20250220;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+        uint32 worldwideDay = 20250220;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _commit(worldwideDay, iba2, 40, 70, iba2PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
 
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
         vm.warp(uint256(sched.commitEnd) + 1);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
 
         vm.warp(uint256(sched.revealEnd) + 1);
         vm.startPrank(bridger);
-        auction.startClearingStage(seriesId);
-        auction.executeAuctionClearing(seriesId, 100, 75, 2);
+        auction.startClearingStage(worldwideDay);
+        auction.executeAuctionClearing(worldwideDay, 100, 75, 2);
         vm.stopPrank();
 
         vm.expectRevert(IIntexAuction.TooEarlyToReap.selector);
-        auction.reapAuction(seriesId, 10);
+        auction.reapAuction(worldwideDay, 10);
 
         vm.warp(uint256(sched.issuanceEnd) + 1);
-        auction.reapAuction(seriesId, 1);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(seriesId);
+        auction.reapAuction(worldwideDay, 1);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(worldwideDay);
         assertEq(afterPage1.length, 1);
-        auction.reapAuction(seriesId, 10);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(seriesId);
+        auction.reapAuction(worldwideDay, 10);
+        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(worldwideDay);
         assertEq(afterPage2.length, 0);
     }
 
     function test_ReapAuction_RevertsBeforeTerminal() public {
-        uint32 seriesId = 20250221;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(seriesId).schedule;
+        uint32 worldwideDay = 20250221;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
         vm.warp(uint256(sched.issuanceEnd) + 1);
 
         // Green, past revealEnd, never cleared -> Issuance stage, not terminal.
@@ -541,139 +541,139 @@ contract AuctionTest is Test {
                 IIntexAuction.AuctionStage.Issuance
             )
         );
-        auction.reapAuction(seriesId, 10);
+        auction.reapAuction(worldwideDay, 10);
     }
 
     function test_RevealBid_FreesCommitSlot() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250230;
-        _start(seriesId, 50, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(seriesId, iba1) != bytes32(0));
+        uint32 worldwideDay = 20250230;
+        _start(worldwideDay, 50, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        assertTrue(auction.committedBidsByHash(worldwideDay, iba1) != bytes32(0));
 
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
 
-        assertEq(auction.committedBidsByHash(seriesId, iba1), bytes32(0));
+        assertEq(auction.committedBidsByHash(worldwideDay, iba1), bytes32(0));
     }
 
     function test_AccessControl_AuctionStart() public {
-        uint32 seriesId = 20250123;
+        uint32 worldwideDay = 20250123;
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, _schedule(), _params(10, 1));
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, _schedule(), _params(10, 1));
     }
 
     function test_AccessControl_StartRevealingBidsStage() public {
-        uint32 seriesId = 20250124;
-        _start(seriesId, 10, 1);
+        uint32 worldwideDay = 20250124;
+        _start(worldwideDay, 10, 1);
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
     }
 
     function test_AccessControl_StartClearingStage() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250125;
-        _start(seriesId, 10, 1);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250125;
+        _start(worldwideDay, 10, 1);
+        _enterRevealStage(worldwideDay, startTs);
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
     }
 
     function test_AccessControl_ExecuteAuctionClearing() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250126;
-        _start(seriesId, 10, 1);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250126;
+        _start(worldwideDay, 10, 1);
+        _enterRevealStage(worldwideDay, startTs);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.executeAuctionClearing(seriesId, 100, 75, 1);
+        auction.executeAuctionClearing(worldwideDay, 100, 75, 1);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.executeAuctionClearing(seriesId, 100, 75, 1);
+        auction.executeAuctionClearing(worldwideDay, 100, 75, 1);
     }
 
     // --- Clearing sanity-floor ---
 
     function test_ExecuteAuctionClearing_RevertsWonBidsExceedRevealed() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250127;
+        uint32 worldwideDay = 20250127;
         uint32 floor = 50;
-        _start(seriesId, floor, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _commit(seriesId, iba2, 40, 70, iba2PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _reveal(seriesId, iba2, 40, 70, iba2PrivateKey);
+        _start(worldwideDay, floor, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _commit(worldwideDay, iba2, 40, 70, iba2PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // 2 bids revealed; a clearing claiming 3 winners is rejected.
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, uint32(3), uint32(2)));
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 100, 75, 3);
+        auction.executeAuctionClearing(worldwideDay, 100, 75, 3);
     }
 
     function test_ExecuteAuctionClearing_RevertsPromisOverflow() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250199;
+        uint32 worldwideDay = 20250199;
         uint32 floor = 50;
 
         IIntexAuction.AuctionParams memory params = _params(floor, 1);
         params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), params);
+        auction.auctionStart(worldwideDay, _schedule(), params);
 
-        _enterRevealStage(seriesId, startTs);
+        _enterRevealStage(worldwideDay, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         vm.expectRevert(
             abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
         );
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, type(uint32).max, floor, 0);
+        auction.executeAuctionClearing(worldwideDay, type(uint32).max, floor, 0);
     }
 
     function test_ExecuteAuctionClearing_RevertsClearingRateBelowMin() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250128;
+        uint32 worldwideDay = 20250128;
         uint32 floor = 50;
-        _start(seriesId, floor, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _start(worldwideDay, floor, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // Clearing rate below the configured minimum is rejected.
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, uint64(floor - 1), floor));
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 100, floor - 1, 1);
+        auction.executeAuctionClearing(worldwideDay, 100, floor - 1, 1);
     }
 
     /// @dev No-sale auction: Desis floors the clearing rate at `minIntexBidRate`, so a clearing
@@ -682,24 +682,24 @@ contract AuctionTest is Test {
     ///      `clearingRate == 0 ⇔ winners == 0`. Guards against re-introducing that wrong rule.
     function test_ExecuteAuctionClearing_NoSale_ZeroWinnersAtFloor() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250144;
+        uint32 worldwideDay = 20250144;
         uint32 floor = 50;
-        _start(seriesId, floor, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _start(worldwideDay, floor, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // Zero winners, zero issued, clearing rate at the floor (non-zero): a valid No-sale result.
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(seriesId, floor, 0);
+        emit IIntexAuction.AuctionClearingExecuted(worldwideDay, floor, 0);
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 0, floor, 0);
+        auction.executeAuctionClearing(worldwideDay, 0, floor, 0);
 
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
-        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedIntexCount, 0);
         assertEq(fin.result.auctionClearingRate, floor);
@@ -712,24 +712,24 @@ contract AuctionTest is Test {
     ///      `ZeroValue`/`ClearingRateBelowMin`. The `cleared` flag drives the Completed stage.
     function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250145;
+        uint32 worldwideDay = 20250145;
         uint32 floor = 50; // minIntexBidRate > 0
-        _start(seriesId, floor, 1);
-        _commit(seriesId, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
-        _reveal(seriesId, iba1, 30, 80, iba1PrivateKey);
+        _start(worldwideDay, floor, 1);
+        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // issued=0, clearingRate=0, won=0 — accepted despite floor=50 (no supply was available).
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(seriesId, 0, 0);
+        emit IIntexAuction.AuctionClearingExecuted(worldwideDay, 0, 0);
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 0, 0, 0);
+        auction.executeAuctionClearing(worldwideDay, 0, 0, 0);
 
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Completed));
-        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(seriesId);
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.auctionClearingRate, 0);
         assertEq(fin.result.issuedIntexCount, 0);
         assertEq(fin.result.wonBidsCount, 0);
@@ -744,12 +744,12 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 0, 0, 0);
+        auction.executeAuctionClearing(worldwideDay, 0, 0, 0);
     }
 
     // --- Validation Tests ---
     function test_AuctionStart_Validation() public {
-        uint32 seriesId = 20250127;
+        uint32 worldwideDay = 20250127;
 
         // Schedule with commitEnd in the past.
         IIntexAuction.AuctionSchedule memory pastSchedule = IIntexAuction.AuctionSchedule({
@@ -759,7 +759,7 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, pastSchedule, _params(10, 1));
+        auction.auctionStart(worldwideDay, pastSchedule, _params(10, 1));
 
         // Schedule not strictly increasing (revealEnd <= commitEnd).
         IIntexAuction.AuctionSchedule memory nonIncreasing = IIntexAuction.AuctionSchedule({
@@ -769,16 +769,16 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, nonIncreasing, _params(10, 1));
+        auction.auctionStart(worldwideDay, nonIncreasing, _params(10, 1));
 
         // Valid start succeeds.
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, _schedule(), _params(10, 1));
 
         // AuctionAlreadyExists
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, _schedule(), _params(10, 1));
     }
 
     function test_Wire_Validation() public {
@@ -795,62 +795,62 @@ contract AuctionTest is Test {
 
     function test_ExecuteAuctionClearing_Validation() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250128;
-        _start(seriesId, 10, 1);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250128;
+        _start(worldwideDay, 10, 1);
+        _enterRevealStage(worldwideDay, startTs);
         // Reach the Issuance stage (time-derived: now >= revealEnd).
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // Zero auctionClearingRate
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
         vm.prank(bridger);
-        auction.executeAuctionClearing(seriesId, 100, 0, 1);
+        auction.executeAuctionClearing(worldwideDay, 100, 0, 1);
     }
 
     function test_RevealBid_Validation() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250129;
-        _start(seriesId, 10, 1);
-        _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250129;
+        _start(worldwideDay, 10, 1);
+        _commit(worldwideDay, iba1, 10, 20, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
 
         // Zero quantity
-        bytes memory sig = _createSignature(seriesId, iba1, 0, 20, iba1PrivateKey);
+        bytes memory sig = _createSignature(worldwideDay, iba1, 0, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 0, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 0, 20, uint64(block.chainid), sig);
 
         // Zero bidRate
-        sig = _createSignature(seriesId, iba1, 10, 0, iba1PrivateKey);
+        sig = _createSignature(worldwideDay, iba1, 10, 0, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 10, 0, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 0, uint64(block.chainid), sig);
 
         // Wrong chainId — caller's chainId param does not match block.chainid -> WrongChain.
         uint64 wrongChainId = 999;
-        sig = _createSignature(seriesId, iba1, 10, 20, iba1PrivateKey);
+        sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChainId)));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 10, 20, wrongChainId, sig);
+        auction.revealBid(worldwideDay, 10, 20, wrongChainId, sig);
     }
 
     function test_StartClearingStage_AlreadyClearing() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250130;
-        _start(seriesId, 10, 1);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250130;
+        _start(worldwideDay, 10, 1);
+        _enterRevealStage(worldwideDay, startTs);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
         // Call again when already in the issuance stage: idempotent, re-emits the stage update.
         vm.expectEmit(true, false, false, true);
         emit IIntexAuction.AuctionStageUpdated(
-            seriesId, IIntexAuction.AuctionStage.Issuance, uint32(block.timestamp), ""
+            worldwideDay, IIntexAuction.AuctionStage.Issuance, uint32(block.timestamp), ""
         );
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
     }
 
     function test_ViewFunctions_NotFound() public {
@@ -868,17 +868,17 @@ contract AuctionTest is Test {
 
     function test_RevealBid_WrongSigner() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250131;
-        _start(seriesId, 10, 1);
-        _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250131;
+        _start(worldwideDay, 10, 1);
+        _commit(worldwideDay, iba1, 10, 20, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
 
         // Try to reveal with signature from iba1 but call from iba2
         // This will fail with BidNotFound because iba2 has no commit
-        bytes memory sig = _createSignature(seriesId, iba1, 10, 20, iba1PrivateKey);
+        bytes memory sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         vm.prank(iba2);
-        auction.revealBid(seriesId, 10, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 20, uint64(block.chainid), sig);
     }
 
     /// @dev Reentrancy probe: arm the escrow mock to call back into `revealBid` during
@@ -888,26 +888,26 @@ contract AuctionTest is Test {
     ///      attacker double-records the bid) — i.e. it is a true red→green test of the guard.
     function test_RevealBid_reentrancyBlocked() public {
         uint256 startTs = block.timestamp;
-        uint32 seriesId = 20250201;
-        _start(seriesId, 10, 1);
-        _commit(seriesId, iba1, 10, 20, iba1PrivateKey);
-        _enterRevealStage(seriesId, startTs);
+        uint32 worldwideDay = 20250201;
+        _start(worldwideDay, 10, 1);
+        _commit(worldwideDay, iba1, 10, 20, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
 
-        bytes memory sig = _createSignature(seriesId, iba1, 10, 20, iba1PrivateKey);
+        bytes memory sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         bytes memory reentrantCall =
-            abi.encodeCall(IIntexAuction.revealBid, (seriesId, 10, 20, uint64(block.chainid), sig));
+            abi.encodeCall(IIntexAuction.revealBid, (worldwideDay, 10, 20, uint64(block.chainid), sig));
         escrow.armReentry(auction, reentrantCall);
 
         bytes4 reentrancyGuard = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
         vm.expectRevert(reentrancyGuard);
         vm.prank(iba1);
-        auction.revealBid(seriesId, 10, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 20, uint64(block.chainid), sig);
 
         // Tx unwound: no reveal recorded, no bid pushed.
-        assertFalse(auction.revealedBidsByBidder(seriesId, iba1));
-        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(seriesId);
+        assertFalse(auction.revealedBidsByBidder(worldwideDay, iba1));
+        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(worldwideDay);
         assertEq(bids.length, 0);
-        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(seriesId);
+        (, uint32 revealedBidsCount) = auction.auctionRunningCounts(worldwideDay);
         assertEq(revealedBidsCount, 0);
     }
 }

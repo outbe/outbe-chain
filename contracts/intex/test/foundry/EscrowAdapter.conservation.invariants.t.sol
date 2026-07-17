@@ -18,24 +18,24 @@ contract EscrowConservationHandler is Test {
     address internal auction;
     address internal bridger;
     address[] internal bidders;
-    uint32[] internal seriesIds;
+    uint32[] internal worldwideDays;
 
     constructor(
         EscrowAdapter _escrow,
         address _auction,
         address _bridger,
         address[] memory _bidders,
-        uint32[] memory _seriesIds
+        uint32[] memory _worldwideDays
     ) {
         escrow = _escrow;
         auction = _auction;
         bridger = _bridger;
         bidders = _bidders;
-        seriesIds = _seriesIds;
+        worldwideDays = _worldwideDays;
     }
 
     function _series(uint256 seed) internal view returns (uint32) {
-        return seriesIds[bound(seed, 0, seriesIds.length - 1)];
+        return worldwideDays[bound(seed, 0, worldwideDays.length - 1)];
     }
 
     function _bidder(uint256 seed) internal view returns (address) {
@@ -115,7 +115,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     address internal bridger = address(2);
     address internal auction = address(3);
 
-    uint32[] internal seriesIds;
+    uint32[] internal worldwideDays;
     address[] internal bidders;
 
     function setUp() public {
@@ -140,11 +140,11 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
             paymentToken.approve(address(escrow), type(uint256).max);
         }
 
-        seriesIds.push(1);
-        seriesIds.push(2);
-        seriesIds.push(3);
+        worldwideDays.push(1);
+        worldwideDays.push(2);
+        worldwideDays.push(3);
 
-        handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, seriesIds);
+        handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, worldwideDays);
 
         bytes4[] memory selectors = new bytes4[](9);
         selectors[0] = EscrowConservationHandler.lock.selector;
@@ -162,15 +162,15 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
     function invariant_pooledBalanceEqualsSumOfTotalLocked() public view {
         uint256 sumTotalLocked;
-        for (uint256 i = 0; i < seriesIds.length; i++) {
-            (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesIds[i]);
+        for (uint256 i = 0; i < worldwideDays.length; i++) {
+            (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);
             sumTotalLocked += totalLocked;
         }
         // Commit bonds share the pooled lockId with bid escrow but are accounted separately.
         uint256 sumBonds;
-        for (uint256 i = 0; i < seriesIds.length; i++) {
+        for (uint256 i = 0; i < worldwideDays.length; i++) {
             for (uint256 j = 0; j < bidders.length; j++) {
-                sumBonds += escrow.getCommitBond(seriesIds[i], bidders[j]).amount;
+                sumBonds += escrow.getCommitBond(worldwideDays[i], bidders[j]).amount;
             }
         }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());

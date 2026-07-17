@@ -26,7 +26,7 @@ interface IIntexFactory {
     ///         each owner's Tribute Nominal Amount. Callable only by the
     ///         OriginRouter. Registers the distribution; every payout is drained
     ///         over later blocks by the begin-block hook.
-    function distribute(uint32 seriesId) external payable;
+    function distribute(uint32 worldwideDay) external payable;
 
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);

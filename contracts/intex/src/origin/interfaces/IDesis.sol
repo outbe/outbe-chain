@@ -17,7 +17,7 @@ interface IDesis {
     }
 
     function processBidsBatch(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 srcChainId,
         uint32 relayGeneration,
         uint16 batchIndex,
@@ -28,8 +28,8 @@ interface IDesis {
         uint32[] calldata timestamps
     ) external;
 
-    function clearAuction(uint32 seriesId) external payable;
+    function clearAuction(uint32 worldwideDay) external payable;
 
-    function getAuctionStage(uint32 seriesId) external view returns (AuctionStage);
-    function getBidsCount(uint32 seriesId) external view returns (uint256);
+    function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
+    function getBidsCount(uint32 worldwideDay) external view returns (uint256);
 }

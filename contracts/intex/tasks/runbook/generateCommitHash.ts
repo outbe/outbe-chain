@@ -5,7 +5,7 @@
 import { task } from "hardhat/config";
 import { keccak256, isAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { resolveSeriesId } from "../../scripts/shared/auctionId.js";
+import { resolveWorldwideDay } from "../../scripts/shared/auctionId.js";
 import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 
 // =============================================================================
@@ -13,7 +13,7 @@ import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 // =============================================================================
 
 interface GenerateCommitHashTaskArgs {
-  series?: string;
+  worldwideDay?: string;
   bidder?: string;
   quantity?: string;
   bidRate?: string;
@@ -35,9 +35,9 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
 
   const account = privateKeyToAccount(privateKey);
 
-  // Parse parameters. `--series` (yyyymmdd) resolves to the uint32 seriesId that
-  // keys the auction; it falls back to today's date when omitted.
-  const seriesId = resolveSeriesId(toOptional(args.series));
+  // Parse parameters. `--worldwide-day` (yyyymmdd) resolves to the uint32 worldwide day
+  // that keys the auction; it falls back to today's date when omitted.
+  const worldwideDay = resolveWorldwideDay(toOptional(args.worldwideDay));
   const bidder = (toOptional(args.bidder) || account.address) as `0x${string}`;
   const quantity = BigInt(toOptional(args.quantity) || "5");
   const bidRate = BigInt(toOptional(args.bidRate) || "800000");
@@ -56,7 +56,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
 
   // Log inputs
   console.log("\n=== Generating Commit Hash (EIP-712) ===");
-  console.log("seriesId:", seriesId);
+  console.log("worldwideDay:", worldwideDay);
   console.log("bidder:", bidder);
   console.log("quantity:", quantity.toString());
   console.log("bidRate:", bidRate.toString());
@@ -74,7 +74,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
     },
     types: {
       RevealBid: [
-        { name: "seriesId", type: "uint32" },
+        { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
@@ -82,7 +82,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
     },
     primaryType: "RevealBid",
     message: {
-      seriesId,
+      worldwideDay,
       bidder,
       quantity: Number(quantity),
       bidRate: Number(bidRate),
@@ -95,7 +95,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("commitHash:", commitHash);
 
   console.log("\n=== FOR REVEAL ===");
-  console.log(`seriesId: ${seriesId}`);
+  console.log(`worldwideDay: ${worldwideDay}`);
   console.log(`quantity: ${quantity}`);
   console.log(`bidRate: ${bidRate}`);
   console.log(`chainId: ${chainId}`);
@@ -111,8 +111,8 @@ const generateCommitHash = task(
   "Generate the EIP-712 reveal signature and commit hash for manual bidding",
 )
   .addOption({
-    name: "series",
-    description: "Series in yyyymmdd format (e.g. 20260501). Resolves to the uint32 seriesId; defaults to today.",
+    name: "worldwideDay",
+    description: "Worldwide day in yyyymmdd format (e.g. 20260501). Resolves to the uint32 auction key; defaults to today.",
     defaultValue: "",
   })
   .addOption({ name: "bidder", description: "Bidder address (default: from PRIVATE_KEY)", defaultValue: "" })

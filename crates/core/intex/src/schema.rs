@@ -43,6 +43,7 @@ pub struct IntexCallTrigger {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSeriesParams {
     pub series_id: u32,
+    pub worldwide_day: u32,
     pub issued_intex_count: u32,
     /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
     pub promis_load_minor: u128,

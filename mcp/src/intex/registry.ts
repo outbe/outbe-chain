@@ -89,22 +89,22 @@ export function bridgeDstChainId(network: string): number {
 
 /** IntexAuction (BSC): commit/reveal + auction views. */
 export const AUCTION_ABI: Abi = parseAbi([
-  "function commitBid(uint32 seriesId, bytes32 commitHash)",
-  "function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes signature)",
-  "function cancelCommit(uint32 seriesId)",
-  "function claimCommitBond(uint32 seriesId, address bidder)",
-  "function getAuctionStage(uint32 seriesId) view returns (uint8)",
-  "function getAuctionInfo(uint32 seriesId) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
-  "function committedBidsByHash(uint32 seriesId, address bidder) view returns (bytes32)",
-  "function revealedBidsByBidder(uint32 seriesId, address bidder) view returns (bool)",
+  "function commitBid(uint32 worldwideDay, bytes32 commitHash)",
+  "function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes signature)",
+  "function cancelCommit(uint32 worldwideDay)",
+  "function claimCommitBond(uint32 worldwideDay, address bidder)",
+  "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
+  "function getAuctionInfo(uint32 worldwideDay) view returns ((uint8 worldwideDayState, (uint32 commitEnd, uint32 revealEnd, uint32 issuanceEnd) schedule, (uint16 issuanceCurrency, uint16 referenceCurrency, uint128 promisLoadMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 minIntexBidRate, uint16 minIntexBidQuantity, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, uint128 commitBondMinor) params, (uint64 auctionClearingRate, uint32 wonBidsCount, uint32 issuedIntexCount, uint128 issuedIntexLoadedPromis) result) auctionData)",
+  "function committedBidsByHash(uint32 worldwideDay, address bidder) view returns (bytes32)",
+  "function revealedBidsByBidder(uint32 worldwideDay, address bidder) view returns (bool)",
   "function escrowContract() view returns (address)",
-  "event AuctionStageUpdated(uint32 indexed seriesId, uint8 auctionStage, uint32 timestamp, string reason)",
+  "event AuctionStageUpdated(uint32 indexed worldwideDay, uint8 auctionStage, uint32 timestamp, string reason)",
 ]);
 
 /** IntexNFT1155 (BSC + outbe): holder-facing reads. */
 export const NFT_ABI: Abi = parseAbi([
   "function getOwnedSeriesWithBalances(address owner) view returns (uint256[] ownedTokenIds, uint256[] balances)",
-  "function getAuctionWonCount(uint32 seriesId, address account) view returns (uint16)",
+  "function getAuctionWonCount(uint32 worldwideDay, address account) view returns (uint16)",
   "function statusOf(uint256 tokenId) view returns (uint8)",
   "function balanceOf(address account, uint256 id) view returns (uint256)",
   "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",

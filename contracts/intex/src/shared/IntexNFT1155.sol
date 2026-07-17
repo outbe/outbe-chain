@@ -197,7 +197,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             totalSupply: 0,
             status: IIntexNFT1155.IntexStatus.Issued,
             state: IIntexNFT1155.IntexState.Issued,
-            worldwideDay: params.seriesId
+            worldwideDay: params.worldwideDay
         });
 
         // Register the Settled token id so reverse lookups and status checks work for either class.
@@ -208,7 +208,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
-        $.seriesOfDay[params.seriesId].push(params.seriesId);
+        $.seriesOfDay[params.worldwideDay].push(params.seriesId);
 
         emit MetadataUpdate(iTok);
     }

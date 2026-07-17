@@ -5,30 +5,30 @@ pragma solidity 0.8.30;
 /// @author Outbe
 /// @notice Interface for the Outbe-side router. Sends auction/series messages to BNB and receives BIDS_BATCH
 ///         from BNB over the protocol-agnostic ERC-7786 bridge.
-/// @dev All auction/series messages are keyed by `seriesId` (uint32). Outbound `send*` return the bridge `sendId`
+/// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. Outbound `send*` return the bridge `sendId`
 ///      and are funded either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quote*`
 ///      return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
     // --- Events ---
     /// @notice Emitted when a BIDS_BATCH is received from BNB.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids received.
-    event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed seriesId, uint256 bidsCount);
+    event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 bidsCount);
 
     /// @notice Emitted when an auction stage message is sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param stageType Codec message type (start/reveal/clearing).
-    event AuctionStageSent(bytes32 indexed sendId, uint32 indexed seriesId, uint8 stageType);
+    event AuctionStageSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultSent(
-        bytes32 indexed sendId, uint32 indexed seriesId, uint32 issuedIntexCount, uint64 clearingRate
+        bytes32 indexed sendId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are sent to BNB.
@@ -39,9 +39,9 @@ interface IOriginRouter {
 
     /// @notice Emitted when refund instructions are sent to BNB.
     /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param instructionsCount Number of finalization instructions.
-    event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 instructionsCount);
+    event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
     /// @notice Emitted when a mark-called message is sent to BNB.
     /// @param sendId Bridge send identifier.
@@ -54,13 +54,13 @@ interface IOriginRouter {
     event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);
 
     /// @notice Emitted when `_handleBidsBatch` auto-fires `Desis.clearAuction` for a `BidsReceived` series.
-    /// @param seriesId Series identifier whose auction was auto-cleared.
-    event ClearingAutoDispatched(uint32 indexed seriesId);
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose auction was auto-cleared.
+    event ClearingAutoDispatched(uint32 indexed worldwideDay);
 
     /// @notice Emitted when the auto-fired `Desis.clearAuction` reverts; the bid intake is kept.
-    /// @param seriesId Series identifier whose auto-clearing reverted.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose auto-clearing reverted.
     /// @param reason Raw revert bytes from the failed `clearAuction` call.
-    event ClearingAutoDispatchFailed(uint32 indexed seriesId, bytes reason);
+    event ClearingAutoDispatchFailed(uint32 indexed worldwideDay, bytes reason);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
@@ -77,11 +77,11 @@ interface IOriginRouter {
     /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
     event ProceedsRouteSet(address tokenBridge, address wcoen);
     /// @notice Emitted when inbound auction proceeds are handed to the factory for creator payout.
-    event ProceedsDistributed(uint32 indexed seriesId, uint256 amount);
+    event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when distribution failed and the proceeds were parked for retry.
-    event ProceedsParked(uint256 indexed idx, uint32 indexed seriesId, uint256 amount);
+    event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when a parked distribution was retried successfully.
-    event ProceedsRetried(uint256 indexed idx, uint32 indexed seriesId, uint256 amount);
+    event ProceedsRetried(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
@@ -95,14 +95,14 @@ interface IOriginRouter {
     // --- Types ---
     /// @notice Auction proceeds unwrapped on Outbe but not yet distributed, awaiting permissionless retry.
     struct ParkedProceeds {
-        uint32 seriesId;
+        uint32 worldwideDay;
         uint128 amount;
         bool settled;
     }
 
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     struct AuctionStageStartParams {
-        uint32 seriesId;
+        uint32 worldwideDay;
         /// @notice End of the commit stage (UNIX seconds).
         uint32 commitEnd;
         /// @notice End of the reveal stage (UNIX seconds).
@@ -140,6 +140,8 @@ interface IOriginRouter {
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         uint32 seriesId;
+        /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
+        uint32 worldwideDay;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
@@ -197,12 +199,12 @@ interface IOriginRouter {
     /// @notice Native fee to send auction stage start to BNB.
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256 fee);
     /// @notice Native fee to send auction stage reveal to BNB.
-    function quoteSendAuctionStageReveal(uint32 seriesId, bool isGreenDay) external view returns (uint256 fee);
+    function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256 fee);
     /// @notice Native fee to send auction stage clearing to BNB.
-    function quoteSendAuctionStageClearing(uint32 seriesId) external view returns (uint256 fee);
+    function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256 fee);
     /// @notice Native fee to send auction result to BNB.
     function quoteSendAuctionResult(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
@@ -214,7 +216,7 @@ interface IOriginRouter {
         returns (uint256 fee);
     /// @notice Native fee to send refund instructions to BNB.
     function quoteSendRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
@@ -228,12 +230,12 @@ interface IOriginRouter {
     /// @notice Send auction stage start to BNB. Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable returns (bytes32 sendId);
     /// @notice Send auction stage reveal to BNB. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageReveal(uint32 seriesId, bool isGreenDay) external payable returns (bytes32 sendId);
+    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external payable returns (bytes32 sendId);
     /// @notice Send auction stage clearing to BNB. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageClearing(uint32 seriesId) external payable returns (bytes32 sendId);
+    function sendAuctionStageClearing(uint32 worldwideDay) external payable returns (bytes32 sendId);
     /// @notice Send auction result to BNB. Restricted to `DESIS_ROLE`.
     function sendAuctionResult(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
@@ -245,7 +247,7 @@ interface IOriginRouter {
         returns (bytes32 sendId);
     /// @notice Send refund instructions to BNB. Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts

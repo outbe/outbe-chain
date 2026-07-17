@@ -44,7 +44,7 @@ contract GasAttributeTest is CrossChainTest {
 
     function test_fixedMessage_carriesTypeGas() public {
         IOriginRouter.AuctionStageStartParams memory p;
-        p.seriesId = 42;
+        p.worldwideDay = 42;
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
         _assertLastGas(IntexGas.AUCTION_STAGE_START);
@@ -59,7 +59,7 @@ contract GasAttributeTest is CrossChainTest {
 
     function _assertBidsGas(uint256 n) internal {
         ITargetRouter.BidsBatchParams memory p = ITargetRouter.BidsBatchParams({
-            seriesId: 42,
+            worldwideDay: 42,
             bidderAddresses: new address[](n),
             intexQuantities: new uint16[](n),
             intexBidRates: new uint32[](n),
@@ -73,7 +73,7 @@ contract GasAttributeTest is CrossChainTest {
         // The quote path builds the same attribute; the mock returns a flat fee, so this simply confirms the
         // quote signature compiles and returns without reverting under the gas attribute.
         IOriginRouter.AuctionStageStartParams memory p;
-        p.seriesId = 7;
+        p.worldwideDay = 7;
         outbe.quoteSendAuctionStageStart(p);
     }
 }

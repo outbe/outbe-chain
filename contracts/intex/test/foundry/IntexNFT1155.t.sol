@@ -128,6 +128,23 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.seriesIdsByWorldwideDay(SERIES_ID_2)[0], SERIES_ID_2);
     }
 
+    /// @dev The day is stored verbatim, not inferred from `seriesId`: prove it with distinct values so a future
+    ///      composite seriesId (many series per day) records the real day. Fails if provenance reads `params.seriesId`.
+    function test_CreateSeries_StoresRealDay_DistinctFromSeriesId() public {
+        uint32 seriesId = 7;
+        uint32 worldwideDay = 20260101;
+        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(worldwideDay, ISSUED_INTEX_COUNT, 0);
+        p.seriesId = seriesId; // break the identity so seriesId != worldwideDay
+        vm.prank(bridger);
+        nft.createSeries(p);
+
+        assertEq(nft.worldwideDayOf(seriesId), worldwideDay, "day stored verbatim");
+        uint32[] memory ids = nft.seriesIdsByWorldwideDay(worldwideDay);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], seriesId, "day indexes the series id");
+        assertEq(nft.seriesIdsByWorldwideDay(seriesId).length, 0, "the series id is not itself a day key");
+    }
+
     function test_Mint() public {
         uint256 quantity = 10;
 
