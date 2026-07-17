@@ -84,3 +84,18 @@ end-to-end coverage. Commands are run from the repository root unless noted.
   19/19 steps.
 - Harness removed both isolated run directories and managed containers after
   completion.
+
+### Harness and documentation audit
+
+- Every PFS-001 through PFS-006 contains all eight required acceptance-contract
+  fields; no missing field was reported by the repository check.
+- Added the PFS traceability-tag table and partial-coverage warning to the harness
+  README; updated `docs/flows/index.md` with verification-level selection and the
+  actual PFS-002/003/004/005 status.
+- First sandboxed `cargo test -p outbe-e2e-harness`: environment-induced RED —
+  loopback bind is denied in the restricted network namespace, so the scanning
+  allocator exhausted the range. No source change was made for this result.
+- Repeated with loopback access: PASS — 21/21 library tests; binary/doc tests PASS.
+- Final matrix audit found and replaced every remaining bare scenario `GAP` with
+  either existing evidence or a precise missing seam/policy. The template retains
+  its intentional `GAP` placeholder for newly authored flows.

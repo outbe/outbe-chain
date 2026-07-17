@@ -119,12 +119,12 @@ committed state. A partial cross-module result is never accepted.
 | PFS-006-02 | stale joiner withheld from reshare | 4 validators + stale joiner | remains pending/no share | `@pfs-006-02` live-node |
 | PFS-006-03 | voluntary exit and complete claim | 4 validators | committee exclusion and value conservation | `@pfs-006-03` committee exclusion; claim/value GAP |
 | PFS-006-04 | DKG failure and restart | 4 validators + joiner | no partial activation; retry succeeds | `@pfs-006-04` live-node |
-| PFS-006-05 | fee escrow and late voter payout | 4 validators | exact payout/residue equation | GAP |
+| PFS-006-05 | fee escrow and late voter payout | 4 validators | exact payout/residue equation | documentation-only until harness supports a fee-enabled genesis and controllable late-vote metadata |
 | PFS-006-06 | threshold liveness felony | 4 validators | one jail/slash; next committee excludes | `@pfs-006-06` liveness only; slash disabled/GAP |
-| PFS-006-07 | duplicate cryptographic evidence | 4 validators | one punishment/reward only | GAP |
-| PFS-006-08 | unjail and second reshare | 4 validators | cooldown/readiness/share reset | GAP |
+| PFS-006-07 | duplicate cryptographic evidence | 4 validators | one punishment/reward only | documentation-only until harness exposes canonical signed evidence construction/submission |
+| PFS-006-08 | unjail and second reshare | 4 validators | cooldown/readiness/share reset | documentation-only until fee/slashing is enabled and scenario time can cross the cooldown deterministically |
 | PFS-006-09 | crash at every boundary checkpoint | 4 validators | semantic pre-state or full outcome | `@pfs-006-09` active-share restart only; remaining checkpoints GAP |
-| PFS-006-10 | inactive cleanup and re-registration | 4 validators | index/pubkey/cooldown closure | GAP |
+| PFS-006-10 | inactive cleanup and re-registration | 4 validators | index/pubkey/cooldown closure | documentation-only until the lifecycle fixture drives claim maturity, cleanup and identity reuse |
 
 ## Open questions and technical debt
 

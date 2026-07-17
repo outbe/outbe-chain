@@ -20,6 +20,9 @@ resolve, not an implicit override.
 Every flow document contains:
 
 - status, actors, trigger and referenced ADRs;
+- an evidence-oriented acceptance contract: Source, Trigger, Environment,
+  Canonical inputs, System under test, Expected response, Response measures and
+  Failure guarantee;
 - preconditions and canonical inputs;
 - numbered success sequence with the owner of every step;
 - transaction/checkpoint/finality boundaries;
@@ -56,16 +59,19 @@ external services. Assertions distinguish:
 - **verified** — independent reads/proofs reconcile with canonical state.
 
 Tests must never use “transaction sent” as evidence for a completed protocol flow.
+Each matrix row maps to the strongest feasible level: live-node harness first,
+then an in-process cross-module test, otherwise documentation-only with the missing
+seam or unresolved policy named explicitly.
 
 ## Index
 
 | Flow | Outcome | Principal ADRs | Status | Automation |
 |---|---|---|---|---|
 | [PFS-001](001-encrypted-tribute-materialization.md) | Encrypted Tribute offer becomes finalized, projected and authenticated | ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-CLI-001, ADR-B-MCP-001, ADR-B-OCD-003 through ADR-B-OCD-006, ADR-B-OCD-013; ADR-S-TEE-001 through ADR-S-TEE-002; ADR-C-TRB-001 through ADR-C-TRB-002 | Draft | Partial: `tribute_projection.feature` |
-| [PFS-002](002-worldwide-day-tribute-to-nod.md) | WorldwideDay advances and atomically transforms sealed Tributes to Nods | ADR-B-CNS-003; ADR-S-CYC-001, ADR-S-ORC-001; ADR-C-MET-001, ADR-C-LYS-001 | Draft | Module tests; e2e gap |
-| [PFS-003](003-gratis-pledge-credis-repayment.md) | Gratis pledge opens Credis and installments release reclaim notes | ADR-B-SMA-001; ADR-S-ORC-001; ADR-C-GRT-001 through ADR-C-GRT-003, ADR-C-FID-001, ADR-C-CRD-001 through ADR-C-CRD-002, ADR-C-VLT-001 | Draft | e2e gap |
-| [PFS-004](004-intex-settlement-to-promis.md) | Intex issuance/qualification/settlement is mined into Promis | ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-XCH-001; ADR-S-ORC-001; ADR-C-PRM-001 through ADR-C-PRM-003, ADR-C-VLT-001, ADR-C-TOK-001 through ADR-C-TOK-002, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-DES-001 | Draft | e2e gap |
-| [PFS-005](005-governance-vote-protocol-activation.md) | Validator vote schedules and activates a supported protocol version | ADR-B-CNS-003; ADR-S-VAL-001, ADR-S-GOV-001 through ADR-S-GOV-003 | Draft | Partial: update feature |
+| [PFS-002](002-worldwide-day-tribute-to-nod.md) | WorldwideDay advances and atomically transforms sealed Tributes to Nods | ADR-B-CNS-003; ADR-S-CYC-001, ADR-S-ORC-001; ADR-C-MET-001, ADR-C-LYS-001 | Draft | Partial: in-process WWD/Lysis/Nod/Gratis |
+| [PFS-003](003-gratis-pledge-credis-repayment.md) | Gratis pledge opens Credis and installments release reclaim notes | ADR-B-SMA-001; ADR-S-ORC-001; ADR-C-GRT-001 through ADR-C-GRT-003, ADR-C-FID-001, ADR-C-CRD-001 through ADR-C-CRD-002, ADR-C-VLT-001 | Draft | Partial: in-process Credis lifecycle; proof/vault stubs |
+| [PFS-004](004-intex-settlement-to-promis.md) | Intex issuance/qualification/settlement is mined into Promis | ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-XCH-001; ADR-S-ORC-001; ADR-C-PRM-001 through ADR-C-PRM-003, ADR-C-VLT-001, ADR-C-TOK-001 through ADR-C-TOK-002, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-DES-001 | Draft | Documentation-only full flow; module/Foundry fragments |
+| [PFS-005](005-governance-vote-protocol-activation.md) | Validator vote schedules and activates a supported protocol version | ADR-B-CNS-003; ADR-S-VAL-001, ADR-S-GOV-001 through ADR-S-GOV-003 | Draft | Partial: live update + in-process edges |
 | [PFS-006](006-validator-join-operation-and-exit.md) | Validator joins, earns, exits or is punished without partial cross-module state | ADR-B-NOD-001, ADR-B-GEN-001, ADR-B-CNS-001 through ADR-B-CNS-003; ADR-S-CYC-001, ADR-S-VAL-001, ADR-S-STK-001, ADR-S-RWD-001, ADR-S-SLS-001, ADR-S-KEY-001, ADR-S-ACC-001 | Draft | Partial: lifecycle/DKG/stale-join/downtime features |
 
 ## Relationship to test documentation

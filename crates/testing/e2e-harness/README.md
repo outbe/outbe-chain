@@ -21,6 +21,20 @@ Gherkin tags. The runner matches the two:
 Requirement tags (`@`-less in code): `tee`, `min-validators-N`, `sudo`,
 and `todo` (an unimplemented stub — always skipped).
 
+Traceability tags use stable scenario ids from `docs/flows`, for example
+`@pfs-001-05`. They do not alter environment selection and can be passed directly
+to Cucumber's `--tags` filter. Current live-node mappings are:
+
+| PFS examples | Feature coverage |
+|---|---|
+| `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate replay |
+| `PFS-005-01` | Vote approval, Update scheduling and activation |
+| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness and active-share restart; consult the PFS matrix for deliberately partial assertions |
+
+Run one mapped example with `--tags '@pfs-001-05'`. A tag means that the
+scenario supplies the evidence stated in its PFS matrix row; it does not imply
+coverage of assertions that the row explicitly marks as a gap.
+
 ## Layout
 
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
