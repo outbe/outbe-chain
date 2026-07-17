@@ -48,9 +48,10 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
-fn sample(series_id: u32) -> IssuanceParams {
+fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
-        series_id,
+        series_id: worldwide_day,
+        worldwide_day,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
@@ -583,6 +584,7 @@ fn try_call_excludes_pre_issuance_days() {
             &s,
             outbe_intex::CreateSeriesParams {
                 series_id: 8,
+                worldwide_day: 8,
                 issued_intex_count: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
@@ -632,6 +634,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
         s,
         outbe_intex::CreateSeriesParams {
             series_id: id,
+            worldwide_day: id,
             issued_intex_count: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
