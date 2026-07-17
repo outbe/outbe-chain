@@ -72,17 +72,17 @@ contract FeeOnTransferToken is IERC20 {
 /// @dev Re-enters EscrowAdapter.claimRefund from depositLiquidity to probe the nonReentrant guard.
 contract HostileReentrantVaultProvider {
     EscrowAdapter public escrow;
-    uint32 public seriesId;
+    uint32 public worldwideDay;
     address public bidder;
 
-    function arm(EscrowAdapter _escrow, uint32 _seriesId, address _bidder) external {
+    function arm(EscrowAdapter _escrow, uint32 _worldwideDay, address _bidder) external {
         escrow = _escrow;
-        seriesId = _seriesId;
+        worldwideDay = _worldwideDay;
         bidder = _bidder;
     }
 
     function depositLiquidity(address, uint256) external returns (uint256) {
-        escrow.claimRefund(seriesId, bidder);
+        escrow.claimRefund(worldwideDay, bidder);
         return 1;
     }
 }

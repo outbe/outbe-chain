@@ -103,7 +103,7 @@ contract TargetRouterTest is CrossChainTest {
         }
 
         return ITargetRouter.BidsBatchParams({
-            seriesId: SERIES_ID,
+            worldwideDay: SERIES_ID,
             bidderAddresses: bidderAddresses,
             intexQuantities: intexQuantities,
             intexBidRates: intexBidRates,

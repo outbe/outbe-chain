@@ -11,7 +11,7 @@
           "internalType": "struct ITargetRouter.BidsBatchParams",
           "components": [
             {
-              "name": "seriesId",
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -57,7 +57,7 @@
           "internalType": "struct ITargetRouter.BidsBatchParams",
           "components": [
             {
-              "name": "seriesId",
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -168,7 +168,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -199,7 +199,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -224,7 +224,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -249,7 +249,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -274,7 +274,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -475,7 +475,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -506,7 +506,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -538,7 +538,7 @@
       "name": "ProceedsRouted",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -563,7 +563,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"

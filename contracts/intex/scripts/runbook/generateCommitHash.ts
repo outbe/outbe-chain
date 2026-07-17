@@ -23,12 +23,12 @@ async function main() {
   const account = privateKeyToAccount(privateKey);
 
   // Parse parameters
-  const seriesIdStr = params.seriesId || params.series || "20260108";
-  if (!/^\d{8}$/.test(seriesIdStr)) {
-    console.error("Error: --series must be yyyymmdd, e.g. 20260108");
+  const worldwideDayStr = params.worldwideDay || "20260108";
+  if (!/^\d{8}$/.test(worldwideDayStr)) {
+    console.error("Error: --worldwideDay must be yyyymmdd, e.g. 20260108");
     process.exit(1);
   }
-  const seriesId = parseInt(seriesIdStr, 10);
+  const worldwideDay = parseInt(worldwideDayStr, 10);
   const bidder = (params.bidder || account.address) as `0x${string}`;
   const quantity = BigInt(params.quantity || "5");
   const bidRate = BigInt(params.bidRate || params.rate || "800000");
@@ -47,7 +47,7 @@ async function main() {
 
   // Log inputs
   console.log("\n=== Generating Commit Hash (EIP-712) ===");
-  console.log("seriesId:", seriesId);
+  console.log("worldwideDay:", worldwideDay);
   console.log("bidder:", bidder);
   console.log("quantity:", quantity.toString());
   console.log("bidRate:", bidRate.toString());
@@ -65,7 +65,7 @@ async function main() {
     },
     types: {
       RevealBid: [
-        { name: "seriesId", type: "uint32" },
+        { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
         { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
@@ -73,7 +73,7 @@ async function main() {
     },
     primaryType: "RevealBid",
     message: {
-      seriesId,
+      worldwideDay,
       bidder,
       quantity: Number(quantity),
       bidRate: Number(bidRate),
@@ -86,7 +86,7 @@ async function main() {
   console.log("commitHash:", commitHash);
 
   console.log("\n=== FOR REVEAL ===");
-  console.log(`seriesId: ${seriesId}`);
+  console.log(`worldwideDay: ${worldwideDay}`);
   console.log(`quantity: ${quantity}`);
   console.log(`bidRate: ${bidRate}`);
   console.log(`chainId: ${chainId}`);

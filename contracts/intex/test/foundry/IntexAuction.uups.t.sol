@@ -22,7 +22,7 @@ contract IntexAuctionUupsTest is Test {
         auction = DeployProxy.intexAuction(admin, bridger);
     }
 
-    function _startAuction(uint32 seriesId) internal {
+    function _startAuction(uint32 worldwideDay) internal {
         IIntexAuction.AuctionSchedule memory schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp + 1 hours),
             revealEnd: uint32(block.timestamp + 2 hours),
@@ -41,7 +41,7 @@ contract IntexAuctionUupsTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(seriesId, schedule, params);
+        auction.auctionStart(worldwideDay, schedule, params);
     }
 
     function test_Initialize_GrantsRoles() public view {

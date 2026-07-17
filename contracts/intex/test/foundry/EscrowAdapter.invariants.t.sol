@@ -12,8 +12,8 @@ import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Property test for the per-series escrow invariant:
-///   Σ bidLocks[seriesId][bidder].lockedAmount, status == Locked
-///     == auctionEscrowState[seriesId].totalLocked
+///   Σ bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
+///     == auctionEscrowState[worldwideDay].totalLocked
 /// Holds across every state transition (lock, finalize, emergency refund).
 contract EscrowAdapterInvariantsTest is Test {
     EscrowAdapter escrow;
@@ -59,10 +59,10 @@ contract EscrowAdapterInvariantsTest is Test {
         }
     }
 
-    function _assertSeriesInvariant(uint32 seriesId, address[3] memory bidders) internal view {
+    function _assertSeriesInvariant(uint32 worldwideDay, address[3] memory bidders) internal view {
         uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
-            IEscrowAdapter.BidLock memory lock = escrow.getBidLock(seriesId, bidders[i]);
+            IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay, bidders[i]);
             if (lock.status == IEscrowAdapter.LockStatus.Locked) {
                 sum += lock.lockedAmount;
             } else if (lock.status == IEscrowAdapter.LockStatus.RefundClaimed) {
@@ -70,7 +70,7 @@ contract EscrowAdapterInvariantsTest is Test {
                 sum += lock.lockedAmount - lock.failedRefund;
             }
         }
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(seriesId);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
     }
 
@@ -142,8 +142,8 @@ contract EscrowAdapterInvariantsTest is Test {
         this._externalAssertInvariant(s1, bidders);
     }
 
-    function _externalAssertInvariant(uint32 seriesId, address[3] memory bidders) external view {
-        _assertSeriesInvariant(seriesId, bidders);
+    function _externalAssertInvariant(uint32 worldwideDay, address[3] memory bidders) external view {
+        _assertSeriesInvariant(worldwideDay, bidders);
     }
 
     /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201

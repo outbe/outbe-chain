@@ -18,7 +18,7 @@
           "internalType": "struct IOriginRouter.ParkedProceeds",
           "components": [
             {
-              "name": "seriesId",
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -42,7 +42,7 @@
       "name": "quoteSendAuctionResult",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -76,7 +76,7 @@
       "name": "quoteSendAuctionStageClearing",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -95,7 +95,7 @@
       "name": "quoteSendAuctionStageReveal",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -124,7 +124,7 @@
           "internalType": "struct IOriginRouter.AuctionStageStartParams",
           "components": [
             {
-              "name": "seriesId",
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -344,7 +344,7 @@
       "name": "quoteSendRefundInstructions",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -391,7 +391,7 @@
       "name": "sendAuctionResult",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -425,7 +425,7 @@
       "name": "sendAuctionStageClearing",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -444,7 +444,7 @@
       "name": "sendAuctionStageReveal",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -473,7 +473,7 @@
           "internalType": "struct IOriginRouter.AuctionStageStartParams",
           "components": [
             {
-              "name": "seriesId",
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -693,7 +693,7 @@
       "name": "sendRefundInstructions",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -831,7 +831,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -862,7 +862,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -887,7 +887,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -906,7 +906,7 @@
       "name": "ClearingAutoDispatchFailed",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -925,7 +925,7 @@
       "name": "ClearingAutoDispatched",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1051,7 +1051,7 @@
       "name": "ProceedsDistributed",
       "inputs": [
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1076,7 +1076,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1101,7 +1101,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1145,7 +1145,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
