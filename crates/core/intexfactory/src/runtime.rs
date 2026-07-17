@@ -17,7 +17,6 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -25,8 +24,11 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex and enroll it in the floor-bin
-/// index. The outbound ERC-7786 send is added with router wiring.
+/// Capture series identity in Intex, enroll it in the floor-bin index, and send
+/// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
+/// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
+/// broadcast (including a loopback leg on the origin), so there is no in-process
+/// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
     // u32 timestamp; bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
@@ -64,64 +66,45 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // Register the series on the local IntexNFT1155 so holders can be tracked
-    // on the Outbe side (required for the call-bridge credit path).
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::createSeriesCall {
-            params: CreateSeriesParams {
-                seriesId: params.series_id,
-                worldwideDay: params.worldwide_day,
-                issuanceCurrency: params.issuance_currency,
-                referenceCurrency: params.reference_currency,
-                issuedIntexCount: params.issued_intex_count,
-                promisLoadMinor: params.promis_load_minor,
-                entryPriceMinor: entry_price_minor_u64,
-                floorPriceMinor: floor_price_minor_u64,
-                callPriceMinor: call_price_minor_u64,
-                callTrigger: IntexCallTrigger {
-                    windowDays: cfg.call_window_days,
-                    thresholdDays: cfg.call_threshold_days,
-                    intexCallPeriod: cfg.intex_call_period_secs,
-                },
-            },
+    // One ISSUANCE per snapshot chain: winners routed to their own chain, every other snapshot
+    // chain gets an empty-recipient instruction so the series is created there too (needed for
+    // user NFT bridging). Relay-float-funded: value 0, the router pays the bridge fee from its float.
+    for &chain_id in &params.snapshot_chains {
+        let mut recipients = Vec::new();
+        let mut quantities = Vec::new();
+        for (i, &c) in params.recipient_chains.iter().enumerate() {
+            if c == chain_id {
+                recipients.push(params.recipients[i]);
+                quantities.push(params.quantities[i]);
+            }
         }
-        .abi_encode()
-        .into(),
-    )?;
-
-    // Send ISSUANCE_INSTRUCTIONS to BNB over the bridge (relay-float-funded, see below).
-    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
-        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
-    let call_price_minor_u64 = u64::try_from(call_price_minor)
-        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let router_params = IOriginRouter::IssuanceInstructionsParams {
-        seriesId: params.series_id,
-        worldwideDay: params.worldwide_day,
-        issuedIntexCount: params.issued_intex_count,
-        promisLoadMinor: params.promis_load_minor,
-        entryPriceMinor: entry_price_minor_u64,
-        floorPriceMinor: floor_price_minor_u64,
-        intexCallPeriod: cfg.intex_call_period_secs,
-        issuanceCurrency: params.issuance_currency,
-        referenceCurrency: params.reference_currency,
-        callWindowDays: cfg.call_window_days,
-        callThresholdDays: cfg.call_threshold_days,
-        callPriceMinor: call_price_minor_u64,
-        recipients: params.recipients,
-        quantities: params.quantities,
-    };
-    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendIssuanceInstructionsCall {
-            params: router_params,
-        }
-        .abi_encode()
-        .into(),
-    )?;
+        let router_params = IOriginRouter::IssuanceInstructionsParams {
+            dstChainId: chain_id,
+            seriesId: params.series_id,
+            worldwideDay: params.worldwide_day,
+            issuedIntexCount: params.issued_intex_count,
+            promisLoadMinor: params.promis_load_minor,
+            entryPriceMinor: entry_price_minor_u64,
+            floorPriceMinor: floor_price_minor_u64,
+            intexCallPeriod: cfg.intex_call_period_secs,
+            issuanceCurrency: params.issuance_currency,
+            referenceCurrency: params.reference_currency,
+            callWindowDays: cfg.call_window_days,
+            callThresholdDays: cfg.call_threshold_days,
+            callPriceMinor: call_price_minor_u64,
+            recipients,
+            quantities,
+        };
+        storage.call(
+            ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+            IOriginRouter::sendIssuanceInstructionsCall {
+                params: router_params,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+    }
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
     factory.insert_unqualified(params.series_id, floor_price_minor)?;

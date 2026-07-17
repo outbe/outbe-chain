@@ -599,6 +599,8 @@ fn clear_inner(
             reference_currency: QUALIFIER_REFERENCE_ISO,
             recipients: result.winners.clone(),
             quantities: result.winner_quantities.clone(),
+            recipient_chains: result.winner_chains.clone(),
+            snapshot_chains: snapshot.to_vec(),
         };
         outbe_intexfactory::api::issue(&storage, params)?;
     }

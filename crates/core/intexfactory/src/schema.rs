@@ -19,6 +19,10 @@ pub struct IssuanceParams {
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
     pub quantities: Vec<U256>,
+    /// Source chain of each winner (parallel to `recipients`); routes each mint to its chain.
+    pub recipient_chains: Vec<u32>,
+    /// Every target chain of the day's snapshot; each gets an ISSUANCE (empty recipients = create only).
+    pub snapshot_chains: Vec<u32>,
 }
 
 /// EVM storage layout: settlement bookkeeping (authorized_settler, settle_count,
