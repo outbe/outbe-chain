@@ -8,6 +8,12 @@ pub enum TransportError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("enclave io timeout during {operation} after {timeout_secs}s")]
+    IoTimeout {
+        operation: &'static str,
+        timeout_secs: u64,
+    },
+
     #[error("frame too large: {0} bytes")]
     FrameTooLarge(usize),
 

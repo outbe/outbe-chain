@@ -155,3 +155,9 @@ end-to-end coverage. Commands are run from the repository root unless noted.
 - Hardware SGX execution cannot be verified on this host because neither
   `/dev/sgx_enclave` nor `/dev/sgx_provision` exists. The corrected nightly
   hardware lane is the authoritative remaining verification.
+- Reclassified Linux `EAGAIN` correctly at the transport boundary: with
+  `SO_RCVTIMEO`, an enclave response exceeding the configured timeout is exposed
+  as `WouldBlock`/OS error 11. The client now reports the exact quote, Noise or
+  encrypted request/response phase and timeout duration instead of the ambiguous
+  `io error: Resource temporarily unavailable` message.
+- TEE client phase/timeout tests: PASS — 9/9 focused client tests.

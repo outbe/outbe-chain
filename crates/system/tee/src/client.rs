@@ -169,6 +169,26 @@ fn timeout_seconds_from(value: Option<&str>) -> u64 {
         .unwrap_or(DEFAULT_ENCLAVE_IO_TIMEOUT_SECS)
 }
 
+fn with_io_phase<T>(
+    result: Result<T, TransportError>,
+    operation: &'static str,
+) -> Result<T, TransportError> {
+    result.map_err(|error| match error {
+        TransportError::Io(source)
+            if matches!(
+                source.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            TransportError::IoTimeout {
+                operation,
+                timeout_secs: enclave_io_timeout().as_secs(),
+            }
+        }
+        other => other,
+    })
+}
+
 impl EnclaveClient {
     /// Connect to the enclave over a Unix domain socket (native sidecar), then
     /// fetch+verify the quote, pin the enclave Noise static key, and complete the
@@ -239,11 +259,17 @@ impl EnclaveClient {
     fn from_transport(mut stream: Transport, policy: &QuotePolicy) -> Result<Self, TransportError> {
         // 1. GetQuote (cleartext, pre-handshake) with a fresh nonce.
         let nonce: [u8; 32] = rand::random();
-        write_frame(
-            &mut stream,
-            &encode_request(&EnclaveRequest::GetQuote { nonce })?,
+        with_io_phase(
+            write_frame(
+                &mut stream,
+                &encode_request(&EnclaveRequest::GetQuote { nonce })?,
+            ),
+            "quote request write",
         )?;
-        let quote = decode_response(&read_frame(&mut stream)?)?;
+        let quote = decode_response(&with_io_phase(
+            read_frame(&mut stream),
+            "quote response read",
+        )?)?;
         let enclave_static = verify_quote(&quote, policy)?;
         let identity = quote_identity(&quote)?;
 
@@ -266,9 +292,12 @@ impl EnclaveClient {
         let n = handshake
             .write_message(&[], &mut buf)
             .map_err(|e| TransportError::Handshake(e.to_string()))?;
-        write_frame(&mut stream, &buf[..n])?;
+        with_io_phase(
+            write_frame(&mut stream, &buf[..n]),
+            "Noise handshake request write",
+        )?;
 
-        let msg2 = read_frame(&mut stream)?;
+        let msg2 = with_io_phase(read_frame(&mut stream), "Noise handshake response read")?;
         handshake
             .read_message(&msg2, &mut buf)
             .map_err(|e| TransportError::Handshake(e.to_string()))?;
@@ -298,9 +327,15 @@ impl EnclaveClient {
             .noise
             .write_message(&plain, &mut ct)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
-        write_frame(&mut self.stream, &ct[..n])?;
+        with_io_phase(
+            write_frame(&mut self.stream, &ct[..n]),
+            "encrypted enclave request write",
+        )?;
 
-        let resp_ct = read_frame(&mut self.stream)?;
+        let resp_ct = with_io_phase(
+            read_frame(&mut self.stream),
+            "encrypted enclave response read",
+        )?;
         let mut pt = vec![0u8; resp_ct.len()];
         let n = self
             .noise
@@ -513,6 +548,19 @@ mod tests {
         assert_eq!(timeout_seconds_from(Some("120")), 120);
         assert_eq!(timeout_seconds_from(Some("0")), 30);
         assert_eq!(timeout_seconds_from(Some("invalid")), 30);
+    }
+
+    #[test]
+    fn socket_eagain_is_reported_as_a_phase_timeout() {
+        let error = TransportError::Io(std::io::Error::from(std::io::ErrorKind::WouldBlock));
+        let mapped = with_io_phase::<()>(Err(error), "DKG response read").unwrap_err();
+        assert!(matches!(
+            mapped,
+            TransportError::IoTimeout {
+                operation: "DKG response read",
+                timeout_secs: 30
+            }
+        ));
     }
     use crate::quote::MIN_QUOTE_LEN;
 
