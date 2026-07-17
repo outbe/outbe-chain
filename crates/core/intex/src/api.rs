@@ -193,6 +193,16 @@ pub fn clear_distribution(storage: &StorageHandle<'_>, series_id: u32) -> Result
     registry.clear_contributors(series_id)
 }
 
+/// End one distribution round without touching the contributor map: drop the
+/// progress record and the active-set entry only. Used by the multi-chain
+/// proceeds flow, which decides separately whether to retain the map for a
+/// later top-up ([`finalize_proceeds`]) or clear it.
+pub fn finish_distribution_round(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.delete_dist_progress(series_id)?;
+    registry.remove_active_dist(series_id)
+}
+
 /// Number of in-flight distributions (for the begin-block drain).
 pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
     IntexContract::new(storage.clone()).read_active_dist_count()
@@ -201,4 +211,131 @@ pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
 /// `series_id` of the active distribution at a dense index.
 pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
     IntexContract::new(storage.clone()).read_active_dist_at(index)
+}
+
+// -------------------------------------------------------------------------
+// Creator-reward: multi-chain proceeds fan-in aggregation
+// -------------------------------------------------------------------------
+
+/// Arm proceeds fan-in for a series: mark the winning chains expected (deduped),
+/// set the fan-in `deadline`, and enroll the series in the awaiting-proceeds set
+/// the begin-block sweep watches. Called once at issuance.
+pub fn arm_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    winning_chains: &[u32],
+    deadline: u64,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut expected: u32 = 0;
+    for &chain in winning_chains {
+        let key = IntexContract::proceeds_chain_key(series_id, chain);
+        if registry.proceeds_expected.read(&key)? == 0 {
+            registry.proceeds_expected.write(&key, 1u8)?;
+            expected += 1;
+        }
+    }
+    registry
+        .proceeds_expected_count
+        .write(&series_id, expected)?;
+    registry.proceeds_deadline.write(&series_id, deadline)?;
+    registry.push_awaiting_proceeds(series_id)
+}
+
+/// Credit a chain's proceeds into the series pot; counts the chain toward the
+/// fan-in once (dedup), so a chain routing its proceeds in parts is idempotent
+/// for completeness while still summing every amount.
+pub fn credit_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    src_chain_id: u32,
+    amount: U256,
+) -> Result<()> {
+    let registry = IntexContract::new(storage.clone());
+    let pot = registry.proceeds_pot.read(&series_id)?;
+    registry.proceeds_pot.write(&series_id, pot + amount)?;
+
+    let expected_key = IntexContract::proceeds_chain_key(series_id, src_chain_id);
+    let arrived_key = expected_key;
+    if registry.proceeds_expected.read(&expected_key)? != 0
+        && registry.proceeds_arrived.read(&arrived_key)? == 0
+    {
+        registry.proceeds_arrived.write(&arrived_key, 1u8)?;
+        let arrived = registry.proceeds_arrived_count.read(&series_id)?;
+        registry
+            .proceeds_arrived_count
+            .write(&series_id, arrived + 1)?;
+    }
+    Ok(())
+}
+
+/// Every expected winning chain has routed its proceeds.
+pub fn proceeds_ready(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
+    let registry = IntexContract::new(storage.clone());
+    let expected = registry.proceeds_expected_count.read(&series_id)?;
+    Ok(expected > 0 && registry.proceeds_arrived_count.read(&series_id)? == expected)
+}
+
+/// Fan-in deadline for a series (0 if never armed).
+pub fn proceeds_deadline(storage: &StorageHandle<'_>, series_id: u32) -> Result<u64> {
+    IntexContract::new(storage.clone())
+        .proceeds_deadline
+        .read(&series_id)
+}
+
+/// Read and clear the accumulated pot (handed to a distribution round).
+pub fn take_proceeds_pot(storage: &StorageHandle<'_>, series_id: u32) -> Result<U256> {
+    let registry = IntexContract::new(storage.clone());
+    let pot = registry.proceeds_pot.read(&series_id)?;
+    registry.proceeds_pot.write(&series_id, U256::ZERO)?;
+    Ok(pot)
+}
+
+/// Mark whether the current distribution round should finalize the series on
+/// completion (all expected chains in) or retain its map for a later top-up.
+pub fn set_proceeds_finalize_on_done(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    finalize: bool,
+) -> Result<()> {
+    IntexContract::new(storage.clone())
+        .proceeds_finalize_on_done
+        .write(&series_id, u8::from(finalize))
+}
+
+/// Whether the in-flight round finalizes the series on completion.
+pub fn proceeds_finalize_on_done(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
+    Ok(IntexContract::new(storage.clone())
+        .proceeds_finalize_on_done
+        .read(&series_id)?
+        != 0)
+}
+
+/// Finalize proceeds aggregation for a series: clear the pot/deadline/counters,
+/// drop it from the awaiting set, and clear the (now spent) contributor map.
+/// The per-(series, chain) flags are left as harmless dead entries — a series id
+/// (the worldwide day) never recurs.
+pub fn finalize_proceeds(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.proceeds_pot.clear(&series_id)?;
+    registry.proceeds_deadline.clear(&series_id)?;
+    registry.proceeds_expected_count.clear(&series_id)?;
+    registry.proceeds_arrived_count.clear(&series_id)?;
+    registry.proceeds_finalize_on_done.clear(&series_id)?;
+    registry.remove_awaiting_proceeds(series_id)?;
+    registry.clear_contributors(series_id)
+}
+
+/// Number of series awaiting proceeds fan-in (for the begin-block deadline sweep).
+pub fn awaiting_proceeds_count(storage: &StorageHandle<'_>) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .awaiting_proceeds_count
+        .read()
+}
+
+/// `series_id` awaiting proceeds at a dense index.
+pub fn awaiting_proceeds_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .awaiting_proceeds_at
+        .read(&index)
 }

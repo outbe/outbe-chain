@@ -126,7 +126,10 @@ fn issue_broadcasts_one_issuance_per_snapshot_chain() {
     StorageHandle::enter(&mut storage, |s| {
         // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
         let mut p = sample(7);
-        p.recipients = vec![holder(), address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")];
+        p.recipients = vec![
+            holder(),
+            address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
+        ];
         p.quantities = vec![U256::from(1), U256::from(2)];
         p.recipient_chains = vec![10, 20];
         p.snapshot_chains = vec![10, 20, 30];
@@ -1162,6 +1165,9 @@ fn contrib(n: u8) -> Address {
     Address::from([n; 20])
 }
 
+/// A future fan-in deadline relative to the harness clock (`ISSUED_AT`).
+const DEADLINE_FUTURE: u64 = ISSUED_AT as u64 + 1000;
+
 #[test]
 fn distribute_pays_contributors_proportionally_with_dust_to_last() {
     with_factory(|s| {
@@ -1176,11 +1182,13 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
             ],
         )
         .unwrap();
+        // A single winning chain: its arrival completes the fan-in immediately.
+        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
         // Simulate the native value arriving on the precompile via distribute{value}.
         let amount = U256::from(1000u64);
         s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
 
-        runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, 7, amount).unwrap();
+        runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, 7, 10, amount).unwrap();
 
         // distribute only registers; nothing is paid until the begin-block drain.
         assert_eq!(s.balance(owners[0]).unwrap(), U256::ZERO);
@@ -1198,6 +1206,112 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
         assert_eq!(outbe_intex::api::get_progress(&s, 7).unwrap(), None);
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+    });
+}
+
+#[test]
+fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
+    with_factory(|s| {
+        let owners = [contrib(1), contrib(2)];
+        outbe_intex::api::record_contributors(
+            &s,
+            7,
+            &[
+                (owners[0], U256::from(100u64)),
+                (owners[1], U256::from(100u64)),
+            ],
+        )
+        .unwrap();
+        outbe_intex::api::arm_proceeds(&s, 7, &[10, 20], DEADLINE_FUTURE).unwrap();
+
+        // Chain 10 arrives first: pot accumulates, fan-in not complete → no payout yet.
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(300u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            10,
+            U256::from(300u64),
+        )
+        .unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+        assert!(!outbe_intex::api::proceeds_ready(&s, 7).unwrap());
+
+        // Chain 20 completes the fan-in: one distribution over the summed pot.
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(500u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            20,
+            U256::from(500u64),
+        )
+        .unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        runtime::drain_distributions(&s).unwrap();
+        // 800 split 100:100 → 400 each; map cleared since every chain is in.
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(400u64));
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(400u64));
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+    });
+}
+
+#[test]
+fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
+    with_factory(|s| {
+        let owners = [contrib(1), contrib(2)];
+        outbe_intex::api::record_contributors(
+            &s,
+            7,
+            &[
+                (owners[0], U256::from(100u64)),
+                (owners[1], U256::from(100u64)),
+            ],
+        )
+        .unwrap();
+        outbe_intex::api::arm_proceeds(&s, 7, &[10, 20], DEADLINE_FUTURE).unwrap();
+
+        // Only chain 10 arrives before the deadline.
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(200u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            10,
+            U256::from(200u64),
+        )
+        .unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+
+        // Past the deadline the sweep pays out what arrived; the map is retained.
+        runtime::try_settle_proceeds(&s, 7, DEADLINE_FUTURE + 1).unwrap();
+        assert!(!outbe_intex::api::proceeds_finalize_on_done(&s, 7).unwrap());
+        runtime::drain_distributions(&s).unwrap();
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(100u64));
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 2); // retained
+
+        // The straggler arrives: a supplementary payout over the same map, then finalize.
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(400u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            20,
+            U256::from(400u64),
+        )
+        .unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+        runtime::drain_distributions(&s).unwrap();
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64));
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
     });
 }
 
@@ -1248,25 +1362,58 @@ fn distribute_rejects_non_origin_router() {
         outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        let err = runtime::distribute(&s, holder(), 7, U256::from(100u64)).unwrap_err();
+        let err = runtime::distribute(&s, holder(), 7, 10, U256::from(100u64)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("origin router"));
     });
 }
 
 #[test]
-fn distribute_rejects_no_contributors() {
-    with_factory(|s| {
+fn distribute_no_contributors_sweeps_to_reserve() {
+    use alloy_sol_types::SolEvent;
+    use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    storage.stub_sub_call_at(
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        // Armed but no contributors recorded; the single chain completes the fan-in.
+        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        let err = runtime::distribute(
+        runtime::distribute(
             &s,
             crate::constants::ORIGIN_ROUTER_ADDRESS,
             7,
+            10,
             U256::from(100u64),
         )
-        .unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("contributors"));
+        .unwrap();
+
+        // No distribution opened; the ownerless proceeds went to the reserve vault.
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+        assert_eq!(
+            s.balance(VAULT_PROVIDER_ADDRESS).unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
+
+    let sig = IIntexFactory::ProceedsSweptToReserve::SIGNATURE_HASH;
+    let found = storage.get_events(INTEX_FACTORY_ADDRESS).iter().any(|log| {
+        log.topics().first() == Some(&sig)
+            && IIntexFactory::ProceedsSweptToReserve::decode_log_data(log)
+                .map(|ev| ev.seriesId == 7 && ev.amount == U256::from(100u64))
+                .unwrap_or(false)
+    });
+    assert!(found, "expected ProceedsSweptToReserve event");
 }
 
 #[test]

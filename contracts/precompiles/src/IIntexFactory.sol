@@ -21,12 +21,15 @@ interface IIntexFactory {
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
 
-    /// @notice Distribute auction proceeds (native COEN, sent as msg.value) to
-    ///         the contributing tribute owners of `seriesId`, proportional to
-    ///         each owner's Tribute Nominal Amount. Callable only by the
-    ///         OriginRouter. Registers the distribution; every payout is drained
-    ///         over later blocks by the begin-block hook.
-    function distribute(uint32 worldwideDay) external payable;
+    /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
+    ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
+    ///         Creators are paid, proportional to each owner's Tribute Nominal
+    ///         Amount, once every winning chain has routed its proceeds (or the
+    ///         fan-in deadline passes); the payout itself is drained over later
+    ///         blocks by the begin-block hook.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
+    /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
+    function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
@@ -46,4 +49,8 @@ interface IIntexFactory {
     /// @notice Auction proceeds for `seriesId` were fully paid out to
     ///         `contributors` tribute owners, totalling `amount` native COEN.
     event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
+
+    /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
+    ///         swept to the reserve vault instead of being distributed.
+    event ProceedsSweptToReserve(uint32 indexed seriesId, uint256 amount);
 }

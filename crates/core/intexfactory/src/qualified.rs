@@ -22,7 +22,10 @@ pub struct IntexLifecycle;
 impl BlockLifecycle for IntexLifecycle {
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         scan_and_qualify(ctx)?;
+        // Drain in-flight payouts first, then start rounds for any series whose
+        // proceeds fan-in deadline has passed.
         crate::runtime::drain_distributions(&ctx.storage)?;
+        crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
         Ok(())
     }
 }
