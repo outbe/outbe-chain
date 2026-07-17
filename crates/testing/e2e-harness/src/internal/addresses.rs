@@ -1,6 +1,6 @@
 //! Protocol precompile addresses used by the harness.
 //!
-//! Mirrors `scripts/e2e/lib.sh:37-40` and `bin/outbe-cli/src/abi.rs`. Typed
+//! Mirrors `bin/outbe-cli/src/abi.rs`. Typed
 //! `Address` consts (the `eth` layer calls contracts by `Address`, not string).
 
 use alloy_primitives::{address, Address};

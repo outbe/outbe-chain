@@ -1,7 +1,7 @@
 //! stdout/JSON parsers for `cast` and `outbe-cli` output.
 //!
 //! These replace the `sed -n '4p'` / `awk` / `jq` one-liners in
-//! `scripts/e2e/lib.sh` and `update_operator_flow.sh` with small, testable
+//! shell parsing with small, testable
 //! functions. No `regex` crate — the patterns are simple enough by hand.
 
 /// Parse a value that may be decimal or `0x`-hex (uint values from `cast`).

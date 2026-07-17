@@ -220,39 +220,24 @@ run = "bash ./scripts/tribute-demo-actions.sh offer"
 description = "Show the Tribute from the most recent tribute-offer in every validator MongoDB projection"
 run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 
-# Full S1-S7 gramine-mock TEE e2e scenario suite plus update operator smoke.
-# Builds the node, CLI, and mock enclave, then runs all scenario scripts.
+# Full Rust/Cucumber gramine-mock TEE e2e suite.
+# Builds the node, CLI, keygen, and mock enclave, then runs every feature.
 # Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner
 # enclave). Runnable on any box with gramine-direct (no SGX hardware required for
 # the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
-description = "Run the gramine-mock TEE e2e scenario suite (S1-S7 + update operator flow)"
+description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
-test -n "${OUTBE_PROJECTION_MONGODB_URI:-}" || { echo "OUTBE_PROJECTION_MONGODB_URI is required" >&2; exit 1; }
 cargo build -p outbe-chain --bin outbe-chain
-cargo build --bin outbe-cli
+cargo build --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-for s in s1_s2_s6_s3_lifecycle s4_restart_active s5_dkg_failure s7a_downtime_slash s7b_stale_join update_operator_flow; do
-  echo "=== e2e $s ==="
-  ./scripts/e2e/$s.sh || exit 1
-done
-echo "e2e: ALL SCENARIOS PASS"
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
 """
 
-# The same suite driven by the Rust cucumber harness (`crates/testing/e2e-harness`)
-# instead of the shell scripts: it owns the localnet processes and enclave
-# containers itself, giving every scenario its own data dir and port block.
-# Extra flags pass straight through, e.g.
-#   mise run e2e-rust -- --tee none --validators 6 --no-cleanup --debug
+# Backward-compatible task name; `e2e` is now the canonical Rust harness task.
 [tasks.e2e-rust]
-description = "Run the Rust cucumber e2e harness (gramine-mock TEE, all features)"
-run = """
-test -n "${OUTBE_PROJECTION_MONGODB_URI:-}" || { echo "OUTBE_PROJECTION_MONGODB_URI is required" >&2; exit 1; }
-cargo build --bin outbe-chain --bin outbe-cli --bin outbe-keygen
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock \
-  --projection-mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI"
-"""
+description = "Alias for the Rust/Cucumber e2e suite"
+depends = ["e2e"]
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #
 

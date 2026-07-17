@@ -1,6 +1,6 @@
 //! CLI-derived configuration for the harness.
 //!
-//! Paths/toggles ported from `scripts/e2e/lib.sh` (lines 11-14, 17-41) and
+//! Paths and toggles for isolated localnet scenarios and
 //! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] — the
 //! harness reads no configuration from the process environment. (`PATH`/`HOME`
 //! are only read to build the child's `PATH` so `cast` resolves.)

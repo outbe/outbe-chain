@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use eyre::{bail, eyre, Result, WrapErr};
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::sync::Client;
 
 use crate::env::Environment;
@@ -25,6 +25,13 @@ pub struct MongoDb {
     validators: usize,
     #[allow(dead_code)]
     guard: Option<DockerGuard>,
+}
+
+/// Exact primary projection value needed to verify one compressed Tribute.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedTribute {
+    pub raw_id: outbe_compressed_entities::EntityId36,
+    pub stored_body: Vec<u8>,
 }
 
 impl MongoDb {
@@ -86,6 +93,70 @@ impl MongoDb {
         .join()
         .map_err(|_| eyre!("projection MongoDB worker panicked"))?
     }
+
+    /// Load the exact authenticated identity/body bytes projected by one validator.
+    pub fn projected_tribute(&self, validator: usize, tx_hash: &str) -> Result<ProjectedTribute> {
+        let uri = self.uri.clone();
+        let name = format!(
+            "{}_scenario_{}_validator-{validator}",
+            self.database_prefix, self.scenario
+        );
+        let tx_hash = tx_hash.to_owned();
+        std::thread::spawn(move || projected_tribute(&uri, &name, &tx_hash))
+            .join()
+            .map_err(|_| eyre!("projection MongoDB worker panicked"))?
+    }
+
+    /// Assert that no Tribute primary or secondary projection exists anywhere.
+    pub fn assert_no_tribute_projection(&self) -> Result<()> {
+        let uri = self.uri.clone();
+        let database_prefix = self.database_prefix.clone();
+        let scenario = self.scenario;
+        let validators = self.validators;
+        std::thread::spawn(move || {
+            let client = Client::with_uri_str(&uri).wrap_err("connect projection MongoDB")?;
+            for validator in 0..validators {
+                let name = format!("{database_prefix}_scenario_{scenario}_validator-{validator}");
+                let db = client.database(&name);
+                for collection_name in COLLECTIONS {
+                    let count = db
+                        .collection::<Document>(collection_name)
+                        .count_documents(doc! {})
+                        .run()?;
+                    if count != 0 {
+                        bail!("{name}.{collection_name}: expected no documents, found {count}");
+                    }
+                }
+            }
+            Ok(())
+        })
+        .join()
+        .map_err(|_| eyre!("projection MongoDB worker panicked"))?
+    }
+}
+
+fn projected_tribute(uri: &str, name: &str, tx_hash: &str) -> Result<ProjectedTribute> {
+    let client = Client::with_uri_str(uri).wrap_err("connect projection MongoDB")?;
+    let document = client
+        .database(name)
+        .collection::<Document>("tributes")
+        .find_one(doc! {"_projection.tx_hash": tx_hash})
+        .run()?
+        .ok_or_else(|| eyre!("{name}.tributes has no row for transaction {tx_hash}"))?;
+    let encoded_id = document
+        .get_str("_id")
+        .map_err(|error| eyre!("{name}.tributes has invalid _id: {error}"))?;
+    let id = hex::decode(encoded_id).wrap_err("decode projected Tribute _id")?;
+    let raw_id = outbe_compressed_entities::EntityId36::try_from(id.as_slice())
+        .wrap_err("projected Tribute _id is not EntityId36")?;
+    let stored_body = match document.get("value") {
+        Some(Bson::Binary(value)) => value.bytes.clone(),
+        other => bail!("{name}.tributes has invalid value field: {other:?}"),
+    };
+    Ok(ProjectedTribute {
+        raw_id,
+        stored_body,
+    })
 }
 
 fn wait_for_projection(

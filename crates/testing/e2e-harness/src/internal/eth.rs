@@ -173,11 +173,20 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
 /// A custom JSON-RPC method returning an arbitrary JSON value (e.g.
 /// `outbe_consensusStatus`).
 pub(crate) fn raw_json(url: &str, method: &'static str) -> Option<serde_json::Value> {
+    raw_json_with_params(url, method, serde_json::json!([]))
+}
+
+/// A custom JSON-RPC method with explicit positional parameters.
+pub(crate) fn raw_json_with_params(
+    url: &str,
+    method: &'static str,
+    params: serde_json::Value,
+) -> Option<serde_json::Value> {
     let url = url.to_string();
     block_on(async move {
         let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
         provider
-            .raw_request::<_, serde_json::Value>(method.into(), serde_json::json!([]))
+            .raw_request::<_, serde_json::Value>(method.into(), params)
             .await
             .ok()
     })

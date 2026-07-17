@@ -24,7 +24,8 @@ and `todo` (an unimplemented stub — always skipped).
 ## Layout
 
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
-  `tribute_projection.feature` is the focused encrypted-offer/projection check.
+  `tribute_projection.feature` covers encrypted-offer projection plus compressed
+  entity presence and absence proofs.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
   requirement/skip logic.
 - `src/world/` — encapsulated handles with verb APIs: `localnet.start(opts)`,
@@ -72,8 +73,11 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 5 --all
+  --tee mock --validators 4 --all
 ```
+
+The same full run is available as `mise run e2e`. The harness owns an isolated
+MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
 
 The skip/fail *logic* is verifiable anywhere (no localnet needed): e.g.
 `--validators 2` prints `SKIPPED: … needs >=4 validators, have 2` and exits 0,
@@ -82,9 +86,18 @@ while `--validators 2 --all` exits non-zero.
 `--debug` streams the localnet setup output live; without it, that output is
 captured and only printed if a setup step fails.
 
-## Focused Tribute projection check
+## Focused Tribute compressed-entity checks
 
-Run only the encrypted Tribute creation and offchain projection scenario:
+Run the complete Tribute compressed-entity feature (happy path and edge cases):
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock \
+  --validators 4 \
+  --input 'crates/testing/e2e-harness/features/tribute_projection.feature'
+```
+
+Run only the creation happy path:
 
 ```sh
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
@@ -105,6 +118,19 @@ The scenario performs the complete product flow:
    `tributes_by_day` in every validator database.
 6. Requires `_projection.tx_hash` to match the successful transaction and the
    complete BSON documents to be identical across all four validators.
+7. Calls `outbe_getCompressedEntity` on every validator, fetches the exact
+   selected block header, and verifies each proof package independently.
+8. Requires every validator's authenticated `Present` body bytes to equal the
+   canonical bytes stored in MongoDB. Proof packages may select different
+   finalized headers while validators converge, so each package is verified
+   independently rather than compared byte-for-byte.
+
+The edge-case scenarios independently verify both authenticated absence forms:
+
+- `EntityAbsentInCollection` for an unknown Tribute identity in a day whose
+  collection already exists;
+- `CollectionAbsent` for an unknown Tribute day, while also asserting that no
+  primary or secondary MongoDB projection was created.
 
 On normal completion or failure, the harness stops the nodes and removes its
 MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container
@@ -114,8 +140,9 @@ default.
 
 ## Status
 
-The focused `tribute_projection` scenario owns MongoDB and verifies the full
-encrypted offer → successful receipt → four-validator projection path. The
+The focused `tribute_projection` scenarios own MongoDB and verify the full
+encrypted offer → successful receipt → four-validator projection → independently
+verified compressed-entity proof path, including both absence-proof edge cases. The
 validator lifecycle, update, DKG, downtime, restart, stale-join, and follower
 flows are also wired under `features/`.
 

@@ -372,7 +372,7 @@ fn require_finalized_checkpoint(
             checkpoint.block_hash
         );
     };
-    if checkpoint.block_number > local_finalized.number {
+    if checkpoint.block_number > local_finalized.number.saturating_add(1) {
         bail!(
             "projection_ahead_of_execution: Mongo checkpoint {} ({}) is ahead of local Reth finalized {} ({})",
             checkpoint.block_number,
@@ -513,6 +513,11 @@ where
 {
     let mut runtime = runtime;
     let start_block = runtime.projector.state().start_block;
+    let durable_startup_checkpoint = runtime
+        .projector
+        .state()
+        .checkpoint
+        .map(|checkpoint| FinalizedTarget::new(checkpoint.block_number, checkpoint.block_hash));
     let recovery_baseline = FinalizedTarget::new(0, runtime.projection_config.genesis_hash);
     let readiness_publisher = runtime.readiness_publisher.clone();
     let mut runtime_failures = runtime
@@ -533,6 +538,11 @@ where
         }
     };
 
+    let mut startup_checkpoint_floor = match (durable_startup_checkpoint, initial_target) {
+        (Some(checkpoint), Some(target)) if target.number < checkpoint.number => Some(checkpoint),
+        _ => None,
+    };
+    let initial_target = initial_target.filter(|_| startup_checkpoint_floor.is_none());
     let mut latest_target = initial_target;
     let mut pending_target = initial_target;
     let mut projection_attempt: Option<ProjectionAttempt> = None;
@@ -620,6 +630,21 @@ where
             finalized = finalized_blocks.next(), if finalized_stream_open => {
                 match finalized {
                     Some(target) => {
+                        match admit_startup_finalized_target(&mut startup_checkpoint_floor, target) {
+                            Ok(false) => continue,
+                            Ok(true) => {}
+                            Err(error) => {
+                                publish_fatal(
+                                    &readiness_publisher,
+                                    &projection_exit,
+                                    ProjectionFailureClass::CheckpointMismatch,
+                                    error.to_string(),
+                                );
+                                can_start_attempt = false;
+                                finality_stalled = true;
+                                continue;
+                            }
+                        }
                         if record_or_publish_finalized_target(
                             &mut latest_target,
                             &mut pending_target,
@@ -851,6 +876,24 @@ where
                     match provider.finalized_block_num_hash() {
                         Ok(Some(block)) => {
                             let target = FinalizedTarget::new(block.number, block.hash);
+                            match admit_startup_finalized_target(
+                                &mut startup_checkpoint_floor,
+                                target,
+                            ) {
+                                Ok(false) => continue,
+                                Ok(true) => {}
+                                Err(error) => {
+                                    publish_fatal(
+                                        &readiness_publisher,
+                                        &projection_exit,
+                                        ProjectionFailureClass::CheckpointMismatch,
+                                        error.to_string(),
+                                    );
+                                    can_start_attempt = false;
+                                    finality_stalled = true;
+                                    continue;
+                                }
+                            }
                             if record_or_publish_finalized_target(
                                 &mut latest_target,
                                 &mut pending_target,
@@ -1039,6 +1082,32 @@ fn record_finalized_target(
             Ok(true)
         }
     }
+}
+
+/// During crash recovery Mongo can durably commit finalized block N just before
+/// Reth persists its finalized marker for N. Ignore the stale N-1 marker until
+/// Reth reaches the already-canonical Mongo checkpoint; never accept a conflict
+/// at the checkpoint height.
+fn admit_startup_finalized_target(
+    startup_floor: &mut Option<FinalizedTarget>,
+    incoming: FinalizedTarget,
+) -> eyre::Result<bool> {
+    let Some(floor) = *startup_floor else {
+        return Ok(true);
+    };
+    if incoming.number < floor.number {
+        return Ok(false);
+    }
+    if incoming.number == floor.number && incoming.hash != floor.hash {
+        bail!(
+            "finalized target conflicts with recovered projection checkpoint at height {}: {} != {}",
+            floor.number,
+            incoming.hash,
+            floor.hash
+        );
+    }
+    *startup_floor = None;
+    Ok(true)
 }
 
 fn record_or_publish_finalized_target(
@@ -1413,6 +1482,30 @@ mod tests {
     }
 
     #[test]
+    fn startup_checkpoint_floor_ignores_stale_finality_then_releases() {
+        let checkpoint = FinalizedTarget::new(4, B256::repeat_byte(0x44));
+        let mut floor = Some(checkpoint);
+
+        assert!(!super::admit_startup_finalized_target(
+            &mut floor,
+            FinalizedTarget::new(3, B256::repeat_byte(0x33)),
+        )
+        .unwrap());
+        assert_eq!(floor, Some(checkpoint));
+
+        let error = super::admit_startup_finalized_target(
+            &mut floor,
+            FinalizedTarget::new(4, B256::repeat_byte(0x45)),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("conflicts"));
+        assert_eq!(floor, Some(checkpoint));
+
+        assert!(super::admit_startup_finalized_target(&mut floor, checkpoint).unwrap());
+        assert_eq!(floor, None);
+    }
+
+    #[test]
     fn persisted_checkpoint_requires_an_actual_reth_finalized_identity() {
         let checkpoint = ProjectionCheckpoint {
             block_number: 4,
@@ -1421,9 +1514,18 @@ mod tests {
         let error = require_finalized_checkpoint(checkpoint, None).unwrap_err();
         assert!(error.to_string().contains("before local Reth finality"));
 
+        assert_eq!(
+            require_finalized_checkpoint(
+                checkpoint,
+                Some(FinalizedTarget::new(3, B256::repeat_byte(0x33))),
+            )
+            .expect("one-block crash-consistency gap must recover"),
+            FinalizedTarget::new(3, B256::repeat_byte(0x33)),
+        );
+
         let error = require_finalized_checkpoint(
             checkpoint,
-            Some(FinalizedTarget::new(3, B256::repeat_byte(0x33))),
+            Some(FinalizedTarget::new(2, B256::repeat_byte(0x22))),
         )
         .unwrap_err();
         assert!(error.to_string().contains("ahead of local Reth finalized"));

@@ -3,7 +3,7 @@
 //! scenarios.
 //!
 //! This is the typed replacement for the `cast`-based RPC readers and the
-//! `wait_*` helpers in `scripts/e2e/lib.sh:82-104` and `update_operator_flow.sh`.
+//! scenario polling helpers used by the lifecycle and update flows.
 //! Reads return `Option` — `None` is the analogue of the shell
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
@@ -11,8 +11,9 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
-use eyre::{eyre, Result};
+use alloy_primitives::{Address, Bytes, U256};
+use eyre::{eyre, Result, WrapErr as _};
+use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 
 use crate::internal::{
     addresses,
@@ -26,6 +27,12 @@ use crate::world::validators::{Operator, Validator};
 #[derive(Debug, Clone)]
 pub struct Rpc {
     cfg: Config,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompressedEntityAtHeader {
+    pub result: PointReadResultV1,
+    pub header: SelectedHeaderV1,
 }
 
 impl Rpc {
@@ -48,6 +55,13 @@ impl Rpc {
         eth::block_number(&self.url(port))
     }
 
+    /// Chain identity reported by the node at `port`.
+    pub fn chain_id(&self, port: u16) -> Option<u64> {
+        eth::raw_json(&self.url(port), "eth_chainId")?
+            .as_str()
+            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+    }
+
     /// Finalized block number on the node at `port`.
     pub fn finalized(&self, port: u16) -> Option<u64> {
         eth::finalized_number(&self.url(port))
@@ -56,6 +70,67 @@ impl Rpc {
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
+    }
+
+    /// Fetch one latest-finalized compressed-entity package and its exact header.
+    pub fn compressed_entity(
+        &self,
+        port: u16,
+        request: PointReadRequestV1,
+    ) -> Result<CompressedEntityAtHeader> {
+        let result = eth::raw_json_with_params(
+            &self.url(port),
+            "outbe_getCompressedEntity",
+            serde_json::json!([request]),
+        )
+        .ok_or_else(|| eyre!("outbe_getCompressedEntity returned no result on port {port}"))?;
+        let result: PointReadResultV1 =
+            serde_json::from_value(result).wrap_err("decode compressed-entity package")?;
+        let common = match &result {
+            PointReadResultV1::Present { common, .. }
+            | PointReadResultV1::Absent { common, .. } => common,
+            PointReadResultV1::Unavailable => {
+                return Err(eyre!(
+                    "compressed-entity package is unavailable on port {port}"
+                ));
+            }
+        };
+        let block = eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getBlockByHash",
+            serde_json::json!([common.block_hash, false]),
+        )
+        .ok_or_else(|| eyre!("selected block {} is unavailable", common.block_hash))?;
+        let returned_hash = block
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("selected block has no hash"))?;
+        if !returned_hash.eq_ignore_ascii_case(&common.block_hash.to_string()) {
+            return Err(eyre!("selected block hash does not match proof package"));
+        }
+        let returned_number = block
+            .get("number")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| eyre!("selected block has no canonical number"))?;
+        if returned_number != common.block_number {
+            return Err(eyre!("selected block number does not match proof package"));
+        }
+        let extra_data: Bytes = serde_json::from_value(
+            block
+                .get("extraData")
+                .cloned()
+                .ok_or_else(|| eyre!("selected block has no extraData"))?,
+        )
+        .wrap_err("decode selected block extraData")?;
+        Ok(CompressedEntityAtHeader {
+            header: SelectedHeaderV1 {
+                block_number: common.block_number,
+                block_hash: common.block_hash,
+                extra_data: extra_data.to_vec(),
+            },
+            result,
+        })
     }
 
     /// TEE registry `isBootstrapped()` on the primary node.

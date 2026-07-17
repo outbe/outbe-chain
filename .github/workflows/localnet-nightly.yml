@@ -74,6 +74,6 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           install: true
-      # The scenario scripts use sudo (run-testnet.sh / docker) and build the
-      # `outbe-tee-enclave-gramine` image on demand via run-testnet.sh.
+      # The Rust harness owns isolated localnets, MongoDB replica sets, and
+      # gramine-mock enclave containers for every scenario.
       - run: mise run e2e

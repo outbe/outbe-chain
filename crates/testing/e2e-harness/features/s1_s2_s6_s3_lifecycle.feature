@@ -1,6 +1,6 @@
 @tee @min-validators-4
 Feature: Validator lifecycle — cold sync, promote, in-flight offer, exit
-  # Port of scripts/e2e/s1_s2_s6_s3_lifecycle.sh — one chain through four stages:
+  # One chain through four lifecycle stages:
   # S1 a cold full node syncs and matches state/supply through its own enclave;
   # S2 it stakes + confirms and is promoted to ACTIVE via a reshare;
   # S6 a tribute offer submitted during the reshare window lands exactly once;

@@ -1,6 +1,6 @@
 @min-validators-4
 Feature: Operator protocol-version update via governance vote
-  # Port of scripts/e2e/update_operator_flow.sh: an operator proposes a protocol
+  # An operator proposes a protocol
   # update, three validators approve it, and after the voting window + activation
   # height the new version goes live with state-root parity across the committee.
   # Needs a >=4-validator committee; runs with or without TEE (--tee any).

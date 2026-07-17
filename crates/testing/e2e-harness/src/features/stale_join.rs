@@ -1,5 +1,5 @@
 //! Steps for `features/s7b_stale_join.feature` — port of
-//! `scripts/e2e/s7b_stale_join.sh`. A staked-but-unconfirmed joiner must stay
+//! The stale-join feature. A staked-but-unconfirmed joiner must stay
 //! PENDING across a full reshare cycle (the stale-join guard keeps it out of the
 //! frozen reshare target); only `confirm-ready` lets the next reshare activate it.
 
