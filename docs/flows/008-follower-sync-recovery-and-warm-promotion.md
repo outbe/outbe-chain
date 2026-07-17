@@ -74,4 +74,3 @@ failure retains the old committee as specified by PFS-006.
 - Split or tag the composite feature so all four implemented examples retain stable traceability without multiplying expensive setup unnecessarily.
 - Add explicit finalized-hash/state-root equality, not only the four-block height tolerance.
 - Define upstream failover, retention floor and datadir compatibility policy.
-
