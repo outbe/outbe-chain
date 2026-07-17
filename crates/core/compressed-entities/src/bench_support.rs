@@ -39,6 +39,18 @@ pub fn candidate_checksum(batch: &StagedTreeBatch) -> B256 {
     )
 }
 
+/// Returns the first changed collection's shard roots for the historical
+/// ADR-009 aggregation benchmark.
+pub fn candidate_shard_roots(batch: &ProvisionalTreeBatch) -> Vec<B256> {
+    batch
+        .changed_collections
+        .values()
+        .next()
+        .map_or_else(Vec::new, |collection| {
+            collection.shard_set.new_shard_roots.clone()
+        })
+}
+
 /// Recomputes the production shard-top aggregation for phase benchmarks.
 pub fn aggregate_shard_roots(roots: &[B256]) -> Result<B256, String> {
     aggregate_b256_shard_roots(roots).map_err(|error| error.to_string())
@@ -127,11 +139,21 @@ pub fn staged_batch(
 ) -> Result<StagedTreeBatch, String> {
     let mut branches = BTreeMap::new();
     let mut leaves = BTreeMap::new();
+    let mut key_candidate = 1_u64;
     for index in 0..record_count {
         let ordinal = u64::try_from(index)
             .map_err(|_| "benchmark record count is not representable as u64".to_owned())?
             .saturating_add(1);
-        let key_word = field_b256(ordinal);
+        let key_word = loop {
+            let word = field_b256(key_candidate);
+            key_candidate = key_candidate
+                .checked_add(1)
+                .ok_or_else(|| "benchmark key search overflowed".to_owned())?;
+            let smt_key = TreeKey::from_be_bytes(word.0).map_err(|error| error.to_string())?;
+            if shard_index(smt_key, crate::K_PROVISIONAL).map_err(|error| error.to_string())? == 0 {
+                break word;
+            }
+        };
         let value_word = field_b256(block_number.wrapping_add(ordinal).max(1));
         let field = FieldValue::try_from(value_word).map_err(|error| error.to_string())?;
         let branch_key =
@@ -150,7 +172,7 @@ pub fn staged_batch(
             TreeChange::Set(LeafValue::try_from(value_word).map_err(|error| error.to_string())?),
         );
     }
-    ProvisionalTreeBatch::new_unsharded(
+    ProvisionalTreeBatch::new_fixture_single_collection(
         block_number,
         parent_block_hash,
         parent_root,

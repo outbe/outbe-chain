@@ -62,7 +62,21 @@ impl<'storage> State<'storage> {
                         "compressed-entity schema initialization found non-empty root/reserved slots",
                     ));
                 }
-                schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION)
+                #[cfg(test)]
+                {
+                    let root =
+                        crate::sealed_root(B256::ZERO).map_err(|error| fatal(error.to_string()))?;
+                    schema
+                        .last_smt_root
+                        .write(U256::from_be_slice(root.as_slice()))?;
+                    schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION)
+                }
+                #[cfg(not(test))]
+                {
+                    Err(fatal(
+                        "compressed-entity genesis allocation is missing; lazy initialization is forbidden",
+                    ))
+                }
             }
             STORAGE_SCHEMA_VERSION => Ok(()),
             _ => Err(fatal(format!(
@@ -73,12 +87,17 @@ impl<'storage> State<'storage> {
 
     fn validate_schema_for_read(&self) -> Result<()> {
         let actual = self.schema().storage_schema_version.read()?;
-        if actual == 0 || actual == STORAGE_SCHEMA_VERSION {
-            Ok(())
-        } else {
-            Err(fatal(format!(
+        match actual {
+            STORAGE_SCHEMA_VERSION => Ok(()),
+            #[cfg(test)]
+            0 => Ok(()),
+            #[cfg(not(test))]
+            0 => Err(fatal(
+                "compressed-entity genesis allocation is missing; reads cannot bootstrap it",
+            )),
+            _ => Err(fatal(format!(
                 "unsupported compressed-entity storage schema {actual}"
-            )))
+            ))),
         }
     }
 

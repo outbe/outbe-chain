@@ -191,13 +191,12 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
-# Compressed-entity schema V2. ADR-009's selected K_TARGET=8 layout has a
-# non-zero all-empty shard-top root and must be present in authoritative EVM
-# storage from genesis so the CE MDBX height-0 marker binds the same root.
+# Compressed-entity EVM schema V2. ADR-010 seals the structurally empty Root
+# Catalog, so slot 1 is non-zero even though no collection exists at genesis.
 COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
 COMPRESSED_ENTITIES_SCHEMA_VERSION = 2
-COMPRESSED_ENTITIES_K_TARGET_8_EMPTY_ROOT = int(
-    "2930aedc6d0cc5c1aebf2cd641494943411dacba7681ad7022b841a21e855ed3", 16
+COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
+    "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
 )
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config; the rest of the
@@ -1115,9 +1114,9 @@ def seed_accounting_progress(storage: StorageBuilder):
 
 
 def seed_compressed_entities(storage: StorageBuilder):
-    """Seed schema V2 and ADR-009 K_TARGET=8's authoritative empty top root."""
+    """Seed EVM schema V2 and ADR-010's authoritative empty sealed root."""
     storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
-    storage.set_slot(1, COMPRESSED_ENTITIES_K_TARGET_8_EMPTY_ROOT)
+    storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 
 
 def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
@@ -1612,7 +1611,7 @@ def main():
     )
     print(
         "  CompressedEntities: slot 0 = 2, "
-        "slot 1 = ADR-009 K_TARGET=8 empty shard-top root"
+        "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README

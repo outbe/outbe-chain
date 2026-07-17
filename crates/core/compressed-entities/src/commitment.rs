@@ -19,6 +19,9 @@ pub const TAG_SMT_BASE: u64 = CES1_TAG_BASE + 8;
 pub const TAG_SMT_NORMAL: u64 = CES1_TAG_BASE + 9;
 pub const TAG_SMT_ZERO: u64 = CES1_TAG_BASE + 10;
 pub const TAG_TOP_NODE: u64 = CES1_TAG_BASE + 11;
+pub const TAG_SEALED_ROOT: u64 = CES1_TAG_BASE + 12;
+pub const TAG_COLLECTION_KEY: u64 = CES1_TAG_BASE + 13;
+pub const TAG_COLLECTION_ROOT: u64 = CES1_TAG_BASE + 14;
 pub const ACTIVE_COMMITMENT_SCHEME: u32 = 1;
 
 /// Canonical non-zero BN254 body leaf.
@@ -161,7 +164,7 @@ fn chunk_to_field(chunk: &[u8]) -> Fr {
     Fr::from_be_bytes_mod_order(&padded)
 }
 
-fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
+pub(crate) fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
     let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(tag))
         .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
     hasher
@@ -169,7 +172,7 @@ fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
         .map_err(|error| CommitmentError::Poseidon(error.to_string()))
 }
 
-fn field_to_be32(value: Fr) -> [u8; 32] {
+pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
     let bytes = value.into_bigint().to_bytes_be();
     let mut output = [0_u8; 32];
     output[32 - bytes.len()..].copy_from_slice(&bytes);

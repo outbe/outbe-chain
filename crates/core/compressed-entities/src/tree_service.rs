@@ -8,28 +8,41 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
     api::{AuthenticatedParentTree, EntityRef, FinalLeafMutation},
-    persistence::{CeMdbx, ExactParentIdentity, PersistenceError},
+    collection::{collection_key, collection_root, sealed_root},
+    persistence::{CeMdbx, ExactParentIdentity, PersistenceError, TreeNamespace},
     schema::Collection,
     sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeRoot},
-    staging::{AuthenticatedTreeView, ProvisionalShardBatch, ShardIndex, StagingCkbStore},
-    Commitment, ProvisionalTreeBatch,
+    staging::{
+        AuthenticatedCatalogView, CollectionBatch, ProvisionalCatalogBatch,
+        ProvisionalShardSetBatch, ShardIndex, StagingCkbStore,
+    },
+    CeDomain, CollectionKey, Commitment, ProvisionalTreeBatch,
 };
 
-struct SessionState {
+type CollectionMutation = (EntityRef, TreeKey, TreeLeaf);
+type GroupedCollectionMutations = BTreeMap<CollectionKey, (CeDomain, Vec<CollectionMutation>)>;
+
+struct CollectionSession {
+    domain: CeDomain,
+    parent_collection_root: Option<B256>,
+    parent_shard_roots: Vec<B256>,
     trees: Option<Vec<PoseidonSmt<StagingCkbStore>>>,
+}
+
+struct SessionState {
+    catalog_tree: Option<PoseidonSmt<StagingCkbStore>>,
+    collections: BTreeMap<CollectionKey, CollectionSession>,
     verified_leaves: BTreeMap<EntityRef, Option<Commitment>>,
 }
 
-/// One exact-finalized-parent CKB tree session for block execution.
+/// One exact-finalized-parent catalog session for block execution.
 ///
-/// The session owns one immutable MDBX read snapshot. Point reads verify CKB
-/// evidence before returning a leaf, and end-block sealing consumes the same
-/// snapshot into an isolated staged store without an MDBX write transaction.
+/// The Root Catalog is opened eagerly. Collection shard sets are opened only
+/// after their catalog leaf has been verified against the same MDBX snapshot.
 pub struct MdbxAuthenticatedTree {
     identity: ExactParentIdentity,
-    shard_count: u32,
-    parent_shard_roots: Vec<B256>,
+    view: AuthenticatedCatalogView,
     state: Mutex<SessionState>,
 }
 
@@ -45,29 +58,144 @@ impl core::fmt::Debug for MdbxAuthenticatedTree {
 impl MdbxAuthenticatedTree {
     pub fn open(db: Arc<CeMdbx>, identity: ExactParentIdentity) -> Result<Self> {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
-        let shard_count = db.identity().shard_count;
-        let view = AuthenticatedTreeView::open(snapshot, identity, shard_count)
+        let view = AuthenticatedCatalogView::open(snapshot, identity)
             .map_err(|error| tree_corruption(error.to_string()))?;
-        let parent_shard_roots = view.shard_roots().to_vec();
-        let mut trees = Vec::with_capacity(parent_shard_roots.len());
-        for (index, root) in parent_shard_roots.iter().copied().enumerate() {
-            let shard_index = u32::try_from(index)
-                .map_err(|_| tree_corruption("shard index is not representable"))?;
-            let root = TreeRoot::from_be_bytes(root.0)
-                .map_err(|error| tree_corruption(error.to_string()))?;
-            let store = StagingCkbStore::new(view.clone(), shard_index)
-                .map_err(|error| tree_corruption(error.to_string()))?;
-            trees.push(PoseidonSmt::open_with_store(root, store));
-        }
+        let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let catalog_store =
+            StagingCkbStore::new(view.clone(), TreeNamespace::Catalog, view.catalog_root());
         Ok(Self {
             identity,
-            shard_count,
-            parent_shard_roots,
+            view,
             state: Mutex::new(SessionState {
-                trees: Some(trees),
+                catalog_tree: Some(PoseidonSmt::open_with_store(catalog_root, catalog_store)),
+                collections: BTreeMap::new(),
                 verified_leaves: BTreeMap::new(),
             }),
         })
+    }
+
+    fn ensure_collection(
+        &self,
+        state: &mut SessionState,
+        domain: CeDomain,
+        key: CollectionKey,
+    ) -> Result<()> {
+        if let Some(existing) = state.collections.get(&key) {
+            if existing.domain != domain {
+                return Err(tree_corruption("collection key/domain collision"));
+            }
+            return Ok(());
+        }
+        let catalog = state
+            .catalog_tree
+            .as_ref()
+            .ok_or_else(|| tree_corruption("authenticated catalog session already sealed"))?;
+        let catalog_key = TreeKey::from_be_bytes(*key.as_bytes())
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let leaf = catalog
+            .get(catalog_key)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let proof = catalog
+            .prove(vec![catalog_key])
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        catalog
+            .verify(
+                TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                    .map_err(|error| tree_corruption(error.to_string()))?,
+                &proof,
+                vec![(catalog_key, leaf)],
+            )
+            .map_err(|error| tree_corruption(error.to_string()))?;
+
+        if leaf == TreeLeaf::ZERO {
+            if self
+                .view
+                .collection_has_records(key)
+                .map_err(|error| tree_corruption(error.to_string()))?
+            {
+                return Err(tree_corruption(
+                    "orphan collection records behind catalog non-membership",
+                ));
+            }
+            state.collections.insert(
+                key,
+                CollectionSession {
+                    domain,
+                    parent_collection_root: None,
+                    parent_shard_roots: vec![B256::ZERO; domain.shard_count() as usize],
+                    trees: None,
+                },
+            );
+            return Ok(());
+        }
+
+        let parent_collection_root = B256::from(leaf.as_bytes());
+        let root_count = self
+            .view
+            .collection_root_count(key)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        if root_count != domain.shard_count() as usize {
+            return Err(tree_corruption(format!(
+                "present collection has {root_count} shard roots, expected {}",
+                domain.shard_count()
+            )));
+        }
+        let mut roots = Vec::with_capacity(domain.shard_count() as usize);
+        let mut trees = Vec::with_capacity(domain.shard_count() as usize);
+        for shard in 0..domain.shard_count() {
+            let namespace = TreeNamespace::CollectionShard(key, shard);
+            let root = self
+                .view
+                .tree_root(namespace)
+                .map_err(|error| tree_corruption(error.to_string()))?
+                .ok_or_else(|| tree_corruption("present collection has a missing shard root"))?;
+            let tree_root = TreeRoot::from_be_bytes(root.0)
+                .map_err(|error| tree_corruption(error.to_string()))?;
+            trees.push(PoseidonSmt::open_with_store(
+                tree_root,
+                StagingCkbStore::new(self.view.clone(), namespace, root),
+            ));
+            roots.push(root);
+        }
+        let top = aggregate_b256_shard_roots(&roots)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let recomputed = collection_root(domain, key, top)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        if recomputed != parent_collection_root {
+            return Err(tree_corruption(
+                "catalog collection root does not match exact shard-root vector",
+            ));
+        }
+        state.collections.insert(
+            key,
+            CollectionSession {
+                domain,
+                parent_collection_root: Some(parent_collection_root),
+                parent_shard_roots: roots,
+                trees: Some(trees),
+            },
+        );
+        Ok(())
+    }
+
+    fn ensure_mutable_trees(&self, key: CollectionKey, session: &mut CollectionSession) {
+        if session.trees.is_some() {
+            return;
+        }
+        let trees = (0..session.domain.shard_count())
+            .map(|shard| {
+                PoseidonSmt::open_with_store(
+                    TreeRoot::EMPTY,
+                    StagingCkbStore::new(
+                        self.view.clone(),
+                        TreeNamespace::CollectionShard(key, shard),
+                        B256::ZERO,
+                    ),
+                )
+            })
+            .collect();
+        session.trees = Some(trees);
     }
 }
 
@@ -87,40 +215,42 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
     ) -> Result<Option<Commitment>> {
         if expected_parent_root != self.identity.root {
             return Err(tree_corruption(
-                "requested EVM root does not match exact tree view",
+                "requested EVM root does not match exact catalog view",
             ));
         }
         let mut state = self
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated tree session lock poisoned"))?;
+            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
         if let Some(cached) = state.verified_leaves.get(&entity) {
             return Ok(*cached);
         }
-        let key = entity_tree_key(entity)?;
-        let shard = shard_index(key, self.shard_count)
+        let (domain, _, id) = entity_parts(entity);
+        let key = collection_key(domain, id).map_err(|error| tree_corruption(error.to_string()))?;
+        self.ensure_collection(&mut state, domain, key)?;
+        let session = state
+            .collections
+            .get(&key)
+            .ok_or_else(|| tree_corruption("verified collection cache entry is missing"))?;
+        let Some(trees) = session.trees.as_ref() else {
+            state.verified_leaves.insert(entity, None);
+            return Ok(None);
+        };
+        let tree_key = entity_tree_key(entity)?;
+        let shard = shard_index(tree_key, domain.shard_count())
             .map_err(|error| tree_corruption(error.to_string()))?;
-        let tree = state
-            .trees
-            .as_ref()
-            .ok_or_else(|| tree_corruption("authenticated tree session already sealed"))?
-            .get(usize::try_from(shard).map_err(|_| tree_corruption("shard index overflow"))?)
-            .ok_or_else(|| tree_corruption("derived shard index out of range"))?;
+        let tree = &trees[shard as usize];
         let leaf = tree
-            .get(key)
+            .get(tree_key)
             .map_err(|error| tree_corruption(error.to_string()))?;
         let proof = tree
-            .prove(vec![key])
+            .prove(vec![tree_key])
             .map_err(|error| tree_corruption(error.to_string()))?;
         tree.verify(
-            TreeRoot::from_be_bytes(
-                self.parent_shard_roots[usize::try_from(shard)
-                    .map_err(|_| tree_corruption("shard index overflow"))?]
-                .0,
-            )
-            .map_err(|error| tree_corruption(error.to_string()))?,
+            TreeRoot::from_be_bytes(session.parent_shard_roots[shard as usize].0)
+                .map_err(|error| tree_corruption(error.to_string()))?,
             &proof,
-            vec![(key, leaf)],
+            vec![(tree_key, leaf)],
         )
         .map_err(|error| tree_corruption(error.to_string()))?;
         let commitment = if leaf == TreeLeaf::ZERO {
@@ -148,137 +278,229 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated tree session lock poisoned"))?;
-        let trees = state
-            .trees
-            .take()
-            .ok_or_else(|| tree_corruption("compressed-entity tree sealed more than once"))?;
+            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+        let mut grouped = GroupedCollectionMutations::new();
+        let mut unique_entities = BTreeSet::new();
+        let mut unique_keys = BTreeMap::new();
+        for mutation in mutations {
+            if !unique_entities.insert(mutation.entity) {
+                return Err(tree_corruption(
+                    "duplicate compressed-entity identity at seal",
+                ));
+            }
+            let (domain, _, id) = entity_parts(mutation.entity);
+            let collection =
+                collection_key(domain, id).map_err(|error| tree_corruption(error.to_string()))?;
+            let key = entity_tree_key(mutation.entity)?;
+            if let Some(other) = unique_keys.insert((collection, key), mutation.entity) {
+                if other != mutation.entity {
+                    return Err(tree_corruption("compressed-entity tree-key collision"));
+                }
+            }
+            let leaf = mutation
+                .final_leaf
+                .map_or(Ok(TreeLeaf::ZERO), |commitment| {
+                    TreeLeaf::from_be_bytes(*commitment.as_bytes())
+                        .map_err(|error| tree_corruption(error.to_string()))
+                })?;
+            grouped
+                .entry(collection)
+                .or_insert_with(|| (domain, Vec::new()))
+                .1
+                .push((mutation.entity, key, leaf));
+        }
 
         let result = (|| {
-            let mut keyed_by_shard: BTreeMap<ShardIndex, Vec<(TreeKey, TreeLeaf)>> =
-                BTreeMap::new();
-            let mut unique_entities = BTreeSet::new();
-            let mut unique_keys = BTreeMap::new();
-            for mutation in mutations {
-                if !unique_entities.insert(mutation.entity) {
-                    return Err(tree_corruption(
-                        "duplicate compressed-entity identity at seal",
-                    ));
+            let mut changed_collections = BTreeMap::new();
+            let mut catalog_updates = Vec::new();
+            for (collection_key, (domain, mut keyed)) in grouped {
+                self.ensure_collection(&mut state, domain, collection_key)?;
+                let session = state
+                    .collections
+                    .get_mut(&collection_key)
+                    .ok_or_else(|| tree_corruption("collection session is missing"))?;
+                self.ensure_mutable_trees(collection_key, session);
+                keyed.sort_by_key(|(_, key, _)| *key);
+                let mut by_shard: BTreeMap<ShardIndex, Vec<(TreeKey, TreeLeaf)>> = BTreeMap::new();
+                for (_, key, leaf) in keyed {
+                    let shard = shard_index(key, domain.shard_count())
+                        .map_err(|error| tree_corruption(error.to_string()))?;
+                    by_shard.entry(shard).or_default().push((key, leaf));
                 }
-                let key = entity_tree_key(mutation.entity)?;
-                if let Some(other) = unique_keys.insert(key, mutation.entity) {
-                    if other != mutation.entity {
-                        return Err(tree_corruption("compressed-entity tree-key collision"));
+                let trees = session
+                    .trees
+                    .take()
+                    .ok_or_else(|| tree_corruption("collection shard set already sealed"))?;
+                let mut new_roots = session.parent_shard_roots.clone();
+                let mut changed_shards = BTreeMap::new();
+                for (position, mut tree) in trees.into_iter().enumerate() {
+                    let shard = position as u32;
+                    let Some(updates) = by_shard.remove(&shard) else {
+                        continue;
+                    };
+                    let keys = updates.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+                    let parents = keys
+                        .iter()
+                        .map(|key| {
+                            tree.get(*key)
+                                .map(|leaf| (*key, leaf))
+                                .map_err(|error| tree_corruption(error.to_string()))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let proof = tree
+                        .prove(keys)
+                        .map_err(|error| tree_corruption(error.to_string()))?;
+                    tree.verify(
+                        TreeRoot::from_be_bytes(session.parent_shard_roots[position].0)
+                            .map_err(|error| tree_corruption(error.to_string()))?,
+                        &proof,
+                        parents.clone(),
+                    )
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                    let effective = updates
+                        .into_iter()
+                        .zip(parents)
+                        .filter_map(|((key, final_leaf), (parent_key, parent_leaf))| {
+                            (key == parent_key && final_leaf != parent_leaf)
+                                .then_some((key, final_leaf))
+                        })
+                        .collect::<Vec<_>>();
+                    if !effective.is_empty() {
+                        tree.update_all(effective)
+                            .map_err(|error| tree_corruption(error.to_string()))?;
+                    }
+                    let new_root = B256::from(
+                        tree.root()
+                            .map_err(|error| tree_corruption(error.to_string()))?
+                            .as_bytes(),
+                    );
+                    new_roots[position] = new_root;
+                    if let Some(batch) = tree
+                        .into_store()
+                        .freeze_shard(new_root)
+                        .map_err(|error| tree_corruption(error.to_string()))?
+                    {
+                        changed_shards.insert(shard, batch);
                     }
                 }
-                let final_leaf = mutation
-                    .final_leaf
-                    .map_or(Ok(TreeLeaf::ZERO), |commitment| {
-                        TreeLeaf::from_be_bytes(*commitment.as_bytes())
-                            .map_err(|error| tree_corruption(error.to_string()))
-                    })?;
-                let shard = shard_index(key, self.shard_count)
+                if !by_shard.is_empty() {
+                    return Err(tree_corruption("derived mutation shard was not prepared"));
+                }
+                if changed_shards.is_empty() {
+                    continue;
+                }
+                let parent_top = aggregate_b256_shard_roots(&session.parent_shard_roots)
                     .map_err(|error| tree_corruption(error.to_string()))?;
-                keyed_by_shard
-                    .entry(shard)
-                    .or_default()
-                    .push((key, final_leaf));
-            }
-            for keyed in keyed_by_shard.values_mut() {
-                keyed.sort_by_key(|(key, _)| *key);
+                let new_top = aggregate_b256_shard_roots(&new_roots)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let new_collection_root = collection_root(domain, collection_key, new_top)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let shard_set = ProvisionalShardSetBatch::new(
+                    domain.shard_count(),
+                    parent_top,
+                    new_top,
+                    session.parent_shard_roots.clone(),
+                    new_roots,
+                    changed_shards,
+                )
+                .map_err(|error| tree_corruption(error.to_string()))?;
+                let collection_batch = CollectionBatch::new(
+                    domain,
+                    collection_key,
+                    session.parent_collection_root,
+                    new_collection_root,
+                    shard_set,
+                )
+                .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                catalog_updates.push((catalog_key, catalog_leaf));
+                changed_collections.insert(collection_key, collection_batch);
             }
 
-            let mut new_shard_roots = self.parent_shard_roots.clone();
-            let mut changed_shards: BTreeMap<ShardIndex, ProvisionalShardBatch> = BTreeMap::new();
-            for (index, mut tree) in trees.into_iter().enumerate() {
-                let shard = u32::try_from(index)
-                    .map_err(|_| tree_corruption("shard index is not representable"))?;
-                let Some(keyed) = keyed_by_shard.remove(&shard) else {
-                    continue;
-                };
-                let keys = keyed.iter().map(|(key, _)| *key).collect::<Vec<_>>();
-                let parent_leaves = keys
+            let mut catalog_tree = state
+                .catalog_tree
+                .take()
+                .ok_or_else(|| tree_corruption("authenticated catalog sealed more than once"))?;
+            let new_catalog_root = if catalog_updates.is_empty() {
+                self.view.catalog_root()
+            } else {
+                let keys = catalog_updates
+                    .iter()
+                    .map(|(key, _)| *key)
+                    .collect::<Vec<_>>();
+                let parents = keys
                     .iter()
                     .map(|key| {
-                        tree.get(*key)
+                        catalog_tree
+                            .get(*key)
                             .map(|leaf| (*key, leaf))
                             .map_err(|error| tree_corruption(error.to_string()))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let proof = tree
+                let proof = catalog_tree
                     .prove(keys)
                     .map_err(|error| tree_corruption(error.to_string()))?;
-                tree.verify(
-                    TreeRoot::from_be_bytes(self.parent_shard_roots[index].0)
-                        .map_err(|error| tree_corruption(error.to_string()))?,
-                    &proof,
-                    parent_leaves.clone(),
-                )
-                .map_err(|error| tree_corruption(error.to_string()))?;
-
-                let effective = keyed
-                    .into_iter()
-                    .zip(parent_leaves)
-                    .filter_map(|((key, final_leaf), (parent_key, parent_leaf))| {
-                        (key == parent_key && final_leaf != parent_leaf)
-                            .then_some((key, final_leaf))
-                    })
-                    .collect::<Vec<_>>();
-                if !effective.is_empty() {
-                    tree.update_all(effective)
-                        .map_err(|error| tree_corruption(error.to_string()))?;
-                }
-                let new_shard_root = B256::from(
-                    tree.root()
+                catalog_tree
+                    .verify(
+                        TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                            .map_err(|error| tree_corruption(error.to_string()))?,
+                        &proof,
+                        parents,
+                    )
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                B256::from(
+                    catalog_tree
+                        .update_all(catalog_updates)
                         .map_err(|error| tree_corruption(error.to_string()))?
                         .as_bytes(),
-                );
-                new_shard_roots[index] = new_shard_root;
-                if let Some(batch) = tree
-                    .into_store()
-                    .freeze_shard(new_shard_root)
-                    .map_err(|error| tree_corruption(error.to_string()))?
-                {
-                    changed_shards.insert(shard, batch);
-                }
-            }
-            if !keyed_by_shard.is_empty() {
-                return Err(tree_corruption("derived mutation shard was not prepared"));
-            }
-            let new_root = if mutations.is_empty() {
-                self.identity.root
-            } else {
-                aggregate_b256_shard_roots(&new_shard_roots)
-                    .map_err(|error| tree_corruption(error.to_string()))?
+                )
             };
+            let catalog_batch = catalog_tree
+                .into_store()
+                .freeze_shard(new_catalog_root)
+                .map_err(|error| tree_corruption(error.to_string()))?
+                .map(|batch| ProvisionalCatalogBatch {
+                    parent_catalog_root: batch.parent_shard_root,
+                    new_catalog_root: batch.new_shard_root,
+                    branch_changes: batch.branch_changes,
+                    leaf_changes: batch.leaf_changes,
+                });
+            let parent_r_sealed = sealed_root(self.view.catalog_root())
+                .map_err(|error| tree_corruption(error.to_string()))?;
+            let new_r_sealed = sealed_root(new_catalog_root)
+                .map_err(|error| tree_corruption(error.to_string()))?;
             ProvisionalTreeBatch::new(
                 block_number,
                 self.identity.block_hash,
-                self.identity.root,
-                new_root,
-                self.shard_count,
-                self.parent_shard_roots.clone(),
-                new_shard_roots,
-                changed_shards,
+                parent_r_sealed,
+                new_r_sealed,
+                self.view.catalog_root(),
+                new_catalog_root,
+                changed_collections,
+                catalog_batch,
             )
             .map_err(|error| tree_corruption(error.to_string()))
         })();
-
         if result.is_err() {
-            // A failed seal is terminal for this block-scoped session. Keeping
-            // it consumed prevents accidental retry against partial staging.
             state.verified_leaves.clear();
         }
         result
     }
 }
 
+fn entity_parts(entity: EntityRef) -> (CeDomain, Collection, crate::EntityId36) {
+    match entity {
+        EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
+        EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),
+        EntityRef::NodBucket(id) => (CeDomain::NodBucket, Collection::NodBucket, id),
+    }
+}
+
 fn entity_tree_key(entity: EntityRef) -> Result<TreeKey> {
-    let (collection, id) = match entity {
-        EntityRef::Tribute(id) => (Collection::Tribute, id),
-        EntityRef::NodItem(id) => (Collection::NodItem, id),
-        EntityRef::NodBucket(id) => (Collection::NodBucket, id),
-    };
+    let (_, collection, id) = entity_parts(entity);
     derive_tree_key(collection, id).map_err(|error| tree_corruption(error.to_string()))
 }
 

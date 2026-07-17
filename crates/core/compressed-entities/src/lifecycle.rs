@@ -71,12 +71,12 @@ impl BlockLifecycle for CompressedEntitiesLifecycle {
         let staged_tree_batch = ctx
             .scope
             .prepare_tree_seal(ctx.runtime.block.block_number, &mutations)?;
-        if staged_tree_batch.parent_root != parent_root {
+        if staged_tree_batch.parent_root() != parent_root {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "prepared compressed-entity tree batch has the wrong parent root".into(),
             ));
         }
-        let new_root = staged_tree_batch.new_root;
+        let new_root = staged_tree_batch.new_root();
         ctx.runtime.storage.clone().with_checkpoint(|| {
             state.write_root(new_root)?;
             state.cleanup()

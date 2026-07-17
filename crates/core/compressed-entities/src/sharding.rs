@@ -10,10 +10,6 @@ use crate::{
     TAG_TOP_NODE,
 };
 
-/// Fork-fixed shard count selected by the ADR-009 target-host benchmark.
-pub const K_TARGET: u32 = 8;
-/// Wider shard count retained by correctness and cross-architecture vectors.
-pub const K_TEST: u32 = 16;
 pub const K_CANDIDATES: [u32; 6] = [1, 2, 4, 8, 16, 32];
 
 #[derive(Debug, Error)]
@@ -125,7 +121,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::{schema::Collection, smt::derive_tree_key, EntityId36};
+    use crate::{schema::Collection, smt::derive_tree_key, EntityId36, K_PROVISIONAL};
 
     fn key(bytes: [u8; 32]) -> TreeKey {
         TreeKey::from_be_bytes(bytes).unwrap()
@@ -136,14 +132,14 @@ mod tests {
         assert_eq!(K_CANDIDATES, [1, 2, 4, 8, 16, 32]);
         let vectors = [
             ([0_u8; 32], 1, 0),
-            ([0_u8; 32], K_TEST, 0),
+            ([0_u8; 32], K_PROVISIONAL, 0),
             (
                 {
                     let mut value = [0_u8; 32];
                     value[31] = 0x01;
                     value
                 },
-                K_TEST,
+                K_PROVISIONAL,
                 1,
             ),
             (
@@ -152,7 +148,7 @@ mod tests {
                     value[31] = 0x0f;
                     value
                 },
-                K_TEST,
+                K_PROVISIONAL,
                 15,
             ),
             (
@@ -161,7 +157,7 @@ mod tests {
                     value[31] = 0x10;
                     value
                 },
-                K_TEST,
+                K_PROVISIONAL,
                 0,
             ),
             (
@@ -170,7 +166,7 @@ mod tests {
                     value[31] = 0xff;
                     value
                 },
-                K_TEST,
+                K_PROVISIONAL,
                 15,
             ),
             (
@@ -179,7 +175,7 @@ mod tests {
                     value[0] = 0x0f;
                     value
                 },
-                K_TEST,
+                K_PROVISIONAL,
                 0,
             ),
         ];
@@ -205,9 +201,9 @@ mod tests {
             derive_tree_key(Collection::NodItem, identity).unwrap(),
             derive_tree_key(Collection::NodBucket, identity).unwrap(),
         ]
-        .map(|tree_key| shard_index(tree_key, K_TEST).unwrap());
+        .map(|tree_key| shard_index(tree_key, K_PROVISIONAL).unwrap());
 
-        assert_eq!(actual, [10, 10, 7]);
+        assert_eq!(actual, [1, 1, 10]);
     }
 
     #[derive(Deserialize)]
@@ -236,7 +232,7 @@ mod tests {
     fn checked_in_vectors_reproduce_full_keys_and_shards() {
         let vectors: ShardingVectors =
             serde_json::from_str(include_str!("../vectors/adr009-sharding.json")).unwrap();
-        assert_eq!(vectors.k_test, K_TEST);
+        assert_eq!(vectors.k_test, K_PROVISIONAL);
         for vector in vectors.synthetic {
             let bytes: [u8; 32] = hex::decode(vector.tree_key_hex)
                 .unwrap()
@@ -259,7 +255,10 @@ mod tests {
             };
             let derived = derive_tree_key(collection, identity).unwrap();
             assert_eq!(hex::encode(derived.as_bytes()), vector.tree_key_hex);
-            assert_eq!(shard_index(derived, K_TEST).unwrap(), vector.shard_index);
+            assert_eq!(
+                shard_index(derived, K_PROVISIONAL).unwrap(),
+                vector.shard_index
+            );
         }
     }
 
@@ -270,7 +269,7 @@ mod tests {
             TreeRoot::EMPTY
         );
 
-        let empty = vec![TreeRoot::EMPTY; usize::try_from(K_TEST).unwrap()];
+        let empty = vec![TreeRoot::EMPTY; usize::try_from(K_PROVISIONAL).unwrap()];
         let empty_top = aggregate_shard_roots(&empty).unwrap();
         assert_ne!(empty_top, TreeRoot::EMPTY);
 

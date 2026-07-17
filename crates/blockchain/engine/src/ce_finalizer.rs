@@ -512,17 +512,11 @@ mod tests {
         }
     }
 
-    fn candidate(root: B256) -> Arc<StagedTreeBatch> {
+    fn candidate() -> Arc<StagedTreeBatch> {
         Arc::new(
-            outbe_compressed_entities::bench_support::staged_batch(
-                1,
-                hash(2),
-                hash(1),
-                B256::ZERO,
-                root,
-                usize::from(root != B256::ZERO),
-            )
-            .unwrap(),
+            outbe_compressed_entities::ProvisionalTreeBatch::new_identity(1, hash(1), B256::ZERO)
+                .unwrap()
+                .freeze(hash(2)),
         )
     }
 
@@ -535,8 +529,8 @@ mod tests {
                 chain_id: 1,
                 genesis_hash: hash(1),
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                shard_count: 1,
-                tree_format: "ckb-smt-v0.6.1-poseidon-unsharded-control".to_owned(),
+                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -545,7 +539,7 @@ mod tests {
                 block_hash: hash(1),
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: B256::ZERO,
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .unwrap();
@@ -570,7 +564,13 @@ mod tests {
         fn new() -> (Arc<Self>, mpsc::UnboundedSender<BlockNumHash>) {
             let (tx, rx) = mpsc::unbounded();
             let mut blocks = BTreeMap::new();
-            blocks.insert(0, (hash(1), B256::ZERO));
+            blocks.insert(
+                0,
+                (
+                    hash(1),
+                    outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                ),
+            );
             (
                 Arc::new(Self {
                     stream: Mutex::new(Some(rx)),
@@ -624,17 +624,17 @@ mod tests {
                     block_hash: hash(1),
                     parent_block_hash: B256::ZERO,
                     parent_root: B256::ZERO,
-                    new_root: B256::ZERO,
+                    new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
                 },
                 attempts: Mutex::new(Vec::new()),
                 apply_error: false,
             })
         }
 
-        fn committed(root: B256) -> Arc<Self> {
+        fn committed() -> Arc<Self> {
             Arc::new(Self {
                 candidate: None,
-                marker: candidate(root).marker(ACTIVE_COMMITMENT_SCHEME),
+                marker: candidate().marker(ACTIVE_COMMITMENT_SCHEME),
                 attempts: Mutex::new(Vec::new()),
                 apply_error: false,
             })
@@ -649,7 +649,7 @@ mod tests {
                     block_hash: hash(1),
                     parent_block_hash: B256::ZERO,
                     parent_root: B256::ZERO,
-                    new_root: B256::ZERO,
+                    new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
                 },
                 attempts: Mutex::new(Vec::new()),
                 apply_error: true,
@@ -717,9 +717,10 @@ mod tests {
 
     #[tokio::test]
     async fn waits_for_exact_persistence_before_applying_tree() {
-        let root = hash(9);
+        let staged = candidate();
+        let root = staged.new_root();
         let (state, persisted_tx) = FakeDurableState::new();
-        let tree = FakeTree::new(Some(candidate(root)));
+        let tree = FakeTree::new(Some(staged));
         let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
 
         let task = {
@@ -739,9 +740,10 @@ mod tests {
 
     #[tokio::test]
     async fn coalesced_later_notification_rechecks_exact_target_in_db() {
-        let root = hash(9);
+        let staged = candidate();
+        let root = staged.new_root();
         let (state, persisted_tx) = FakeDurableState::new();
-        let tree = FakeTree::new(Some(candidate(root)));
+        let tree = FakeTree::new(Some(staged));
         let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
 
         let task = {
@@ -759,10 +761,11 @@ mod tests {
 
     #[tokio::test]
     async fn durable_hash_conflict_fails_before_tree_apply() {
-        let root = hash(9);
+        let staged = candidate();
+        let root = staged.new_root();
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(7), root);
-        let tree = FakeTree::new(Some(candidate(root)));
+        let tree = FakeTree::new(Some(staged));
         let error = finalizer(state, tree.clone())
             .commit(finalized_block())
             .await
@@ -775,7 +778,7 @@ mod tests {
     async fn durable_root_mismatch_fails_before_tree_apply() {
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), hash(8));
-        let tree = FakeTree::new(Some(candidate(hash(9))));
+        let tree = FakeTree::new(Some(candidate()));
         let error = finalizer(state, tree.clone())
             .commit(finalized_block())
             .await
@@ -793,7 +796,7 @@ mod tests {
             number: 1,
             hash: hash(2),
             parent_hash: hash(1),
-            parent_root: B256::ZERO,
+            parent_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             new_root: root,
             events: Vec::new(),
         });
@@ -817,7 +820,7 @@ mod tests {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                 block_number: 0,
                 block_hash: hash(1),
-                root: B256::ZERO,
+                root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             })
             .unwrap();
         let expected_root = parent
@@ -837,7 +840,7 @@ mod tests {
             number: 1,
             hash: hash(2),
             parent_hash: hash(1),
-            parent_root: B256::ZERO,
+            parent_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             new_root: expected_root,
             events: vec![outbe_compressed_entities::CanonicalBodyEvent {
                 entity,
@@ -868,10 +871,10 @@ mod tests {
 
     #[tokio::test]
     async fn redelivery_after_ce_commit_before_ack_is_idempotent_without_candidate() {
-        let root = hash(9);
+        let root = candidate().new_root();
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), root);
-        let tree = FakeTree::committed(root);
+        let tree = FakeTree::committed();
 
         finalizer(state, tree.clone())
             .commit(finalized_block())
@@ -883,10 +886,11 @@ mod tests {
 
     #[tokio::test]
     async fn redelivery_rejects_a_corrupted_marker_parent_root() {
-        let root = hash(9);
+        let staged = candidate();
+        let root = staged.new_root();
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), root);
-        let mut marker = candidate(root).marker(ACTIVE_COMMITMENT_SCHEME);
+        let mut marker = staged.marker(ACTIVE_COMMITMENT_SCHEME);
         marker.parent_root = hash(8);
         let tree = Arc::new(FakeTree {
             candidate: None,
@@ -905,10 +909,11 @@ mod tests {
 
     #[tokio::test]
     async fn tree_apply_failure_is_propagated_without_success() {
-        let root = hash(9);
+        let staged = candidate();
+        let root = staged.new_root();
         let (state, _tx) = FakeDurableState::new();
         state.set(1, hash(2), root);
-        let tree = FakeTree::failing(candidate(root));
+        let tree = FakeTree::failing(staged);
         let error = finalizer(state, tree.clone())
             .commit(finalized_block())
             .await

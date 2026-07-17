@@ -26,7 +26,9 @@ use outbe_evm::sub_call;
 use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
-use outbe_primitives::addresses::{NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
+use outbe_primitives::addresses::{
+    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+};
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
@@ -52,7 +54,7 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
     }
 
     fn parent_root(&self) -> B256 {
-        B256::ZERO
+        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
     }
 
     fn read_leaf_verified(
@@ -60,7 +62,10 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         entity: EntityRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<Option<Commitment>> {
-        assert_eq!(expected_parent_root, B256::ZERO);
+        assert_eq!(
+            expected_parent_root,
+            outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+        );
         Ok((entity == self.entity).then_some(self.commitment))
     }
 
@@ -69,15 +74,8 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         block_number: u64,
         _mutations: &[FinalLeafMutation],
     ) -> outbe_primitives::error::Result<ProvisionalTreeBatch> {
-        ProvisionalTreeBatch::new_unsharded(
-            block_number,
-            B256::ZERO,
-            B256::ZERO,
-            B256::ZERO,
-            Default::default(),
-            Default::default(),
-        )
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+        ProvisionalTreeBatch::new_identity(block_number, B256::ZERO, B256::ZERO)
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }
 }
 
@@ -182,6 +180,20 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(2_u64))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1_u64),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
         begin_block(storage, scope.as_ref()).unwrap();
     });
     provider.flush().unwrap();

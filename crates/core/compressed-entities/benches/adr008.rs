@@ -89,7 +89,7 @@ fn open_mdbx() -> BenchMdbx {
         block_hash: genesis_hash,
         parent_block_hash: B256::ZERO,
         parent_root: B256::ZERO,
-        new_root: B256::ZERO,
+        new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
     };
     let store = CeMdbx::open(
         directory.path(),
@@ -98,8 +98,8 @@ fn open_mdbx() -> BenchMdbx {
             chain_id: 1,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            shard_count: 1,
-            tree_format: "ckb-smt-v0.6.1-unsharded".to_owned(),
+            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },
         marker,

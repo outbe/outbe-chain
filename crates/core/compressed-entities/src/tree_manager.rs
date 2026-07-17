@@ -89,30 +89,24 @@ impl CompressedTreeService {
             .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
         let current = self.db.marker()?;
         let batch = provisional.freeze(block_hash);
-        if batch.shard_count() != self.db.identity().shard_count {
-            return Err(TreeServiceError::ShardCountMismatch {
-                expected: self.db.identity().shard_count,
-                actual: batch.shard_count(),
-            });
-        }
         if current.height == batch.block_number
             && current.block_hash == batch.block_hash
             && current.parent_block_hash == batch.parent_block_hash
-            && current.parent_root == batch.parent_root
-            && current.new_root == batch.new_root
+            && current.parent_root == batch.parent_root()
+            && current.new_root == batch.new_root()
         {
             return Ok(PublicationOutcome::AlreadyPublished);
         }
         if batch.block_number != current.height.saturating_add(1)
             || batch.parent_block_hash != current.block_hash
-            || batch.parent_root != current.new_root
+            || batch.parent_root() != current.new_root
         {
             return Err(TreeServiceError::NonContiguousPublication {
                 current_marker: current,
                 candidate_height: batch.block_number,
                 block_hash,
                 parent_block_hash: batch.parent_block_hash,
-                parent_root: batch.parent_root,
+                parent_root: batch.parent_root(),
             });
         }
         self.candidates
@@ -205,11 +199,11 @@ impl CompressedTreeService {
             });
         };
 
-        if candidate.new_root != authoritative_root {
+        if candidate.new_root() != authoritative_root {
             return Err(TreeServiceError::AuthoritativeRootMismatch {
                 block_number,
                 block_hash,
-                candidate_root: candidate.new_root,
+                candidate_root: candidate.new_root(),
                 authoritative_root,
             });
         }
@@ -320,15 +314,16 @@ pub enum TreeServiceError {
     },
 }
 
+// ADR-009's flat-namespace fixtures are replaced by ADR-010 catalog fixtures below.
 #[cfg(test)]
 mod tests {
     use super::*;
     use outbe_common::WorldwideDay;
 
     use crate::{
-        empty_shard_top_root,
         persistence::{EnvironmentIdentity, LOCAL_STORAGE_SCHEMA_VERSION},
-        Commitment, EntityId36, EntityRef, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME, K_TEST,
+        sealed_root, CeTopologyV1, Commitment, EntityId36, EntityRef, FinalLeafMutation,
+        ACTIVE_COMMITMENT_SCHEME, K_PROVISIONAL,
     };
 
     fn b256(last: u8) -> B256 {
@@ -343,8 +338,8 @@ mod tests {
             chain_id: 8080,
             genesis_hash: b256(1),
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            shard_count: K_TEST,
-            tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
+            topology: CeTopologyV1.encode(),
+            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         }
     }
@@ -356,7 +351,7 @@ mod tests {
             block_hash: environment().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: empty_shard_top_root(K_TEST).unwrap(),
+            new_root: sealed_root(B256::ZERO).unwrap(),
         }
     }
 
@@ -468,8 +463,8 @@ mod tests {
         );
 
         let staged = service.candidate(1, block_hash).unwrap().unwrap();
-        assert_eq!(staged.parent_root, genesis().new_root);
-        let new_root = staged.new_root;
+        assert_eq!(staged.parent_root(), genesis().new_root);
+        let new_root = staged.new_root();
         assert_eq!(
             service.apply_finalized(1, block_hash, new_root).unwrap(),
             FinalizedCandidateOutcome::Applied(staged.marker(ACTIVE_COMMITMENT_SCHEME))
@@ -522,10 +517,12 @@ mod tests {
                 ],
             )
             .unwrap();
-        assert_eq!(provisional.shard_count(), K_TEST);
         assert_eq!(provisional.changed_shard_count(), 2);
-        assert_eq!(provisional.parent_shard_roots().len(), 16);
-        assert_eq!(provisional.new_shard_roots().len(), 16);
+        assert_eq!(provisional.changed_collections.len(), 2);
+        assert!(provisional.changed_collections.values().all(|collection| {
+            collection.shard_set.parent_shard_roots.len() == K_PROVISIONAL as usize
+                && collection.shard_set.new_shard_roots.len() == K_PROVISIONAL as usize
+        }));
 
         let block_hash = b256(91);
         let new_root = provisional.new_root();
@@ -559,7 +556,11 @@ mod tests {
         let block_hash = b256(2);
         service.publish_candidate(block_hash, provisional).unwrap();
 
-        let root = service.candidate(1, block_hash).unwrap().unwrap().new_root;
+        let root = service
+            .candidate(1, block_hash)
+            .unwrap()
+            .unwrap()
+            .new_root();
 
         assert!(matches!(
             service.apply_finalized(1, block_hash, root).unwrap(),
@@ -619,18 +620,12 @@ mod tests {
     fn stale_or_wrong_parent_candidate_is_rejected_before_cache_publication() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
-        let empty_root = empty_shard_top_root(K_TEST).unwrap();
-        let wrong_parent = ProvisionalTreeBatch::new(
-            1,
-            b256(44),
-            empty_root,
-            empty_root,
-            K_TEST,
-            vec![B256::ZERO; K_TEST as usize],
-            vec![B256::ZERO; K_TEST as usize],
-            Default::default(),
-        )
-        .unwrap();
+        let mut wrong_parent = service
+            .open_parent(genesis_identity())
+            .unwrap()
+            .prepare_seal(1, &[])
+            .unwrap();
+        wrong_parent.parent_block_hash = b256(44);
         assert!(matches!(
             service.publish_candidate(b256(2), wrong_parent),
             Err(TreeServiceError::NonContiguousPublication { .. })

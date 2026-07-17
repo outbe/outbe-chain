@@ -411,8 +411,7 @@ mod tests {
 
     fn test_tree_service(parent_hash: B256) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
         // This fixture isolates validator non-publication after Reth root
-        // rejection; K=1 keeps the pre-existing zero-root block independent
-        // from ADR-009 sharding correctness, which is covered by the tree tests.
+        // rejection while retaining the final ADR-010 empty authority.
         let directory = tempfile::tempdir().expect("CE test directory must be created");
         let db = CeMdbx::open(
             directory.path(),
@@ -421,8 +420,8 @@ mod tests {
                 chain_id: MAINNET.chain().id(),
                 genesis_hash: parent_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                shard_count: 1,
-                tree_format: "ckb-smt-v0.6.1-poseidon-unsharded-control".to_owned(),
+                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -431,7 +430,7 @@ mod tests {
                 block_hash: parent_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: B256::ZERO,
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .expect("CE test MDBX must open");

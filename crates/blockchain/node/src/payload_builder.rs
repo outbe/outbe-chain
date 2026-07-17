@@ -634,8 +634,8 @@ mod ce_work_tests {
                 chain_id: 1,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                shard_count: outbe_compressed_entities::K_TARGET,
-                tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
+                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
             FinalizedMarker {
@@ -644,10 +644,7 @@ mod ce_work_tests {
                 block_hash: genesis_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::empty_shard_top_root(
-                    outbe_compressed_entities::K_TARGET,
-                )
-                .unwrap(),
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .unwrap();
@@ -683,9 +680,7 @@ mod ce_work_tests {
         let (_directory, service) = tree_service();
         let genesis_hash = B256::repeat_byte(0x11);
         let block_hash = B256::repeat_byte(0x22);
-        let genesis_root =
-            outbe_compressed_entities::empty_shard_top_root(outbe_compressed_entities::K_TARGET)
-                .unwrap();
+        let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
         let provisional = service
             .open_parent(ExactParentIdentity {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,

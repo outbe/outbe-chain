@@ -407,7 +407,10 @@ fn schema_v2_has_one_root_and_keeps_reserved_slots_empty() {
     StorageHandle::enter(&mut provider, |storage| {
         let state = State::new(storage.clone());
         state.ensure_schema().unwrap();
-        assert_eq!(state.root().unwrap(), B256::ZERO);
+        assert_eq!(
+            state.root().unwrap(),
+            crate::sealed_root(B256::ZERO).unwrap()
+        );
         let schema = CompressedEntitiesSchema::new(storage);
         assert_eq!(schema.storage_schema_version.read().unwrap(), 2);
         assert_eq!(schema.reserved_2.read().unwrap(), U256::ZERO);

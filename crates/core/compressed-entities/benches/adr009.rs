@@ -10,9 +10,9 @@ use alloy_primitives::{keccak256, B256};
 use criterion::{black_box, BenchmarkId, Criterion};
 use outbe_compressed_entities::{
     bench_support::{aggregate_shard_roots, candidate_checksum, derived_shard, field_word},
-    empty_shard_top_root, CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService,
-    EntityId36, EntityRef, EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation,
-    FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, K_CANDIDATES, LOCAL_STORAGE_SCHEMA_VERSION,
+    CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityId36, EntityRef,
+    EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, K_CANDIDATES, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use tempfile::TempDir;
 
@@ -189,14 +189,14 @@ fn dataset_checksum(entities: impl IntoIterator<Item = EntityRef>) -> B256 {
     keccak256(bytes)
 }
 
-fn environment(shard_count: u32, genesis_hash: B256) -> EnvironmentIdentity {
+fn environment(_shard_count: u32, genesis_hash: B256) -> EnvironmentIdentity {
     EnvironmentIdentity {
         local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
         chain_id: 9_009,
         genesis_hash,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        shard_count,
-        tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v2".to_owned(),
+        topology: outbe_compressed_entities::CeTopologyV1.encode(),
+        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
         vendor_revision: VENDOR_REVISION.to_owned(),
     }
 }
@@ -296,7 +296,8 @@ fn build_fixture(
     let workload = workload(shape, distribution, operation);
     let directory = tempfile::tempdir().expect("benchmark tempdir");
     let genesis_hash = B256::repeat_byte(9);
-    let genesis_root = empty_shard_top_root(shard_count).expect("candidate K");
+    let genesis_root =
+        outbe_compressed_entities::sealed_root(B256::ZERO).expect("ADR-010 empty authority");
     let genesis = FinalizedMarker {
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         height: 0,
@@ -439,7 +440,7 @@ fn measured_aggregation(fixture: Fixture) -> Duration {
     let provisional = parent
         .prepare_seal(2, &fixture.mutations)
         .expect("sharded proof and seal");
-    let roots = provisional.new_shard_roots().to_vec();
+    let roots = outbe_compressed_entities::bench_support::candidate_shard_roots(&provisional);
     let started = Instant::now();
     black_box(aggregate_shard_roots(black_box(&roots)).expect("shard aggregation"));
     started.elapsed()
@@ -657,7 +658,8 @@ fn cold_run(arguments: &[String]) -> Result<(), String> {
     }
 
     let genesis_hash = B256::repeat_byte(9);
-    let genesis_root = empty_shard_top_root(shard_count).map_err(|error| error.to_string())?;
+    let genesis_root =
+        outbe_compressed_entities::sealed_root(B256::ZERO).map_err(|error| error.to_string())?;
     let genesis = FinalizedMarker {
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         height: 0,

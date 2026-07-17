@@ -56,7 +56,7 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
     }
 
     fn parent_root(&self) -> B256 {
-        B256::ZERO
+        crate::sealed_root(B256::ZERO).unwrap()
     }
 
     fn read_leaf_verified(
@@ -64,7 +64,10 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
         entity: EntityRef,
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>> {
-        assert_eq!(expected_parent_root, B256::ZERO);
+        assert_eq!(
+            expected_parent_root,
+            crate::sealed_root(B256::ZERO).unwrap()
+        );
         Ok(self.0.lock().unwrap().get(&entity).copied())
     }
 
@@ -73,7 +76,7 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
         block_number: u64,
         _mutations: &[FinalLeafMutation],
     ) -> Result<ProvisionalTreeBatch> {
-        ProvisionalTreeBatch::new_unsharded(
+        ProvisionalTreeBatch::new_fixture_single_collection(
             block_number,
             B256::ZERO,
             B256::ZERO,
@@ -1788,7 +1791,7 @@ fn storage_layout_uses_exact_slots_zero_through_ten() {
             .get(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(1)))
             .copied()
             .unwrap_or_default(),
-        U256::ZERO
+        U256::from_be_slice(crate::sealed_root(B256::ZERO).unwrap().as_slice())
     );
     for reserved in [U256::from(2), U256::from(3)] {
         assert_eq!(

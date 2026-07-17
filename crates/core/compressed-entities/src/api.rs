@@ -113,7 +113,7 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
     }
 
     fn parent_root(&self) -> B256 {
-        B256::ZERO
+        crate::sealed_root(B256::ZERO).expect("empty sealed root is protocol-fixed")
     }
 
     fn read_leaf_verified(
@@ -121,7 +121,7 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         _entity: EntityRef,
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>> {
-        if expected_parent_root != B256::ZERO {
+        if expected_parent_root != self.parent_root() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "empty reference parent does not match the EVM root".into(),
             ));
@@ -136,56 +136,142 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
     ) -> Result<crate::ProvisionalTreeBatch> {
         use crate::{
             schema::Collection,
+            sharding::shard_index,
             smt::{derive_tree_key, PoseidonSmt, TreeLeaf},
+            CeDomain, CollectionBatch, ProvisionalCatalogBatch, ProvisionalShardBatch,
+            ProvisionalShardSetBatch, TreeChange,
         };
-        let mut tree = PoseidonSmt::empty();
-        let mut updates = Vec::with_capacity(mutations.len());
-        let mut leaf_changes = std::collections::BTreeMap::new();
+        use std::collections::BTreeMap;
+        let mut grouped: BTreeMap<
+            crate::CollectionKey,
+            (CeDomain, Vec<(crate::smt::TreeKey, crate::Commitment)>),
+        > = BTreeMap::new();
         for mutation in mutations {
-            let (collection, entity_id) = match mutation.entity {
-                EntityRef::Tribute(id) => (Collection::Tribute, id),
-                EntityRef::NodItem(id) => (Collection::NodItem, id),
-                EntityRef::NodBucket(id) => (Collection::NodBucket, id),
+            let (domain, collection, entity_id) = match mutation.entity {
+                EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
+                EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),
+                EntityRef::NodBucket(id) => (CeDomain::NodBucket, Collection::NodBucket, id),
             };
+            let Some(commitment) = mutation.final_leaf else {
+                continue;
+            };
+            let collection_key = crate::collection_key(domain, entity_id)
+                .map_err(|error| fatal_scope(error.to_string()))?;
             let key = derive_tree_key(collection, entity_id)
                 .map_err(|error| fatal_scope(error.to_string()))?;
-            let leaf = match mutation.final_leaf {
-                Some(commitment) => TreeLeaf::from_be_bytes(*commitment.as_bytes())
-                    .map_err(|error| fatal_scope(error.to_string()))?,
-                None => TreeLeaf::ZERO,
-            };
-            updates.push((key, leaf));
-            let persisted_key = crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let change = mutation
-                .final_leaf
-                .map(
-                    |commitment| -> Result<crate::TreeChange<crate::persistence::LeafValue>> {
-                        Ok(crate::TreeChange::Set(
+            grouped
+                .entry(collection_key)
+                .or_insert_with(|| (domain, Vec::new()))
+                .1
+                .push((key, commitment));
+        }
+
+        let mut changed_collections = BTreeMap::new();
+        let mut catalog_updates = Vec::new();
+        let mut catalog_leaf_changes = BTreeMap::new();
+        for (collection_key, (domain, keyed)) in grouped {
+            let mut by_shard: BTreeMap<u32, Vec<(crate::smt::TreeKey, crate::Commitment)>> =
+                BTreeMap::new();
+            for (key, commitment) in keyed {
+                let shard = shard_index(key, domain.shard_count())
+                    .map_err(|error| fatal_scope(error.to_string()))?;
+                by_shard.entry(shard).or_default().push((key, commitment));
+            }
+            let parent_roots = vec![B256::ZERO; domain.shard_count() as usize];
+            let mut new_roots = parent_roots.clone();
+            let mut changed_shards = BTreeMap::new();
+            for (shard, updates) in by_shard {
+                let mut tree = PoseidonSmt::empty();
+                let smt_updates = updates
+                    .iter()
+                    .map(|(key, commitment)| {
+                        TreeLeaf::from_be_bytes(*commitment.as_bytes()).map(|leaf| (*key, leaf))
+                    })
+                    .collect::<core::result::Result<Vec<_>, _>>()
+                    .map_err(|error| fatal_scope(error.to_string()))?;
+                let new_root = B256::from(
+                    tree.update_all(smt_updates)
+                        .map_err(|error| fatal_scope(error.to_string()))?
+                        .as_bytes(),
+                );
+                new_roots[shard as usize] = new_root;
+                let mut leaf_changes = BTreeMap::new();
+                for (key, commitment) in updates {
+                    leaf_changes.insert(
+                        crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
+                            .map_err(|error| fatal_scope(error.to_string()))?,
+                        TreeChange::Set(
                             crate::persistence::LeafValue::try_from(B256::from(
                                 *commitment.as_bytes(),
                             ))
                             .map_err(|error| fatal_scope(error.to_string()))?,
-                        ))
-                    },
-                )
-                .transpose()?;
-            if let Some(change) = change {
-                if leaf_changes.insert(persisted_key, change).is_some() {
-                    return Err(fatal_scope("compressed-entity tree-key collision"));
+                        ),
+                    );
                 }
+                changed_shards.insert(
+                    shard,
+                    ProvisionalShardBatch::new(B256::ZERO, new_root, BTreeMap::new(), leaf_changes)
+                        .map_err(|error| fatal_scope(error.to_string()))?,
+                );
             }
-        }
-        let new_root = tree
-            .update_all(updates)
+            let parent_top = crate::empty_shard_top_root(domain.shard_count())
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let new_top = crate::sharding::aggregate_b256_shard_roots(&new_roots)
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let new_collection_root = crate::collection_root(domain, collection_key, new_top)
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let shard_set = ProvisionalShardSetBatch::new(
+                domain.shard_count(),
+                parent_top,
+                new_top,
+                parent_roots,
+                new_roots,
+                changed_shards,
+            )
             .map_err(|error| fatal_scope(error.to_string()))?;
-        crate::ProvisionalTreeBatch::new_unsharded(
+            changed_collections.insert(
+                collection_key,
+                CollectionBatch::new(domain, collection_key, None, new_collection_root, shard_set)
+                    .map_err(|error| fatal_scope(error.to_string()))?,
+            );
+            let catalog_key = crate::smt::TreeKey::from_be_bytes(*collection_key.as_bytes())
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
+                .map_err(|error| fatal_scope(error.to_string()))?;
+            catalog_updates.push((catalog_key, catalog_leaf));
+            let persisted_catalog_key =
+                crate::persistence::TreeKey::try_from(B256::from(*collection_key.as_bytes()))
+                    .map_err(|error| fatal_scope(error.to_string()))?;
+            catalog_leaf_changes.insert(
+                persisted_catalog_key,
+                TreeChange::Set(
+                    crate::persistence::LeafValue::try_from(new_collection_root)
+                        .map_err(|error| fatal_scope(error.to_string()))?,
+                ),
+            );
+        }
+        let mut catalog = PoseidonSmt::empty();
+        let new_catalog_root = B256::from(
+            catalog
+                .update_all(catalog_updates)
+                .map_err(|error| fatal_scope(error.to_string()))?
+                .as_bytes(),
+        );
+        let catalog_batch = (!changed_collections.is_empty()).then_some(ProvisionalCatalogBatch {
+            parent_catalog_root: B256::ZERO,
+            new_catalog_root,
+            branch_changes: BTreeMap::new(),
+            leaf_changes: catalog_leaf_changes,
+        });
+        crate::ProvisionalTreeBatch::new(
             block_number,
             B256::ZERO,
+            self.parent_root(),
+            crate::sealed_root(new_catalog_root).map_err(|error| fatal_scope(error.to_string()))?,
             B256::ZERO,
-            B256::from(new_root.as_bytes()),
-            Default::default(),
-            leaf_changes,
+            new_catalog_root,
+            changed_collections,
+            catalog_batch,
         )
         .map_err(|error| fatal_scope(error.to_string()))
     }

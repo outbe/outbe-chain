@@ -15,6 +15,7 @@ use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use reth_db::{
+    cursor::DbCursorRO,
     database::Database,
     mdbx::{create_db, tx::Tx, DatabaseArguments, RO},
     transaction::{DbTx, DbTxMut},
@@ -24,15 +25,487 @@ use thiserror::Error;
 
 use crate::{
     sharding::aggregate_b256_shard_roots,
-    staging::{FinalizedTreeSnapshot, ShardIndex, StagedTreeBatch, StagingError, TreeChange},
+    staging::{
+        FinalizedTreeSnapshot, ProvisionalShardBatch, ShardIndex, StagedTreeBatch, StagingError,
+        TreeChange,
+    },
+    CollectionKey, K_PROVISIONAL,
 };
 
-pub const LOCAL_STORAGE_SCHEMA_VERSION: u32 = 2;
+pub const LOCAL_STORAGE_SCHEMA_VERSION: u32 = 3;
 pub const FINALIZED_MARKER_ENCODED_LEN: usize = 4 + 8 + 32 * 4;
 pub const CE_SMT_RELATIVE_PATH: &str = "compressed_entities/smt";
 
 const IDENTITY_KEY: &[u8] = b"environment_identity";
 const LAST_APPLIED_KEY: &[u8] = b"last_applied";
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TreeNamespace {
+    Catalog,
+    CollectionShard(CollectionKey, ShardIndex),
+}
+
+#[cfg(test)]
+mod adr010_tests {
+    use std::sync::Arc;
+
+    use alloy_primitives::B256;
+
+    use super::*;
+    use crate::{
+        api::{AuthenticatedParentTree, EntityRef, FinalLeafMutation},
+        collection_key, sealed_root, CeDomain, CeTopologyV1, Commitment, EntityId36,
+        MdbxAuthenticatedTree, ACTIVE_COMMITMENT_SCHEME, K_PROVISIONAL,
+    };
+
+    const VENDOR: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
+
+    fn identity(genesis_hash: B256) -> EnvironmentIdentity {
+        EnvironmentIdentity {
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+            chain_id: 10,
+            genesis_hash,
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            topology: CeTopologyV1.encode(),
+            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+            vendor_revision: VENDOR.to_owned(),
+        }
+    }
+
+    fn genesis(genesis_hash: B256) -> FinalizedMarker {
+        FinalizedMarker {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            height: 0,
+            block_hash: genesis_hash,
+            parent_block_hash: B256::ZERO,
+            parent_root: B256::ZERO,
+            new_root: sealed_root(B256::ZERO).unwrap(),
+        }
+    }
+
+    fn tribute_id(day: u32, suffix: u8) -> EntityId36 {
+        let mut bytes = [0_u8; 36];
+        bytes[..4].copy_from_slice(&day.to_be_bytes());
+        bytes[35] = suffix;
+        EntityId36::try_from(bytes.as_slice()).unwrap()
+    }
+
+    #[test]
+    fn v3_genesis_materializes_only_catalog_and_first_mint_creates_exact_domain_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x10);
+        let db = Arc::new(
+            CeMdbx::open(
+                directory.path(),
+                identity(genesis_hash),
+                genesis(genesis_hash),
+            )
+            .unwrap(),
+        );
+        let snapshot = db.open_snapshot().unwrap();
+        assert_eq!(
+            snapshot.tree_root(TreeNamespace::Catalog).unwrap(),
+            Some(B256::ZERO)
+        );
+
+        let id = tribute_id(20_260_717, 1);
+        let collection = collection_key(CeDomain::Tribute, id).unwrap();
+        assert!(!snapshot.collection_has_records(collection).unwrap());
+        for shard in 0..K_PROVISIONAL {
+            assert_eq!(
+                snapshot
+                    .tree_root(TreeNamespace::CollectionShard(collection, shard))
+                    .unwrap(),
+                None
+            );
+        }
+        drop(snapshot);
+
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: genesis_hash,
+                root: sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            parent
+                .read_leaf_verified(
+                    EntityRef::Tribute(tribute_id(20_260_717, 9)),
+                    sealed_root(B256::ZERO).unwrap()
+                )
+                .unwrap(),
+            None
+        );
+        assert!(!db
+            .open_snapshot()
+            .unwrap()
+            .collection_has_records(collection)
+            .unwrap());
+        let commitment = Commitment::try_from(B256::with_last_byte(1).0).unwrap();
+        let provisional = parent
+            .prepare_seal(
+                1,
+                &[FinalLeafMutation {
+                    entity: EntityRef::Tribute(id),
+                    final_leaf: Some(commitment),
+                }],
+            )
+            .unwrap();
+        let staged = provisional.freeze(B256::repeat_byte(0x11));
+        assert_eq!(
+            db.apply_finalized(&staged).unwrap(),
+            ApplyOutcome::Applied(staged.marker(1))
+        );
+
+        let snapshot = db.open_snapshot().unwrap();
+        assert_ne!(
+            snapshot.tree_root(TreeNamespace::Catalog).unwrap(),
+            Some(B256::ZERO)
+        );
+        assert!(snapshot.collection_has_records(collection).unwrap());
+        for shard in 0..K_PROVISIONAL {
+            assert!(snapshot
+                .tree_root(TreeNamespace::CollectionShard(collection, shard))
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(
+            snapshot
+                .tree_root(TreeNamespace::CollectionShard(collection, K_PROVISIONAL))
+                .unwrap(),
+            None
+        );
+        let block_one_root = staged.new_root();
+        let block_one_hash = staged.block_hash();
+        drop(snapshot);
+
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 1,
+                block_hash: block_one_hash,
+                root: block_one_root,
+            },
+        )
+        .unwrap();
+        let staged_delete = parent
+            .prepare_seal(
+                2,
+                &[FinalLeafMutation {
+                    entity: EntityRef::Tribute(id),
+                    final_leaf: None,
+                }],
+            )
+            .unwrap()
+            .freeze(B256::repeat_byte(0x12));
+        db.apply_finalized(&staged_delete).unwrap();
+        let snapshot = db.open_snapshot().unwrap();
+        let catalog_key = TreeKey::try_from(B256::from(*collection.as_bytes())).unwrap();
+        assert!(snapshot
+            .read_leaf(TreeNamespace::Catalog, catalog_key)
+            .unwrap()
+            .is_some());
+        for shard in 0..K_PROVISIONAL {
+            assert_eq!(
+                snapshot
+                    .tree_root(TreeNamespace::CollectionShard(collection, shard))
+                    .unwrap(),
+                Some(B256::ZERO)
+            );
+        }
+    }
+
+    #[test]
+    fn topology_identity_is_canonical_and_mismatch_never_falls_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x20);
+        let expected = identity(genesis_hash);
+        drop(CeMdbx::open(directory.path(), expected.clone(), genesis(genesis_hash)).unwrap());
+
+        let mut mismatched = expected;
+        mismatched.topology.push(0);
+        assert!(matches!(
+            CeMdbx::open(directory.path(), mismatched, genesis(genesis_hash)),
+            Err(PersistenceError::InvalidTopologyIdentity)
+        ));
+    }
+
+    #[test]
+    fn one_block_atomically_creates_three_independent_domain_collections() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x30);
+        let db = Arc::new(
+            CeMdbx::open(
+                directory.path(),
+                identity(genesis_hash),
+                genesis(genesis_hash),
+            )
+            .unwrap(),
+        );
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: genesis_hash,
+                root: sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        let id = tribute_id(20_260_718, 7);
+        let mutations = [
+            EntityRef::Tribute(id),
+            EntityRef::NodItem(id),
+            EntityRef::NodBucket(id),
+        ]
+        .map(|entity| FinalLeafMutation {
+            entity,
+            final_leaf: Some(
+                Commitment::try_from(B256::with_last_byte(entity_kind(entity)).0).unwrap(),
+            ),
+        });
+        let staged = parent
+            .prepare_seal(1, &mutations)
+            .unwrap()
+            .freeze(B256::repeat_byte(0x31));
+        assert_eq!(staged.changed_collections.len(), 3);
+        assert_eq!(staged.catalog_batch.as_ref().unwrap().leaf_changes.len(), 3);
+        db.apply_finalized(&staged).unwrap();
+
+        let snapshot = db.open_snapshot().unwrap();
+        for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+            let key = collection_key(domain, id).unwrap();
+            assert!(snapshot.collection_has_records(key).unwrap());
+            assert!(snapshot
+                .read_leaf(
+                    TreeNamespace::Catalog,
+                    TreeKey::try_from(B256::from(*key.as_bytes())).unwrap(),
+                )
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(
+            snapshot.marker().unwrap(),
+            staged.marker(ACTIVE_COMMITMENT_SCHEME)
+        );
+    }
+
+    fn entity_kind(entity: EntityRef) -> u8 {
+        match entity {
+            EntityRef::Tribute(_) => 1,
+            EntityRef::NodItem(_) => 2,
+            EntityRef::NodBucket(_) => 3,
+        }
+    }
+
+    #[test]
+    fn v3_namespace_codec_is_typed_strict_and_order_preserving() {
+        let key = collection_key(CeDomain::Tribute, tribute_id(20_260_719, 1)).unwrap();
+        let catalog = TreeNamespace::Catalog.encode();
+        let shard = TreeNamespace::CollectionShard(key, 15).encode();
+        assert_eq!(catalog, vec![0]);
+        assert_eq!(shard.len(), 37);
+        assert_eq!(
+            TreeNamespace::decode(&catalog).unwrap(),
+            TreeNamespace::Catalog
+        );
+        assert_eq!(
+            TreeNamespace::decode(&shard).unwrap(),
+            TreeNamespace::CollectionShard(key, 15)
+        );
+        for malformed in [
+            vec![2],
+            vec![0, 0],
+            TreeNamespace::CollectionShard(key, K_PROVISIONAL).encode(),
+        ] {
+            assert!(TreeNamespace::decode(&malformed).is_err());
+        }
+    }
+
+    #[test]
+    fn present_collection_rejects_missing_and_extra_root_records() {
+        for extra in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let genesis_hash = B256::repeat_byte(if extra { 0x41 } else { 0x40 });
+            let db = Arc::new(
+                CeMdbx::open(
+                    directory.path(),
+                    identity(genesis_hash),
+                    genesis(genesis_hash),
+                )
+                .unwrap(),
+            );
+            let id = tribute_id(20_260_720, 1);
+            let collection = collection_key(CeDomain::Tribute, id).unwrap();
+            let parent = MdbxAuthenticatedTree::open(
+                Arc::clone(&db),
+                ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 0,
+                    block_hash: genesis_hash,
+                    root: sealed_root(B256::ZERO).unwrap(),
+                },
+            )
+            .unwrap();
+            let staged = parent
+                .prepare_seal(
+                    1,
+                    &[FinalLeafMutation {
+                        entity: EntityRef::Tribute(id),
+                        final_leaf: Some(Commitment::try_from(B256::with_last_byte(1).0).unwrap()),
+                    }],
+                )
+                .unwrap()
+                .freeze(B256::repeat_byte(0x42));
+            db.apply_finalized(&staged).unwrap();
+
+            let tx = db.db.tx_mut().unwrap();
+            let namespace =
+                TreeNamespace::CollectionShard(collection, if extra { K_PROVISIONAL } else { 0 });
+            if extra {
+                tx.put::<tables::CeTreeRoots>(namespace.encode(), B256::ZERO.as_slice().to_vec())
+                    .unwrap();
+            } else {
+                tx.delete::<tables::CeTreeRoots>(namespace.encode(), None)
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+
+            let reopened = MdbxAuthenticatedTree::open(
+                Arc::clone(&db),
+                ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 1,
+                    block_hash: staged.block_hash(),
+                    root: staged.new_root(),
+                },
+            )
+            .unwrap();
+            assert!(reopened
+                .read_leaf_verified(EntityRef::Tribute(id), staged.new_root())
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn catalog_non_membership_rejects_orphan_collection_prefix_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x50);
+        let db = Arc::new(
+            CeMdbx::open(
+                directory.path(),
+                identity(genesis_hash),
+                genesis(genesis_hash),
+            )
+            .unwrap(),
+        );
+        let id = tribute_id(20_260_721, 1);
+        let collection = collection_key(CeDomain::Tribute, id).unwrap();
+        let key = TreeKey::try_from(B256::with_last_byte(1)).unwrap();
+        let tx = db.db.tx_mut().unwrap();
+        tx.put::<tables::CeLeaves>(
+            prefixed_key(TreeNamespace::CollectionShard(collection, 0), &key.encode()),
+            LeafValue::try_from(B256::with_last_byte(1))
+                .unwrap()
+                .encode()
+                .to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: genesis_hash,
+                root: sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(parent
+            .read_leaf_verified(EntityRef::Tribute(id), sealed_root(B256::ZERO).unwrap())
+            .is_err());
+    }
+
+    #[test]
+    fn identity_candidate_advances_only_marker_and_keeps_empty_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x60);
+        let db = Arc::new(
+            CeMdbx::open(
+                directory.path(),
+                identity(genesis_hash),
+                genesis(genesis_hash),
+            )
+            .unwrap(),
+        );
+        let parent = MdbxAuthenticatedTree::open(
+            Arc::clone(&db),
+            ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: genesis_hash,
+                root: sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        let staged = parent
+            .prepare_seal(1, &[])
+            .unwrap()
+            .freeze(B256::repeat_byte(0x61));
+        assert!(staged.changed_collections.is_empty());
+        assert!(staged.catalog_batch.is_none());
+        assert_eq!(staged.parent_root(), staged.new_root());
+        db.apply_finalized(&staged).unwrap();
+        let snapshot = db.open_snapshot().unwrap();
+        assert_eq!(
+            snapshot.tree_root(TreeNamespace::Catalog).unwrap(),
+            Some(B256::ZERO)
+        );
+        assert_eq!(
+            snapshot.marker().unwrap(),
+            staged.marker(ACTIVE_COMMITMENT_SCHEME)
+        );
+    }
+}
+
+impl TreeNamespace {
+    #[must_use]
+    pub fn encode(self) -> Vec<u8> {
+        match self {
+            Self::Catalog => vec![0],
+            Self::CollectionShard(collection, shard) => {
+                let mut bytes = Vec::with_capacity(37);
+                bytes.push(1);
+                bytes.extend_from_slice(collection.as_bytes());
+                bytes.extend_from_slice(&shard.to_be_bytes());
+                bytes
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, PersistenceError> {
+        match bytes {
+            [0] => Ok(Self::Catalog),
+            [1, collection @ .., a, b, c, d] if collection.len() == 32 => {
+                let collection = CollectionKey::try_from(B256::from_slice(collection))
+                    .map_err(|_| PersistenceError::NonCanonicalTreeNamespace)?;
+                let shard = u32::from_be_bytes([*a, *b, *c, *d]);
+                if shard >= K_PROVISIONAL {
+                    return Err(PersistenceError::InvalidNamespaceShard { shard });
+                }
+                Ok(Self::CollectionShard(collection, shard))
+            }
+            _ => Err(PersistenceError::NonCanonicalTreeNamespace),
+        }
+    }
+}
 
 /// Canonical BN254 field bytes. Zero is allowed for structural emptiness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -312,7 +785,7 @@ pub struct EnvironmentIdentity {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub commitment_scheme_version: u32,
-    pub shard_count: u32,
+    pub topology: Vec<u8>,
     pub tree_format: String,
     pub vendor_revision: String,
 }
@@ -324,12 +797,17 @@ impl EnvironmentIdentity {
         let tree_len = u16::try_from(tree.len()).map_err(|_| PersistenceError::LengthOverflow)?;
         let vendor_len =
             u16::try_from(vendor.len()).map_err(|_| PersistenceError::LengthOverflow)?;
-        let mut bytes = Vec::with_capacity(56 + tree.len() + vendor.len());
+        let topology_len =
+            u16::try_from(self.topology.len()).map_err(|_| PersistenceError::LengthOverflow)?;
+        crate::CeTopologyV1::decode(&self.topology)
+            .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+        let mut bytes = Vec::with_capacity(58 + self.topology.len() + tree.len() + vendor.len());
         bytes.extend_from_slice(&self.local_storage_schema_version.to_be_bytes());
         bytes.extend_from_slice(&self.chain_id.to_be_bytes());
         bytes.extend_from_slice(self.genesis_hash.as_slice());
         bytes.extend_from_slice(&self.commitment_scheme_version.to_be_bytes());
-        bytes.extend_from_slice(&self.shard_count.to_be_bytes());
+        bytes.extend_from_slice(&topology_len.to_be_bytes());
+        bytes.extend_from_slice(&self.topology);
         bytes.extend_from_slice(&tree_len.to_be_bytes());
         bytes.extend_from_slice(tree);
         bytes.extend_from_slice(&vendor_len.to_be_bytes());
@@ -343,7 +821,10 @@ impl EnvironmentIdentity {
         let chain_id = decoder.u64()?;
         let genesis_hash = decoder.b256()?;
         let commitment_scheme_version = decoder.u32()?;
-        let shard_count = decoder.u32()?;
+        let topology_len = decoder.u16()?;
+        let topology = decoder.take(usize::from(topology_len))?.to_vec();
+        crate::CeTopologyV1::decode(&topology)
+            .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
         let tree_format = decoder.string_u16()?;
         let vendor_revision = decoder.string_u16()?;
         decoder.finish()?;
@@ -352,7 +833,7 @@ impl EnvironmentIdentity {
             chain_id,
             genesis_hash,
             commitment_scheme_version,
-            shard_count,
+            topology,
             tree_format,
             vendor_revision,
         })
@@ -589,7 +1070,7 @@ mod tables {
     #[derive(Debug)]
     pub struct CeMetadata;
     impl Table for CeMetadata {
-        const NAME: &'static str = "OutbeCompressedEntitiesMetadataV2";
+        const NAME: &'static str = "OutbeCompressedEntitiesMetadataV3";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
@@ -606,7 +1087,7 @@ mod tables {
     #[derive(Debug)]
     pub struct CeBranches;
     impl Table for CeBranches {
-        const NAME: &'static str = "OutbeCompressedEntitiesBranchesV2";
+        const NAME: &'static str = "OutbeCompressedEntitiesBranchesV3";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
@@ -623,7 +1104,7 @@ mod tables {
     #[derive(Debug)]
     pub struct CeLeaves;
     impl Table for CeLeaves {
-        const NAME: &'static str = "OutbeCompressedEntitiesLeavesV2";
+        const NAME: &'static str = "OutbeCompressedEntitiesLeavesV3";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
@@ -638,14 +1119,14 @@ mod tables {
     }
 
     #[derive(Debug)]
-    pub struct CeShardRoots;
-    impl Table for CeShardRoots {
-        const NAME: &'static str = "OutbeCompressedEntitiesShardRootsV2";
+    pub struct CeTreeRoots;
+    impl Table for CeTreeRoots {
+        const NAME: &'static str = "OutbeCompressedEntitiesTreeRootsV3";
         const DUPSORT: bool = false;
         type Key = Vec<u8>;
         type Value = Vec<u8>;
     }
-    impl TableInfo for CeShardRoots {
+    impl TableInfo for CeTreeRoots {
         fn name(&self) -> &'static str {
             <Self as Table>::NAME
         }
@@ -663,7 +1144,7 @@ mod tables {
                     Box::new(CeMetadata) as Box<dyn TableInfo>,
                     Box::new(CeBranches) as Box<dyn TableInfo>,
                     Box::new(CeLeaves) as Box<dyn TableInfo>,
-                    Box::new(CeShardRoots) as Box<dyn TableInfo>,
+                    Box::new(CeTreeRoots) as Box<dyn TableInfo>,
                 ]
                 .into_iter(),
             )
@@ -696,14 +1177,8 @@ impl CeMdbx {
         {
             return Err(PersistenceError::EmptyEnvironmentIdentityField);
         }
-        if expected_identity.shard_count == 0
-            || expected_identity.shard_count > 32
-            || !expected_identity.shard_count.is_power_of_two()
-        {
-            return Err(PersistenceError::InvalidShardCount {
-                actual: expected_identity.shard_count,
-            });
-        }
+        crate::CeTopologyV1::decode(&expected_identity.topology)
+            .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
         if genesis_marker.height != 0 || genesis_marker.block_hash != expected_identity.genesis_hash
         {
             return Err(PersistenceError::InvalidGenesisMarker {
@@ -716,15 +1191,7 @@ impl CeMdbx {
         }
         validate_root(genesis_marker.parent_root)?;
         validate_root(genesis_marker.new_root)?;
-        let empty_roots = vec![
-            B256::ZERO;
-            usize::try_from(expected_identity.shard_count).map_err(|_| {
-                PersistenceError::InvalidShardCount {
-                    actual: expected_identity.shard_count,
-                }
-            })?
-        ];
-        let expected_genesis_root = aggregate_b256_shard_roots(&empty_roots)
+        let expected_genesis_root = crate::sealed_root(B256::ZERO)
             .map_err(|error| PersistenceError::Staging(error.to_string()))?;
         if genesis_marker.new_root != expected_genesis_root {
             return Err(PersistenceError::InvalidGenesisShardRoot {
@@ -784,13 +1251,19 @@ impl CeMdbx {
     pub fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {
         let tx = self.tx()?;
         let marker = read_marker(&tx, &self.path)?;
-        let shard_roots =
-            read_shard_roots(&tx, &self.path, self.identity.shard_count, marker.new_root)?;
+        let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
+        let wrapped = crate::sealed_root(catalog_root)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        if wrapped != marker.new_root {
+            return Err(PersistenceError::CatalogWrapperMismatch {
+                expected: marker.new_root,
+                actual: wrapped,
+            });
+        }
         Ok(Box::new(MdbxSnapshot {
             path: self.path.clone(),
             tx,
             marker,
-            shard_roots,
         }))
     }
 
@@ -803,14 +1276,8 @@ impl CeMdbx {
         batch
             .validate_encoded_size()
             .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-        validate_root(batch.parent_root)?;
-        validate_root(batch.new_root)?;
-        if batch.shard_count != self.identity.shard_count {
-            return Err(PersistenceError::ShardCountMismatch {
-                expected: self.identity.shard_count,
-                actual: batch.shard_count,
-            });
-        }
+        validate_root(batch.parent_root())?;
+        validate_root(batch.new_root())?;
         let next = batch.marker(self.identity.commitment_scheme_version);
         let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
         let current = read_marker(&tx, &self.path)?;
@@ -830,57 +1297,86 @@ impl CeMdbx {
             return Err(PersistenceError::NonContiguousFinalizedApply { current, next });
         }
 
-        let persisted_roots =
-            read_shard_roots(&tx, &self.path, self.identity.shard_count, current.new_root)?;
-        if persisted_roots != batch.parent_shard_roots {
-            return Err(PersistenceError::ParentShardRootsMismatch);
+        let parent_catalog = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
+        if parent_catalog != batch.parent_catalog_root
+            || crate::sealed_root(parent_catalog)
+                .map_err(|error| PersistenceError::Staging(error.to_string()))?
+                != current.new_root
+        {
+            return Err(PersistenceError::ParentCatalogRootMismatch);
         }
-        let mut resulting_roots = persisted_roots;
-        for (shard_index, shard) in &batch.changed_shards {
-            for (key, change) in &shard.branch_changes {
-                let key = prefixed_key(*shard_index, &key.encode());
-                match change {
-                    TreeChange::Set(node) => tx
-                        .put::<tables::CeBranches>(key, node.encode())
-                        .map_err(|error| self.db_error(error))?,
-                    TreeChange::Delete => {
-                        tx.delete::<tables::CeBranches>(key, None)
-                            .map_err(|error| self.db_error(error))?;
+
+        for (collection_key, collection) in &batch.changed_collections {
+            let domain = crate::CeDomain::try_from(collection.domain_id)
+                .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+            let shard_count = domain.shard_count();
+            let catalog_key = TreeKey::try_from(B256::from(*collection_key.as_bytes()))?;
+            let catalog_leaf =
+                read_tree_leaf(&tx, &self.path, TreeNamespace::Catalog, catalog_key)?
+                    .map(LeafValue::into_inner);
+            if catalog_leaf != collection.parent_collection_root {
+                return Err(PersistenceError::ParentCatalogRootMismatch);
+            }
+            let persisted = read_collection_roots(&tx, &self.path, *collection_key, shard_count)?;
+            match (&persisted, collection.parent_collection_root) {
+                (None, None) => {
+                    if collection_has_records(&tx, &self.path, *collection_key)? {
+                        return Err(PersistenceError::OrphanCollectionRecords {
+                            collection: *collection_key,
+                        });
                     }
                 }
+                (Some(roots), Some(_)) if roots == &collection.shard_set.parent_shard_roots => {}
+                _ => return Err(PersistenceError::ParentShardRootsMismatch),
             }
-            for (key, change) in &shard.leaf_changes {
-                let key = prefixed_key(*shard_index, &key.encode());
-                match change {
-                    TreeChange::Set(value) => tx
-                        .put::<tables::CeLeaves>(key, value.encode().to_vec())
-                        .map_err(|error| self.db_error(error))?,
-                    TreeChange::Delete => {
-                        tx.delete::<tables::CeLeaves>(key, None)
-                            .map_err(|error| self.db_error(error))?;
+
+            for shard_index in 0..shard_count {
+                let namespace = TreeNamespace::CollectionShard(*collection_key, shard_index);
+                let position = usize::try_from(shard_index).map_err(|_| {
+                    PersistenceError::InvalidShardCount {
+                        actual: shard_index,
                     }
+                })?;
+                if let Some(shard) = collection.shard_set.changed_shards.get(&shard_index) {
+                    apply_tree_changes(&tx, self, namespace, shard)?;
                 }
+                tx.put::<tables::CeTreeRoots>(
+                    namespace.encode(),
+                    collection.shard_set.new_shard_roots[position]
+                        .as_slice()
+                        .to_vec(),
+                )
+                .map_err(|error| self.db_error(error))?;
             }
-            tx.put::<tables::CeShardRoots>(
-                shard_index.to_be_bytes().to_vec(),
-                shard.new_shard_root.as_slice().to_vec(),
+            let top = aggregate_b256_shard_roots(&collection.shard_set.new_shard_roots)
+                .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            let recomputed = crate::collection_root(domain, *collection_key, top)
+                .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            if recomputed != collection.new_collection_root {
+                return Err(PersistenceError::NewCollectionRootMismatch);
+            }
+        }
+
+        if let Some(catalog) = &batch.catalog_batch {
+            apply_raw_tree_changes(
+                &tx,
+                self,
+                TreeNamespace::Catalog,
+                &catalog.branch_changes,
+                &catalog.leaf_changes,
+            )?;
+            tx.put::<tables::CeTreeRoots>(
+                TreeNamespace::Catalog.encode(),
+                batch.new_catalog_root.as_slice().to_vec(),
             )
             .map_err(|error| self.db_error(error))?;
-            resulting_roots[usize::try_from(*shard_index).map_err(|_| {
-                PersistenceError::InvalidShardCount {
-                    actual: *shard_index,
-                }
-            })?] = shard.new_shard_root;
         }
-        if resulting_roots != batch.new_shard_roots {
-            return Err(PersistenceError::NewShardRootsMismatch);
-        }
-        let resulting_root = aggregate_b256_shard_roots(&resulting_roots)
+        let wrapped = crate::sealed_root(batch.new_catalog_root)
             .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-        if resulting_root != batch.new_root {
-            return Err(PersistenceError::ShardRootAggregateMismatch {
-                expected: batch.new_root,
-                actual: resulting_root,
+        if wrapped != batch.new_root() {
+            return Err(PersistenceError::CatalogWrapperMismatch {
+                expected: batch.new_root(),
+                actual: wrapped,
             });
         }
         // Progress is deliberately the final write in this transaction.
@@ -914,7 +1410,7 @@ impl CeMdbx {
             .entries::<tables::CeLeaves>()
             .map_err(|error| self.db_error(error))?;
         let shard_root_records = tx
-            .entries::<tables::CeShardRoots>()
+            .entries::<tables::CeTreeRoots>()
             .map_err(|error| self.db_error(error))?;
         tx.commit().map_err(|error| self.db_error(error))?;
 
@@ -931,13 +1427,11 @@ impl CeMdbx {
                 let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
                 tx.put::<tables::CeMetadata>(IDENTITY_KEY.to_vec(), identity)
                     .map_err(|error| self.db_error(error))?;
-                for shard_index in 0..expected_identity.shard_count {
-                    tx.put::<tables::CeShardRoots>(
-                        shard_index.to_be_bytes().to_vec(),
-                        B256::ZERO.as_slice().to_vec(),
-                    )
-                    .map_err(|error| self.db_error(error))?;
-                }
+                tx.put::<tables::CeTreeRoots>(
+                    TreeNamespace::Catalog.encode(),
+                    B256::ZERO.as_slice().to_vec(),
+                )
+                .map_err(|error| self.db_error(error))?;
                 tx.put::<tables::CeMetadata>(
                     LAST_APPLIED_KEY.to_vec(),
                     genesis_marker.encode().to_vec(),
@@ -963,12 +1457,16 @@ impl CeMdbx {
                     return Err(PersistenceError::EnvironmentMarkerSchemeMismatch);
                 }
                 let tx = self.tx()?;
-                read_shard_roots(
-                    &tx,
-                    &self.path,
-                    expected_identity.shard_count,
-                    marker.new_root,
-                )?;
+                let catalog_root =
+                    read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
+                let wrapped = crate::sealed_root(catalog_root)
+                    .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+                if wrapped != marker.new_root {
+                    return Err(PersistenceError::CatalogWrapperMismatch {
+                        expected: marker.new_root,
+                        actual: wrapped,
+                    });
+                }
                 tx.commit().map_err(|error| self.db_error(error))?;
             }
             _ => return Err(PersistenceError::PartialEnvironmentInitialization),
@@ -988,11 +1486,59 @@ impl CeMdbx {
     }
 }
 
+fn apply_tree_changes<T: DbTxMut>(
+    tx: &T,
+    db: &CeMdbx,
+    namespace: TreeNamespace,
+    batch: &ProvisionalShardBatch,
+) -> Result<(), PersistenceError> {
+    apply_raw_tree_changes(
+        tx,
+        db,
+        namespace,
+        &batch.branch_changes,
+        &batch.leaf_changes,
+    )
+}
+
+fn apply_raw_tree_changes<T: DbTxMut>(
+    tx: &T,
+    db: &CeMdbx,
+    namespace: TreeNamespace,
+    branches: &std::collections::BTreeMap<BranchKey, TreeChange<BranchNode>>,
+    leaves: &std::collections::BTreeMap<TreeKey, TreeChange<LeafValue>>,
+) -> Result<(), PersistenceError> {
+    for (key, change) in branches {
+        let key = prefixed_key(namespace, &key.encode());
+        match change {
+            TreeChange::Set(node) => tx
+                .put::<tables::CeBranches>(key, node.encode())
+                .map_err(|error| db.db_error(error))?,
+            TreeChange::Delete => {
+                tx.delete::<tables::CeBranches>(key, None)
+                    .map_err(|error| db.db_error(error))?;
+            }
+        }
+    }
+    for (key, change) in leaves {
+        let key = prefixed_key(namespace, &key.encode());
+        match change {
+            TreeChange::Set(value) => tx
+                .put::<tables::CeLeaves>(key, value.encode().to_vec())
+                .map_err(|error| db.db_error(error))?,
+            TreeChange::Delete => {
+                tx.delete::<tables::CeLeaves>(key, None)
+                    .map_err(|error| db.db_error(error))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 struct MdbxSnapshot {
     path: PathBuf,
     tx: Tx<RO>,
     marker: FinalizedMarker,
-    shard_roots: Vec<B256>,
 }
 
 impl FinalizedTreeSnapshot for MdbxSnapshot {
@@ -1000,17 +1546,25 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
         Ok(self.marker)
     }
 
-    fn shard_roots(&self) -> Result<Vec<B256>, PersistenceError> {
-        Ok(self.shard_roots.clone())
+    fn tree_root(&self, namespace: TreeNamespace) -> Result<Option<B256>, PersistenceError> {
+        read_tree_root(&self.tx, &self.path, namespace)
+    }
+
+    fn collection_has_records(&self, collection: CollectionKey) -> Result<bool, PersistenceError> {
+        collection_has_records(&self.tx, &self.path, collection)
+    }
+
+    fn collection_root_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError> {
+        count_collection_root_records(&self.tx, &self.path, collection)
     }
 
     fn read_branch(
         &self,
-        shard_index: ShardIndex,
+        namespace: TreeNamespace,
         key: BranchKey,
     ) -> Result<Option<BranchNode>, PersistenceError> {
         self.tx
-            .get::<tables::CeBranches>(prefixed_key(shard_index, &key.encode()))
+            .get::<tables::CeBranches>(prefixed_key(namespace, &key.encode()))
             .map_err(|error| PersistenceError::Database {
                 path: self.path.clone(),
                 message: error.to_string(),
@@ -1021,11 +1575,11 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
 
     fn read_leaf(
         &self,
-        shard_index: ShardIndex,
+        namespace: TreeNamespace,
         key: TreeKey,
     ) -> Result<Option<LeafValue>, PersistenceError> {
         self.tx
-            .get::<tables::CeLeaves>(prefixed_key(shard_index, &key.encode()))
+            .get::<tables::CeLeaves>(prefixed_key(namespace, &key.encode()))
             .map_err(|error| PersistenceError::Database {
                 path: self.path.clone(),
                 message: error.to_string(),
@@ -1035,54 +1589,188 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
     }
 }
 
-fn prefixed_key(shard_index: ShardIndex, key: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(4 + key.len());
-    output.extend_from_slice(&shard_index.to_be_bytes());
+fn prefixed_key(namespace: TreeNamespace, key: &[u8]) -> Vec<u8> {
+    let namespace = namespace.encode();
+    let mut output = Vec::with_capacity(namespace.len() + key.len());
+    output.extend_from_slice(&namespace);
     output.extend_from_slice(key);
     output
 }
 
-fn read_shard_roots<T: DbTx>(
+fn read_tree_leaf<T: DbTx>(
     tx: &T,
     path: &Path,
+    namespace: TreeNamespace,
+    key: TreeKey,
+) -> Result<Option<LeafValue>, PersistenceError> {
+    tx.get::<tables::CeLeaves>(prefixed_key(namespace, &key.encode()))
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .map(|bytes| LeafValue::decode(&bytes))
+        .transpose()
+}
+
+fn read_tree_root<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    namespace: TreeNamespace,
+) -> Result<Option<B256>, PersistenceError> {
+    tx.get::<tables::CeTreeRoots>(namespace.encode())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .map(|bytes| {
+            let root = decode_b256(&bytes, "tree root")?;
+            validate_root(root)?;
+            Ok(root)
+        })
+        .transpose()
+}
+
+fn read_required_tree_root<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    namespace: TreeNamespace,
+) -> Result<B256, PersistenceError> {
+    read_tree_root(tx, path, namespace)?.ok_or(PersistenceError::MissingTreeRoot { namespace })
+}
+
+fn read_collection_roots<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    collection: CollectionKey,
     shard_count: u32,
-    authoritative_root: B256,
-) -> Result<Vec<B256>, PersistenceError> {
-    let actual =
-        tx.entries::<tables::CeShardRoots>()
+) -> Result<Option<Vec<B256>>, PersistenceError> {
+    let actual = count_collection_root_records(tx, path, collection)?;
+    if actual != 0 && actual != shard_count as usize {
+        return Err(PersistenceError::CollectionRootCountMismatch {
+            collection,
+            expected: shard_count as usize,
+            actual,
+        });
+    }
+    let mut roots = Vec::with_capacity(shard_count as usize);
+    let mut present = 0_usize;
+    for shard in 0..shard_count {
+        if let Some(root) =
+            read_tree_root(tx, path, TreeNamespace::CollectionShard(collection, shard))?
+        {
+            present += 1;
+            roots.push(root);
+        } else {
+            roots.push(B256::ZERO);
+        }
+    }
+    if present == 0 && actual == 0 {
+        Ok(None)
+    } else if present == shard_count as usize && actual == shard_count as usize {
+        Ok(Some(roots))
+    } else {
+        Err(PersistenceError::CollectionRootCountMismatch {
+            collection,
+            expected: shard_count as usize,
+            actual: present,
+        })
+    }
+}
+
+fn count_collection_root_records<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    collection: CollectionKey,
+) -> Result<usize, PersistenceError> {
+    let prefix = collection_prefix(collection);
+    let mut cursor =
+        tx.cursor_read::<tables::CeTreeRoots>()
             .map_err(|error| PersistenceError::Database {
                 path: path.to_path_buf(),
                 message: error.to_string(),
             })?;
-    let expected =
-        usize::try_from(shard_count).map_err(|_| PersistenceError::InvalidShardCount {
-            actual: shard_count,
+    let mut entry = cursor
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
         })?;
-    if actual != expected {
-        return Err(PersistenceError::ShardRootCountMismatch { expected, actual });
+    let mut count = 0_usize;
+    while let Some((key, _)) = entry {
+        if !key.starts_with(&prefix) {
+            break;
+        }
+        let namespace = TreeNamespace::decode(&key)?;
+        if !matches!(namespace, TreeNamespace::CollectionShard(actual, _) if actual == collection) {
+            return Err(PersistenceError::NonCanonicalTreeNamespace);
+        }
+        count = count.saturating_add(1);
+        entry = cursor.next().map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
     }
-    let mut roots = Vec::with_capacity(expected);
-    for index in 0..shard_count {
-        let bytes = tx
-            .get::<tables::CeShardRoots>(index.to_be_bytes().to_vec())
+    Ok(count)
+}
+
+fn collection_prefix(collection: CollectionKey) -> Vec<u8> {
+    let mut prefix = Vec::with_capacity(33);
+    prefix.push(1);
+    prefix.extend_from_slice(collection.as_bytes());
+    prefix
+}
+
+fn collection_has_records<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    collection: CollectionKey,
+) -> Result<bool, PersistenceError> {
+    let prefix = collection_prefix(collection);
+    let mut roots =
+        tx.cursor_read::<tables::CeTreeRoots>()
             .map_err(|error| PersistenceError::Database {
                 path: path.to_path_buf(),
                 message: error.to_string(),
-            })?
-            .ok_or(PersistenceError::MissingShardRoot { index })?;
-        let root = decode_b256(&bytes, "shard root")?;
-        validate_root(root)?;
-        roots.push(root);
+            })?;
+    if roots
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .is_some_and(|(key, _)| key.starts_with(&prefix))
+    {
+        return Ok(true);
     }
-    let aggregate = aggregate_b256_shard_roots(&roots)
-        .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-    if aggregate != authoritative_root {
-        return Err(PersistenceError::ShardRootAggregateMismatch {
-            expected: authoritative_root,
-            actual: aggregate,
-        });
+    let mut branches =
+        tx.cursor_read::<tables::CeBranches>()
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    if branches
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .is_some_and(|(key, _)| key.starts_with(&prefix))
+    {
+        return Ok(true);
     }
-    Ok(roots)
+    let mut leaves =
+        tx.cursor_read::<tables::CeLeaves>()
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    Ok(leaves
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .is_some_and(|(key, _)| key.starts_with(&prefix)))
 }
 
 fn read_marker<T: DbTx>(tx: &T, path: &Path) -> Result<FinalizedMarker, PersistenceError> {
@@ -1163,6 +1851,12 @@ impl<'a> Decoder<'a> {
         Ok(u32::from_be_bytes(bytes))
     }
 
+    fn u16(&mut self) -> Result<u16, PersistenceError> {
+        let mut bytes = [0_u8; 2];
+        bytes.copy_from_slice(self.take(2)?);
+        Ok(u16::from_be_bytes(bytes))
+    }
+
     fn u64(&mut self) -> Result<u64, PersistenceError> {
         let mut bytes = [0_u8; 8];
         bytes.copy_from_slice(self.take(8)?);
@@ -1209,6 +1903,12 @@ pub enum PersistenceError {
     UnsupportedLocalSchema { actual: u32 },
     #[error("invalid CE shard count {actual}")]
     InvalidShardCount { actual: u32 },
+    #[error("invalid canonical CE topology in environment identity")]
+    InvalidTopologyIdentity,
+    #[error("non-canonical CE tree namespace")]
+    NonCanonicalTreeNamespace,
+    #[error("CE tree namespace shard {shard} is outside the fork-fixed domain topology")]
+    InvalidNamespaceShard { shard: u32 },
     #[error("CE batch shard count mismatch: expected {expected}, got {actual}")]
     ShardCountMismatch { expected: u32, actual: u32 },
     #[error("environment identity does not match: expected {expected:?}, actual {actual:?}")]
@@ -1241,6 +1941,22 @@ pub enum PersistenceError {
     MissingFinalizedMarker,
     #[error("missing persisted shard root {index}")]
     MissingShardRoot { index: u32 },
+    #[error("missing persisted tree root for namespace {namespace:?}")]
+    MissingTreeRoot { namespace: TreeNamespace },
+    #[error("catalog sealed-root wrapper mismatch: expected {expected}, got {actual}")]
+    CatalogWrapperMismatch { expected: B256, actual: B256 },
+    #[error("persisted parent catalog root differs from candidate")]
+    ParentCatalogRootMismatch,
+    #[error("orphan records exist behind absent catalog collection {collection:?}")]
+    OrphanCollectionRecords { collection: CollectionKey },
+    #[error("collection {collection:?} root count mismatch: expected {expected}, got {actual}")]
+    CollectionRootCountMismatch {
+        collection: CollectionKey,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("recomputed collection root differs from candidate")]
+    NewCollectionRootMismatch,
     #[error("persisted shard root count mismatch: expected {expected}, got {actual}")]
     ShardRootCountMismatch { expected: usize, actual: usize },
     #[error("persisted parent shard roots differ from candidate vector")]
@@ -1305,15 +2021,19 @@ impl From<StagingError> for PersistenceError {
     }
 }
 
+// ADR-009's flat-namespace fixtures are replaced by ADR-010 catalog fixtures below.
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
     use crate::{
-        empty_shard_top_root,
-        staging::{ProvisionalShardBatch, ProvisionalTreeBatch},
-        K_TEST,
+        collection_root, sealed_root,
+        staging::{
+            CollectionBatch, ProvisionalCatalogBatch, ProvisionalShardBatch,
+            ProvisionalShardSetBatch, ProvisionalTreeBatch,
+        },
+        CeDomain, CeTopologyV1, K_PROVISIONAL,
     };
 
     fn b256(last: u8) -> B256 {
@@ -1339,18 +2059,14 @@ mod tests {
             chain_id: 99,
             genesis_hash: b256(42),
             commitment_scheme_version: 1,
-            shard_count: 1,
-            tree_format: "ckb-smt-v0.6.1-poseidon".to_owned(),
+            topology: CeTopologyV1.encode(),
+            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         }
     }
 
-    fn sharded_identity(shard_count: u32) -> EnvironmentIdentity {
-        EnvironmentIdentity {
-            shard_count,
-            tree_format: "ckb-smt-v0.6.1-poseidon-sharded-v1".to_owned(),
-            ..identity()
-        }
+    fn sharded_identity(_shard_count: u32) -> EnvironmentIdentity {
+        identity()
     }
 
     fn sharded_genesis(shard_count: u32) -> FinalizedMarker {
@@ -1361,8 +2077,23 @@ mod tests {
             block_hash: identity.genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: empty_shard_top_root(shard_count).unwrap(),
+            new_root: sealed_root(B256::ZERO).unwrap(),
         }
+    }
+
+    fn legacy_collection_namespace(shard: u32) -> TreeNamespace {
+        TreeNamespace::CollectionShard(CollectionKey::try_from(B256::ZERO).unwrap(), shard)
+    }
+
+    fn key_in_shard(shard: u32, ordinal: usize) -> TreeKey {
+        (0..=u8::MAX)
+            .map(|value| TreeKey::try_from(b256(value)).unwrap())
+            .filter(|candidate| {
+                let smt_key = crate::smt::TreeKey::from_be_bytes(candidate.encode()).unwrap();
+                crate::sharding::shard_index(smt_key, K_PROVISIONAL).unwrap() == shard
+            })
+            .nth(ordinal)
+            .unwrap()
     }
 
     #[test]
@@ -1392,6 +2123,28 @@ mod tests {
             LeafValue::try_from(B256::ZERO),
             Err(PersistenceError::ZeroPersistedLeaf)
         ));
+    }
+
+    #[test]
+    fn v3_tree_namespaces_are_typed_canonical_and_domain_bounded() {
+        let entity = crate::EntityId36::try_from([7_u8; 36].as_slice()).unwrap();
+        let collection = crate::collection_key(crate::CeDomain::NodItem, entity).unwrap();
+        let namespaces = [
+            TreeNamespace::Catalog,
+            TreeNamespace::CollectionShard(collection, 0),
+            TreeNamespace::CollectionShard(collection, K_PROVISIONAL - 1),
+        ];
+        for namespace in namespaces {
+            let encoded = namespace.encode();
+            assert_eq!(TreeNamespace::decode(&encoded).unwrap(), namespace);
+        }
+        assert!(TreeNamespace::decode(&[]).is_err());
+        assert!(TreeNamespace::decode(&[2]).is_err());
+        assert!(TreeNamespace::decode(&[0, 0]).is_err());
+        assert!(TreeNamespace::decode(
+            &TreeNamespace::CollectionShard(collection, K_PROVISIONAL).encode()
+        )
+        .is_err());
     }
 
     #[test]
@@ -1515,7 +2268,7 @@ mod tests {
 
     #[test]
     fn no_change_batch_still_carries_a_complete_next_marker() {
-        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
+        let batch = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
             8,
             b256(7),
             b256(18),
@@ -1540,17 +2293,17 @@ mod tests {
             block_hash: identity().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: sealed_root(B256::ZERO).unwrap(),
         };
         let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
-        let tree_key = TreeKey::try_from(b256(3)).unwrap();
+        let tree_key = key_in_shard(0, 0);
         let leaf = LeafValue::try_from(b256(4)).unwrap();
         let branch_key = BranchKey::new(1, b256(5)).unwrap();
         let branch = BranchNode {
             left: MergeValue::Value(FieldValue::try_from(b256(6)).unwrap()),
             right: MergeValue::Value(FieldValue::try_from(b256(7)).unwrap()),
         };
-        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
+        let batch = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
             1,
             genesis.block_hash,
             genesis.new_root,
@@ -1569,8 +2322,18 @@ mod tests {
         );
         let snapshot = store.open_snapshot().unwrap();
         assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
-        assert_eq!(snapshot.read_leaf(0, tree_key).unwrap(), Some(leaf));
-        assert_eq!(snapshot.read_branch(0, branch_key).unwrap(), Some(branch));
+        assert_eq!(
+            snapshot
+                .read_leaf(legacy_collection_namespace(0), tree_key)
+                .unwrap(),
+            Some(leaf)
+        );
+        assert_eq!(
+            snapshot
+                .read_branch(legacy_collection_namespace(0), branch_key)
+                .unwrap(),
+            Some(branch)
+        );
 
         drop(snapshot);
         drop(store);
@@ -1587,17 +2350,17 @@ mod tests {
             block_hash: identity().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: sealed_root(B256::ZERO).unwrap(),
         };
         let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
-        let gap = crate::staging::ProvisionalTreeBatch::new_unsharded(
+        let gap = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
             2,
             genesis.block_hash,
             genesis.new_root,
             b256(51),
             BTreeMap::new(),
             BTreeMap::from([(
-                TreeKey::try_from(b256(1)).unwrap(),
+                key_in_shard(0, 0),
                 TreeChange::Set(LeafValue::try_from(b256(2)).unwrap()),
             )]),
         )
@@ -1608,14 +2371,14 @@ mod tests {
             Err(PersistenceError::NonContiguousFinalizedApply { .. })
         ));
 
-        let mut malformed = crate::staging::ProvisionalTreeBatch::new_unsharded(
+        let mut malformed = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
             1,
             genesis.block_hash,
             genesis.new_root,
             b256(51),
             BTreeMap::new(),
             BTreeMap::from([(
-                TreeKey::try_from(b256(1)).unwrap(),
+                key_in_shard(0, 0),
                 TreeChange::Set(LeafValue::try_from(b256(2)).unwrap()),
             )]),
         )
@@ -1638,13 +2401,13 @@ mod tests {
             block_hash: identity().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: sealed_root(B256::ZERO).unwrap(),
         };
         let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
         let old_snapshot = store.open_snapshot().unwrap();
-        let tree_key = TreeKey::try_from(b256(10)).unwrap();
+        let tree_key = key_in_shard(0, 1);
         let leaf = LeafValue::try_from(b256(11)).unwrap();
-        let batch = crate::staging::ProvisionalTreeBatch::new_unsharded(
+        let batch = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
             1,
             genesis.block_hash,
             genesis.new_root,
@@ -1657,10 +2420,20 @@ mod tests {
         store.apply_finalized(&batch).unwrap();
 
         assert_eq!(old_snapshot.marker().unwrap(), genesis);
-        assert_eq!(old_snapshot.read_leaf(0, tree_key).unwrap(), None);
+        assert_eq!(
+            old_snapshot
+                .read_leaf(legacy_collection_namespace(0), tree_key)
+                .unwrap(),
+            None
+        );
         let new_snapshot = store.open_snapshot().unwrap();
         assert_eq!(new_snapshot.marker().unwrap(), batch.marker(1));
-        assert_eq!(new_snapshot.read_leaf(0, tree_key).unwrap(), Some(leaf));
+        assert_eq!(
+            new_snapshot
+                .read_leaf(legacy_collection_namespace(0), tree_key)
+                .unwrap(),
+            Some(leaf)
+        );
     }
 
     #[test]
@@ -1672,7 +2445,7 @@ mod tests {
             block_hash: identity().genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: B256::ZERO,
+            new_root: sealed_root(B256::ZERO).unwrap(),
         };
         let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
         drop(store);
@@ -1685,101 +2458,93 @@ mod tests {
     }
 
     #[test]
-    fn v2_initializes_exact_k_roots_and_rejects_k_drift() {
+    fn v3_initializes_only_catalog_and_rejects_topology_drift() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = sharded_identity(K_TEST);
-        let genesis = sharded_genesis(K_TEST);
+        let identity = sharded_identity(K_PROVISIONAL);
+        let genesis = sharded_genesis(K_PROVISIONAL);
         assert_ne!(genesis.new_root, B256::ZERO);
 
         let store = CeMdbx::open(directory.path(), identity.clone(), genesis).unwrap();
         let snapshot = store.open_snapshot().unwrap();
         assert_eq!(
-            snapshot.shard_roots().unwrap(),
-            vec![B256::ZERO; K_TEST as usize]
+            snapshot.tree_root(TreeNamespace::Catalog).unwrap(),
+            Some(B256::ZERO)
         );
         assert_eq!(snapshot.marker().unwrap(), genesis);
         drop(snapshot);
         drop(store);
 
-        let wrong_k = K_TEST / 2;
+        let mut wrong = identity;
+        wrong.topology.push(0);
         assert!(matches!(
-            CeMdbx::open(
-                directory.path(),
-                sharded_identity(wrong_k),
-                sharded_genesis(wrong_k),
-            ),
-            Err(PersistenceError::EnvironmentIdentityMismatch { .. })
+            CeMdbx::open(directory.path(), wrong, genesis),
+            Err(PersistenceError::InvalidTopologyIdentity)
         ));
     }
 
     #[test]
-    fn v2_reopen_rejects_missing_or_extra_shard_root_records() {
-        for corrupt in ["missing", "extra"] {
-            let directory = tempfile::tempdir().unwrap();
-            let identity = sharded_identity(K_TEST);
-            let genesis = sharded_genesis(K_TEST);
-            let store = CeMdbx::open(directory.path(), identity.clone(), genesis).unwrap();
-            let tx = store.db.tx_mut().unwrap();
-            if corrupt == "missing" {
-                tx.delete::<tables::CeShardRoots>((K_TEST - 1).to_be_bytes().to_vec(), None)
-                    .unwrap();
-            } else {
-                tx.put::<tables::CeShardRoots>(K_TEST.to_be_bytes().to_vec(), B256::ZERO.to_vec())
-                    .unwrap();
-            }
-            tx.commit().unwrap();
-            drop(store);
-
-            assert!(matches!(
-                CeMdbx::open(directory.path(), identity, genesis),
-                Err(PersistenceError::ShardRootCountMismatch { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn v2_leaf_namespaces_are_isolated_by_be4_shard_prefix() {
+    fn v3_collection_leaf_namespaces_are_isolated_by_typed_prefix() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = sharded_identity(K_TEST);
-        let genesis = sharded_genesis(K_TEST);
+        let identity = sharded_identity(K_PROVISIONAL);
+        let genesis = sharded_genesis(K_PROVISIONAL);
         let store = CeMdbx::open(directory.path(), identity, genesis).unwrap();
         let key = TreeKey::try_from(b256(3)).unwrap();
         let first = LeafValue::try_from(b256(4)).unwrap();
         let second = LeafValue::try_from(b256(5)).unwrap();
         let tx = store.db.tx_mut().unwrap();
-        tx.put::<tables::CeLeaves>(prefixed_key(1, &key.encode()), first.encode().to_vec())
-            .unwrap();
-        tx.put::<tables::CeLeaves>(prefixed_key(2, &key.encode()), second.encode().to_vec())
-            .unwrap();
+        tx.put::<tables::CeLeaves>(
+            prefixed_key(legacy_collection_namespace(1), &key.encode()),
+            first.encode().to_vec(),
+        )
+        .unwrap();
+        tx.put::<tables::CeLeaves>(
+            prefixed_key(legacy_collection_namespace(2), &key.encode()),
+            second.encode().to_vec(),
+        )
+        .unwrap();
         tx.commit().unwrap();
 
         let snapshot = store.open_snapshot().unwrap();
-        assert_eq!(snapshot.read_leaf(0, key).unwrap(), None);
-        assert_eq!(snapshot.read_leaf(1, key).unwrap(), Some(first));
-        assert_eq!(snapshot.read_leaf(2, key).unwrap(), Some(second));
+        assert_eq!(
+            snapshot.read_leaf(TreeNamespace::Catalog, key).unwrap(),
+            None
+        );
+        assert_eq!(
+            snapshot
+                .read_leaf(legacy_collection_namespace(1), key)
+                .unwrap(),
+            Some(first)
+        );
+        assert_eq!(
+            snapshot
+                .read_leaf(legacy_collection_namespace(2), key)
+                .unwrap(),
+            Some(second)
+        );
     }
 
     #[test]
-    fn v2_applies_two_changed_shards_under_one_marker() {
+    fn v3_applies_two_changed_shards_and_catalog_leaf_under_one_marker() {
         let directory = tempfile::tempdir().unwrap();
-        let identity = sharded_identity(K_TEST);
-        let genesis = sharded_genesis(K_TEST);
+        let identity = sharded_identity(K_PROVISIONAL);
+        let genesis = sharded_genesis(K_PROVISIONAL);
         let store = CeMdbx::open(directory.path(), identity, genesis).unwrap();
         let key_one = TreeKey::try_from(b256(1)).unwrap();
         let key_two = TreeKey::try_from(b256(2)).unwrap();
         let leaf_one = LeafValue::try_from(b256(31)).unwrap();
         let leaf_two = LeafValue::try_from(b256(32)).unwrap();
-        let mut new_roots = vec![B256::ZERO; K_TEST as usize];
+        let mut new_roots = vec![B256::ZERO; K_PROVISIONAL as usize];
         new_roots[1] = b256(21);
         new_roots[2] = b256(22);
-        let new_root = aggregate_b256_shard_roots(&new_roots).unwrap();
-        let batch = ProvisionalTreeBatch::new(
-            1,
-            genesis.block_hash,
-            genesis.new_root,
-            new_root,
-            K_TEST,
-            vec![B256::ZERO; K_TEST as usize],
+        let parent_roots = vec![B256::ZERO; K_PROVISIONAL as usize];
+        let parent_top = aggregate_b256_shard_roots(&parent_roots).unwrap();
+        let new_top = aggregate_b256_shard_roots(&new_roots).unwrap();
+        let collection_key = CollectionKey::try_from(B256::ZERO).unwrap();
+        let shard_set = ProvisionalShardSetBatch::new(
+            K_PROVISIONAL,
+            parent_top,
+            new_top,
+            parent_roots,
             new_roots,
             BTreeMap::from([
                 (
@@ -1804,20 +2569,66 @@ mod tests {
                 ),
             ]),
         )
+        .unwrap();
+        let new_collection_root =
+            collection_root(CeDomain::Tribute, collection_key, new_top).unwrap();
+        let collection = CollectionBatch::new(
+            CeDomain::Tribute,
+            collection_key,
+            None,
+            new_collection_root,
+            shard_set,
+        )
+        .unwrap();
+        let parent_catalog_root = B256::ZERO;
+        let new_catalog_root = b256(50);
+        let catalog_key = TreeKey::try_from(B256::from(*collection_key.as_bytes())).unwrap();
+        let batch = ProvisionalTreeBatch::new(
+            1,
+            genesis.block_hash,
+            sealed_root(parent_catalog_root).unwrap(),
+            sealed_root(new_catalog_root).unwrap(),
+            parent_catalog_root,
+            new_catalog_root,
+            BTreeMap::from([(collection_key, collection)]),
+            Some(ProvisionalCatalogBatch {
+                parent_catalog_root,
+                new_catalog_root,
+                branch_changes: BTreeMap::new(),
+                leaf_changes: BTreeMap::from([(
+                    catalog_key,
+                    TreeChange::Set(LeafValue::try_from(new_collection_root).unwrap()),
+                )]),
+            }),
+        )
         .unwrap()
         .freeze(b256(50));
 
         assert_eq!(batch.changed_shard_count(), 2);
-        assert_eq!(batch.leaf_change_count(), 2);
+        assert_eq!(batch.leaf_change_count(), 3);
         assert_eq!(
             store.apply_finalized(&batch).unwrap(),
             ApplyOutcome::Applied(batch.marker(1))
         );
         let snapshot = store.open_snapshot().unwrap();
         assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
-        assert_eq!(snapshot.shard_roots().unwrap(), batch.new_shard_roots());
-        assert_eq!(snapshot.read_leaf(1, key_one).unwrap(), Some(leaf_one));
-        assert_eq!(snapshot.read_leaf(2, key_two).unwrap(), Some(leaf_two));
-        assert_eq!(snapshot.read_leaf(2, key_one).unwrap(), None);
+        assert_eq!(
+            snapshot
+                .read_leaf(TreeNamespace::CollectionShard(collection_key, 1), key_one)
+                .unwrap(),
+            Some(leaf_one)
+        );
+        assert_eq!(
+            snapshot
+                .read_leaf(TreeNamespace::CollectionShard(collection_key, 2), key_two)
+                .unwrap(),
+            Some(leaf_two)
+        );
+        assert_eq!(
+            snapshot
+                .read_leaf(TreeNamespace::CollectionShard(collection_key, 2), key_one)
+                .unwrap(),
+            None
+        );
     }
 }

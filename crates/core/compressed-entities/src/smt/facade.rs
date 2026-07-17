@@ -5,7 +5,6 @@ use std::{
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_sparse_merkle_tree_v061::{
     error::Error as VendorError,
     merge::MergeValue,
@@ -15,7 +14,7 @@ use outbe_sparse_merkle_tree_v061::{
 use thiserror::Error;
 
 use super::codec::{hash_error, is_canonical, PoseidonCkbHasher};
-use crate::{identity_field, schema::Collection, EntityId36, ACTIVE_COMMITMENT_SCHEME, TAG_KEY};
+use crate::{schema::Collection, EntityId36};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TreeKey([u8; 32]);
@@ -274,26 +273,9 @@ pub(crate) fn derive_tree_key(
     collection: Collection,
     identity: EntityId36,
 ) -> Result<TreeKey, TreeError> {
-    let identity_bytes =
-        identity_field(identity).map_err(|error| TreeError::Poseidon(error.to_string()))?;
-    let identity_f = Fr::from_be_bytes_mod_order(&identity_bytes);
-    let collection_id = match collection {
-        Collection::Tribute => 1_u64,
-        Collection::NodItem => 2,
-        Collection::NodBucket => 3,
-    };
-    let inputs = [
-        Fr::from(ACTIVE_COMMITMENT_SCHEME),
-        Fr::from(collection_id),
-        identity_f,
-    ];
-    let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(TAG_KEY))
-        .map_err(|error| TreeError::Poseidon(error.to_string()))?;
-    let output = hasher
-        .hash(&inputs)
-        .map_err(|error| TreeError::Poseidon(error.to_string()))?;
-    let bytes = field_to_be32(output);
-    TreeKey::from_be_bytes(bytes)
+    crate::collection::tree_key_bytes(collection.into(), identity)
+        .map_err(|error| TreeError::Poseidon(error.to_string()))
+        .and_then(TreeKey::from_be_bytes)
 }
 
 fn ensure_unique_keys(keys: &[TreeKey]) -> Result<(), TreeError> {
