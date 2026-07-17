@@ -7112,6 +7112,7 @@ dependencies = [
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
+ "outbe-intex",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
