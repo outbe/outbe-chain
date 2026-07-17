@@ -7,9 +7,11 @@ import {console2} from "forge-std/console2.sol";
 import {CreateX} from "./0_DeployCreateX.s.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
+import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 
 /// @dev Deploys the gateway adapters via CREATE3 (same address on every chain). `run()` deploys each adapter only if
-///      its endpoint env is set: LayerZero when `LZ_ENDPOINT` is present, Hyperlane when `HYPERLANE_MAILBOX` is present.
+///      its endpoint env is set: LayerZero when `LZ_ENDPOINT` is present, Hyperlane when `HYPERLANE_MAILBOX` is present,
+///      the loopback (same-chain) adapter when `WIRE_LOOPBACK` is true.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `BRIDGE_OWNER`, and at least one of
 /// `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
@@ -31,6 +33,9 @@ contract DeployAdapters is Script {
         }
         if (mailbox != address(0)) {
             console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(createX, salt, deployer, owner, mailbox));
+        }
+        if (vm.envOr("WIRE_LOOPBACK", false)) {
+            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(createX, salt, deployer, owner));
         }
         vm.stopBroadcast();
     }
@@ -56,6 +61,18 @@ contract DeployAdapters is Script {
     ) public returns (address) {
         bytes32 saltHash = keccak256(abi.encodePacked("HyperlaneGatewayAdapter", salt, deployer));
         bytes memory code = abi.encodePacked(type(HyperlaneGatewayAdapter).creationCode, abi.encode(mailbox, owner));
+        return CreateX(createX).deployCreate3(saltHash, code);
+    }
+
+    function deployLoopbackAdapter(address createX, string memory salt, address deployer, address owner)
+        public
+        returns (address)
+    {
+        // The hub address is CREATE3-deterministic, so the adapter can be deployed before the bridge itself.
+        address hub =
+            CreateX(createX).computeCreate3Address(keccak256(abi.encodePacked("ERC7786Bridge", salt, deployer)));
+        bytes32 saltHash = keccak256(abi.encodePacked("LoopbackGatewayAdapter", salt, deployer));
+        bytes memory code = abi.encodePacked(type(LoopbackGatewayAdapter).creationCode, abi.encode(hub, owner));
         return CreateX(createX).deployCreate3(saltHash, code);
     }
 }

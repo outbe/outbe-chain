@@ -53,6 +53,28 @@ contract AttrAwareGatewayMock is IERC7786GatewaySource, IGatewayQuote {
     }
 }
 
+/// @dev Minimal gateway that counts sends and quotes a fixed fee, for per-chain routing assertions.
+contract RecordingGatewayMock is IERC7786GatewaySource, IGatewayQuote {
+    uint256 public sends;
+
+    function supportsAttribute(bytes4) external pure returns (bool) {
+        return false;
+    }
+
+    function sendMessage(bytes calldata, bytes calldata, bytes[] calldata) external payable returns (bytes32) {
+        sends++;
+        return bytes32(0);
+    }
+
+    function quote(bytes calldata, bytes calldata) external pure returns (uint256) {
+        return 7;
+    }
+
+    function quote(bytes calldata, bytes calldata, bytes[] calldata) external pure returns (uint256) {
+        return 7;
+    }
+}
+
 contract ERC7786BridgeTest is Test {
     ERC7786Bridge internal bridge;
 
@@ -252,6 +274,14 @@ contract ERC7786BridgeTest is Test {
         bridge.receiveMessage(bytes32(0), _interop(wrongRemote), payload);
     }
 
+    function test_RevertWhen_ReceiveWithMalformedSender() public {
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+        bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
+        vm.prank(gw);
+        vm.expectRevert();
+        bridge.receiveMessage(bytes32(0), hex"deadbeef", payload);
+    }
+
     function test_RevertWhen_ReceiveAlreadyExecuted() public {
         ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
         bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
@@ -291,6 +321,101 @@ contract ERC7786BridgeTest is Test {
         vm.prank(gw2);
         bridge.receiveMessage(bytes32(0), _interop(sourceBridge), p2);
         assertTrue(_recipientExecuted(vm.getRecordedLogs(), address(recipient)), "new gateway executes");
+    }
+
+    // ============================================= per-chain gateways ==============================================
+
+    function test_SetGateway_PerChainOverrideAndClear() public {
+        address gwA = makeAddr("gatewayA");
+        vm.prank(owner);
+        bridge.setGateway(uint256(1111), gwA);
+        assertEq(bridge.getGateway(1111), gwA, "override returned for its chain");
+        assertEq(bridge.getGateway(2222), gw, "other chains fall back to the default");
+        assertEq(bridge.getGateway(), gw, "default gateway unchanged");
+
+        vm.prank(owner);
+        bridge.setGateway(uint256(1111), address(0));
+        assertEq(bridge.getGateway(1111), gw, "cleared override falls back to the default");
+    }
+
+    function test_RevertWhen_NonOwnerSetsChainGateway() public {
+        vm.prank(app);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, app));
+        bridge.setGateway(uint256(1111), gw);
+    }
+
+    function test_SendMessage_RoutesPerDestinationGateway() public {
+        RecordingGatewayMock gwA = new RecordingGatewayMock();
+        RecordingGatewayMock gwDefault = new RecordingGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gwDefault));
+
+        vm.startPrank(owner);
+        b.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, address(b)));
+        b.registerRemoteBridge(InteroperableAddress.formatEvmV1(2222, address(b)));
+        b.setGateway(uint256(1111), address(gwA));
+        vm.stopPrank();
+
+        vm.startPrank(app);
+        b.sendMessage(InteroperableAddress.formatEvmV1(1111, address(0xAAAA)), "x", _noAttrs());
+        b.sendMessage(InteroperableAddress.formatEvmV1(2222, address(0xBBBB)), "x", _noAttrs());
+        vm.stopPrank();
+
+        assertEq(gwA.sends(), 1, "send to the overridden chain uses its gateway");
+        assertEq(gwDefault.sends(), 1, "send to other chains uses the default gateway");
+    }
+
+    function test_Quote_UsesPerChainGateway() public {
+        GatewayMock gwDefault = new GatewayMock();
+        RecordingGatewayMock gwA = new RecordingGatewayMock();
+        ERC7786Bridge b = new ERC7786Bridge(owner, address(gwDefault));
+
+        vm.startPrank(owner);
+        b.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, address(b)));
+        b.registerRemoteBridge(InteroperableAddress.formatEvmV1(2222, address(b)));
+        b.setGateway(uint256(1111), address(gwA));
+        vm.stopPrank();
+
+        assertEq(b.quote(InteroperableAddress.formatEvmV1(1111, address(0xAAAA)), "x"), 7, "override chain quote");
+        assertEq(b.quote(InteroperableAddress.formatEvmV1(2222, address(0xBBBB)), "x"), 4242, "default chain quote");
+    }
+
+    function test_ReceiveMessage_TrustsPerSourceChainGateway() public {
+        address gwA = makeAddr("gatewayA");
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+
+        vm.startPrank(owner);
+        bridge.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, sourceBridge));
+        bridge.setGateway(uint256(1111), gwA);
+        vm.stopPrank();
+
+        bytes memory remoteSender = InteroperableAddress.formatEvmV1(1111, sourceBridge);
+        bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
+
+        // The default gateway is no longer trusted for the overridden source chain.
+        vm.prank(gw);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeUnauthorizedGateway.selector, gw));
+        bridge.receiveMessage(bytes32(0), remoteSender, payload);
+
+        vm.prank(gwA);
+        bytes4 magic = bridge.receiveMessage(bytes32(0), remoteSender, payload);
+        assertEq(magic, IERC7786Recipient.receiveMessage.selector, "source chain's gateway delivers");
+    }
+
+    function test_RevertWhen_ChainGatewayDeliversForOtherChain() public {
+        address gwA = makeAddr("gatewayA");
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+
+        vm.startPrank(owner);
+        bridge.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, sourceBridge));
+        bridge.setGateway(uint256(1111), gwA);
+        vm.stopPrank();
+
+        // The local-chain remote registered in setUp is served by the default gateway; the chain-1111 gateway
+        // must not be able to deliver on its behalf.
+        bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
+        vm.prank(gwA);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeUnauthorizedGateway.selector, gwA));
+        bridge.receiveMessage(bytes32(0), _interop(sourceBridge), payload);
     }
 
     // ================================================ access / pause ================================================
