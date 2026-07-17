@@ -172,9 +172,10 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.startPrank(admin);
         origin.wire(address(desisMock), factory);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
+        origin.addTarget(B_CHAIN_ID);
         vm.stopPrank();
 
-        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge), B_CHAIN_ID);
+        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
         origin.upgradeToAndCall(address(newImpl), "");
 
@@ -182,7 +183,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(origin.desis(), address(desisMock), "desis wiring lost");
         assertEq(origin.intexFactory(), factory, "factory wiring lost");
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        assertEq(origin.BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
+        // The appended target registry must survive the upgrade (tail-appended erc7201 storage).
+        assertTrue(origin.isTarget(B_CHAIN_ID), "target registry lost");
     }
 
     function test_Drill_TargetRouter() public {

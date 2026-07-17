@@ -18,10 +18,11 @@ contract MockWCOEN {
     receive() external payable {}
 }
 
-/// @dev IntexFactory precompile stub: records the value/series of each `distribute`; can be toggled to revert.
+/// @dev IntexFactory precompile stub: records the value/series/source of each `distribute`; can be toggled to revert.
 contract MockIntexFactory {
     bool public shouldRevert;
     uint32 public lastSeriesId;
+    uint32 public lastSrcChainId;
     uint256 public lastValue;
     uint256 public calls;
 
@@ -29,10 +30,11 @@ contract MockIntexFactory {
         shouldRevert = v;
     }
 
-    function distribute(uint32 seriesId) external payable {
+    function distribute(uint32 seriesId, uint32 srcChainId) external payable {
         require(!shouldRevert, "distribute failed");
         calls++;
         lastSeriesId = seriesId;
+        lastSrcChainId = srcChainId;
         lastValue = msg.value;
     }
 }
@@ -67,6 +69,19 @@ contract OriginRouterProceedsTest is CrossChainTest {
         // Peer the proceeds hook authenticates `from` against.
         origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetRouter));
         from = _interop(BNB_CHAIN_ID, targetRouter);
+
+        // Register BNB and seed the day's target snapshot: proceeds authenticate the source against it.
+        // No float needed — the mock bridge fee defaults to 0, so the seed STAGE_START costs nothing.
+        origin.addTarget(BNB_CHAIN_ID);
+        _seedDaySnapshot(SERIES_ID);
+    }
+
+    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so `seriesTargets[day]` is populated.
+    function _seedDaySnapshot(uint32 day) internal {
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = day;
+        vm.prank(address(desis));
+        origin.sendAuctionStageStart(p);
     }
 
     function _receive(uint32 sourceDomain, uint256 amount, uint32 seriesId) internal returns (bytes4) {
@@ -80,6 +95,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 1);
         assertEq(factory.lastSeriesId(), SERIES_ID);
+        assertEq(factory.lastSrcChainId(), BNB_CHAIN_ID);
         assertEq(factory.lastValue(), AMOUNT);
         // Fully routed: nothing parked, no native stranded on the router.
         assertEq(origin.parkedProceeds(0).amount, 0);

@@ -31,6 +31,16 @@ interface IDesis {
         uint32[] calldata timestamps
     ) external;
 
+    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day/generation.
+    ///         The gate clears the auction once every snapshot chain has reported (or the fan-in deadline passes).
+    function processBidsDone(
+        uint32 worldwideDay,
+        uint32 srcChainId,
+        uint32 relayGeneration,
+        uint16 totalBatches,
+        uint32 totalBids
+    ) external;
+
     /// @notice Run clearing and hand issuance to IntexFactory.
     function clearAuction(uint32 worldwideDay) external payable;
 

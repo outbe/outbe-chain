@@ -44,7 +44,7 @@ contract DeployFlowTest is CrossChainTest {
 
     function test_DeployBridgeClientProxy_Deterministic() public {
         address predicted = Create3Deploy.predictProxy(factory, address(this), "OriginRouter", VERSION);
-        address impl = address(new OriginRouter(address(bridge), B_CHAIN_ID));
+        address impl = address(new OriginRouter(address(bridge)));
         address proxy = Create3Deploy.deployProxy(
             factory, address(this), "OriginRouter", VERSION, impl, abi.encodeCall(OriginRouter.initialize, (admin))
         );
@@ -55,7 +55,6 @@ contract DeployFlowTest is CrossChainTest {
             OriginRouter(payable(proxy)).hasRole(OriginRouter(payable(proxy)).DEFAULT_ADMIN_ROLE(), admin),
             "admin not set"
         );
-        assertEq(OriginRouter(payable(proxy)).BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
     }
 
     function test_Idempotent_SkipsRedeploy() public {

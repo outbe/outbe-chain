@@ -5,6 +5,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
@@ -92,6 +93,11 @@ contract IntexCallFlowTest is CrossChainTest {
         targetRouter.wire(address(auction), address(intexBnb), admin, address(nftBridgeBnb));
         originRouter.wire(desis, intexFactory);
 
+        // ---- Register BNB target + seed the day snapshot (mark-called broadcasts over it) ----
+        originRouter.addTarget(BNB_CHAIN_ID);
+        vm.deal(address(originRouter), 100 ether);
+        _seedDaySnapshot(SERIES_ID);
+
         // ---- Grant roles ----
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
         intexBnb.grantRole(intexBnb.RELAYER_ROLE(), address(targetRouter));
@@ -110,6 +116,15 @@ contract IntexCallFlowTest is CrossChainTest {
     /// @dev Create the series on a given Intex contract with the shared default parameters.
     function _createSeries(IntexNFT1155 intex) internal {
         intex.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, uint32(21 days)));
+    }
+
+    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so the day's target snapshot exists for the
+    ///      later mark-called/qualified broadcasts, which fan out over that frozen snapshot.
+    function _seedDaySnapshot(uint32 day) internal {
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = day;
+        vm.prank(desis);
+        originRouter.sendAuctionStageStart(p);
     }
 
     // ============================================================

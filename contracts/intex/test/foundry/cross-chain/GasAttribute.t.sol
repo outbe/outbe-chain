@@ -28,6 +28,8 @@ contract GasAttributeTest is CrossChainTest {
         bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
         bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
+        outbe.addTarget(BNB_CHAIN_ID);
+        vm.deal(address(outbe), 10 ether);
 
         desis = address(new MockDesis());
         outbe.wire(desis, makeAddr("factory"));
