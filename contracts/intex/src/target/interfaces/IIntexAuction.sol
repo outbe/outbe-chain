@@ -222,7 +222,8 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
-    function auctionStart(uint32 worldwideDay, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
+    function auctionStart(uint32 worldwideDay, AuctionSchedule calldata schedule, AuctionParams calldata params)
+        external;
 
     /// @notice Start the reveal stage (bridge-driven; green day proceeds, red day cancels).
     /// @dev Early green-day signal snaps `commitEnd` forward; `revealEnd` is unchanged.

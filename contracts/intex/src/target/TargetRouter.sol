@@ -353,8 +353,11 @@ contract TargetRouter is
 
     /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.
     function _handleAuctionStageStart(uint32 _srcChainId, bytes calldata _message) internal {
-        (uint32 worldwideDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
-            BridgeMsgCodec.decodeAuctionParams(_message);
+        (
+            uint32 worldwideDay,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params
+        ) = BridgeMsgCodec.decodeAuctionParams(_message);
         _ts().auction.auctionStart(worldwideDay, schedule, params);
 
         emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
@@ -424,7 +427,9 @@ contract TargetRouter is
         uint32 gen = ++$.bidsRelayGeneration[worldwideDay];
 
         if (bidsCount == 0) {
-            _sendOneBidsBatch(worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0));
+            _sendOneBidsBatch(
+                worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+            );
             return;
         }
 
@@ -555,8 +560,12 @@ contract TargetRouter is
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag; escrow dedups on the series' own `finalized` flag.
     function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
-        (uint32 worldwideDay, address[] memory bidders, uint128[] memory refundedAmounts, uint128[] memory paidAmounts) =
-            BridgeMsgCodec.decodeRefundInstructions(_message);
+        (
+            uint32 worldwideDay,
+            address[] memory bidders,
+            uint128[] memory refundedAmounts,
+            uint128[] memory paidAmounts
+        ) = BridgeMsgCodec.decodeRefundInstructions(_message);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions =
             new IEscrowAdapter.FinalizationInstruction[](bidders.length);

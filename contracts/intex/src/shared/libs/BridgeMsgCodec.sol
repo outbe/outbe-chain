@@ -409,7 +409,9 @@ library BridgeMsgCodec {
         }
         requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_REFUND_INSTRUCTIONS, abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
+            BODY_VERSION_V1,
+            MSG_REFUND_INSTRUCTIONS,
+            abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
         );
     }
 
@@ -528,7 +530,11 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded AUCTION_STAGE_REVEAL message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return isGreenDay The decoded green-day flag.
-    function decodeAuctionStageReveal(bytes calldata _msg) internal pure returns (uint32 worldwideDay, bool isGreenDay) {
+    function decodeAuctionStageReveal(bytes calldata _msg)
+        internal
+        pure
+        returns (uint32 worldwideDay, bool isGreenDay)
+    {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_REVEAL, MIN_LEN_AUCTION_STAGE_REVEAL);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));

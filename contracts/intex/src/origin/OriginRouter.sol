@@ -142,16 +142,17 @@ contract OriginRouter is
     /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256) {
         return _quoteFee(
-            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+            BNB_CHAIN_ID,
+            BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay),
+            IntexGas.AUCTION_STAGE_REVEAL
         );
     }
 
     /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256) {
-        return
-            _quoteFee(
-                BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
-            );
+        return _quoteFee(
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
+        );
     }
 
     /// @inheritdoc IOriginRouter
@@ -221,15 +222,23 @@ contract OriginRouter is
         returns (bytes32 sendId)
     {
         sendId = _send(
-            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay), IntexGas.AUCTION_STAGE_REVEAL
+            BNB_CHAIN_ID,
+            BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay),
+            IntexGas.AUCTION_STAGE_REVEAL
         );
         emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageClearing(uint32 worldwideDay) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
-        sendId =
-            _send(BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING);
+    function sendAuctionStageClearing(uint32 worldwideDay)
+        external
+        payable
+        onlyRole(DESIS_ROLE)
+        returns (bytes32 sendId)
+    {
+        sendId = _send(
+            BNB_CHAIN_ID, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
+        );
         emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 

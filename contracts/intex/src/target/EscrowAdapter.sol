@@ -345,7 +345,12 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function releaseCommitBond(uint32 worldwideDay, address bidder) external override onlyRole(AUCTION_ROLE) nonReentrant {
+    function releaseCommitBond(uint32 worldwideDay, address bidder)
+        external
+        override
+        onlyRole(AUCTION_ROLE)
+        nonReentrant
+    {
         _releaseCommitBond(worldwideDay, bidder);
     }
 

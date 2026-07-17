@@ -208,7 +208,10 @@ contract IntexAuction is
             // Red day - cancel auction.
             a.worldwideDayState = IIntexAuction.WorldwideDayState.Red;
             emit AuctionStageUpdated(
-                worldwideDay, IIntexAuction.AuctionStage.Cancelled, uint32(block.timestamp), "Red day - auction cancelled"
+                worldwideDay,
+                IIntexAuction.AuctionStage.Cancelled,
+                uint32(block.timestamp),
+                "Red day - auction cancelled"
             );
             return;
         }

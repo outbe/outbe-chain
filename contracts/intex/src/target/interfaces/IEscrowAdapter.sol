@@ -156,7 +156,9 @@ interface IEscrowAdapter {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose finalization step failed.
     /// @param reason Raw revert data from the failed per-bidder finalization call.
-    event BidderRefundFailed(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason);
+    event BidderRefundFailed(
+        bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
+    );
 
     /// @notice Emitted on a successful `retryFinalize` call.
     /// @param receiveId Original inbound bridge message the relayer is retrying for.
