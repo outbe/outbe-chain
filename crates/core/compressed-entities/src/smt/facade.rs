@@ -97,6 +97,13 @@ impl TreeProof {
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0 .0
     }
+
+    pub(crate) fn compute_root(&self, key: TreeKey, leaf: TreeLeaf) -> Result<TreeRoot, TreeError> {
+        self.0
+            .compute_root::<PoseidonCkbHasher>(vec![(key.ckb(), leaf.ckb())])
+            .map_err(vendor_error)
+            .and_then(checked_root)
+    }
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]

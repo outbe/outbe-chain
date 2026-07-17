@@ -182,6 +182,14 @@ pub struct FinalizationProof {
 /// Enable with `--http.api outbe`.
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
+    /// Returns one independently verifiable latest-finalized compressed-entity
+    /// point package. V1 deliberately has no caller-selected block.
+    #[method(name = "getCompressedEntity")]
+    async fn get_compressed_entity(
+        &self,
+        request: outbe_compressed_entities::PointReadRequestV1,
+    ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
+
     /// Returns information about all active validators.
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;

@@ -23,6 +23,7 @@ thiserror.workspace = true
 [dev-dependencies]
 ckb-smt-pristine = { package = "outbe-sparse-merkle-tree-v061-pristine", path = "vendor/sparse-merkle-tree-pristine" }
 criterion.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

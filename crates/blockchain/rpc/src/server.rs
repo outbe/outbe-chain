@@ -7,6 +7,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use jsonrpsee::core::RpcResult;
+use outbe_compressed_entities::{
+    CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
+};
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
@@ -46,7 +50,7 @@ impl StorageReader for RethStateReader<'_> {
 }
 
 /// RPC handler for the `outbe_*` namespace.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     bridge: Option<ConsensusExecutionBridge>,
@@ -56,6 +60,33 @@ pub struct OutbeApiHandler<P> {
     /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
     is_validator: bool,
     projection_readiness: ProjectionReadinessHandle,
+    point_reads: Option<PointReadRuntime>,
+}
+
+#[derive(Clone)]
+struct PointReadRuntime {
+    tree: Arc<CompressedTreeService>,
+    bodies: RuntimeBodyReaders,
+    chain_id: u64,
+}
+
+impl std::fmt::Debug for PointReadRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PointReadRuntime")
+            .field("chain_id", &self.chain_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P> std::fmt::Debug for OutbeApiHandler<P> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutbeApiHandler")
+            .field("is_validator", &self.is_validator)
+            .field("point_reads", &self.point_reads)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> OutbeApiHandler<P> {
@@ -67,6 +98,7 @@ impl<P> OutbeApiHandler<P> {
             bridge: None,
             is_validator: false,
             projection_readiness,
+            point_reads: None,
         }
     }
 
@@ -81,6 +113,7 @@ impl<P> OutbeApiHandler<P> {
             bridge: Some(bridge),
             is_validator: true,
             projection_readiness,
+            point_reads: None,
         }
     }
 
@@ -97,14 +130,88 @@ impl<P> OutbeApiHandler<P> {
             bridge: Some(bridge),
             is_validator: false,
             projection_readiness,
+            point_reads: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_point_reads(
+        mut self,
+        tree: Arc<CompressedTreeService>,
+        bodies: RuntimeBodyReaders,
+        chain_id: u64,
+    ) -> Self {
+        self.point_reads = Some(PointReadRuntime {
+            tree,
+            bodies,
+            chain_id,
+        });
+        self
     }
 }
 
 impl<P> OutbeApiHandler<P>
 where
-    P: StateProviderFactory + 'static,
+    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync + 'static,
 {
+    async fn serve_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        let Some(runtime) = self.point_reads.clone() else {
+            return Ok(PointReadResultV1::Unavailable);
+        };
+        let provider = Arc::clone(&self.provider);
+        tokio::task::spawn_blocking(move || {
+            runtime.tree.serve_point_read_v1(
+                runtime.chain_id,
+                request,
+                |height, expected_hash| {
+                    let finalized = provider.finalized_block_num_hash().ok().flatten()?;
+                    if finalized.number < height {
+                        return None;
+                    }
+                    provider
+                        .sealed_header(height)
+                        .ok()
+                        .flatten()
+                        .filter(|header| header.hash() == expected_hash)
+                        .map(|header| SelectedHeaderV1 {
+                            block_number: height,
+                            block_hash: expected_hash,
+                            extra_data: header.header().inner.extra_data.to_vec(),
+                        })
+                },
+                |domain, raw_id| match domain {
+                    CeDomain::Tribute => match runtime.bodies.tribute().get_stored_body(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodItem => match runtime.bodies.nod().get_stored_item(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodBucket => match runtime.bodies.nod().get_stored_bucket(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                },
+            )
+        })
+        .await
+        .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
+        .map_err(|error| invalid_params(error.to_string()))
+    }
+
     /// Read precompile state at the latest block using a closure.
     fn with_latest_state<R>(
         &self,
@@ -134,6 +241,13 @@ where
         + Sync
         + 'static,
 {
+    async fn get_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        self.serve_compressed_entity(request).await
+    }
+
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -411,6 +525,14 @@ fn projection_status_info(
 fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+        msg,
+        None::<()>,
+    )
+}
+
+fn invalid_params(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+    jsonrpsee::types::ErrorObject::owned(
+        jsonrpsee::types::error::INVALID_PARAMS_CODE,
         msg,
         None::<()>,
     )

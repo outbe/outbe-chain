@@ -52,6 +52,12 @@ pub struct CompressedTreeService {
 }
 
 impl CompressedTreeService {
+    pub(crate) fn open_finalized_snapshot(
+        &self,
+    ) -> Result<Box<dyn crate::staging::FinalizedTreeSnapshot>, TreeServiceError> {
+        self.db.open_snapshot().map_err(Into::into)
+    }
+
     /// Takes ownership of the CE MDBX environment and seeds retention from its
     /// already-verified finalized marker.
     pub fn new(db: CeMdbx, limits: CandidateCacheLimits) -> Result<Self, TreeServiceError> {

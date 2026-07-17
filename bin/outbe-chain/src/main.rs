@@ -501,6 +501,8 @@ fn run_node() -> eyre::Result<()> {
                 .await
                 .wrap_err("offchain-data startup validation worker failed")??;
         let runtime_body_readers = prepared_projection.runtime_body_readers();
+        let proof_body_readers = runtime_body_readers.clone();
+        let proof_chain_id = builder.config().chain.chain().id();
         let projection_readiness = prepared_projection.readiness();
         let ce_data_dir = builder
             .config()
@@ -592,6 +594,8 @@ fn run_node() -> eyre::Result<()> {
                 let is_validator = args.is_validator;
                 let is_follower = args.upstream.is_some();
                 let projection_readiness = projection_readiness_for_rpc.clone();
+                let compressed_tree_service = compressed_tree_service.clone();
+                let proof_body_readers = proof_body_readers.clone();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
@@ -600,7 +604,7 @@ fn run_node() -> eyre::Result<()> {
                     // `outbe_getFinalization` (chaining followers), but must NOT
                     // report validator status; they get a follower-scoped handler
                     // that exposes only the finalization-serving capability.
-                    let outbe_api = if is_validator {
+                    let outbe_api = (if is_validator {
                         outbe_rpc::OutbeApiHandler::with_bridge(
                             provider,
                             bridge,
@@ -614,7 +618,12 @@ fn run_node() -> eyre::Result<()> {
                         )
                     } else {
                         outbe_rpc::OutbeApiHandler::new(provider, projection_readiness.clone())
-                    };
+                    })
+                    .with_point_reads(
+                        compressed_tree_service.clone(),
+                        proof_body_readers.clone(),
+                        proof_chain_id,
+                    );
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),

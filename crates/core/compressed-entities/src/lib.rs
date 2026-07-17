@@ -11,6 +11,7 @@ mod errors;
 mod identity;
 mod lifecycle;
 mod persistence;
+mod proof;
 mod protobuf;
 mod replay;
 mod runtime;
@@ -51,6 +52,11 @@ pub use persistence::{
     classify_restart, ApplyOutcome, CeMdbx, CeRetentionCursor, DurableFinalizedCheckpoint,
     EnvironmentIdentity, ExactParentIdentity, FinalizationStage, FinalizedMarker, PersistenceError,
     RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
+};
+pub use proof::{
+    verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1, PointProofCommonV1,
+    PointReadRequestError, PointReadRequestV1, PointReadResultV1, PointReadServiceError,
+    PresentEvidenceV1, SelectedHeaderV1, VerifiedPointReadV1, PROOF_ENCODING_VERSION_V1,
 };
 pub use protobuf::{
     decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_nod_bucket_v1,

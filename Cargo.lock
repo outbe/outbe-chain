@@ -7314,6 +7314,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-sparse-merkle-tree-v061",
  "outbe-sparse-merkle-tree-v061-pristine",
+ "proptest",
  "reth-db",
  "serde",
  "serde_json",
@@ -8105,6 +8106,8 @@ dependencies = [
  "eyre",
  "hex",
  "jsonrpsee",
+ "outbe-compressed-entities",
+ "outbe-offchain-data",
  "outbe-primitives",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -8116,6 +8119,7 @@ dependencies = [
  "reth-provider",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
