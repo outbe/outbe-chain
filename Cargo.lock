@@ -7404,7 +7404,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "hex",
- "outbe-common",
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
