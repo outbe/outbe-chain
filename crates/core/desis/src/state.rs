@@ -68,7 +68,12 @@ impl DesisContract<'_> {
 
     // --- bid storage (per chain) ---
 
-    pub(crate) fn append_bid(&self, worldwide_day: u32, chain_id: u32, bid: &BidData) -> Result<u32> {
+    pub(crate) fn append_bid(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        bid: &BidData,
+    ) -> Result<u32> {
         let chain_key = Self::chain_key(worldwide_day, chain_id);
         let index = self.chain_bid_count.read(&chain_key)?;
         self.write_bid_at(worldwide_day, chain_id, index, bid)?;
@@ -78,7 +83,12 @@ impl DesisContract<'_> {
         Ok(index)
     }
 
-    pub(crate) fn read_bid_at(&self, worldwide_day: u32, chain_id: u32, index: u32) -> Result<BidData> {
+    pub(crate) fn read_bid_at(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        index: u32,
+    ) -> Result<BidData> {
         let key = Self::bid_key(worldwide_day, chain_id, index);
         let packed = self.bid_packed.read(&key)?;
         let limbs = packed.as_limbs();
@@ -90,7 +100,13 @@ impl DesisContract<'_> {
         })
     }
 
-    fn write_bid_at(&self, worldwide_day: u32, chain_id: u32, index: u32, bid: &BidData) -> Result<()> {
+    fn write_bid_at(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        index: u32,
+        bid: &BidData,
+    ) -> Result<()> {
         let key = Self::bid_key(worldwide_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
         let packed = U256::from_limbs([
@@ -110,7 +126,9 @@ impl DesisContract<'_> {
     ) -> Result<Vec<(u32, BidData)>> {
         let mut bids = Vec::new();
         for &chain_id in chain_ids {
-            let count = self.chain_bid_count.read(&Self::chain_key(worldwide_day, chain_id))?;
+            let count = self
+                .chain_bid_count
+                .read(&Self::chain_key(worldwide_day, chain_id))?;
             for i in 0..count {
                 bids.push((chain_id, self.read_bid_at(worldwide_day, chain_id, i)?));
             }

@@ -279,7 +279,9 @@ pub fn process_bids_batch(
         // New generation supersedes: drop the chain's bids and reset its completeness tracking
         // (including a stale marker and the done flag).
         contract.reset_chain_intake(worldwide_day, src_chain_id)?;
-        contract.chain_last_generation.write(&chain_key, generation)?;
+        contract
+            .chain_last_generation
+            .write(&chain_key, generation)?;
         contract
             .chain_total_batches
             .write(&chain_key, u32::from(total_batches))?;
@@ -608,8 +610,11 @@ fn clear_inner(
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
-        let won_bids_count =
-            result.winner_chains.iter().filter(|&&c| c == chain_id).count() as u32;
+        let won_bids_count = result
+            .winner_chains
+            .iter()
+            .filter(|&&c| c == chain_id)
+            .count() as u32;
         storage.call(
             ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,

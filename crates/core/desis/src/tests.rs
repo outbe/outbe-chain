@@ -1055,7 +1055,9 @@ fn force_clear_waits_then_fires_when_all_done() {
         .unwrap();
         mark_done(&s, chain_a, 1, 1, 1);
         // Before the deadline, a missing chain keeps the gate closed.
-        assert!(runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW).unwrap().is_none());
+        assert!(runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
+            .unwrap()
+            .is_none());
 
         // Chain B reports → the gate opens and the tick clears.
         runtime::process_bids_batch(
@@ -1144,10 +1146,8 @@ fn force_clear_skips_missing_chain_after_deadline() {
 fn tick_gate_no_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
-            s.clone(),
-        );
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, CHAIN_ID), s.clone());
         runtime::tick_gate(&ctx).unwrap();
     });
 }
@@ -1172,10 +1172,8 @@ fn tick_gate_clears_ready_day() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 1);
 
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
-            s.clone(),
-        );
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, CHAIN_ID), s.clone());
         runtime::tick_gate(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
