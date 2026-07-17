@@ -650,6 +650,13 @@ contract IntexNFT1155Test is Test {
         nft.grantRole(role, account);
     }
 
+    /// @dev Helper: grant GEM_ROLE on the deployed Intex contract to `account`.
+    function _grantGemRole(address account) internal {
+        bytes32 role = nft.GEM_ROLE();
+        vm.prank(admin);
+        nft.grantRole(role, account);
+    }
+
     function test_Settle_BurnsIssued_MintsSettled() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
@@ -830,6 +837,131 @@ contract IntexNFT1155Test is Test {
         nft.burnSettled(user, SERIES_ID_1, 5);
 
         assertEq(nft.balanceOf(user, nft.settledTokenId(SERIES_ID_1)), 0);
+    }
+
+    // --- Tests for parkForGems (Gem Factory parking) ---
+
+    function test_ParkForGems_BurnsIssued() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.prank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        _grantGemRole(address(this));
+
+        vm.expectEmit(true, true, false, true);
+        emit IIntexNFT1155.IntexParked(SERIES_ID_1, user, 4);
+        nft.parkForGems(user, SERIES_ID_1, 4);
+
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+        assertEq(nft.totalSupply(TOKEN_ID_1), 6);
+    }
+
+    function test_ParkForGems_AllowedInQualified() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.markQualified(SERIES_ID_1);
+        vm.stopPrank();
+        _grantGemRole(address(this));
+
+        nft.parkForGems(user, SERIES_ID_1, 10);
+
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
+        assertEq(nft.totalSupply(TOKEN_ID_1), 0);
+    }
+
+    function test_ParkForGems_OnlyGemRole() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.prank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+
+        vm.prank(bridger);
+        vm.expectRevert();
+        nft.parkForGems(user, SERIES_ID_1, 1);
+    }
+
+    function test_ParkForGems_RevertsWhenCalled() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.markCalled(SERIES_ID_1);
+        vm.stopPrank();
+        _grantGemRole(address(this));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexNFT1155.InvalidState.selector,
+                uint8(IIntexNFT1155.IntexState.Qualified),
+                uint8(IIntexNFT1155.IntexState.Called)
+            )
+        );
+        nft.parkForGems(user, SERIES_ID_1, 1);
+    }
+
+    function test_ParkForGems_RevertsOnNonexistentSeries() public {
+        _grantGemRole(address(this));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
+        nft.parkForGems(user, SERIES_ID_1, 1);
+    }
+
+    function test_ParkForGems_RevertsOnZeroAmount() public {
+        _createSeries(SERIES_ID_1, 0);
+        _grantGemRole(address(this));
+        vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
+        nft.parkForGems(user, SERIES_ID_1, 0);
+    }
+
+    function test_ParkForGems_RevertsOnZeroHolder() public {
+        _createSeries(SERIES_ID_1, 0);
+        _grantGemRole(address(this));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "holder", address(0)));
+        nft.parkForGems(address(0), SERIES_ID_1, 1);
+    }
+
+    function test_ParkForGems_RevertsAboveBalance() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 5, SERIES_ID_1);
+        nft.mint(user2, 5, SERIES_ID_1);
+        vm.stopPrank();
+        _grantGemRole(address(this));
+
+        // amount <= totalSupply but > holder balance
+        vm.expectRevert();
+        nft.parkForGems(user, SERIES_ID_1, 6);
+    }
+
+    function test_ParkForGems_DoesNotTouchSettled() public {
+        _createSeries(SERIES_ID_1, 0);
+        vm.startPrank(bridger);
+        nft.mint(user, 10, SERIES_ID_1);
+        nft.markQualified(SERIES_ID_1);
+        vm.stopPrank();
+        _grantSettlementRole(address(this));
+        nft.settle(SERIES_ID_1, user, user, 4);
+        _grantGemRole(address(this));
+
+        nft.parkForGems(user, SERIES_ID_1, 6);
+
+        (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
+        assertEq(nft.balanceOf(user, issued), 0);
+        assertEq(nft.balanceOf(user, settled), 4, "Settled balance is out of parking's reach");
+        assertEq(nft.totalSupply(settled), 4);
+    }
+
+    function test_ParkForGems_FreesCapRoom() public {
+        uint32 cap = 10;
+        vm.startPrank(bridger);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1, cap, 0));
+        nft.mint(user, 10, SERIES_ID_1);
+        vm.stopPrank();
+        _grantGemRole(address(this));
+
+        nft.parkForGems(user, SERIES_ID_1, 4);
+
+        // Deliberate: the cap is enforced against live totalSupply, so parking frees mint room.
+        vm.prank(bridger);
+        nft.mint(user2, 4, SERIES_ID_1);
+        assertEq(nft.totalSupply(TOKEN_ID_1), 10);
     }
 
     function test_ExpireSeries_PreservesSettled() public {
