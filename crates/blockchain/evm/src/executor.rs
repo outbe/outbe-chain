@@ -505,6 +505,10 @@ pub fn run_outbe_pre_execution_hooks(
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
+    // DESIS: clear auctions whose bid fan-in gate is satisfied (every target
+    // chain reported BIDS_DONE, or the deadline passed).
+    <outbe_desis::DesisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+
     Ok(())
 }
 

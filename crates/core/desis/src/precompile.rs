@@ -13,8 +13,10 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::BidData;
 
-/// `IDesis` interface ID (XOR of non-ERC-165 selectors in IDesis).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xa2, 0xce, 0x63, 0xc8];
+/// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
+/// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
+/// (XOR of its 5 function selectors).
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xde, 0xc7, 0x95, 0xe6];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -72,8 +74,21 @@ pub fn dispatch(
             getBidsCount(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let count = contract.read_bid_count(c.worldwideDay)?;
+                let count = contract.day_bid_count.read(&c.worldwideDay)?;
                 Ok(U256::from(count))
+            }),
+            getChainBidsCount(c) => view(c, |c| {
+                use crate::schema::DesisContract;
+                let contract = storage.contract::<DesisContract>();
+                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                let count = contract.chain_bid_count.read(&key)?;
+                Ok(U256::from(count))
+            }),
+            isChainDone(c) => view(c, |c| {
+                use crate::schema::DesisContract;
+                let contract = storage.contract::<DesisContract>();
+                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                Ok(contract.chain_done.read(&key)? != 0)
             }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;

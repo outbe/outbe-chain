@@ -7,6 +7,7 @@
 pub mod api;
 pub mod constants;
 pub mod errors;
+pub mod hooks;
 pub mod precompile;
 pub(crate) mod runtime;
 pub mod schema;
@@ -17,4 +18,5 @@ pub(crate) mod state;
 mod tests;
 
 pub use errors::DesisError;
+pub use hooks::DesisLifecycle;
 pub use schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};

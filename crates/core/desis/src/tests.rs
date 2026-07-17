@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -12,6 +13,10 @@ const CHAIN_ID: u64 = 1;
 const WORLDWIDE_DAY: u32 = 20260101;
 const AUCTION_TS: u64 = 1_767_261_600; // 2026-01-01 10:00 UTC
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+/// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
+const SRC_CHAIN: u32 = 1;
+/// Block timestamp threaded into `begin_clearing` for the fan-in deadline.
+const NOW: u64 = 1_700_000_000;
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -19,17 +24,40 @@ fn bidder(n: u8) -> Address {
     Address::from(bytes)
 }
 
-fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+/// ABI-encoded `targetsOf` return, so the OriginRouter staticcall in clearing sees this target set.
+fn targets_stub(chains: &[u32]) -> Bytes {
+    Bytes::from(crate::sol_ext::IOriginRouter::targetsOfCall::abi_encode_returns(&chains.to_vec()))
+}
+
+fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(1_700_000_000u64));
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes); the value is ignored.
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, Bytes::from(vec![0u8; 32]));
+    storage.set_timestamp(U256::from(NOW));
+    // Stub OriginRouter: `targetsOf` returns the snapshot; send* returns are ignored by the runtime.
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(chains));
     // Stub IntexNFT1155: createSeries/settle/burnSettled are void; balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, f)
+}
+
+fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+    with_targets(&[SRC_CHAIN], f)
+}
+
+/// Send the chain's BIDS_DONE marker so its intake finalizes and the clearing gate opens.
+fn mark_done(s: &StorageHandle, chain: u32, gen: u32, total_batches: u16, total_bids: u32) {
+    runtime::process_bids_done(
+        s.clone(),
+        ORIGIN_ROUTER_ADDRESS,
+        WORLDWIDE_DAY,
+        chain,
+        gen,
+        total_batches,
+        total_bids,
+    )
+    .unwrap();
 }
 
 fn default_config() -> AuctionConfig {
@@ -128,11 +156,18 @@ fn begin_clearing_stores_pending() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply_promis = 10 * PROMIS_LOAD_MINOR;
-        let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply_promis).unwrap();
+        let remainder =
+            runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply_promis, NOW).unwrap();
         assert_eq!(remainder, 0); // no rounding with exact multiple
         let contract = s.contract::<DesisContract>();
         let supply = contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap();
         assert_eq!(supply, 10);
+        // The fan-in gate is armed for the day.
+        assert_eq!(
+            contract.clearing_deadline.read(&WORLDWIDE_DAY).unwrap(),
+            NOW + crate::constants::BIDS_FANIN_TIMEOUT_SECS
+        );
+        assert_eq!(contract.gate_active_count.read().unwrap(), 1);
     });
 }
 
@@ -142,12 +177,12 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         // First auction: start, reveal, clear with 100 issued (supply = 100).
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 100 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 100 * PROMIS_LOAD_MINOR, NOW).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
@@ -161,6 +196,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
                 .collect(),
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 100);
         runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
         // Second auction for a different worldwide_day: min_bid_qty must be 4% of 100 = 4.
@@ -189,7 +225,7 @@ fn process_bids_in_non_revealing_stage_fails() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
@@ -212,7 +248,7 @@ fn process_bids_rejects_non_origin_caller() {
             s.clone(),
             attacker,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
@@ -220,7 +256,7 @@ fn process_bids_rejects_non_origin_caller() {
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
     });
 }
 
@@ -233,20 +269,20 @@ fn clear_auction_rejects_non_origin_caller() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             bids(3, 200),
         )
         .unwrap();
-        // Series is in BidsReceived, so the only admission gate left is the caller check.
+        // The caller check runs before the gate, so a stranger is rejected regardless of readiness.
         let attacker = bidder(99);
         assert!(runtime::clear_auction(s.clone(), attacker, WORLDWIDE_DAY).is_err());
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::BidsReceived
+            AuctionStage::Revealing
         );
     });
 }
@@ -265,18 +301,18 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 }
 
 #[test]
-fn process_bids_accumulate_then_finalize() {
+fn process_bids_accumulate_across_batches() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
 
-        // Two batches of generation 1 (total_batches=2); the stage advances only once
-        // both batch_index 0 and 1 have arrived.
+        // Two batches of generation 1 (total_batches=2) accumulate for the chain. Intake stays
+        // Revealing — nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             2,
@@ -287,7 +323,7 @@ fn process_bids_accumulate_then_finalize() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             1,
             2,
@@ -296,10 +332,117 @@ fn process_bids_accumulate_then_finalize() {
         .unwrap();
 
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.read_bid_count(WORLDWIDE_DAY).unwrap(), 5);
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 5);
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::BidsReceived
+            AuctionStage::Revealing
+        );
+        // No marker yet, so the chain is not done.
+        assert!(
+            contract
+                .chain_done
+                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+                .unwrap()
+                == 0
+        );
+    });
+}
+
+#[test]
+fn marker_finalizes_chain_once_batches_and_totals_match() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(4, 200),
+        )
+        .unwrap();
+        // Marker with matching totals opens the gate for this chain.
+        mark_done(&s, SRC_CHAIN, 1, 1, 4);
+        let contract = s.contract::<DesisContract>();
+        assert!(
+            contract
+                .chain_done
+                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+                .unwrap()
+                == 1
+        );
+    });
+}
+
+#[test]
+fn marker_arriving_before_batches_still_finalizes() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        // Marker races ahead of the batches over the unordered bridge: it can't finalize yet
+        // (generation not seen), so it reverts and the transport redelivers it after the batches.
+        assert!(runtime::process_bids_done(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            1,
+            2
+        )
+        .is_err());
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(2, 200),
+        )
+        .unwrap();
+        // Redelivered marker now matches and finalizes.
+        mark_done(&s, SRC_CHAIN, 1, 1, 2);
+        let contract = s.contract::<DesisContract>();
+        assert!(
+            contract
+                .chain_done
+                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+                .unwrap()
+                == 1
+        );
+    });
+}
+
+#[test]
+fn marker_total_mismatch_keeps_chain_not_done() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(3, 200),
+        )
+        .unwrap();
+        // Marker claims 5 bids but only 3 arrived: the integrity check keeps the chain not-done.
+        mark_done(&s, SRC_CHAIN, 1, 1, 5);
+        let contract = s.contract::<DesisContract>();
+        assert!(
+            contract
+                .chain_done
+                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+                .unwrap()
+                == 0
         );
     });
 }
@@ -315,7 +458,7 @@ fn higher_generation_replaces_bids() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             2,
@@ -327,7 +470,7 @@ fn higher_generation_replaces_bids() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             2,
             0,
             1,
@@ -336,7 +479,45 @@ fn higher_generation_replaces_bids() {
         .unwrap();
 
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.read_bid_count(WORLDWIDE_DAY).unwrap(), 2);
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 2);
+    });
+}
+
+#[test]
+fn superseding_generation_resets_done_flag() {
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(2, 200),
+        )
+        .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 2);
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert!(s.contract::<DesisContract>().chain_done.read(&key).unwrap() == 1);
+
+        // A fresh generation re-opens the chain: done is cleared until the new marker lands.
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            2,
+            0,
+            1,
+            bids(3, 150),
+        )
+        .unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert!(contract.chain_done.read(&key).unwrap() == 0);
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 3);
     });
 }
 
@@ -350,7 +531,7 @@ fn stale_generation_is_rejected() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             2,
             0,
             2,
@@ -361,7 +542,7 @@ fn stale_generation_is_rejected() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
@@ -372,30 +553,24 @@ fn stale_generation_is_rejected() {
 }
 
 #[test]
-fn no_bids_last_batch_clears_as_no_sale() {
+fn no_bids_clears_as_no_sale() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 10 * PROMIS_LOAD_MINOR).unwrap();
-        // A single empty batch (batch 0 of 1) completes the generation and advances to
-        // BidsReceived (not Cancelled), so clearing auto-fires.
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 10 * PROMIS_LOAD_MINOR, NOW).unwrap();
+        // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             vec![],
         )
         .unwrap();
-        assert_eq!(
-            s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
-                .unwrap(),
-            AuctionStage::BidsReceived
-        );
+        mark_done(&s, SRC_CHAIN, 1, 1, 0);
 
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
@@ -420,20 +595,26 @@ fn clear_auction_allocates_up_to_supply() {
         let supply = 3u32;
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(
+            s.clone(),
+            WORLDWIDE_DAY,
+            supply as u128 * PROMIS_LOAD_MINOR,
+            NOW,
+        )
+        .unwrap();
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             bids(5, 200),
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 5);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         assert_eq!(result.issued_intex_count, supply);
@@ -446,24 +627,27 @@ fn clear_auction_transitions_to_cleared() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR, NOW).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             bids(1, 200),
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 1);
         runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Cleared
         );
+        // The gate is released once the day clears.
+        assert_eq!(contract.gate_active_count.read().unwrap(), 0);
     });
 }
 
@@ -472,7 +656,7 @@ fn begin_clearing_accepts_zero_supply() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0).unwrap();
+        let remainder = runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0, NOW).unwrap();
         assert_eq!(remainder, 0);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -488,18 +672,19 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 0, NOW).unwrap();
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             bids(3, 200),
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
@@ -523,8 +708,13 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(
+            s.clone(),
+            WORLDWIDE_DAY,
+            supply as u128 * PROMIS_LOAD_MINOR,
+            NOW,
+        )
+        .unwrap();
         // Three bids at descending prices: 300, 200, 150.
         let three_bids = vec![
             BidData {
@@ -550,13 +740,14 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             three_bids,
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
@@ -570,7 +761,7 @@ fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap(); // min_bid_price=100
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 3 * PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 3 * PROMIS_LOAD_MINOR, NOW).unwrap();
         let low_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -589,13 +780,14 @@ fn clear_bids_below_min_price_skipped() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             low_bids,
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
@@ -609,7 +801,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 1u32;
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR, NOW).unwrap();
         // Winner bids 300, clearing price will be 300 (only one slot).
         let two_bids = vec![
             BidData {
@@ -629,13 +821,14 @@ fn clear_refunds_equal_locked_minus_paid() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             two_bids,
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
         // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
@@ -680,8 +873,13 @@ fn clear_rate_escrow_scales_by_basis() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, cfg).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         let supply = 2u32;
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, supply as u128 * PROMIS_LOAD_MINOR)
-            .unwrap();
+        runtime::begin_clearing(
+            s.clone(),
+            WORLDWIDE_DAY,
+            supply as u128 * PROMIS_LOAD_MINOR,
+            NOW,
+        )
+        .unwrap();
         let rate_bids = vec![
             BidData {
                 bidder_address: bidder(0),
@@ -706,13 +904,14 @@ fn clear_rate_escrow_scales_by_basis() {
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
-            1,
+            SRC_CHAIN,
             1,
             0,
             1,
             rate_bids,
         )
         .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
             runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
 
@@ -740,13 +939,265 @@ fn clear_rate_escrow_scales_by_basis() {
     });
 }
 
+// --- Multi-chain fan-in gate ---
+
+/// Auction clearing over two target chains: bids merge into one clearing, and each
+/// winner/bidder is tagged with its source chain for per-chain result/refund routing.
+#[test]
+fn two_chain_bids_merge_and_carry_source_chain() {
+    let chain_a = 10u32;
+    let chain_b = 20u32;
+    with_targets(&[chain_a, chain_b], |s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 3 * PROMIS_LOAD_MINOR, NOW).unwrap();
+
+        // Chain A: one bid at 300. Chain B: one bid at 200.
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_a,
+            1,
+            0,
+            1,
+            vec![BidData {
+                bidder_address: bidder(1),
+                intex_bid_rate: 300,
+                timestamp: 0,
+                intex_quantity: 1,
+            }],
+        )
+        .unwrap();
+        mark_done(&s, chain_a, 1, 1, 1);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_b,
+            1,
+            0,
+            1,
+            vec![BidData {
+                bidder_address: bidder(2),
+                intex_bid_rate: 200,
+                timestamp: 0,
+                intex_quantity: 1,
+            }],
+        )
+        .unwrap();
+        mark_done(&s, chain_b, 1, 1, 1);
+
+        let result =
+            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        assert_eq!(result.issued_intex_count, 2);
+        // Both bidders win; each is tagged with its own chain.
+        let a = result.winners.iter().position(|&w| w == bidder(1)).unwrap();
+        let b = result.winners.iter().position(|&w| w == bidder(2)).unwrap();
+        assert_eq!(result.winner_chains[a], chain_a);
+        assert_eq!(result.winner_chains[b], chain_b);
+        assert_eq!(result.bidder_chains.len(), 2);
+    });
+}
+
+/// Manual clearing must wait until every snapshot chain has finalized.
+#[test]
+fn clear_auction_requires_all_chains_done() {
+    let chain_a = 10u32;
+    let chain_b = 20u32;
+    with_targets(&[chain_a, chain_b], |s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 2 * PROMIS_LOAD_MINOR, NOW).unwrap();
+        // Only chain A reports.
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_a,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        mark_done(&s, chain_a, 1, 1, 1);
+        // Chain B is still missing → manual clear is rejected.
+        assert!(runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).is_err());
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Revealing
+        );
+    });
+}
+
+/// The tick clears only once the gate is satisfied; before then `force_clear` yields `None`.
+#[test]
+fn force_clear_waits_then_fires_when_all_done() {
+    let chain_a = 10u32;
+    let chain_b = 20u32;
+    with_targets(&[chain_a, chain_b], |s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 2 * PROMIS_LOAD_MINOR, NOW).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_a,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        mark_done(&s, chain_a, 1, 1, 1);
+        // Before the deadline, a missing chain keeps the gate closed.
+        assert!(runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW).unwrap().is_none());
+
+        // Chain B reports → the gate opens and the tick clears.
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_b,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        mark_done(&s, chain_b, 1, 1, 1);
+        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW).unwrap();
+        assert!(result.is_some());
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Cleared
+        );
+    });
+}
+
+/// After the deadline, clearing proceeds without the missing chain and reports it skipped.
+#[test]
+fn force_clear_skips_missing_chain_after_deadline() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let chain_a = 10u32;
+    let chain_b = 20u32;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[chain_a, chain_b]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+
+    let cleared = StorageHandle::enter(&mut storage, |s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 2 * PROMIS_LOAD_MINOR, NOW).unwrap();
+        // Only chain A finalizes.
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain_a,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        mark_done(&s, chain_a, 1, 1, 1);
+        // Past the deadline the gate clears without chain B.
+        let deadline = NOW + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        // Only chain A's bid participated.
+        assert_eq!(result.issued_intex_count, 1);
+        assert!(result.bidder_chains.iter().all(|&c| c == chain_a));
+        s.contract::<DesisContract>()
+            .read_stage(WORLDWIDE_DAY)
+            .unwrap()
+    });
+    assert_eq!(cleared, AuctionStage::Cleared);
+
+    // The missing chain is reported skipped.
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let skip_sig = IDesis::ChainSkipped::SIGNATURE_HASH;
+    let found = storage.get_events(desis_addr).iter().any(|log| {
+        log.topics().first() == Some(&skip_sig)
+            && IDesis::ChainSkipped::decode_log_data(log)
+                .map(|ev| ev.worldwideDay == WORLDWIDE_DAY && ev.srcChainId == chain_b)
+                .unwrap_or(false)
+    });
+    assert!(found, "expected ChainSkipped for the missing chain");
+}
+
+#[test]
+fn tick_gate_no_active_days_is_noop() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    with_storage(|s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
+            s.clone(),
+        );
+        runtime::tick_gate(&ctx).unwrap();
+    });
+}
+
+#[test]
+fn tick_gate_clears_ready_day() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    with_storage(|s| {
+        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
+        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
+        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, PROMIS_LOAD_MINOR, NOW).unwrap();
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 1);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
+            s.clone(),
+        );
+        runtime::tick_gate(&ctx).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Cleared
+        );
+        assert_eq!(contract.gate_active_count.read().unwrap(), 0);
+    });
+}
+
 #[test]
 fn test_iface_id_matches_selector_xor() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolCall;
 
+    // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) — the five
+    // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
+    // isChainDone) are not part of that interface, so they are excluded from the XOR.
     let xor: [u8; 4] = [
         IDesis::processBidsBatchCall::SELECTOR,
+        IDesis::processBidsDoneCall::SELECTOR,
         IDesis::clearAuctionCall::SELECTOR,
         IDesis::getAuctionStageCall::SELECTOR,
         IDesis::getBidsCountCall::SELECTOR,
@@ -807,7 +1258,7 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(1_700_000_000u64));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, Bytes::from(vec![0u8; 32]));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -861,7 +1312,7 @@ fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis(
         // be auctioned, so the dust is the remainder the caller must keep.
         let supply = U256::from(3u128 * PROMIS_LOAD_MINOR + 7);
         let remainder =
-            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
+            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply, NOW).unwrap();
 
         // The dispatch returns the dust to the caller instead of writing it to
         // PromisLimit, so it cannot collide with the caller's own set/add. (The
@@ -887,7 +1338,7 @@ fn dispatch_stage_clearing_failure_returns_whole_supply() {
 
         let supply = U256::from(5u128 * PROMIS_LOAD_MINOR);
         let remainder =
-            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply).unwrap();
+            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply, NOW).unwrap();
         assert_eq!(remainder, supply);
     });
 }

@@ -36,6 +36,7 @@ sol! {
         function sendAuctionStageClearing(uint32 worldwideDay) external payable returns (bytes32 sendId);
 
         function sendAuctionResult(
+            uint32 dstChainId,
             uint32 worldwideDay,
             uint32 issuedIntexCount,
             uint64 auctionClearingRate,
@@ -43,10 +44,13 @@ sol! {
         ) external payable returns (bytes32 sendId);
 
         function sendRefundInstructions(
+            uint32 dstChainId,
             uint32 worldwideDay,
             address[] calldata bidders,
             uint128[] calldata refundedAmounts,
             uint128[] calldata paidAmounts
         ) external payable returns (bytes32 sendId);
+
+        function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
     }
 }

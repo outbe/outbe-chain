@@ -47,13 +47,19 @@ interface IDesis {
     // --- Views ---
     function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
     function getBidsCount(uint32 worldwideDay) external view returns (uint256);
+    function getChainBidsCount(uint32 worldwideDay, uint32 srcChainId) external view returns (uint256);
+    /// @notice Whether the chain's bid intake for the day is complete (marker + all batches arrived).
+    function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
 
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
     // --- Events ---
     event AuctionCreated(uint32 indexed worldwideDay);
-    event BidsReceived(uint32 indexed worldwideDay, uint32 srcChainId, uint256 bidsCount);
+    /// @notice The chain's bid intake finalized: BIDS_DONE marker and all batches arrived with matching totals.
+    event ChainBidsDone(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint32 bidsCount);
+    /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
+    event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
