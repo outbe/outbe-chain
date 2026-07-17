@@ -27,9 +27,11 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 
 | PFS examples | Feature coverage |
 |---|---|
-| `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate replay |
-| `PFS-005-01` | Vote approval, Update scheduling and activation |
+| `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
+| `PFS-005-01`, `-09` | Vote approval/Update activation and unsupported-version fatal boundary |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness and active-share restart; consult the PFS matrix for deliberately partial assertions |
+| `PFS-007-01` through `-06` | Pectra/ZeroFee readiness, native EIP-7702 delegation, sponsored quota, soft failure and paid fallback |
+| `PFS-008-01` through `-04` | Cold/chained follower sync, validator recovery and warm promotion in one composite live scenario |
 
 Run one mapped example with `--tags '@pfs-001-05'`. A tag means that the
 scenario supplies the evidence stated in its PFS matrix row; it does not imply
@@ -92,6 +94,21 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
 
 The same full run is available as `mise run e2e`. The harness owns an isolated
 MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
+On an SGX runner, `mise run e2e-sgx` builds the real enclave and runs the same
+features with four `gramine-sgx` containers. That lane raises the per-request
+TEE timeout to 120 seconds for EPC paging while retaining the normal 30-second
+default elsewhere.
+
+Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee none --validators 4 --all \
+  --input crates/testing/e2e-harness/features/zerofee.feature
+```
+
+It is also part of the canonical `mise run e2e` suite. The Rust World owns its
+network, transaction signing, receipts and cleanup; Foundry `cast` is not used.
 
 The skip/fail *logic* is verifiable anywhere (no localnet needed): e.g.
 `--validators 2` prints `SKIPPED: … needs >=4 validators, have 2` and exits 0,

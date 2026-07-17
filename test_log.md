@@ -99,3 +99,59 @@ end-to-end coverage. Commands are run from the repository root unless noted.
 - Final matrix audit found and replaced every remaining bare scenario `GAP` with
   either existing evidence or a precise missing seam/policy. The template retains
   its intentional `GAP` placeholder for newly authored flows.
+
+### Repository-wide E2E inventory follow-up
+
+- Found the previously orphaned `e2e/zerofee-e2e.sh` live four-validator flow.
+  Added PFS-007, `mise run e2e-zerofee`, harness README discovery text and a
+  non-advisory nightly job. The script proves Pectra readiness, EIP-7702
+  delegation, eight sponsored transactions, quota soft-failure, paid fallback
+  and CLI authorization output; replay and restart persistence remain explicit
+  documentation-only scenarios.
+- Added PFS-008 for the existing follower composite and mapped its cold follower,
+  chained follower, validator recovery and warm-promotion assertions.
+- Added missing Credis validation and Update ordering/error scenarios to their
+  PFS matrices. Split unsupported-version activation from registered migration
+  handler failure instead of treating them as one case.
+- Corrected Tribute terminology: the executable case submits a second logical
+  offer for the same owner/day. Byte-identical encrypted-envelope replay is now
+  a separate uncovered PFS-001 requirement.
+- Added `docs/flows/e2e-inventory.md`, classifying live multi-node, in-process
+  cross-module and Foundry contract evidence. Contract or in-process tests are
+  no longer implicitly presented as live-network proof.
+- Expanded every PFS scenario row to record its own canonical inputs, trigger,
+  outputs/postconditions and verification boundary.
+- `cargo test -p outbe-e2e-harness --no-run`: PASS after the feature wording and
+  state-field rename.
+- `cargo fmt --all -- --check`, `git diff --check`, Gherkin matrix-column audit
+  and `bash -n e2e/zerofee-e2e.sh`: PASS.
+
+### ZeroFee Rust migration and real-SGX startup hardening
+
+- Superseded the interim shell integration above: migrated PFS-007-01 through
+  PFS-007-06 into `crates/testing/e2e-harness/features/zerofee.feature` and
+  deleted `e2e/zerofee-e2e.sh` plus its separate mise/CI entrypoints.
+- The Rust World now signs the EIP-7702 authorization and transactions natively
+  with Alloy, then asserts the marker/schema/views, exact delegation designator,
+  eight successful zero-debit sponsorships, mined soft failure 110, paid
+  fallback, counter/event invariants and product CLI authorization JSON.
+- Initial live runs identified an admission distinction: a 100-wei fee cap was
+  accepted by RPC but remained parked relative to base fee. Retaining zero
+  priority fee while using a 1-gwei fee cap preserves sponsored execution and
+  produces timely inclusion.
+- Focused live run on four tee-less validators: PASS — 1 scenario, 12/12 steps;
+  the harness removed its isolated network and MongoDB afterward.
+- The SGX nightly job previously called the mock-only `mise run e2e`, despite
+  running on an SGX-labelled host. Added `mise run e2e-sgx`, which builds the
+  real enclave, selects `--tee real`, and is now the nightly job's entrypoint.
+- Reduced `sgx.max_threads` from 64 to 16. Four validators now reserve at most
+  64 rather than 256 SGX thread slots; the server's normal concurrent connection
+  count remains comfortably below the per-enclave limit.
+- Added `OUTBE_TEE_IO_TIMEOUT_SECS`; the real-SGX E2E lane uses 120 seconds to
+  tolerate EPC paging while all other environments retain the 30-second default.
+- Targeted timeout parsing and SGX manifest resource-budget tests: PASS.
+- `cargo test -p outbe-e2e-harness --no-run`, `cargo fmt --all -- --check` and
+  `git diff --check`: PASS.
+- Hardware SGX execution cannot be verified on this host because neither
+  `/dev/sgx_enclave` nor `/dev/sgx_provision` exists. The corrected nightly
+  hardware lane is the authoritative remaining verification.

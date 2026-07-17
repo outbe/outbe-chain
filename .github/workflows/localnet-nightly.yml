@@ -66,7 +66,7 @@ jobs:
       - run: mise run sgx-smoke
 
   e2e-tee:
-    name: S1-S7 gramine TEE e2e suite
+    name: real-SGX Rust/Cucumber e2e suite
     runs-on: [self-hosted, sgx]
     timeout-minutes: 60
     steps:
@@ -74,6 +74,7 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           install: true
-      # The Rust harness owns isolated localnets, MongoDB replica sets, and
-      # gramine-mock enclave containers for every scenario.
-      - run: mise run e2e
+      # The Rust harness owns isolated localnets, MongoDB replica sets, and four
+      # real gramine-sgx enclave containers per scenario. This must not call the
+      # default mock task: sequential real-SGX startup is the regression surface.
+      - run: mise run e2e-sgx

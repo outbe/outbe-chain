@@ -148,7 +148,26 @@ pub struct EnclaveClient {
 /// the connection but never responds surfaces as a timeout error instead of hanging
 /// the caller (e.g. node startup) forever. Generous — every real enclave op (quote,
 /// Noise handshake, seal, offer-batch decrypt) completes well within this.
-const ENCLAVE_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DEFAULT_ENCLAVE_IO_TIMEOUT_SECS: u64 = 30;
+
+/// Hardware SGX can spend substantially longer than gramine-direct servicing a
+/// request while EPC pages are reclaimed. The default remains fail-fast for
+/// production/dev, while SGX stress/E2E runners may raise the bound explicitly.
+fn enclave_io_timeout() -> std::time::Duration {
+    static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *TIMEOUT.get_or_init(|| {
+        let value = std::env::var("OUTBE_TEE_IO_TIMEOUT_SECS").ok();
+        let seconds = timeout_seconds_from(value.as_deref());
+        std::time::Duration::from_secs(seconds)
+    })
+}
+
+fn timeout_seconds_from(value: Option<&str>) -> u64 {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_ENCLAVE_IO_TIMEOUT_SECS)
+}
 
 impl EnclaveClient {
     /// Connect to the enclave over a Unix domain socket (native sidecar), then
@@ -156,8 +175,8 @@ impl EnclaveClient {
     /// Noise-IK handshake.
     pub fn connect(path: &Path, policy: &QuotePolicy) -> Result<Self, TransportError> {
         let stream = UnixStream::connect(path)?;
-        stream.set_read_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
-        stream.set_write_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
         Self::from_transport(Transport::Unix(stream), policy)
     }
 
@@ -166,8 +185,8 @@ impl EnclaveClient {
     pub fn connect_tcp(addr: &str, policy: &QuotePolicy) -> Result<Self, TransportError> {
         let stream = TcpStream::connect(addr)?;
         let _ = stream.set_nodelay(true);
-        stream.set_read_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
-        stream.set_write_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
         Self::from_transport(Transport::Tcp(stream), policy)
     }
 
@@ -487,6 +506,14 @@ pub fn verify_tribute_offer_attestation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enclave_timeout_is_bounded_and_configurable_for_sgx() {
+        assert_eq!(timeout_seconds_from(None), 30);
+        assert_eq!(timeout_seconds_from(Some("120")), 120);
+        assert_eq!(timeout_seconds_from(Some("0")), 30);
+        assert_eq!(timeout_seconds_from(Some("invalid")), 30);
+    }
     use crate::quote::MIN_QUOTE_LEN;
 
     const RB: usize = 48; // report-body offset inside the quote

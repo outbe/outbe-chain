@@ -239,6 +239,18 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --al
 description = "Alias for the Rust/Cucumber e2e suite"
 depends = ["e2e"]
 
+# The hardware lane must be distinct from `e2e`: the default suite intentionally
+# uses gramine-direct/mock so it runs on developer machines. This task builds the
+# real enclave binary and makes the harness request gramine-sgx containers.
+[tasks.e2e-sgx]
+description = "Run all Rust/Cucumber e2e features on real SGX hardware"
+run = """
+cargo build -p outbe-chain --bin outbe-chain
+cargo build --bin outbe-cli --bin outbe-keygen
+cargo build --release --bin outbe-tee-enclave
+OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
+"""
+
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #
 
 # Hardware SGX smoke: build + sign + run the enclave under gramine-sgx and
