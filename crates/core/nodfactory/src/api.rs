@@ -16,6 +16,7 @@ pub fn issue_nod(
     runtime::issue_nod(storage, scope, parent, params)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,

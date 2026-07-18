@@ -104,6 +104,7 @@ fn issue_nod_inner(
 /// and `asset` is not validated, so callers mining zero-cost Nods can pass
 /// `Address::ZERO`.
 /// Mines a Nod through the block-scoped compressed-body lifecycle.
+#[allow(clippy::too_many_arguments)]
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
