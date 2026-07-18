@@ -437,6 +437,8 @@ contract TargetRouter is
             _sendOneBidsBatch(
                 worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
             );
+            // Trusted bridge immutable; the flagged write is the erc7201 pointer load.
+            // slither-disable-next-line reentrancy-eth
             _sendBidsDone(worldwideDay, gen, 1, 0);
             return;
         }
@@ -469,6 +471,7 @@ contract TargetRouter is
         }
 
         // Completeness marker in the same tx/generation as the chunks, so it can never outrun a lost sibling.
+        // slither-disable-next-line reentrancy-eth
         _sendBidsDone(worldwideDay, gen, totalBatches, SafeCast.toUint32(bidsCount));
     }
 
